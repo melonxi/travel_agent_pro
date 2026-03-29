@@ -1,7 +1,7 @@
 # backend/agent/types.py
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -43,15 +43,28 @@ class Message:
         d: dict[str, Any] = {"role": self.role.value}
         if self.content is not None:
             d["content"] = self.content
+        if self.name is not None:
+            d["name"] = self.name
         if self.tool_calls:
             d["tool_calls"] = [
                 {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
                 for tc in self.tool_calls
             ]
         if self.tool_result:
-            d["tool_result"] = {
-                "tool_call_id": self.tool_result.tool_call_id,
-                "status": self.tool_result.status,
-                "data": self.tool_result.data,
+            tr = self.tool_result
+            tr_dict: dict[str, Any] = {
+                "tool_call_id": tr.tool_call_id,
+                "status": tr.status,
             }
+            if tr.data is not None:
+                tr_dict["data"] = tr.data
+            if tr.metadata is not None:
+                tr_dict["metadata"] = tr.metadata
+            if tr.error is not None:
+                tr_dict["error"] = tr.error
+            if tr.error_code is not None:
+                tr_dict["error_code"] = tr.error_code
+            if tr.suggestion is not None:
+                tr_dict["suggestion"] = tr.suggestion
+            d["tool_result"] = tr_dict
         return d
