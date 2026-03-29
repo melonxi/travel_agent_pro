@@ -1,3 +1,5 @@
+# ⚠️ WARNING: Do NOT put real API keys in this file.
+# Use environment variables instead. The ${VAR} syntax will be resolved at runtime.
 # config.yaml
 llm:
   provider: "openai"
