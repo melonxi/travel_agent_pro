@@ -59,6 +59,12 @@ async def test_save_snapshot(manager):
 @pytest.mark.asyncio
 async def test_load_nonexistent_raises(manager):
     with pytest.raises(FileNotFoundError):
+        await manager.load("sess_000000000000")
+
+
+@pytest.mark.asyncio
+async def test_load_invalid_session_id_raises(manager):
+    with pytest.raises(ValueError):
         await manager.load("nonexistent")
 
 
