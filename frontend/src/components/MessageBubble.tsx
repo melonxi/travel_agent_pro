@@ -1,5 +1,3 @@
-import React from 'react'
-
 interface Props {
   role: 'user' | 'assistant' | 'tool'
   content: string

@@ -1,5 +1,3 @@
-import React from 'react'
-
 const PHASE_LABELS: Record<number, string> = {
   1: '灵感探索',
   2: '目的地选择',

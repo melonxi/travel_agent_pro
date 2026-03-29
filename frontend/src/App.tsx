@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import ChatPanel from './components/ChatPanel'
 import PhaseIndicator from './components/PhaseIndicator'
 import MapView from './components/MapView'

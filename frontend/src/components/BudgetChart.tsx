@@ -1,4 +1,3 @@
-import React from 'react'
 import type { TravelPlanState } from '../types/plan'
 
 interface Props {

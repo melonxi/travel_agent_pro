@@ -1,4 +1,3 @@
-import React from 'react'
 import { MapContainer, TileLayer, Marker, Polyline } from 'react-leaflet'
 import type { DayPlan } from '../types/plan'
 import 'leaflet/dist/leaflet.css'
