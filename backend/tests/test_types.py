@@ -44,3 +44,30 @@ def test_message_to_dict():
     d = msg.to_dict()
     assert d["role"] == "user"
     assert d["content"] == "hello"
+
+
+def test_message_to_dict_with_tool_calls():
+    tc = ToolCall(id="tc_1", name="search_flights", arguments={"origin": "PVG"})
+    msg = Message(role=Role.ASSISTANT, content=None, tool_calls=[tc])
+    d = msg.to_dict()
+    assert d["role"] == "assistant"
+    assert "content" not in d
+    assert len(d["tool_calls"]) == 1
+    assert d["tool_calls"][0]["name"] == "search_flights"
+
+
+def test_message_to_dict_with_tool_result_error():
+    tr = ToolResult(
+        tool_call_id="tc_1",
+        status="error",
+        error="API timeout",
+        error_code="TIMEOUT",
+        suggestion="Retry later",
+    )
+    msg = Message(role=Role.TOOL, content=None, tool_result=tr, name="search_flights")
+    d = msg.to_dict()
+    assert d["role"] == "tool"
+    assert d["name"] == "search_flights"
+    assert d["tool_result"]["error"] == "API timeout"
+    assert d["tool_result"]["error_code"] == "TIMEOUT"
+    assert d["tool_result"]["suggestion"] == "Retry later"

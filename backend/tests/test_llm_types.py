@@ -1,4 +1,5 @@
 # backend/tests/test_llm_types.py
+from agent.types import ToolCall
 from llm.types import LLMChunk, ChunkType
 
 
@@ -10,8 +11,6 @@ def test_text_delta_chunk():
 
 
 def test_tool_call_start_chunk():
-    from agent.types import ToolCall
-
     tc = ToolCall(id="tc_1", name="search_flights", arguments={})
     chunk = LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=tc)
     assert chunk.tool_call.name == "search_flights"
