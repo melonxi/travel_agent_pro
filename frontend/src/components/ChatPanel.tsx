@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import MessageBubble from './MessageBubble'
 import { useSSE } from '../hooks/useSSE'
 import type { SSEEvent, TravelPlanState } from '../types/plan'

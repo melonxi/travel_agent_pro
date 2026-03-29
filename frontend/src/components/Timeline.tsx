@@ -1,4 +1,3 @@
-import React from 'react'
 import type { DayPlan } from '../types/plan'
 
 interface Props {
