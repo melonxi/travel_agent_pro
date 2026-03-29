@@ -1,4 +1,6 @@
 # backend/tests/test_update_plan_state.py
+from datetime import date, timedelta
+
 import pytest
 
 from state.models import TravelPlanState
@@ -32,9 +34,31 @@ async def test_set_dates(tool_fn, plan):
 
 
 @pytest.mark.asyncio
+async def test_set_dates_from_natural_language_string(tool_fn, plan):
+    await tool_fn(field="dates", value="五一假期，3天")
+
+    expected_start = date.today().replace(month=5, day=1)
+    if expected_start < date.today():
+        expected_start = expected_start.replace(year=expected_start.year + 1)
+
+    assert plan.dates is not None
+    assert plan.dates.start == expected_start.isoformat()
+    assert plan.dates.end == (expected_start + timedelta(days=3)).isoformat()
+
+
+@pytest.mark.asyncio
 async def test_set_budget(tool_fn, plan):
     result = await tool_fn(field="budget", value={"total": 15000, "currency": "CNY"})
     assert plan.budget.total == 15000
+
+
+@pytest.mark.asyncio
+async def test_set_budget_from_string(tool_fn, plan):
+    await tool_fn(field="budget", value="1万元")
+
+    assert plan.budget is not None
+    assert plan.budget.total == 10000
+    assert plan.budget.currency == "CNY"
 
 
 @pytest.mark.asyncio

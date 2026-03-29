@@ -23,13 +23,13 @@ PHASE_PROMPTS: dict[int, str] = {
 使用 assemble_day_plan 工具来生成优化的单日行程。""",
     7: """你现在是出发前查漏清单生成器。针对已确认的行程，生成完整的出行检查清单。
 包含：证件准备、货币兑换、天气对应衣物、已规划项目的注意事项、紧急联系方式、目的地实用贴士。
-使用 check_weather_forecast 获取最新天气，使用 generate_trip_summary 生成出行摘要。
+使用 check_weather 获取最新天气，使用 generate_summary 生成出行摘要。
 逐项检查，确保没有遗漏。""",
 }
 
 PHASE_TOOL_NAMES: dict[int, list[str]] = {
     1: ["update_plan_state"],
-    2: ["search_destinations", "check_travel_feasibility", "update_plan_state"],
+    2: ["search_destinations", "check_feasibility", "update_plan_state"],
     3: ["search_flights", "update_plan_state"],
     4: ["search_accommodations", "calculate_route", "update_plan_state"],
     5: [
@@ -39,7 +39,7 @@ PHASE_TOOL_NAMES: dict[int, list[str]] = {
         "check_availability",
         "update_plan_state",
     ],
-    7: ["check_weather_forecast", "generate_trip_summary", "update_plan_state"],
+    7: ["check_weather", "generate_summary", "update_plan_state"],
 }
 
 PHASE_CONTROL_MODE: dict[int, str] = {

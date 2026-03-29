@@ -3,11 +3,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from state.intake import parse_budget_value, parse_dates_value
 from state.models import (
     Accommodation,
-    Budget,
     Constraint,
-    DateRange,
     Preference,
     Travelers,
     TravelPlanState,
@@ -62,13 +61,13 @@ Don't use when: 只是闲聊或询问信息，没有新的决策需要记录。"
         if field == "destination":
             plan.destination = str(value)
         elif field == "dates":
-            plan.dates = DateRange.from_dict(value) if isinstance(value, dict) else None
+            plan.dates = parse_dates_value(value)
         elif field == "travelers":
             plan.travelers = (
                 Travelers.from_dict(value) if isinstance(value, dict) else None
             )
         elif field == "budget":
-            plan.budget = Budget.from_dict(value) if isinstance(value, dict) else None
+            plan.budget = parse_budget_value(value)
         elif field == "accommodation":
             plan.accommodation = (
                 Accommodation.from_dict(value) if isinstance(value, dict) else None
