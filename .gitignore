@@ -36,3 +36,9 @@ yarn-error.log*
 
 # OS
 Thumbs.db
+
+# Project runtime data
+data/
+
+# Superpowers
+.superpowers/
