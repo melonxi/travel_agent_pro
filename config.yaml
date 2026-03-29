@@ -1,0 +1,24 @@
+# config.yaml
+llm:
+  provider: "openai"
+  model: "gpt-4o"
+  temperature: 0.7
+  max_tokens: 4096
+
+llm_overrides:
+  phase_1_2:
+    provider: "anthropic"
+    model: "claude-sonnet-4-20250514"
+  phase_5:
+    provider: "openai"
+    model: "gpt-4o"
+
+api_keys:
+  google_maps: "${GOOGLE_MAPS_API_KEY}"
+  amadeus_key: "${AMADEUS_API_KEY}"
+  amadeus_secret: "${AMADEUS_API_SECRET}"
+  openweather: "${OPENWEATHER_API_KEY}"
+
+data_dir: "./data"
+max_retries: 3
+context_compression_threshold: 0.5
