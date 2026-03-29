@@ -34,12 +34,16 @@ class AppConfig:
     context_compression_threshold: float = 0.5
 
 
-def _resolve_env(value: str) -> str:
-    """Replace ${ENV_VAR} with actual environment variable value."""
+def _resolve_env(value: object) -> str:
+    """Replace ${ENV_VAR} with actual environment variable value.
+
+    Only supports values that are entirely a single ${VAR} reference.
+    Non-string values from YAML (int, bool, etc.) are converted to str.
+    """
     if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
         env_name = value[2:-1]
         return os.environ.get(env_name, "")
-    return value
+    return str(value) if not isinstance(value, str) else value
 
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:
