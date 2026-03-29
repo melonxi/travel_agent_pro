@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator
 
 from anthropic import AsyncAnthropic
 
-from agent.types import Message, Role, ToolCall, ToolResult
+from agent.types import Message, Role, ToolCall
 from llm.types import ChunkType, LLMChunk
 
 

@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator
 import tiktoken
 from openai import AsyncOpenAI
 
-from agent.types import Message, Role, ToolCall, ToolResult
+from agent.types import Message, Role, ToolCall
 from llm.types import ChunkType, LLMChunk
 
 
@@ -98,6 +98,10 @@ class OpenAIProvider:
         if not stream:
             response = await self.client.chat.completions.create(**kwargs)
             choice = response.choices[0]
+            if choice.message.content:
+                yield LLMChunk(
+                    type=ChunkType.TEXT_DELTA, content=choice.message.content
+                )
             if choice.message.tool_calls:
                 for tc in choice.message.tool_calls:
                     yield LLMChunk(
@@ -108,10 +112,6 @@ class OpenAIProvider:
                             arguments=json.loads(tc.function.arguments),
                         ),
                     )
-            elif choice.message.content:
-                yield LLMChunk(
-                    type=ChunkType.TEXT_DELTA, content=choice.message.content
-                )
             yield LLMChunk(type=ChunkType.DONE)
             return
 
