@@ -18,12 +18,23 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
+  const [autoScroll, setAutoScroll] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<HTMLDivElement>(null)
   const { sendMessage } = useSSE()
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    if (autoScroll) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, autoScroll])
+
+  const handleScroll = () => {
+    if (!messagesRef.current) return
+    const { scrollTop, scrollHeight, clientHeight } = messagesRef.current
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50
+    setAutoScroll(isAtBottom)
+  }
 
   const handleSend = async () => {
     if (!input.trim() || streaming) return
@@ -53,6 +64,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
           { role: 'tool', content: '', toolName: event.tool_call!.name },
         ])
       } else if (event.type === 'state_update' && event.plan) {
+        console.log('📊 Plan updated:', event.plan)
         onPlanUpdate(event.plan)
       }
     })
@@ -62,7 +74,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
 
   return (
     <div className="chat-panel">
-      <div className="messages">
+      <div className="messages" ref={messagesRef} onScroll={handleScroll}>
         {messages.map((m, i) => (
           <MessageBubble key={i} role={m.role} content={m.content} toolName={m.toolName} />
         ))}
