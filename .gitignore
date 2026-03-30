@@ -40,6 +40,12 @@ Thumbs.db
 # Project runtime data
 data/
 
+# Test results
+test-results/
+
+# Claude Code
+.claude/
+
 # Superpowers
 .superpowers/
 .worktrees/
