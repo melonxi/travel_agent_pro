@@ -24,3 +24,8 @@ api_keys:
 data_dir: "./data"
 max_retries: 3
 context_compression_threshold: 0.5
+
+flyai:
+  enabled: true
+  cli_timeout: 30
+  # api_key: ${FLYAI_API_KEY}
