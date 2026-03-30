@@ -115,3 +115,34 @@ async def test_openai_chat_request_event_with_tools(otel_exporter):
     span = next(s for s in spans if s.name == "llm.chat")
     req_event = next(e for e in span.events if e.name == EVENT_LLM_REQUEST)
     assert req_event.attributes["has_tools"] is True
+
+
+async def test_anthropic_chat_has_request_event(otel_exporter):
+    mock_response = MagicMock()
+    mock_block = MagicMock()
+    mock_block.type = "text"
+    mock_block.text = "bonjour"
+    mock_response.content = [mock_block]
+
+    with patch("llm.anthropic_provider.AsyncAnthropic") as MockClient:
+        instance = MockClient.return_value
+        instance.messages.create = AsyncMock(return_value=mock_response)
+
+        from llm.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514")
+        messages = [Message(role=Role.USER, content="hello")]
+
+        async for _ in provider.chat(messages, stream=False):
+            pass
+
+    spans = otel_exporter.get_finished_spans()
+    span = next(s for s in spans if s.name == "llm.chat")
+    events = span.events
+
+    req_event = next(e for e in events if e.name == EVENT_LLM_REQUEST)
+    assert req_event.attributes["message_count"] == 1
+    assert req_event.attributes["has_tools"] is False
+
+    resp_event = next(e for e in events if e.name == EVENT_LLM_RESPONSE)
+    assert resp_event.attributes["text_preview"] == "bonjour"

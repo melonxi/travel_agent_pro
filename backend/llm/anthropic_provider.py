@@ -9,7 +9,13 @@ from opentelemetry import trace as otel_trace
 
 from agent.types import Message, Role, ToolCall
 from llm.types import ChunkType, LLMChunk
-from telemetry.attributes import LLM_PROVIDER, LLM_MODEL
+from telemetry.attributes import (
+    EVENT_LLM_REQUEST,
+    EVENT_LLM_RESPONSE,
+    LLM_MODEL,
+    LLM_PROVIDER,
+    truncate,
+)
 
 
 class AnthropicProvider:
@@ -96,6 +102,15 @@ class AnthropicProvider:
         with tracer.start_as_current_span("llm.chat") as span:
             span.set_attribute(LLM_PROVIDER, "anthropic")
             span.set_attribute(LLM_MODEL, self.model)
+            total_chars = sum(len(m.content or "") for m in messages)
+            span.add_event(
+                EVENT_LLM_REQUEST,
+                {
+                    "message_count": len(messages),
+                    "total_chars": total_chars,
+                    "has_tools": tools is not None and len(tools) > 0,
+                },
+            )
             system, converted = self._split_system_and_convert(messages)
             kwargs: dict[str, Any] = {
                 "model": self.model,
@@ -109,16 +124,27 @@ class AnthropicProvider:
 
             if not stream:
                 response = await self.client.messages.create(**kwargs)
+                collected_text = ""
+                tool_names: list[str] = []
                 for block in response.content:
                     if block.type == "text":
+                        collected_text += block.text
                         yield LLMChunk(type=ChunkType.TEXT_DELTA, content=block.text)
                     elif block.type == "tool_use":
+                        tool_names.append(block.name)
                         yield LLMChunk(
                             type=ChunkType.TOOL_CALL_START,
                             tool_call=ToolCall(
                                 id=block.id, name=block.name, arguments=block.input
                             ),
                         )
+                span.add_event(
+                    EVENT_LLM_RESPONSE,
+                    {
+                        "text_preview": truncate(collected_text, max_len=200),
+                        "tool_calls": json.dumps(tool_names),
+                    },
+                )
                 yield LLMChunk(type=ChunkType.DONE)
                 return
 
@@ -126,6 +152,8 @@ class AnthropicProvider:
                 current_tool_id: str | None = None
                 current_tool_name: str | None = None
                 current_tool_json: str = ""
+                collected_text = ""
+                tool_call_names: list[str] = []
 
                 async for event in stream_resp:
                     if event.type == "content_block_start":
@@ -136,6 +164,7 @@ class AnthropicProvider:
                                 current_tool_json = ""
                     elif event.type == "content_block_delta":
                         if hasattr(event.delta, "text"):
+                            collected_text += event.delta.text
                             yield LLMChunk(
                                 type=ChunkType.TEXT_DELTA, content=event.delta.text
                             )
@@ -143,6 +172,7 @@ class AnthropicProvider:
                             current_tool_json += event.delta.partial_json
                     elif event.type == "content_block_stop":
                         if current_tool_id and current_tool_name:
+                            tool_call_names.append(current_tool_name)
                             yield LLMChunk(
                                 type=ChunkType.TOOL_CALL_START,
                                 tool_call=ToolCall(
@@ -156,6 +186,13 @@ class AnthropicProvider:
                             current_tool_id = None
                             current_tool_name = None
                     elif event.type == "message_stop":
+                        span.add_event(
+                            EVENT_LLM_RESPONSE,
+                            {
+                                "text_preview": truncate(collected_text, max_len=200),
+                                "tool_calls": json.dumps(tool_call_names),
+                            },
+                        )
                         yield LLMChunk(type=ChunkType.DONE)
 
     async def count_tokens(self, messages: list[Message]) -> int:

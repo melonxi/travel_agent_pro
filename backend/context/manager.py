@@ -8,7 +8,11 @@ from opentelemetry import trace
 
 from agent.types import Message, Role
 from state.models import TravelPlanState
-from telemetry.attributes import CONTEXT_TOKENS_BEFORE, CONTEXT_TOKENS_AFTER
+from telemetry.attributes import (
+    CONTEXT_TOKENS_AFTER,
+    CONTEXT_TOKENS_BEFORE,
+    EVENT_CONTEXT_COMPRESSION,
+)
 
 # Keywords that signal user preferences — these messages must survive compression
 _PREFERENCE_SIGNALS = [
@@ -103,6 +107,16 @@ class ContextManager:
             span.set_attribute(CONTEXT_TOKENS_BEFORE, estimated)
             span.set_attribute("context.max_tokens", max_tokens)
             result = estimated > max_tokens * 0.5
+            if result:
+                must_keep, _ = self.classify_messages(messages)
+                span.add_event(
+                    EVENT_CONTEXT_COMPRESSION,
+                    {
+                        "message_count": len(messages),
+                        "estimated_tokens": estimated,
+                        "must_keep_count": len(must_keep),
+                    },
+                )
             return result
 
     def classify_messages(

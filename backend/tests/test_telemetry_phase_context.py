@@ -8,7 +8,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from agent.types import Message, Role
 from context.manager import ContextManager
 from phase.router import PhaseRouter
-from state.models import TravelPlanState
+from state.models import DateRange, TravelPlanState
+from telemetry.attributes import EVENT_CONTEXT_COMPRESSION, EVENT_PHASE_PLAN_SNAPSHOT
 
 
 def _reset_tracer_provider():
@@ -82,3 +83,61 @@ def test_context_compress_check_creates_span(otel_exporter):
     assert "context.tokens.before" in span.attributes
     assert "context.max_tokens" in span.attributes
     assert span.attributes["context.max_tokens"] == 1000
+
+
+def test_phase_transition_has_plan_snapshot_event(otel_exporter):
+    router = PhaseRouter()
+    plan = TravelPlanState(
+        session_id="s1",
+        destination="Tokyo",
+        dates=DateRange(start="2026-04-01", end="2026-04-05"),
+    )
+
+    changed = router.check_and_apply_transition(plan)
+    assert changed
+
+    spans = otel_exporter.get_finished_spans()
+    span = next(s for s in spans if s.name == "phase.transition")
+    events = span.events
+    snapshot = next(e for e in events if e.name == EVENT_PHASE_PLAN_SNAPSHOT)
+    assert snapshot.attributes["destination"] == "Tokyo"
+    assert snapshot.attributes["dates"] == "2026-04-01 ~ 2026-04-05"
+    assert snapshot.attributes["daily_plans_count"] == 0
+
+
+def test_context_compression_event_when_triggered(otel_exporter):
+    """压缩判定为 True 时，应添加 context.compression event。"""
+    manager = ContextManager()
+    messages = [
+        Message(role=Role.USER, content="Hello " * 500),
+        Message(role=Role.ASSISTANT, content="Response " * 300),
+    ]
+    max_tokens = 100
+
+    result = manager.should_compress(messages, max_tokens)
+    assert result is True
+
+    spans = otel_exporter.get_finished_spans()
+    span = next(s for s in spans if s.name == "context.should_compress")
+    events = span.events
+    comp_event = next(e for e in events if e.name == EVENT_CONTEXT_COMPRESSION)
+    assert comp_event.attributes["message_count"] == 2
+    assert "estimated_tokens" in comp_event.attributes
+
+
+def test_context_no_compression_event_when_not_triggered(otel_exporter):
+    """压缩判定为 False 时，不应添加 context.compression event。"""
+    manager = ContextManager()
+    messages = [
+        Message(role=Role.USER, content="Hi"),
+    ]
+    max_tokens = 100000
+
+    result = manager.should_compress(messages, max_tokens)
+    assert result is False
+
+    spans = otel_exporter.get_finished_spans()
+    span = next(s for s in spans if s.name == "context.should_compress")
+    events = span.events
+    compression_events = [e for e in events if e.name == EVENT_CONTEXT_COMPRESSION]
+    assert len(compression_events) == 0
