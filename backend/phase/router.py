@@ -5,7 +5,7 @@ from opentelemetry import trace
 
 from phase.prompts import PHASE_CONTROL_MODE, PHASE_PROMPTS, PHASE_TOOL_NAMES
 from state.models import BacktrackEvent, TravelPlanState
-from telemetry.attributes import PHASE_FROM, PHASE_TO
+from telemetry.attributes import EVENT_PHASE_PLAN_SNAPSHOT, PHASE_FROM, PHASE_TO
 
 
 class PhaseRouter:
@@ -39,6 +39,18 @@ class PhaseRouter:
             with tracer.start_as_current_span("phase.transition") as span:
                 span.set_attribute(PHASE_FROM, plan.phase)
                 span.set_attribute(PHASE_TO, inferred)
+                span.add_event(
+                    EVENT_PHASE_PLAN_SNAPSHOT,
+                    {
+                        "destination": plan.destination or "",
+                        "dates": (
+                            f"{plan.dates.start} ~ {plan.dates.end}"
+                            if plan.dates
+                            else ""
+                        ),
+                        "daily_plans_count": len(plan.daily_plans),
+                    },
+                )
                 plan.phase = inferred
             return True
         return False
