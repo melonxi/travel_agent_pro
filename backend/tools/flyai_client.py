@@ -77,7 +77,8 @@ class FlyAIClient:
             return []
 
         if data.get("status") != 0:
-            logger.warning("FlyAI CLI non-zero status: %s", data.get("message"))
+            # Non-zero status is expected (e.g. "not found poi") — degrade silently
+            logger.debug("FlyAI CLI non-zero status: %s", data.get("message"))
             return []
 
-        return data.get("data", {}).get("itemList", [])
+        return (data.get("data") or {}).get("itemList", [])

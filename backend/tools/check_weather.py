@@ -9,7 +9,10 @@ from tools.base import ToolError, tool
 _PARAMETERS = {
     "type": "object",
     "properties": {
-        "city": {"type": "string", "description": "城市名称，如 '东京' 'Paris'"},
+        "city": {
+            "type": "string",
+            "description": "城市英文名称（必须用英文），如 'Tokyo' 'Paris' 'Beijing'",
+        },
         "date": {"type": "string", "description": "查询日期，如 '2024-07-15'"},
     },
     "required": ["city", "date"],
@@ -22,6 +25,7 @@ def make_check_weather_tool(api_keys: ApiKeysConfig):
         description="""查询城市天气预报。
 Use when: 用户在阶段 5 或 7，需要了解目的地天气情况。
 Don't use when: 已有天气信息或不需要天气数据。
+Important: city 参数必须使用英文名称（如 Tokyo 而非 东京），OpenWeather API 不支持中文城市名。
 返回城市天气预报，含温度、天气描述等。""",
         phases=[5, 7],
         parameters=_PARAMETERS,
