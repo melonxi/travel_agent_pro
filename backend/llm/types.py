@@ -11,6 +11,9 @@ class ChunkType(str, Enum):
     TEXT_DELTA = "text_delta"
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_DELTA = "tool_call_delta"
+    KEEPALIVE = (
+        "keepalive"  # SSE ping to prevent proxy/client timeout during tool execution
+    )
     DONE = "done"
 
 

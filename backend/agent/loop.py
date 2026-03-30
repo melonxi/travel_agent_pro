@@ -36,20 +36,26 @@ class AgentLoop:
             span.set_attribute(AGENT_PHASE, phase)
             tools = tools_override or self.tool_engine.get_tools_for_phase(phase)
 
-            for iteration in range(20):  # safety limit on loop iterations
+            for iteration in range(self.max_retries):  # safety limit on loop iterations
                 with tracer.start_as_current_span("agent_loop.iteration") as iter_span:
                     iter_span.set_attribute(AGENT_ITERATION, iteration)
 
-                    await self.hooks.run("before_llm_call", messages=messages, phase=phase)
+                    await self.hooks.run(
+                        "before_llm_call", messages=messages, phase=phase
+                    )
 
                     tool_calls: list[ToolCall] = []
                     text_chunks: list[str] = []
 
-                    async for chunk in self.llm.chat(messages, tools=tools, stream=True):
+                    async for chunk in self.llm.chat(
+                        messages, tools=tools, stream=True
+                    ):
                         if chunk.type == ChunkType.TEXT_DELTA:
                             text_chunks.append(chunk.content or "")
                             yield chunk
-                        elif chunk.type == ChunkType.TOOL_CALL_START and chunk.tool_call:
+                        elif (
+                            chunk.type == ChunkType.TOOL_CALL_START and chunk.tool_call
+                        ):
                             tool_calls.append(chunk.tool_call)
                             yield chunk
                         elif chunk.type == ChunkType.DONE:
@@ -59,7 +65,9 @@ class AgentLoop:
                     if not tool_calls:
                         full_text = "".join(text_chunks)
                         if full_text:
-                            messages.append(Message(role=Role.ASSISTANT, content=full_text))
+                            messages.append(
+                                Message(role=Role.ASSISTANT, content=full_text)
+                            )
                         yield LLMChunk(type=ChunkType.DONE)
                         return
 
@@ -82,6 +90,10 @@ class AgentLoop:
                                 tool_result=result,
                             )
                         )
+
+                        # Keepalive ping so the SSE connection stays alive during
+                        # back-to-back tool executions that produce no text output
+                        yield LLMChunk(type=ChunkType.KEEPALIVE)
 
                         await self.hooks.run(
                             "after_tool_call",

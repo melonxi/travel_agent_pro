@@ -37,7 +37,7 @@ async def test_search_accommodations(tool_fn):
     )
     assert len(result["accommodations"]) == 1
     assert result["accommodations"][0]["name"] == "Tokyo Hotel"
-    assert result["source"] == "google_places"
+    assert result["accommodations"][0]["source"] == "google"
 
 
 @pytest.mark.asyncio
