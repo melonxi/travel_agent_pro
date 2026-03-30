@@ -13,6 +13,7 @@ from agent.hooks import HookManager
 from agent.loop import AgentLoop
 from agent.types import Message, Role
 from config import load_config
+from telemetry import setup_telemetry
 from context.manager import ContextManager
 from harness.judge import build_judge_prompt, parse_judge_response
 from harness.validator import validate_hard_constraints
@@ -57,6 +58,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     sessions: dict[str, dict] = {}  # session_id → {plan, messages, agent}
 
     app = FastAPI(title="Travel Agent Pro")
+    setup_telemetry(app, config.telemetry)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
