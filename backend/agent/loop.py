@@ -81,6 +81,10 @@ class AgentLoop:
                     result=result,
                 )
 
+                # Keepalive ping so the SSE connection stays alive during
+                # back-to-back tool executions that produce no text output
+                yield LLMChunk(type=ChunkType.KEEPALIVE)
+
             # Loop continues — LLM will see tool results and decide next step
 
         # Safety limit reached
