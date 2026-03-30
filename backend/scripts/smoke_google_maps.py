@@ -88,16 +88,17 @@ async def test_get_poi_info_google(api_keys):
 
 
 async def test_calculate_route(api_keys):
-    """计算路线: 东京站 → 浅草寺 (公共交通)"""
+    """计算路线: 东京站 → 浅草寺 (驾车)"""
     from tools.calculate_route import make_calculate_route_tool
 
     fn = make_calculate_route_tool(api_keys)
+    # 使用 driving 模式; transit 在某些地区/路线可能返回 ZERO_RESULTS
     result = await fn(
         origin_lat=35.6812,
         origin_lng=139.7671,
         dest_lat=35.7148,
         dest_lng=139.7967,
-        mode="transit",
+        mode="driving",
     )
     if result.get("distance") and result.get("duration"):
         report(
