@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from opentelemetry import trace
+
 from agent.types import ToolCall, ToolResult
+from telemetry.attributes import TOOL_NAME, TOOL_STATUS, TOOL_ERROR_CODE
 from tools.base import ToolDef, ToolError
 
 
@@ -21,36 +24,50 @@ class ToolEngine:
         return self._tools.get(name)
 
     async def execute(self, call: ToolCall) -> ToolResult:
-        tool_def = self._tools.get(call.name)
-        if not tool_def:
-            return ToolResult(
-                tool_call_id=call.id,
-                status="error",
-                error=f"Unknown tool: {call.name}",
-                error_code="UNKNOWN_TOOL",
-                suggestion=f"Available tools: {', '.join(self._tools.keys())}",
-            )
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("tool.execute") as span:
+            tool_def = self._tools.get(call.name)
+            if not tool_def:
+                span.set_attribute(TOOL_NAME, call.name)
+                span.set_attribute(TOOL_STATUS, "error")
+                span.set_attribute(TOOL_ERROR_CODE, "UNKNOWN_TOOL")
+                return ToolResult(
+                    tool_call_id=call.id,
+                    status="error",
+                    error=f"Unknown tool: {call.name}",
+                    error_code="UNKNOWN_TOOL",
+                    suggestion=f"Available tools: {', '.join(self._tools.keys())}",
+                )
 
-        try:
-            data = await tool_def(**call.arguments)
-            return ToolResult(
-                tool_call_id=call.id,
-                status="success",
-                data=data,
-            )
-        except ToolError as e:
-            return ToolResult(
-                tool_call_id=call.id,
-                status="error",
-                error=str(e),
-                error_code=e.error_code,
-                suggestion=e.suggestion,
-            )
-        except Exception as e:
-            return ToolResult(
-                tool_call_id=call.id,
-                status="error",
-                error=str(e),
-                error_code="INTERNAL_ERROR",
-                suggestion="An unexpected error occurred",
-            )
+            try:
+                data = await tool_def(**call.arguments)
+                span.set_attribute(TOOL_NAME, call.name)
+                span.set_attribute(TOOL_STATUS, "success")
+                return ToolResult(
+                    tool_call_id=call.id,
+                    status="success",
+                    data=data,
+                )
+            except ToolError as e:
+                span.set_attribute(TOOL_NAME, call.name)
+                span.set_attribute(TOOL_STATUS, "error")
+                span.set_attribute(TOOL_ERROR_CODE, e.error_code)
+                return ToolResult(
+                    tool_call_id=call.id,
+                    status="error",
+                    error=str(e),
+                    error_code=e.error_code,
+                    suggestion=e.suggestion,
+                )
+            except Exception as e:
+                span.set_attribute(TOOL_NAME, call.name)
+                span.set_attribute(TOOL_STATUS, "error")
+                span.set_attribute(TOOL_ERROR_CODE, "INTERNAL_ERROR")
+                span.record_exception(e)
+                return ToolResult(
+                    tool_call_id=call.id,
+                    status="error",
+                    error=str(e),
+                    error_code="INTERNAL_ERROR",
+                    suggestion="An unexpected error occurred",
+                )
