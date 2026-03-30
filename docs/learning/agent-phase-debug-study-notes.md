@@ -197,45 +197,33 @@ hook 也挂在这里：
 
 ## 6. trace 基建检查结果
 
-如果按“有没有完整 agent trace”来判断，答案是：没有。
+这一节最初的检查结论已经过期。它描述的是 observability Phase A / B 合并之前的状态，不再代表当前主分支。
 
-我查到的现状是：
+当前 `main` 上已经具备基础 trace 能力：
 
-- 没有 OpenTelemetry / Langfuse / telemetry 相关依赖  
-见 `backend/pyproject.toml`
-- 全仓库没有 trace/span/otel/langfuse 相关运行时代码
-- 有一个 `HookManager`，但只是事件回调，不会把事件落成结构化 trace  
-见 `backend/agent/hooks.py`
-- 前端只能看到 SSE 三类事件：`text_delta`、`tool_call`、`state_update`  
-见 `frontend/src/types/plan.ts`
-- 聊天区只把 tool name 以一个 badge 显示出来，不显示 tool 参数、tool 返回值、phase transition  
-见 `frontend/src/components/MessageBubble.tsx`
-- 前端只有两个 `console.log`，一个打 phase update，一个打 plan update  
-见 `frontend/src/App.tsx` 和 `frontend/src/components/ChatPanel.tsx`
+- 已引入 OpenTelemetry 相关依赖，并有 `backend/telemetry/` 模块
+- FastAPI 请求、Agent loop、LLM 调用、tool 执行、phase transition、context compression 都会创建 span
+- 本地可通过 `docker-compose.observability.yml` 启动 Jaeger，在 `http://localhost:16686` 查看 trace
+- Phase B 已补齐关键 span events，包括：
+  - `tool.execute`: `tool.input`, `tool.output`
+  - `llm.chat`: `llm.request`, `llm.response`
+  - `phase.transition`: `phase.plan_snapshot`
+  - `context.should_compress`: `context.compression`
 
-磁盘上的运行痕迹也说明同样的问题：
+也就是说，如果按“有没有完整的后端 tracing 基建”来判断，当前答案已经不是“没有”，而是“有基础可观测性，并且可以在 Jaeger 中看到关键链路和结构化调试事件”。
 
-- `backend/data/sessions` 已经有 134 个 session
-- 每个 session 都有 `plan.json / snapshots / tool_results` 目录
-- `snapshots` 目前只有 10 个文件，而且只在回退时生成  
-见 `backend/state/manager.py`
-- `tool_results` 文件数是 0，因为 `save_tool_result()` 根本没人调用  
-定义在 `backend/state/manager.py`，全仓库引用只有测试
+但这份笔记里后半段关于前端可观测性的判断仍然基本成立，当前仍然缺少：
 
-所以现在这套更像：
+- 面向最终用户或开发者的前端 trace 面板
+- 在聊天 UI 中直接展示 tool arguments / tool result / phase transition
+- 统一的 trace id 暴露与跨前后端联动入口
+- 基于 trace 的高级聚合能力，例如 dashboard、告警、成本分析
 
-- 有 plan 持久化
-- 有回退快照
-- 有前端 SSE 表层事件
+所以更准确的当前结论应该是：
 
-但没有：
-
-- 每轮 trace id
-- LLM 输入 / 输出记录
-- tool arguments / tool result 持久化
-- phase transition 结构化日志
-- hook 执行日志
-- 前端 trace 面板
+- 后端 tracing 和 Jaeger 调试链路已经落地
+- 前端仍主要暴露 SSE 表层事件，而不是完整 trace 视图
+- 项目已经脱离“零可观测性”，但还没有形成产品级调试控制台
 
 ## 7. 现在直接联调，还差什么
 

@@ -44,7 +44,8 @@ The `PhaseRouter` manages transitions automatically based on plan state complete
 - FastAPI + Uvicorn (SSE streaming via `sse-starlette`)
 - OpenAI SDK / Anthropic SDK (dual provider support)
 - Pydantic v2 for all data models
-- pytest + pytest-asyncio (105 tests)
+- OpenTelemetry + Jaeger (local tracing and span event inspection)
+- pytest + pytest-asyncio (164 tests)
 
 **Frontend** — TypeScript + React 19
 - Vite 6 dev server with API proxy
@@ -101,9 +102,60 @@ npm run dev
 
 ```bash
 cd backend
-pytest                # 105 tests
+pytest                # 164 tests
 pytest --cov          # with coverage
 ```
+
+## Observability
+
+The backend ships with OpenTelemetry tracing enabled by default. Local traces can
+be viewed in Jaeger, including Phase B span events for tool inputs/outputs, LLM
+request summaries, phase snapshots, and context compression decisions.
+
+### Start Jaeger Locally
+
+```bash
+docker compose -f docker-compose.observability.yml up -d
+```
+
+Jaeger UI: `http://localhost:16686`
+
+### Telemetry Config
+
+`backend/config.py` loads these defaults when `config.yaml` does not override
+them:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `telemetry.enabled` | `true` | Enable OpenTelemetry instrumentation |
+| `telemetry.endpoint` | `http://localhost:4317` | OTLP gRPC endpoint |
+| `telemetry.service_name` | `travel-agent-pro` | Service name shown in Jaeger |
+
+Example `config.yaml` override:
+
+```yaml
+telemetry:
+  enabled: true
+  endpoint: http://localhost:4317
+  service_name: travel-agent-pro
+```
+
+### Inspect Phase B Span Events
+
+1. Start Jaeger with `docker compose -f docker-compose.observability.yml up -d`
+2. Start the backend with `cd backend && uvicorn main:app --reload --port 8000`
+3. Trigger one chat request from the frontend or API
+4. Open Jaeger and search for service `travel-agent-pro`
+5. Open a trace and inspect the span `Logs` / `Events` section
+
+You should see event payloads like:
+
+- `tool.execute`: `tool.input`, `tool.output`
+- `llm.chat`: `llm.request`, `llm.response`
+- `phase.transition`: `phase.plan_snapshot`
+- `context.should_compress`: `context.compression`
+
+Large string payloads are truncated before export to avoid oversized event data.
 
 ## Environment Variables
 
@@ -134,13 +186,15 @@ travel_agent_pro/
 │   ├── context/             # 4-layer system message assembly + soul.md
 │   ├── memory/              # User preference & trip history persistence
 │   ├── harness/             # Constraint validator + quality judge
-│   └── tests/               # 105 tests (pytest-asyncio)
+│   ├── telemetry/           # OTel attributes, decorators, setup
+│   └── tests/               # 164 tests (pytest-asyncio)
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx          # Main layout (chat + info panel)
 │   │   ├── hooks/useSSE.ts  # SSE streaming hook
 │   │   └── components/      # ChatPanel, MapView, Timeline, BudgetChart, etc.
 │   └── vite.config.ts       # Dev proxy to backend
+├── docker-compose.observability.yml # Local Jaeger all-in-one
 └── config.yaml              # Optional YAML config (env vars take precedence)
 ```
 
