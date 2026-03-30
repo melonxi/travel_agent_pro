@@ -31,6 +31,13 @@ class ApiKeysConfig:
 
 
 @dataclass(frozen=True)
+class FlyAIConfig:
+    enabled: bool = True
+    cli_timeout: int = 30
+    api_key: str | None = None
+
+
+@dataclass(frozen=True)
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     llm_overrides: dict[str, LLMConfig] = field(default_factory=dict)
@@ -38,6 +45,7 @@ class AppConfig:
     data_dir: str = "./data"
     max_retries: int = 3
     context_compression_threshold: float = 0.5
+    flyai: FlyAIConfig = field(default_factory=FlyAIConfig)
 
 
 def _resolve_env(value: object) -> str:
@@ -121,6 +129,14 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
 
     api_keys = _build_api_keys(raw.get("api_keys", {}))
 
+    # Parse flyai config
+    flyai_raw = raw.get("flyai", {})
+    flyai = FlyAIConfig(
+        enabled=flyai_raw.get("enabled", True),
+        cli_timeout=int(flyai_raw.get("cli_timeout", 30)),
+        api_key=_resolve_env(flyai_raw.get("api_key", "")) or None,
+    )
+
     return AppConfig(
         llm=llm,
         llm_overrides=overrides,
@@ -128,4 +144,5 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         data_dir=raw.get("data_dir", "./data"),
         max_retries=raw.get("max_retries", 3),
         context_compression_threshold=raw.get("context_compression_threshold", 0.5),
+        flyai=flyai,
     )
