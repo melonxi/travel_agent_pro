@@ -298,6 +298,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         async def event_stream():
             async for chunk in agent.run(messages, phase=plan.phase):
+                # Keepalive: send SSE comment to prevent proxy/client timeout
+                # during long tool executions. Comments are ignored by EventSource.
+                if chunk.type.value == "keepalive":
+                    yield {"comment": "ping"}
+                    continue
+
                 event_type = (
                     "tool_call"
                     if chunk.tool_call and chunk.type.value == "tool_call_start"
