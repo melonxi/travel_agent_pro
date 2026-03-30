@@ -8,7 +8,8 @@ PHASE_PROMPTS: dict[int, str] = {
     2: """你现在是目的地推荐专家。基于用户的意愿，推荐 2-3 个目的地候选。
 每个候选必须附带：季节适宜度、预算估算、签证要求、与用户偏好的匹配度。
 最终目的地由用户拍板，你只提供信息和建议，不替用户做决定。
-如果用户已经明确了目的地，确认后直接进入下一步。""",
+如果用户已经明确了目的地，确认后直接进入下一步。
+你可以使用 quick_travel_search 快速了解候选目的地的产品概览和价格区间，帮助用户做预算估算和目的地对比。""",
     3: """你现在是行程节奏规划师。目的地已确定，需要确定出行日期和整体节奏。
 基于目的地特点和用户偏好（每天景点数、步行耐受度），给出天数建议。
 需要确认：具体出发和返回日期、每日可用时间、必去景点列表。
@@ -24,22 +25,8 @@ PHASE_PROMPTS: dict[int, str] = {
     7: """你现在是出发前查漏清单生成器。针对已确认的行程，生成完整的出行检查清单。
 包含：证件准备、货币兑换、天气对应衣物、已规划项目的注意事项、紧急联系方式、目的地实用贴士。
 使用 check_weather 获取最新天气，使用 generate_summary 生成出行摘要。
+你可以使用 search_travel_services 搜索签证办理、旅行保险、电话卡、租车、接送机等实用服务，在最终摘要中附上预订链接。
 逐项检查，确保没有遗漏。""",
-}
-
-PHASE_TOOL_NAMES: dict[int, list[str]] = {
-    1: ["update_plan_state"],
-    2: ["search_destinations", "check_feasibility", "update_plan_state"],
-    3: ["search_flights", "update_plan_state"],
-    4: ["search_accommodations", "calculate_route", "update_plan_state"],
-    5: [
-        "get_poi_info",
-        "calculate_route",
-        "assemble_day_plan",
-        "check_availability",
-        "update_plan_state",
-    ],
-    7: ["check_weather", "generate_summary", "update_plan_state"],
 }
 
 PHASE_CONTROL_MODE: dict[int, str] = {

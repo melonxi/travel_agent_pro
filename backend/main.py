@@ -35,6 +35,8 @@ from tools.search_accommodations import make_search_accommodations_tool
 from tools.search_destinations import make_search_destinations_tool
 from tools.search_flights import make_search_flights_tool
 from tools.update_plan_state import make_update_plan_state_tool
+from tools.quick_travel_search import make_quick_travel_search_tool
+from tools.search_travel_services import make_search_travel_services_tool
 
 
 class ChatRequest(BaseModel):
@@ -69,17 +71,32 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     def _build_agent(plan):
         llm = create_llm_provider(config.llm)
         tool_engine = ToolEngine()
+
+        # Create FlyAI client if enabled
+        flyai_client = None
+        if config.flyai.enabled:
+            from tools.flyai_client import FlyAIClient
+
+            flyai_client = FlyAIClient(
+                timeout=config.flyai.cli_timeout,
+                api_key=config.flyai.api_key,
+            )
+
         tool_engine.register(make_update_plan_state_tool(plan))
         tool_engine.register(make_search_destinations_tool(config.api_keys))
         tool_engine.register(make_check_feasibility_tool(config.api_keys))
-        tool_engine.register(make_search_flights_tool(config.api_keys))
-        tool_engine.register(make_search_accommodations_tool(config.api_keys))
-        tool_engine.register(make_get_poi_info_tool(config.api_keys))
+        tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
+        tool_engine.register(
+            make_search_accommodations_tool(config.api_keys, flyai_client)
+        )
+        tool_engine.register(make_get_poi_info_tool(config.api_keys, flyai_client))
         tool_engine.register(make_calculate_route_tool(config.api_keys))
         tool_engine.register(make_assemble_day_plan_tool())
         tool_engine.register(make_check_availability_tool(config.api_keys))
         tool_engine.register(make_check_weather_tool(config.api_keys))
         tool_engine.register(make_generate_summary_tool())
+        tool_engine.register(make_quick_travel_search_tool(flyai_client))
+        tool_engine.register(make_search_travel_services_tool(flyai_client))
 
         hooks = HookManager()
 
@@ -105,7 +122,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             msgs = kwargs.get("messages")
             if not msgs:
                 return
-            threshold = int(config.llm.max_tokens * config.context_compression_threshold)
+            threshold = int(
+                config.llm.max_tokens * config.context_compression_threshold
+            )
             if not context_mgr.should_compress(msgs, threshold):
                 return
             must_keep, compressible = context_mgr.classify_messages(msgs)
@@ -227,9 +246,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found")
         plan = session["plan"]
         if req.to_phase >= plan.phase:
-            raise HTTPException(
-                status_code=400, detail="只能回退到更早的阶段"
-            )
+            raise HTTPException(status_code=400, detail="只能回退到更早的阶段")
         snapshot_path = await state_mgr.save_snapshot(plan)
         phase_router.prepare_backtrack(
             plan, req.to_phase, req.reason or "用户主动回退", snapshot_path
@@ -253,7 +270,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         if backtrack_target is not None:
             snapshot_path = await state_mgr.save_snapshot(plan)
             phase_router.prepare_backtrack(
-                plan, backtrack_target, f"用户意图回退：{req.message[:50]}", snapshot_path
+                plan,
+                backtrack_target,
+                f"用户意图回退：{req.message[:50]}",
+                snapshot_path,
             )
             session["agent"] = _build_agent(plan)
             agent = session["agent"]
@@ -280,6 +300,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         async def event_stream():
             async for chunk in agent.run(messages, phase=plan.phase):
+                # Keepalive: send SSE comment to prevent proxy/client timeout
+                # during long tool executions. Comments are ignored by EventSource.
+                if chunk.type.value == "keepalive":
+                    yield {"comment": "ping"}
+                    continue
+
                 event_type = (
                     "tool_call"
                     if chunk.tool_call and chunk.type.value == "tool_call_start"

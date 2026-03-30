@@ -1,72 +1,36 @@
 # Travel Agent Pro 全阶段架构分析报告
 
 > 分析日期：2026-03-30
-> 文档版本：v1.0
-> 分析范围：后端 Agent 系统全流程（阶段 1→2→3→4→5→7）
-
----
-
-## 目录
-
-1. [系统总览](#1-系统总览)
-2. [阶段总览表](#2-阶段总览表)
-3. [系统消息构建机制](#3-系统消息构建机制)
-4. [各阶段详细分析](#4-各阶段详细分析)
-5. [工具系统详解](#5-工具系统详解)
-6. [阶段转换机制](#6-阶段转换机制)
-7. [回溯机制](#7-回溯机制)
-8. [质量保障系统](#8-质量保障系统)
-9. [上下文压缩机制](#9-上下文压缩机制)
-10. [事实提取预处理机制](#10-事实提取预处理机制)
-11. [用户记忆系统](#11-用户记忆系统)
-12. [核心流程图](#12-核心流程图)
-13. [关键文件索引](#13-关键文件索引)
-
----
-
-## 1. 系统总览
-
-Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的阶段路由** 架构。系统的核心设计哲学是：
-
-- **状态决定阶段**：不是硬编码的流程，而是根据 `TravelPlanState` 中的字段填充情况自动推断当前阶段
-- **阶段决定能力**：每个阶段有独立的 Prompt、工具集和控制模式
-- **工具驱动状态变更**：所有状态变更必须通过 `update_plan_state` 工具完成，确保变更可追踪
-- **钩子系统串联逻辑**：阶段转换、约束验证、质量评估都通过钩子（Hooks）在工具调用前后触发
-
-### 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 后端框架 | FastAPI + SSE (Server-Sent Events) |
-| LLM 提供商 | OpenAI / Anthropic（可切换） |
-| HTTP 客户端 | httpx（异步） |
-| 外部 API | Google Maps/Places, Amadeus, OpenWeather |
+| 数据融合 | FlyAI CLI（飞猪 MCP 封装，Node.js >= 18） |
 | 前端 | React 19 + TypeScript + Vite + Leaflet 地图 |
 | 数据持久化 | JSON 文件系统（`data/sessions/`、`data/users/`） |
 
 ### 核心模块关系
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                      main.py (FastAPI)                   │
-│  ┌──────────┐  ┌─────────────┐  ┌────────────────────┐  │
-│  │ 回溯检测  │  │ 事实提取     │  │ 上下文构建          │  │
-│  │ (正则)    │  │ (intake.py) │  │ (ContextManager)   │  │
-│  └────┬─────┘  └──────┬──────┘  └─────────┬──────────┘  │
-│       │               │                    │             │
-│  ┌────▼─────────────────────────────────────▼──────────┐ │
-│  │              AgentLoop (loop.py)                     │ │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │ │
-│  │  │ LLM 调用  │  │ 工具执行  │  │ HookManager      │   │ │
-│  │  │ (流式)    │  │ (Engine) │  │ before/after     │   │ │
-│  │  └──────────┘  └──────────┘  └──────────────────┘   │ │
-│  └─────────────────────────────────────────────────────┘ │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │ PhaseRouter  │  │ StateManager │  │ MemoryManager │  │
-│  │ (阶段推断)   │  │ (状态持久化)  │  │ (用户画像)    │  │
-│  └──────────────┘  └──────────────┘  └───────────────┘  │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Main["main.py (FastAPI)"]
+        A["回溯检测<br>(正则)"]
+        B["事实提取<br>(intake.py)"]
+        C["上下文构建<br>(ContextManager)"]
+        
+        subgraph Loop["AgentLoop (loop.py)"]
+            direction LR
+            D["LLM 调用<br>(流式)"]
+            E["工具执行<br>(Engine)"]
+            F["HookManager<br>(before/after)"]
+        end
+        
+        G["PhaseRouter<br>(阶段推断)"]
+        H["StateManager<br>(状态持久化)"]
+        I["MemoryManager<br>(用户画像)"]
+        J["FlyAIClient<br>(异步 CLI 封装)"]
+        
+        A --> Loop
+        B --> Loop
+        C --> Loop
+        J -.-> E
+    end
 ```
 
 ---
@@ -78,11 +42,13 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 | 阶段 | 名称 | 角色定位 | 控制模式 | 可用工具（运行时实际生效） | 目标产出 | 前置条件 |
 |------|------|---------|----------|---------|---------|---------|
 | **1** | 灵感探索 | 旅行灵感顾问 | `conversational` | `update_plan_state` | 用户偏好列表 | 无（初始状态） |
-| **2** | 目的地选择 | 目的地推荐专家 | `agent_with_guard` | `search_destinations`, `check_feasibility`, `update_plan_state` | 确定目的地 | 用户已表达偏好 |
-| **3** | 天数与节奏 | 行程节奏规划师 | `workflow` | `search_flights`, `search_accommodations`, `get_poi_info`, `update_plan_state` | 确定日期 | 目的地已确定 |
-| **4** | 住宿区域 | 住宿区域顾问 | `conversational` | `search_flights`, `search_accommodations`, `get_poi_info`, `calculate_route`, `assemble_day_plan`, `check_availability`, `update_plan_state` | 确定住宿 | 日期已确定 |
-| **5** | 行程组装 | 行程组装引擎 | `structured` | `get_poi_info`, `calculate_route`, `assemble_day_plan`, `check_availability`, `check_weather`, `update_plan_state` | 完整日程 | 住宿已确定 |
-| **7** | 出发前查漏 | 查漏清单生成器 | `evaluator` | `check_weather`, `generate_summary`, `update_plan_state` | 出行清单 | 所有天日程完成 |
+| **2** | 目的地选择 | 目的地推荐专家 | `agent_with_guard` | `search_destinations`, `check_feasibility`, `quick_travel_search`🆕, `update_plan_state` | 确定目的地 | 用户已表达偏好 |
+| **3** | 天数与节奏 | 行程节奏规划师 | `workflow` | `search_flights`🔀, `search_accommodations`🔀, `get_poi_info`🔀, `quick_travel_search`🆕, `update_plan_state` | 确定日期 | 目的地已确定 |
+| **4** | 住宿区域 | 住宿区域顾问 | `conversational` | `search_flights`🔀, `search_accommodations`🔀, `get_poi_info`🔀, `calculate_route`, `assemble_day_plan`, `check_availability`, `update_plan_state` | 确定住宿 | 日期已确定 |
+| **5** | 行程组装 | 行程组装引擎 | `structured` | `get_poi_info`🔀, `calculate_route`, `assemble_day_plan`, `check_availability`, `check_weather`, `update_plan_state` | 完整日程 | 住宿已确定 |
+| **7** | 出发前查漏 | 查漏清单生成器 | `evaluator` | `check_weather`, `generate_summary`, `search_travel_services`🆕, `update_plan_state` | 出行清单 | 所有天日程完成 |
+
+> 图例：🔀 = 双源融合工具（内部同时查询原始 API + FlyAI），🆕 = FlyAI 独占新工具
 
 ### 控制模式含义
 
@@ -102,26 +68,16 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 
 ### 组成结构
 
-```
-┌─────────────────────────────────────────┐
-│  ① Soul（Agent 身份 / soul.md）         │
-├─────────────────────────────────────────┤
-│  ② 当前阶段指引（Phase Prompt）          │
-├─────────────────────────────────────────┤
-│  ③ 当前规划状态（Runtime Context）       │
-│    - 阶段编号                            │
-│    - 目的地（若有）                      │
-│    - 日期范围（若有）                    │
-│    - 预算 + 已分配金额                   │
-│    - 住宿区域（若有）                    │
-│    - 已规划天数 / 总天数                 │
-│    - 最近回溯事件（若有）                │
-├─────────────────────────────────────────┤
-│  ④ 用户画像（User Profile）              │
-│    - 显式偏好                            │
-│    - 出行历史 + 满意度                   │
-│    - 永久排除项                          │
-└─────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph 系统消息构建结构
+        direction TB
+        A["① Soul（Agent 身份 / soul.md）"]
+        B["② 当前阶段指引（Phase Prompt）"]
+        C["③ 当前规划状态（Runtime Context）<br/>- 阶段编号<br/>- 目的地（若有）<br/>- 日期范围（若有）<br/>- 预算 + 已分配金额<br/>- 住宿区域（若有）<br/>- 已规划天数 / 总天数<br/>- 最近回溯事件（若有）"]
+        D["④ 用户画像（User Profile）<br/>- 显式偏好<br/>- 出行历史 + 满意度<br/>- 永久排除项"]
+        A ~~~ B ~~~ C ~~~ D
+    end
 ```
 
 ### Soul（Agent 身份）
@@ -199,6 +155,7 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 每个候选必须附带：季节适宜度、预算估算、签证要求、与用户偏好的匹配度。
 最终目的地由用户拍板，你只提供信息和建议，不替用户做决定。
 如果用户已经明确了目的地，确认后直接进入下一步。
+你可以使用 quick_travel_search 快速了解候选目的地的产品概览和价格区间，帮助用户做预算估算和目的地对比。
 ```
 
 #### 可用工具
@@ -207,6 +164,7 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 |--------|------|----------|------|
 | `search_destinations` | `query`, `preferences` | Google Places | 搜索匹配的目的地候选 |
 | `check_feasibility` | `destination`, `travel_date` | OpenWeather | 检查天气和可行性 |
+| `quick_travel_search` 🆕 | `query` | FlyAI CLI | 快速获取目的地产品概览和价格区间 |
 | `update_plan_state` | `field`, `value` | 无 | 记录确定的目的地 |
 
 #### 核心任务
@@ -244,7 +202,10 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 
 | 工具名 | 参数 | 外部 API | 用途 |
 |--------|------|----------|------|
-| `search_flights` | `origin`, `destination`, `date`, `max_results` | Amadeus | 搜索航班 |
+| `search_flights` 🔀 | `origin`, `destination`, `date`, `max_results` | Amadeus + FlyAI | 搜索航班（双源融合） |
+| `search_accommodations` 🔀 | `destination`, `check_in`, `check_out`, ... | Google Places + FlyAI | 搜索住宿（双源融合） |
+| `get_poi_info` 🔀 | `query`, `location` | Google Places + FlyAI | 搜索景点（双源融合） |
+| `quick_travel_search` 🆕 | `query` | FlyAI CLI | 快速产品概览和价格区间 |
 | `update_plan_state` | `field`, `value` | 无 | 记录日期和约束 |
 
 #### 核心任务
@@ -283,7 +244,7 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 
 | 工具名 | 参数 | 外部 API | 用途 |
 |--------|------|----------|------|
-| `search_accommodations` | `destination`, `check_in`, `check_out`, `budget_per_night`, `area`, `requirements` | Google Places | 搜索住宿 |
+| `search_accommodations` 🔀 | `destination`, `check_in`, `check_out`, `budget_per_night`, `area`, `requirements` | Google Places + FlyAI | 搜索住宿（双源融合） |
 | `calculate_route` | `origin_lat/lng`, `dest_lat/lng`, `mode` | Google Directions | 计算住宿到景点的距离 |
 | `update_plan_state` | `field`, `value` | 无 | 记录住宿信息 |
 
@@ -324,7 +285,7 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 
 | 工具名 | 参数 | 外部 API | 用途 |
 |--------|------|----------|------|
-| `get_poi_info` | `query`, `location` | Google Places | 搜索景点详情 |
+| `get_poi_info` 🔀 | `query`, `location` | Google Places + FlyAI | 搜索景点详情（双源融合） |
 | `calculate_route` | 坐标对 + `mode` | Google Directions | 计算景点间路线 |
 | `assemble_day_plan` | `pois`, `start_time`, `end_time`, `max_walk_km` | 无（本地算法） | 贪心算法排序景点 |
 | `check_availability` | `place_name`, `date` | Google Places | 查询景点是否开放 |
@@ -341,15 +302,17 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 
 #### `assemble_day_plan` 算法详解
 
-```
-输入: POIs 列表（含坐标和游览时长）
-算法: 贪心最近邻
-  1. 取第一个 POI 作为起点
-  2. 从剩余 POI 中找到距离最近的（Haversine 公式）
-  3. 加入有序列表，重复直到所有 POI 排完
-  4. 累计总步行距离
-  5. 估算总时间 = Σ游览时长 + 总距离 × 0.25h/km
-输出: 排序后的 POIs + 总距离 + 估计时长
+```mermaid
+graph TD
+    Input["输入: POIs 列表（含坐标和游览时长）"] --> Step1
+    Step1["1. 取第一个 POI 作为起点"] --> Step2
+    Step2["2. 从剩余 POI 中找到距离最近的<br>(Haversine 公式)"] --> Step3
+    Step3["3. 加入有序列表"] --> LoopCheck{"所有 POI 排完?"}
+    LoopCheck -- 否 --> Step2
+    LoopCheck -- 是 --> Step4
+    Step4["4. 累计总步行距离"] --> Step5
+    Step5["5. 估算总时间<br>= Σ游览时长 + 总距离 × 0.25h/km"] --> Output
+    Output["输出: 排序后的 POIs + 总距离 + 估计时长"]
 ```
 
 #### 转出条件
@@ -376,6 +339,7 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 你现在是出发前查漏清单生成器。针对已确认的行程，生成完整的出行检查清单。
 包含：证件准备、货币兑换、天气对应衣物、已规划项目的注意事项、紧急联系方式、目的地实用贴士。
 使用 check_weather 获取最新天气，使用 generate_summary 生成出行摘要。
+你可以使用 search_travel_services 搜索签证办理、旅行保险、电话卡、租车、接送机等实用服务，在最终摘要中附上预订链接。
 逐项检查，确保没有遗漏。
 ```
 
@@ -385,6 +349,7 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 |--------|------|----------|------|
 | `check_weather` | `city`, `date` | OpenWeather | 获取天气预报 |
 | `generate_summary` | `plan_data` | 无（本地） | 生成行程摘要 |
+| `search_travel_services` 🆕 | `query`, `service_type` | FlyAI CLI | 搜索签证、保险、租车等旅行服务 |
 | `update_plan_state` | `field`, `value` | 无 | 补充信息 |
 
 #### 核心任务
@@ -408,28 +373,46 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 
 工具系统由三层组成：
 
-```
-┌──────────────────────────────────────────┐
-│  ToolDef（工具定义）                      │
-│  - name, description, phases, parameters │
-│  - _fn（异步可调用函数）                  │
-│  - @tool 装饰器生成                      │
-├──────────────────────────────────────────┤
-│  ToolEngine（工具引擎）                   │
-│  - register()   注册工具                 │
-│  - get_tools_for_phase()  按阶段过滤     │
-│  - execute()    执行工具调用              │
-├──────────────────────────────────────────┤
-│  ToolCall / ToolResult（调用和结果类型）   │
-│  - ToolCall: id, name, arguments         │
-│  - ToolResult: tool_call_id, status,     │
-│    data, error, error_code, suggestion   │
-└──────────────────────────────────────────┘
+```mermaid
+classDiagram
+    class ToolDef {
+        <<工具定义>>
+        +name: str
+        +description: str
+        +phases: list
+        +parameters: dict
+        +_fn: Callable
+        +@tool 装饰器生成
+    }
+    class ToolEngine {
+        <<工具引擎>>
+        +register()
+        +get_tools_for_phase(phase)
+        +execute()
+    }
+    class ToolCall {
+        <<调用类型>>
+        +id: str
+        +name: str
+        +arguments: dict
+    }
+    class ToolResult {
+        <<结果类型>>
+        +tool_call_id: str
+        +status: str
+        +data: dict
+        +error: str
+        +error_code: str
+        +suggestion: str
+    }
+    ToolEngine --> ToolDef : 注册和执行
+    ToolEngine --> ToolCall : 处理
+    ToolEngine --> ToolResult : 返回
 ```
 
 ### 5.2 工具注册方式
 
-每个工具使用 **工厂函数模式** 创建，通过闭包绑定依赖（如 API Key 或 Plan State）：
+每个工具使用 **工厂函数模式** 创建，通过闭包绑定依赖（如 API Key、Plan State 或 FlyAI Client）：
 
 ```python
 # 绑定外部依赖的工具
@@ -439,6 +422,22 @@ def make_search_destinations_tool(api_keys: ApiKeysConfig):
         # 使用闭包中的 api_keys
         ...
     return search_destinations
+
+# 双源融合工具：同时接收 api_keys 和 flyai_client
+def make_search_flights_tool(api_keys: ApiKeysConfig, flyai_client=None):
+    @tool(name="search_flights", phases=[3, 4], ...)
+    async def search_flights(origin, destination, date, max_results=5):
+        # 并行查询 Amadeus + FlyAI，归一化后合并
+        ...
+    return search_flights
+
+# FlyAI 独占工具：只接收 flyai_client
+def make_quick_travel_search_tool(flyai_client):
+    @tool(name="quick_travel_search", phases=[2, 3], ...)
+    async def quick_travel_search(query):
+        # 调用 FlyAI CLI 的 fliggy-fast-search 命令
+        ...
+    return quick_travel_search
 
 # 绑定状态的工具
 def make_update_plan_state_tool(plan: TravelPlanState):
@@ -460,14 +459,16 @@ def make_update_plan_state_tool(plan: TravelPlanState):
 | update_plan_state | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | search_destinations | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | check_feasibility | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| search_flights | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| search_accommodations | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| get_poi_info | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| search_flights 🔀 | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| search_accommodations 🔀 | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| get_poi_info 🔀 | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
 | calculate_route | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
 | assemble_day_plan | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
 | check_availability | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
 | check_weather | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
 | generate_summary | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| quick_travel_search 🆕 | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| search_travel_services 🆕 | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 > 注意：`PHASE_TOOL_NAMES` 中的配置与上表存在差异（例如 `search_flights` 在 `PHASE_TOOL_NAMES` 中只列在阶段 3，但工具自身声明 `phases=[3, 4]`）。这是代码中的一个设计不一致点，`PHASE_TOOL_NAMES` 作为死代码可能已经过时。
 
@@ -488,14 +489,70 @@ def make_update_plan_state_tool(plan: TravelPlanState):
 | `update_plan_state` | `field`, `value` | — | `updated_field`, `new_value` |
 | `search_destinations` | `query` | `preferences[]` | `destinations[]` (name, address, rating, location) |
 | `check_feasibility` | `destination`, `travel_date` | — | `weather` (temp, description), `feasible` |
-| `search_flights` | `origin`, `destination`, `date` | `max_results` (5) | `flights[]` (id, price, currency, segments) |
-| `search_accommodations` | `destination`, `check_in`, `check_out` | `budget_per_night`, `area`, `requirements[]` | `accommodations[]` (name, address, rating, price_level) |
-| `get_poi_info` | `query` | `location` | `pois[]` (name, address, rating, location, types) |
+| `search_flights` 🔀 | `origin`, `destination`, `date` | `max_results` (5) | `flights[]` (airline, price, currency, departure/arrival, segments, source, booking_url) |
+| `search_accommodations` 🔀 | `destination`, `check_in`, `check_out` | `budget_per_night`, `area`, `requirements[]` | `accommodations[]` (name, address, rating, price_level, price_per_night, source, booking_url) |
+| `get_poi_info` 🔀 | `query` | `location` | `pois[]` (name, address, rating, location, types, source, ticket_price, booking_url) |
 | `calculate_route` | `origin_lat/lng`, `dest_lat/lng` | `mode` (transit) | `distance`, `duration`, `steps[]` |
 | `assemble_day_plan` | `pois[]` | `start_time` (09:00), `end_time` (21:00), `max_walk_km` (10) | `ordered_pois[]`, `total_distance_km`, `estimated_hours` |
 | `check_availability` | `place_name`, `date` | — | `likely_open`, `hours` |
 | `check_weather` | `city`, `date` | — | `forecast` (temp, temp_min/max, description, humidity, wind) |
 | `generate_summary` | `plan_data` | — | `summary` (文本), `total_days`, `total_budget` |
+| `quick_travel_search` 🆕 | `query` | — | `items[]` (title, price, jumpUrl, picUrl, tag) |
+| `search_travel_services` 🆕 | `query` | `service_type` | `services[]` (title, price, detailUrl, picUrl, tag) |
+
+### 5.6 双源融合架构（FlyAI 集成）
+
+v2.0 新增的核心机制。3 个融合工具（`search_flights`、`search_accommodations`、`get_poi_info`）内部同时查询原始 API 和 FlyAI CLI，对 LLM 透明——LLM 只看到一个工具，不感知数据来源差异。
+
+#### 架构总览
+
+```mermaid
+graph LR
+    LLM["LLM 调用<br>search_flights(...)"] --> Tool["融合工具内部"]
+    
+    subgraph Tool["工具内部（并行查询）"]
+        direction TB
+        A["原始 API<br>(Amadeus/Google)"] 
+        B["FlyAI CLI<br>(flyai search-flight)"]
+    end
+    
+    A --> Norm["归一化<br>(normalizers.py)"]
+    B --> Norm
+    Norm --> Merge["合并去重<br>(merge策略)"]
+    Merge --> Result["统一返回格式"]
+```
+
+#### 数据归一化
+
+`backend/tools/normalizers.py` 定义了 3 个标准化数据类和 9 个归一化函数：
+
+| 数据类 | 字段 | 用途 |
+|--------|------|------|
+| `FlightResult` | airline, price, currency, departure, arrival, duration, segments, source, booking_url | 航班统一格式 |
+| `AccommodationResult` | name, address, rating, price_per_night, currency, source, booking_url | 住宿统一格式 |
+| `POIResult` | name, address, rating, lat, lng, types, source, ticket_price, booking_url | 景点统一格式 |
+
+每个数据类有对应的 `normalize_xxx_from_amadeus/google()` 和 `normalize_xxx_from_flyai()` 函数，将不同 API 的异构响应转换为统一结构。
+
+#### 合并策略
+
+3 个 `merge_xxx()` 函数使用**模糊名称匹配 + 去重**策略：
+
+1. 以原始 API 结果为基础列表
+2. 遍历 FlyAI 结果，使用增强的 `_fuzzy_name_ratio()` 计算名称相似度
+3. 相似度 ≥ 0.8 时视为同一条目，将 FlyAI 的 `booking_url` 和 `source` 合并到已有条目
+4. 相似度 < 0.8 时作为新条目追加
+
+`_fuzzy_name_ratio()` 增强了标准 `SequenceMatcher`：提取拉丁字符子串进行额外的子串包含检测，解决中英混合名称匹配问题（如 "金阁寺 Kinkaku-ji" vs "Kinkaku-ji Temple"）。
+
+#### 优雅降级
+
+FlyAI 采用**静默降级**设计：
+
+- `FlyAIClient` 初始化时检测 `flyai` CLI 是否安装（`which flyai`），不可用时 `self.available = False`
+- 工具工厂接收 `flyai_client=None`，客户端缺失时仅使用原始 API
+- CLI 调用超时（默认 30s）或返回错误时，记录 warning 日志并返回空列表
+- 任何单源失败不影响另一源的结果返回
 
 ---
 
@@ -522,39 +579,19 @@ def infer_phase(self, plan: TravelPlanState) -> int:
 
 ### 6.2 转换判定流程图
 
-```
-                    ┌─────────────┐
-                    │ destination? │
-                    └──────┬──────┘
-                     No    │    Yes
-              ┌────────────┤
-              ▼            ▼
-        ┌──────────┐  ┌────────┐
-        │preferences│  │ dates? │
-        │ 非空?     │  └───┬────┘
-        └──┬───────┘   No  │  Yes
-        No │  Yes      ┌───┘
-        ┌──┘  ┌──┐     ▼
-        ▼     ▼  │  ┌──────────────┐
-     阶段1  阶段2│  │accommodation?│
-              └──┘  └──────┬───────┘
-                     No    │    Yes
-                     ┌─────┘
-                     ▼
-                  阶段4
-                     │
-                     ▼
-              ┌──────────────┐
-              │daily_plans   │
-              │数量 < 总天数? │
-              └──────┬───────┘
-               Yes   │    No
-               ┌─────┘
-               ▼
-            阶段5
-               │
-               ▼
-            阶段7
+```mermaid
+graph TD
+    Dest{"destination 存在?"}
+    Dest -- No --> Pref{"preferences 非空?"}
+    Pref -- No --> P1["阶段 1: 灵感探索"]
+    Pref -- Yes --> P2["阶段 2: 目的地选择"]
+    Dest -- Yes --> Dates{"dates 存在?"}
+    Dates -- No --> P3["阶段 3: 天数与节奏"]
+    Dates -- Yes --> Acc{"accommodation 存在?"}
+    Acc -- No --> P4["阶段 4: 住宿区域"]
+    Acc -- Yes --> Daily{"daily_plans 数量 < 总天数?"}
+    Daily -- Yes --> P5["阶段 5: 行程组装"]
+    Daily -- No --> P7["阶段 7: 出发前查漏"]
 ```
 
 ### 6.3 触发时机
@@ -605,23 +642,22 @@ def check_and_apply_transition(self, plan: TravelPlanState) -> bool:
 
 ### 7.3 回溯执行流程
 
-```
-用户消息包含"换个目的地"
-         │
-         ▼
-  _detect_backtrack() → 目标阶段 2
-         │
-         ▼
-  save_snapshot(plan) → 保存当前状态快照
-         │
-         ▼
-  prepare_backtrack()
-    ├── 记录 BacktrackEvent (from→to, reason, snapshot_path)
-    ├── plan.clear_downstream(from_phase=2) → 清除下游字段
-    └── plan.phase = 2
-         │
-         ▼
-  _build_agent(plan) → 重建 Agent（新的工具集和钩子）
+```mermaid
+graph TD
+    A["用户消息包含（如：'换个目的地'）"] --> B["_detect_backtrack()<br>确定目标阶段（如：阶段 2）"]
+    B --> C["save_snapshot(plan)<br>保存当前状态快照"]
+    C --> D["prepare_backtrack()"]
+    
+    subgraph prepare_backtrack 内部操作
+        direction TB
+        D1["记录 BacktrackEvent<br>(from→to, reason, snapshot_path)"]
+        D2["plan.clear_downstream(from_phase)<br>清除下游字段"]
+        D3["plan.phase = target_phase<br>更新当前阶段"]
+        D1 ~~~ D2 ~~~ D3
+    end
+    
+    D --> prepare_backtrack
+    prepare_backtrack --> E["_build_agent(plan)<br>重建 Agent（新的工具集和钩子）"]
 ```
 
 ### 7.4 下游字段清除规则
@@ -649,18 +685,14 @@ _PHASE_DOWNSTREAM = {
 
 ### 8.1 双层约束架构
 
-```
-┌────────────────────────────────────┐
-│  硬约束验证 (validator.py)          │
-│  ─ 阻塞性：必须修正               │
-│  ─ 触发时机：update_plan_state 后  │
-│  ─ 三项检查：时间冲突/预算超限/天数 │
-├────────────────────────────────────┤
-│  软约束评分 (judge.py)             │
-│  ─ 建议性：用于优化               │
-│  ─ 触发时机：assemble_day_plan 后  │
-│  ─ 四维评分：节奏/地理/连贯/个性化  │
-└────────────────────────────────────┘
+```mermaid
+graph LR
+    subgraph 质量保障系统
+        direction TB
+        A["硬约束验证 (validator.py)<br>• 阻塞性：必须修正<br>• 触发时机：update_plan_state 后<br>• 三项检查：时间冲突 / 预算超限 / 天数"]
+        B["软约束评分 (judge.py)<br>• 建议性：用于优化<br>• 触发时机：assemble_day_plan 后<br>• 四维评分：节奏 / 地理 / 连贯 / 个性化"]
+        A ~~~ B
+    end
 ```
 
 ### 8.2 硬约束验证详情
@@ -805,23 +837,31 @@ JPY: 日元, yen, jpy
 
 ### 10.3 处理流程
 
-```
-用户消息 "去东京，五一5天，预算1万元"
-    │
-    ▼
-extract_trip_facts()
-    ├── _extract_destination() → "东京"
-    ├── parse_dates_value()    → DateRange(2026-05-01, 2026-05-06)
-    └── parse_budget_value()   → Budget(10000, "CNY")
-    │
-    ▼
-apply_trip_facts(plan, message)
-    ├── plan.destination = "东京"
-    ├── plan.dates = DateRange(...)
-    └── plan.budget = Budget(...)
-    │
-    ▼
-check_and_apply_transition(plan) → 可能直接跳到阶段 3 或更后
+```mermaid
+graph TD
+    Input["用户消息<br>'去东京，五一5天，预算1万元'"] --> Extract["extract_trip_facts()"]
+    
+    subgraph extract_trip_facts内部逻辑
+        direction TB
+        E1["_extract_destination() → '东京'"]
+        E2["parse_dates_value() → DateRange(2026-05-01, 2026-05-06)"]
+        E3["parse_budget_value() → Budget(10000, 'CNY')"]
+        E1 ~~~ E2 ~~~ E3
+    end
+    
+    Extract --> extract_trip_facts内部逻辑
+    extract_trip_facts内部逻辑 --> Apply["apply_trip_facts(plan, message)"]
+    
+    subgraph apply_trip_facts状态更新
+        direction TB
+        A1["plan.destination = '东京'"]
+        A2["plan.dates = DateRange(...)"]
+        A3["plan.budget = Budget(...)"]
+        A1 ~~~ A2 ~~~ A3
+    end
+    
+    Apply --> apply_trip_facts状态更新
+    apply_trip_facts状态更新 --> Check["check_and_apply_transition(plan)<br>可能直接跳跃到后续阶段"]
 ```
 
 ### 10.4 设计意义
@@ -881,142 +921,86 @@ Rejection:
 
 ### 12.1 完整请求处理流程
 
-```
-用户发送消息
-     │
-     ▼
-┌────────────────────┐
-│ 1. 回溯检测         │ ←── 正则匹配 _BACKTRACK_PATTERNS
-│    (隐式回溯)       │
-└─────────┬──────────┘
-     匹配? ──Yes──► 保存快照 → prepare_backtrack → 重建Agent
-     │No
-     ▼
-┌────────────────────┐
-│ 2. 事实提取         │ ←── extract_trip_facts（目的地/日期/预算）
-│    (intake.py)      │
-└─────────┬──────────┘
-     有更新? ──Yes──► apply_trip_facts → check_and_apply_transition
-     │No
-     ▼
-┌────────────────────┐
-│ 3. 构建系统消息      │ ←── Soul + Phase Prompt + Runtime Context + User Profile
-│    (ContextManager) │
-└─────────┬──────────┘
-     │
-     ▼
-┌────────────────────┐
-│ 4. 追加用户消息      │
-└─────────┬──────────┘
-     │
-     ▼
-┌───────────────────────────────────────────────┐
-│ 5. Agent Loop（最多 20 次迭代）               │
-│                                                │
-│   ┌─────────────────┐                         │
-│   │ before_llm_call  │ ←── 上下文压缩检查      │
-│   └────────┬────────┘                         │
-│            ▼                                   │
-│   ┌─────────────────┐                         │
-│   │ LLM 流式调用     │ ←── 生成文本 + 工具调用  │
-│   └────────┬────────┘                         │
-│            │                                   │
-│     有工具调用?                                │
-│     │No        │Yes                           │
-│     ▼          ▼                               │
-│   返回文本   ┌─────────────────┐              │
-│   结束循环   │ 执行工具调用      │              │
-│             └────────┬────────┘              │
-│                      ▼                        │
-│             ┌─────────────────┐              │
-│             │ after_tool_call  │              │
-│             │  ├─ 阶段转换检查  │              │
-│             │  ├─ 硬约束验证    │              │
-│             │  └─ 软约束评分    │              │
-│             └────────┬────────┘              │
-│                      │                        │
-│                 回到循环顶部                    │
-└───────────────────────────────────────────────┘
-     │
-     ▼
-┌────────────────────┐
-│ 6. 保存状态         │ ←── state_mgr.save(plan)
-│ 7. 发送状态更新事件  │ ←── SSE: state_update
-└────────────────────┘
+```mermaid
+graph TD
+    Start["用户发送消息"] --> Step1
+    
+    Step1{"1. 回溯检测 (隐式回溯)<br>正则匹配 _BACKTRACK_PATTERNS"}
+    Step1 -- 匹配 --> Backtrack["保存快照 → prepare_backtrack → 重建Agent"]
+    Backtrack --> Step2
+    Step1 -- 未匹配 --> Step2{"2. 事实提取 (intake.py)<br>提取目的地/日期/预算"}
+    
+    Step2 -- 有更新 --> IntakeApply["apply_trip_facts → check_and_apply_transition"]
+    IntakeApply --> Step3
+    Step2 -- 无更新 --> Step3["3. 构建系统消息 (ContextManager)<br>Soul + Phase Prompt + Context + Profile"]
+    
+    Step3 --> Step4["4. 追加用户消息"]
+    Step4 --> LoopStart
+    
+    subgraph AgentLoop["5. Agent Loop (最多 20 次迭代)"]
+        direction TB
+        LoopStart["before_llm_call<br>上下文压缩检查"] --> LLMCall["LLM 流式调用<br>生成文本 + 工具调用"]
+        LLMCall --> HasTool{"有工具调用?"}
+        
+        HasTool -- Yes --> ExecuteTool["执行工具调用"]
+        ExecuteTool --> AfterTool["after_tool_call<br>├─ 阶段转换检查<br>├─ 硬约束验证<br>└─ 软约束评分"]
+        AfterTool -- 回到循环顶部 --> LoopStart
+        
+        HasTool -- No --> EndLoop["返回文本"]
+    end
+    
+    EndLoop --> Step6["6. 保存状态<br>state_mgr.save(plan)"]
+    Step6 --> Step7["7. 发送状态更新事件<br>SSE: state_update"]
 ```
 
 ### 12.2 阶段生命周期流程
 
-```
-         ┌─────────┐
-         │ 新会话   │
-         │ phase=1  │
-         └────┬────┘
-              │ 用户表达偏好
-              │ preferences 非空
-              ▼
-         ┌─────────┐
-    ┌────│ 阶段 2   │◄──── "换个目的地"
-    │    │ 目的地选择│
-    │    └────┬────┘
-    │         │ destination 确定
-    │         ▼
-    │    ┌─────────┐
-    │ ┌──│ 阶段 3   │◄──── "改日期"
-    │ │  │ 天数节奏  │
-    │ │  └────┬────┘
-    │ │       │ dates 确定
-    │ │       ▼
-    │ │  ┌─────────┐
-    │ │ ─│ 阶段 4   │◄──── "换住宿"
-    │ │  │ 住宿区域  │
-    │ │  └────┬────┘
-    │ │       │ accommodation 确定
-    │ │       ▼
-    │ │  ┌─────────┐
-    │ └──│ 阶段 5   │
-    │    │ 行程组装  │
-    │    └────┬────┘
-    │         │ daily_plans 全部完成
-    │         ▼
-    │    ┌─────────┐
-    └────│ 阶段 7   │
-         │ 出发查漏  │
-         └─────────┘
+```mermaid
+graph TD
+    P1["阶段 1: 灵感探索<br>(新会话)"]
+    P2["阶段 2: 目的地选择"]
+    P3["阶段 3: 天数与节奏"]
+    P4["阶段 4: 住宿区域"]
+    P5["阶段 5: 行程组装"]
+    P7["阶段 7: 出发前查漏"]
 
-  ◄──── 表示回溯路径
+    P1 -- "preferences 非空<br>(用户表达偏好)" --> P2
+    P2 -- "destination 确定" --> P3
+    P3 -- "dates 确定" --> P4
+    P4 -- "accommodation 确定" --> P5
+    P5 -- "daily_plans 全部完成" --> P7
+
+    %% 回溯路径展示
+    P7 -. "回溯" .-> P5
+    P5 -. "隐式回溯 ('换住宿')" .-> P4
+    P4 -. "隐式回溯 ('改日期')" .-> P3
+    P3 -. "隐式回溯 ('换个目的地')" .-> P2
+    
+    classDef default fill:#f9f9f9,stroke:#333,stroke-width:2px;
 ```
 
 ### 12.3 Agent Loop 内部数据流
 
-```
-Messages: [System, User₁, Asst₁, User₂, ...]
-              │
-              ▼
-         ┌─────────┐
-         │   LLM    │ ←── tools schema (按阶段过滤)
-         └────┬────┘
-              │
-       ┌──────┴──────┐
-       │             │
-   text_delta    tool_call
-       │             │
-   yield →        ToolEngine
-   前端显示       .execute(tc)
-                     │
-                     ▼
-               ┌──────────┐
-               │ ToolResult│ ──► append Message(role=TOOL)
-               └──────────┘
-                     │
-                     ▼
-               HookManager
-               .run("after_tool_call")
-                     │
-              ┌──────┼──────┐
-              │      │      │
-        阶段转换  硬约束  软约束
-        检查     验证    评分
+```mermaid
+graph TD
+    Messages["Messages:<br>[System, User₁, Asst₁, User₂, ...]"] --> LLM
+    
+    ToolsSchema["tools schema<br>(按阶段过滤)"] -.-> LLM
+    
+    LLM["LLM"] --> TextDelta["text_delta"]
+    LLM --> ToolCall["tool_call"]
+    
+    TextDelta --> FrontEnd["yield → 前端显示"]
+    
+    ToolCall --> ToolEngine["ToolEngine.execute(tc)"]
+    ToolEngine --> ToolResult["ToolResult"]
+    
+    ToolResult -- "append Message(role=TOOL)" --> Messages
+    ToolResult --> HookManager["HookManager.run('after_tool_call')"]
+    
+    HookManager --> PhaseCheck["阶段转换检查"]
+    HookManager --> HardValid["硬约束验证"]
+    HookManager --> SoftScore["软约束评分"]
 ```
 
 ---
@@ -1044,17 +1028,21 @@ Messages: [System, User₁, Asst₁, User₂, ...]
 |---------|--------|----------|
 | `backend/tools/base.py` | （基础设施） | — |
 | `backend/tools/engine.py` | （工具引擎） | — |
+| `backend/tools/flyai_client.py` | （FlyAI CLI 异步封装） | FlyAI CLI |
+| `backend/tools/normalizers.py` | （数据归一化 + 合并策略） | — |
 | `backend/tools/update_plan_state.py` | `update_plan_state` | 无 |
 | `backend/tools/search_destinations.py` | `search_destinations` | Google Places |
 | `backend/tools/check_feasibility.py` | `check_feasibility` | OpenWeather |
-| `backend/tools/search_flights.py` | `search_flights` | Amadeus |
-| `backend/tools/search_accommodations.py` | `search_accommodations` | Google Places |
-| `backend/tools/get_poi_info.py` | `get_poi_info` | Google Places |
+| `backend/tools/search_flights.py` | `search_flights` 🔀 | Amadeus + FlyAI |
+| `backend/tools/search_accommodations.py` | `search_accommodations` 🔀 | Google Places + FlyAI |
+| `backend/tools/get_poi_info.py` | `get_poi_info` 🔀 | Google Places + FlyAI |
 | `backend/tools/calculate_route.py` | `calculate_route` | Google Directions |
 | `backend/tools/assemble_day_plan.py` | `assemble_day_plan` | 无（本地算法） |
 | `backend/tools/check_availability.py` | `check_availability` | Google Places |
 | `backend/tools/check_weather.py` | `check_weather` | OpenWeather |
 | `backend/tools/generate_summary.py` | `generate_summary` | 无（本地格式化） |
+| `backend/tools/quick_travel_search.py` | `quick_travel_search` 🆕 | FlyAI CLI |
+| `backend/tools/search_travel_services.py` | `search_travel_services` 🆕 | FlyAI CLI |
 
 ### 辅助模块
 
@@ -1068,7 +1056,7 @@ Messages: [System, User₁, Asst₁, User₂, ...]
 | `backend/llm/factory.py` | LLM Provider 工厂 |
 | `backend/llm/openai_provider.py` | OpenAI 实现 |
 | `backend/llm/anthropic_provider.py` | Anthropic 实现 |
-| `backend/config.py` | 配置加载（yaml + 环境变量） |
+| `backend/config.py` | 配置加载（yaml + 环境变量），含 `FlyAIConfig` |
 | `backend/context/soul.md` | Agent 身份定义 |
 
 ### 前端文件
@@ -1089,17 +1077,17 @@ Messages: [System, User₁, Asst₁, User₂, ...]
 
 ## 附录 A：已知设计不一致点
 
-### A.1 `PHASE_TOOL_NAMES` vs 工具 `phases` 声明
+### A.1 `PHASE_TOOL_NAMES` vs 工具 `phases` 声明 ✅ 已修复 (462fb39)
 
-`prompts.py` 中的 `PHASE_TOOL_NAMES` 和各工具文件中的 `phases` 参数存在不一致。`PHASE_TOOL_NAMES` 从未被运行时调用（`PhaseRouter.get_tool_names()` 是死代码），实际工具过滤由 `ToolEngine.get_tools_for_phase()` 基于各工具文件中的 `phases` 声明执行。建议统一为单一来源。
+`prompts.py` 中的 `PHASE_TOOL_NAMES` 和各工具文件中的 `phases` 参数存在不一致。`PHASE_TOOL_NAMES` 从未被运行时调用（`PhaseRouter.get_tool_names()` 是死代码），实际工具过滤由 `ToolEngine.get_tools_for_phase()` 基于各工具文件中的 `phases` 声明执行。**修复方案**：已移除 `PHASE_TOOL_NAMES` 死代码和对应的 `PhaseRouter.get_tool_names()` 方法，统一为单一来源。
 
-### A.2 `update_plan_state` 的 `_ALLOWED_FIELDS` 不含 `daily_plans`
+### A.2 `update_plan_state` 的 `_ALLOWED_FIELDS` 不含 `daily_plans` ✅ 已修复 (462fb39)
 
-`update_plan_state` 工具通过白名单 `_ALLOWED_FIELDS` 限制可更新字段，但 `daily_plans` 不在其中。这意味着阶段 5（行程组装）生成的日程无法直接通过 `update_plan_state` 写入。实际上日程数据可能需要通过其他路径（如直接在闭包中修改 plan 对象）写入。
+`update_plan_state` 工具通过白名单 `_ALLOWED_FIELDS` 限制可更新字段，但 `daily_plans` 不在其中。**修复方案**：已将 `daily_plans` 添加到 `_ALLOWED_FIELDS` 白名单中。
 
-### A.3 `max_retries` 参数未使用
+### A.3 `max_retries` 参数未使用 ✅ 已修复 (462fb39)
 
-`AgentLoop.__init__` 接受 `max_retries` 参数（默认 3），但 `run()` 方法中只使用了硬编码的 `range(20)` 作为循环上限，`max_retries` 从未被引用。
+`AgentLoop.__init__` 接受 `max_retries` 参数（默认 3），但 `run()` 方法中只使用了硬编码的 `range(20)` 作为循环上限，`max_retries` 从未被引用。**修复方案**：已将 `run()` 中的硬编码 `range(20)` 替换为 `range(self.max_retries)`。
 
 ---
 
