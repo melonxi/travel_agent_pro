@@ -1,8 +1,11 @@
 # backend/phase/router.py
 from __future__ import annotations
 
+from opentelemetry import trace
+
 from phase.prompts import PHASE_CONTROL_MODE, PHASE_PROMPTS, PHASE_TOOL_NAMES
 from state.models import BacktrackEvent, TravelPlanState
+from telemetry.attributes import PHASE_FROM, PHASE_TO
 
 
 class PhaseRouter:
@@ -32,7 +35,11 @@ class PhaseRouter:
         """Check if plan_state warrants a phase change. Returns True if phase changed."""
         inferred = self.infer_phase(plan)
         if inferred != plan.phase:
-            plan.phase = inferred
+            tracer = trace.get_tracer("travel-agent-pro")
+            with tracer.start_as_current_span("phase.transition") as span:
+                span.set_attribute(PHASE_FROM, plan.phase)
+                span.set_attribute(PHASE_TO, inferred)
+                plan.phase = inferred
             return True
         return False
 

@@ -4,8 +4,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from opentelemetry import trace
+
 from agent.types import Message, Role
 from state.models import TravelPlanState
+from telemetry.attributes import CONTEXT_TOKENS_BEFORE, CONTEXT_TOKENS_AFTER
 
 # Keywords that signal user preferences — these messages must survive compression
 _PREFERENCE_SIGNALS = [
@@ -94,8 +97,13 @@ class ContextManager:
         return "\n".join(parts)
 
     def should_compress(self, messages: list[Message], max_tokens: int) -> bool:
-        estimated = sum(len(m.content or "") // 3 for m in messages)
-        return estimated > max_tokens * 0.5
+        tracer = trace.get_tracer("travel-agent-pro")
+        with tracer.start_as_current_span("context.should_compress") as span:
+            estimated = sum(len(m.content or "") // 3 for m in messages)
+            span.set_attribute(CONTEXT_TOKENS_BEFORE, estimated)
+            span.set_attribute("context.max_tokens", max_tokens)
+            result = estimated > max_tokens * 0.5
+            return result
 
     def classify_messages(
         self, messages: list[Message]
