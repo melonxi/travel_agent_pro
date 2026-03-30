@@ -6,9 +6,11 @@ from typing import Any, AsyncIterator
 
 import tiktoken
 from openai import AsyncOpenAI
+from opentelemetry import trace as otel_trace
 
 from agent.types import Message, Role, ToolCall
 from llm.types import ChunkType, LLMChunk
+from telemetry.attributes import LLM_PROVIDER, LLM_MODEL
 
 
 class OpenAIProvider:
@@ -85,79 +87,83 @@ class OpenAIProvider:
         tools: list[dict] | None = None,
         stream: bool = True,
     ) -> AsyncIterator[LLMChunk]:
-        kwargs: dict[str, Any] = {
-            "model": self.model,
-            "messages": self._convert_messages(messages),
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "stream": stream,
-        }
-        if tools:
-            kwargs["tools"] = self._convert_tools(tools)
+        tracer = otel_trace.get_tracer("travel-agent-pro")
+        with tracer.start_as_current_span("llm.chat") as span:
+            span.set_attribute(LLM_PROVIDER, "openai")
+            span.set_attribute(LLM_MODEL, self.model)
+            kwargs: dict[str, Any] = {
+                "model": self.model,
+                "messages": self._convert_messages(messages),
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "stream": stream,
+            }
+            if tools:
+                kwargs["tools"] = self._convert_tools(tools)
 
-        if not stream:
-            response = await self.client.chat.completions.create(**kwargs)
-            choice = response.choices[0]
-            if choice.message.content:
-                yield LLMChunk(
-                    type=ChunkType.TEXT_DELTA, content=choice.message.content
-                )
-            if choice.message.tool_calls:
-                for tc in choice.message.tool_calls:
+            if not stream:
+                response = await self.client.chat.completions.create(**kwargs)
+                choice = response.choices[0]
+                if choice.message.content:
                     yield LLMChunk(
-                        type=ChunkType.TOOL_CALL_START,
-                        tool_call=ToolCall(
-                            id=tc.id,
-                            name=tc.function.name,
-                            arguments=json.loads(tc.function.arguments),
-                        ),
+                        type=ChunkType.TEXT_DELTA, content=choice.message.content
                     )
-            yield LLMChunk(type=ChunkType.DONE)
-            return
-
-        response = await self.client.chat.completions.create(**kwargs)
-        current_tool_calls: dict[int, dict] = {}
-
-        async for chunk in response:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if not delta:
-                continue
-
-            if delta.content:
-                yield LLMChunk(type=ChunkType.TEXT_DELTA, content=delta.content)
-
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in current_tool_calls:
-                        current_tool_calls[idx] = {
-                            "id": tc_delta.id or "",
-                            "name": "",
-                            "arguments": "",
-                        }
-                    entry = current_tool_calls[idx]
-                    if tc_delta.id:
-                        entry["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            entry["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            entry["arguments"] += tc_delta.function.arguments
-
-            if chunk.choices[0].finish_reason:
-                for entry in current_tool_calls.values():
-                    yield LLMChunk(
-                        type=ChunkType.TOOL_CALL_START,
-                        tool_call=ToolCall(
-                            id=entry["id"],
-                            name=entry["name"],
-                            arguments=json.loads(entry["arguments"])
-                            if entry["arguments"]
-                            else {},
-                        ),
-                    )
+                if choice.message.tool_calls:
+                    for tc in choice.message.tool_calls:
+                        yield LLMChunk(
+                            type=ChunkType.TOOL_CALL_START,
+                            tool_call=ToolCall(
+                                id=tc.id,
+                                name=tc.function.name,
+                                arguments=json.loads(tc.function.arguments),
+                            ),
+                        )
                 yield LLMChunk(type=ChunkType.DONE)
                 return
+
+            response = await self.client.chat.completions.create(**kwargs)
+            current_tool_calls: dict[int, dict] = {}
+
+            async for chunk in response:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if not delta:
+                    continue
+
+                if delta.content:
+                    yield LLMChunk(type=ChunkType.TEXT_DELTA, content=delta.content)
+
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in current_tool_calls:
+                            current_tool_calls[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": "",
+                                "arguments": "",
+                            }
+                        entry = current_tool_calls[idx]
+                        if tc_delta.id:
+                            entry["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                entry["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                entry["arguments"] += tc_delta.function.arguments
+
+                if chunk.choices[0].finish_reason:
+                    for entry in current_tool_calls.values():
+                        yield LLMChunk(
+                            type=ChunkType.TOOL_CALL_START,
+                            tool_call=ToolCall(
+                                id=entry["id"],
+                                name=entry["name"],
+                                arguments=json.loads(entry["arguments"])
+                                if entry["arguments"]
+                                else {},
+                            ),
+                        )
+                    yield LLMChunk(type=ChunkType.DONE)
+                    return
 
     async def count_tokens(self, messages: list[Message]) -> int:
         try:
