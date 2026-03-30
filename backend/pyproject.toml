@@ -14,6 +14,10 @@ dependencies = [
     "sse-starlette>=2.0.0",
     "tiktoken>=0.7.0",
     "python-dotenv>=1.0.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+    "opentelemetry-instrumentation-fastapi>=0.41b0",
 ]
 
 [project.optional-dependencies]
@@ -29,7 +33,7 @@ requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["agent*", "llm*", "state*", "phase*", "tools*", "context*", "memory*", "harness*"]
+include = ["agent*", "llm*", "state*", "phase*", "tools*", "context*", "memory*", "harness*", "telemetry*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
