@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Travel Agent Pro · 初始化流程图</title>
+    <style>
+      :root {
+        --bg: #f5efe4;
+        --paper: rgba(255, 250, 242, 0.8);
+        --ink: #1f2523;
+        --muted: #55615d;
+        --line: rgba(52, 73, 67, 0.16);
+        --teal: #1f6d66;
+        --teal-soft: #d9efe8;
+        --gold: #b7722a;
+        --gold-soft: #f6e1c7;
+        --rose: #a54f4f;
+        --rose-soft: #f6dddd;
+        --shadow: 0 18px 40px rgba(47, 52, 49, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB",
+          sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(31, 109, 102, 0.12), transparent 24%),
+          radial-gradient(circle at 85% 18%, rgba(183, 114, 42, 0.16), transparent 20%),
+          linear-gradient(180deg, #f8f2e8 0%, #efe4d4 100%);
+        min-height: 100vh;
+      }
+
+      .shell {
+        max-width: 1480px;
+        margin: 0 auto;
+        padding: 28px 24px 36px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.35fr 0.8fr;
+        gap: 18px;
+        margin-bottom: 22px;
+      }
+
+      .hero-card,
+      .summary-card,
+      .flow-card,
+      .detail-card,
+      .note-card {
+        background: var(--paper);
+        backdrop-filter: blur(14px);
+        border: 1px solid rgba(255, 255, 255, 0.65);
+        border-radius: 28px;
+        box-shadow: var(--shadow);
+      }
+
+      .hero-card {
+        padding: 28px 30px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .hero-card::after {
+        content: "";
+        position: absolute;
+        inset: auto -36px -40px auto;
+        width: 220px;
+        height: 220px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(31, 109, 102, 0.12), transparent 68%);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(31, 109, 102, 0.1);
+        color: var(--teal);
+        font-size: 13px;
+        letter-spacing: 0.03em;
+      }
+
+      h1 {
+        margin: 16px 0 12px;
+        font-size: clamp(34px, 4vw, 58px);
+        line-height: 1.03;
+        letter-spacing: -0.04em;
+        max-width: 11ch;
+      }
+
+      .hero-copy {
+        max-width: 62ch;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.7;
+        margin: 0;
+      }
+
+      .summary-card {
+        padding: 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        justify-content: space-between;
+      }
+
+      .summary-card h2,
+      .detail-card h2,
+      .flow-card h2,
+      .note-card h2 {
+        margin: 0;
+        font-size: 16px;
+        letter-spacing: 0.01em;
+      }
+
+      .summary-card p,
+      .detail-card p,
+      .note-card p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.65;
+      }
+
+      .legend {
+        display: grid;
+        gap: 10px;
+      }
+
+      .legend-item {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+      }
+
+      .swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        margin-top: 4px;
+        flex: 0 0 auto;
+      }
+
+      .swatch.teal {
+        background: var(--teal);
+      }
+
+      .swatch.gold {
+        background: var(--gold);
+      }
+
+      .swatch.rose {
+        background: var(--rose);
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 18px;
+      }
+
+      .flow-card {
+        padding: 22px 22px 28px;
+      }
+
+      .flow-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 18px;
+        align-items: end;
+      }
+
+      .flow-head p {
+        margin: 0;
+        max-width: 44ch;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .flow-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr);
+        gap: 10px 18px;
+        align-items: center;
+      }
+
+      .node {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+        padding: 0;
+        position: relative;
+        animation: rise 0.55s ease both;
+      }
+
+      .node-card {
+        padding: 18px 18px 16px;
+        border-radius: 22px;
+        border: 1px solid transparent;
+        transition:
+          transform 0.18s ease,
+          border-color 0.18s ease,
+          box-shadow 0.18s ease,
+          background 0.18s ease;
+      }
+
+      .node:hover .node-card,
+      .node:focus-visible .node-card {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 26px rgba(35, 43, 39, 0.12);
+      }
+
+      .node.active .node-card {
+        border-color: rgba(31, 37, 35, 0.18);
+        box-shadow: 0 18px 34px rgba(35, 43, 39, 0.14);
+        transform: translateY(-4px);
+      }
+
+      .tone-teal .node-card {
+        background: linear-gradient(180deg, rgba(217, 239, 232, 0.92), rgba(237, 247, 244, 0.9));
+      }
+
+      .tone-gold .node-card {
+        background: linear-gradient(180deg, rgba(246, 225, 199, 0.96), rgba(251, 240, 225, 0.9));
+      }
+
+      .tone-rose .node-card {
+        background: linear-gradient(180deg, rgba(246, 221, 221, 0.96), rgba(252, 241, 241, 0.9));
+      }
+
+      .node-kicker {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: rgba(31, 37, 35, 0.58);
+      }
+
+      .node-title {
+        margin: 8px 0 8px;
+        font-size: 22px;
+        line-height: 1.1;
+      }
+
+      .node-copy {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.55;
+        font-size: 14px;
+      }
+
+      .flow-rail {
+        position: relative;
+        min-height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .flow-rail::before {
+        content: "";
+        position: absolute;
+        top: -14px;
+        bottom: -14px;
+        width: 6px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, rgba(31, 109, 102, 0.18), rgba(183, 114, 42, 0.24));
+      }
+
+      .rail-orb {
+        position: relative;
+        width: 92px;
+        height: 92px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, rgba(255, 250, 242, 0.96), rgba(246, 236, 223, 0.94));
+        border: 1px solid rgba(31, 37, 35, 0.08);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--ink);
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        box-shadow: inset 0 0 0 12px rgba(31, 109, 102, 0.06);
+      }
+
+      .rail-orb::after {
+        content: "";
+        position: absolute;
+        inset: -10px;
+        border-radius: 999px;
+        border: 1px dashed rgba(31, 109, 102, 0.2);
+      }
+
+      .detail-card {
+        padding: 22px;
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+        gap: 16px;
+        min-height: 920px;
+      }
+
+      .detail-stage {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        font-size: 13px;
+        width: fit-content;
+      }
+
+      .detail-stage.teal {
+        background: var(--teal-soft);
+        color: var(--teal);
+      }
+
+      .detail-stage.gold {
+        background: var(--gold-soft);
+        color: var(--gold);
+      }
+
+      .detail-stage.rose {
+        background: var(--rose-soft);
+        color: var(--rose);
+      }
+
+      .detail-title {
+        margin: 0;
+        font-size: 34px;
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+      }
+
+      .detail-lead {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.72;
+      }
+
+      .detail-section {
+        display: grid;
+        gap: 14px;
+      }
+
+      .detail-boxes {
+        display: grid;
+        gap: 12px;
+      }
+
+      .detail-box {
+        padding: 15px 16px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.56);
+        border: 1px solid var(--line);
+      }
+
+      .detail-box h3 {
+        margin: 0 0 8px;
+        font-size: 14px;
+      }
+
+      .detail-box ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .detail-box code,
+      .note-card code {
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 12px;
+        background: rgba(31, 37, 35, 0.07);
+        padding: 2px 6px;
+        border-radius: 8px;
+      }
+
+      .file-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .file-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 10px;
+        border-radius: 999px;
+        background: rgba(31, 37, 35, 0.05);
+        border: 1px solid rgba(31, 37, 35, 0.07);
+        color: var(--ink);
+        font-size: 13px;
+      }
+
+      .note-card {
+        margin-top: 18px;
+        padding: 20px 22px;
+      }
+
+      .note-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+
+      .note-card strong {
+        color: var(--ink);
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(18px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 1180px) {
+        .hero,
+        .workspace,
+        .note-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .detail-card {
+          min-height: auto;
+        }
+      }
+
+      @media (max-width: 860px) {
+        .shell {
+          padding: 18px 14px 28px;
+        }
+
+        .flow-grid {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+
+        .flow-rail {
+          min-height: 92px;
+        }
+
+        .flow-rail::before {
+          width: calc(100% - 18px);
+          height: 6px;
+          top: auto;
+          bottom: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="hero">
+        <article class="hero-card">
+          <div class="eyebrow">Travel Agent Pro · 教学图解</div>
+          <h1>初始化不是准备页面，而是在为第一轮 Agent Loop 搭运行现场。</h1>
+          <p class="hero-copy">
+            这张图把 <code>docs/learning/initial-state-7-points.md</code> 里的内容改成可视化版本。
+            读法不是“页面先出现什么”，而是“在第一次 <code>AgentLoop.run()</code> 真正开始前，
+            系统已经给它准备了哪些输入、边界和上下文”。
+          </p>
+        </article>
+
+        <aside class="summary-card">
+          <h2>怎么看这张图</h2>
+          <p>
+            左侧是初始化流程主链路，点击任意节点，右侧会显示这个节点对第一轮 loop
+            的具体影响。重点不是流程图本身，而是每一步怎样改变 loop 的“可运行性”和“行为边界”。
+          </p>
+          <div class="legend">
+            <div class="legend-item">
+              <span class="swatch teal"></span>
+              <div>
+                <strong>上下文准备</strong>
+                <p>把 session、plan、messages 这些运行材料准备好。</p>
+              </div>
+            </div>
+            <div class="legend-item">
+              <span class="swatch gold"></span>
+              <div>
+                <strong>loop 核心约束</strong>
+                <p>让第一轮 loop 知道当前该扮演什么角色、允许用什么工具。</p>
+              </div>
+            </div>
+            <div class="legend-item">
+              <span class="swatch rose"></span>
+              <div>
+                <strong>前端可见结果</strong>
+                <p>把 loop 的输出以 SSE 形式流回 UI，形成用户可见反馈。</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="workspace">
+        <article class="flow-card">
+          <div class="flow-head">
+            <div>
+              <h2>初始化主流程</h2>
+              <p>
+                这 8 个节点描述的是“第一轮 loop 开始前到第一次结果回前端”的链路。
+                其中最关键的不是页面加载，而是 session 创建、context 组装和 phase 工具选择。
+              </p>
+            </div>
+          </div>
+
+          <div class="flow-grid" id="flowGrid"></div>
+        </article>
+
+        <aside class="detail-card">
+          <div class="detail-stage" id="detailStage"></div>
+          <div>
+            <h2 class="detail-title" id="detailTitle"></h2>
+            <p class="detail-lead" id="detailLead"></p>
+          </div>
+
+          <div class="detail-section">
+            <div class="detail-boxes">
+              <section class="detail-box">
+                <h3>这个节点在做什么</h3>
+                <ul id="detailActions"></ul>
+              </section>
+
+              <section class="detail-box">
+                <h3>它怎样改变第一轮 loop</h3>
+                <ul id="detailImpact"></ul>
+              </section>
+
+              <section class="detail-box">
+                <h3>关键文件</h3>
+                <div class="file-list" id="detailFiles"></div>
+              </section>
+            </div>
+          </div>
+
+          <section class="detail-box">
+            <h3>一句话记忆</h3>
+            <p id="detailMemory"></p>
+          </section>
+        </aside>
+      </section>
+
+      <section class="note-card">
+        <h2>核心结论</h2>
+        <div class="note-grid">
+          <p>
+            <strong>如果只看 UI，初始化像是在“打开一个空页面”。</strong>
+            但从 agent 视角看，初始化真正完成的是一件更重要的事：
+            它把 <code>plan</code>、<code>messages</code>、<code>agent</code>、
+            <code>system prompt</code> 和 phase 对应的 tools 组到一起，
+            让第一轮 loop 从一开始就在一个已定义好的语义环境里工作。
+          </p>
+          <p>
+            <strong>所以初始化不是外围细节，而是 loop 的起跑线。</strong>
+            如果这一步没有把运行现场准备完整，后面的阶段推进、工具调用、约束校验和 SSE
+            展示都会变成松散的拼接，而不是一个可解释、可联调的 agent 系统。
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const nodes = [
+        {
+          id: "frontend",
+          side: "left",
+          tone: "teal",
+          kicker: "01 · UI bootstrap",
+          title: "前端加载页面",
+          short:
+            "页面打开后，前端不会等用户先说话，而是立刻替第一轮 loop 申请一个可用会话。",
+          stageLabel: "上下文准备",
+          stageTone: "teal",
+          lead:
+            "从浏览器视角，这是 App 初始化；从 agent 视角，这是在向后端申请一套新的运行现场。",
+          actions: [
+            "执行 App 的 `useEffect`。",
+            "先发 `POST /api/sessions` 创建会话。",
+            "再发 `GET /api/plan/{session_id}` 拉回当前 plan。"
+          ],
+          impact: [
+            "这一步的目的不是显示数据，而是拿到一个能继续交互的 session。",
+            "如果没有这一步，后续就没有 `plan / messages / agent` 可以挂到同一轮上下文里。",
+            "它把“页面打开”转换成了“loop 运行环境申请”。"
+          ],
+          files: ["frontend/src/App.tsx", "backend/main.py"],
+          memory:
+            "页面加载本质上是在替 loop 先把会话申请下来。"
+        },
+        {
+          id: "session",
+          side: "right",
+          tone: "teal",
+          kicker: "02 · Session",
+          title: "后端创建 Session",
+          short:
+            "后端生成 session_id，并准备这个 session 对应的 plan、messages 和 agent。",
+          stageLabel: "上下文准备",
+          stageTone: "teal",
+          lead:
+            "创建 session 不是单纯生成一个 ID，而是在给后续所有轮次准备宿主容器。",
+          actions: [
+            "调用 `state_mgr.create_session()` 生成新的 `TravelPlanState`。",
+            "调用 `_build_agent(plan)` 创建与当前 plan 绑定的 agent。",
+            "把 `plan / messages / agent` 放进内存里的 `sessions` 字典。"
+          ],
+          impact: [
+            "第一轮 loop 之后所有的状态变化，都有了统一归属的 session。",
+            "同一份 `plan` 会在后续轮次不断被更新，而不是每轮重新拼一份。",
+            "session 是 loop 连续工作的最小边界。"
+          ],
+          files: ["backend/main.py", "backend/state/manager.py"],
+          memory:
+            "session 的意义不是编号，而是给 loop 一个连续可追踪的宿主。"
+        },
+        {
+          id: "agent",
+          side: "left",
+          tone: "gold",
+          kicker: "03 · Executor",
+          title: "装配 Agent 执行器",
+          short:
+            "初始化阶段就把 LLM、ToolEngine、Hooks 和绑定 plan 的工具接进 AgentLoop。",
+          stageLabel: "loop 核心约束",
+          stageTone: "gold",
+          lead:
+            "这是初始化里最像“中枢装配”的一步。创建 session 时，loop 不是空的，而是已经接上了真正能工作的执行部件。",
+          actions: [
+            "创建 LLM provider。",
+            "注册 domain tools 和 `update_plan_state`。",
+            "创建 `HookManager`，挂上 `before_llm_call` 与 `after_tool_call` 钩子。",
+            "用这些部件实例化 `AgentLoop`。"
+          ],
+          impact: [
+            "第一轮 loop 一开始就具备思考、调用工具、执行工具、触发 hook 的能力。",
+            "每个 session 的 agent 都与当前 plan 绑定，因此状态变更会直接落到这份 plan 上。",
+            "这一步定义了 loop 的执行骨架。"
+          ],
+          files: ["backend/main.py", "backend/agent/loop.py", "backend/tools/engine.py"],
+          memory:
+            "初始化不是先有 loop 再慢慢配，而是创建 session 时就把 loop 骨架装好了。"
+        },
+        {
+          id: "plan",
+          side: "right",
+          tone: "gold",
+          kicker: "04 · Blank state",
+          title: "空白 Plan 定义语义起点",
+          short:
+            "初始 `plan` 几乎全空，但这些空值不是消极状态，而是在定义第一轮 loop 该扮演什么角色。",
+          stageLabel: "loop 核心约束",
+          stageTone: "gold",
+          lead:
+            "在这个项目里，空白 plan 等于 phase 1。它告诉 loop：现在不是排详细行程的时候，而是先收集需求。",
+          actions: [
+            "初始 `phase = 1`。",
+            "`destination / dates / accommodation` 都为空。",
+            "`daily_plans` 为空，`preferences` 和 `constraints` 也为空。"
+          ],
+          impact: [
+            "loop 看到的是“还没有目的地和日期”，因此阶段语义偏向需求收集。",
+            "这一步决定了后面加载哪个 phase prompt、暴露哪些 tools。",
+            "空白 state 直接塑造了 loop 的行为起点。"
+          ],
+          files: ["backend/state/models.py", "backend/phase/router.py"],
+          memory:
+            "空白 plan 不是没信息，而是在告诉 loop：先问清楚，再往下走。"
+        },
+        {
+          id: "message",
+          side: "left",
+          tone: "teal",
+          kicker: "05 · User input",
+          title: "首条用户消息进入系统",
+          short:
+            "真正准备进入第一轮 loop 时，后端先看用户有没有触发回退，再抽取目的地、日期、预算等事实。",
+          stageLabel: "上下文准备",
+          stageTone: "teal",
+          lead:
+            "这一步说明 loop 看到的用户输入不是原始文本，而是经过状态预处理后的上下文。",
+          actions: [
+            "检查是否命中回退关键词。",
+            "若不是回退，执行 `apply_trip_facts(plan, req.message)`。",
+            "若提取到有效事实，先更新 plan，再重新推导 phase。"
+          ],
+          impact: [
+            "如果用户一句话已经说清目的地和日期，loop 甚至可能直接跳过 phase 1。",
+            "这一步让 loop 起跑前就先吃到一轮结构化状态更新。",
+            "所以第一轮 loop 的输入已经带有预处理结果。"
+          ],
+          files: ["backend/main.py", "backend/state/intake.py", "backend/phase/router.py"],
+          memory:
+            "用户发的第一句话会先改 state，再被交给 loop。"
+        },
+        {
+          id: "context",
+          side: "right",
+          tone: "gold",
+          kicker: "06 · System message",
+          title: "组装 System Message",
+          short:
+            "后端把 soul、phase prompt、runtime state 和用户画像拼成 system message，再把用户消息压进 messages。",
+          stageLabel: "loop 核心约束",
+          stageTone: "gold",
+          lead:
+            "第一轮 loop 看到的不是“用户说了一句话”，而是“用户消息 + 角色约束 + 当前阶段说明 + 当前状态”。",
+          actions: [
+            "根据当前 phase 读取阶段 prompt。",
+            "加载 memory，生成用户画像摘要。",
+            "用 `ContextManager.build_system_message()` 组装系统消息。",
+            "把 system message 放在 `messages[0]`，再追加当前用户消息。"
+          ],
+          impact: [
+            "loop 的判断会被当前 phase 和当前 state 明确约束。",
+            "同一段用户输入，在不同 phase 下会得到不同语义解释。",
+            "system message 是 loop 行为语义最直接的塑形器之一。"
+          ],
+          files: ["backend/main.py", "backend/context/manager.py", "backend/phase/prompts.py"],
+          memory:
+            "loop 不是只读用户文本，它读的是一整个被组装好的运行上下文。"
+        },
+        {
+          id: "tools",
+          side: "left",
+          tone: "gold",
+          kicker: "07 · Tool boundary",
+          title: "按 Phase 选择可用 Tools",
+          short:
+            "AgentLoop.run() 开始时，会先按当前 phase 取工具集合。phase 1 下，它的能力边界非常窄。",
+          stageLabel: "loop 核心约束",
+          stageTone: "gold",
+          lead:
+            "这一步决定的不只是‘能不能调工具’，而是‘当前这轮 loop 允许采取哪种行动’。",
+          actions: [
+            "执行 `tool_engine.get_tools_for_phase(phase)`。",
+            "把当前 phase 可用工具转换成 schema 发给模型。",
+            "phase 1 的核心工具是 `update_plan_state`。"
+          ],
+          impact: [
+            "模型现在更偏向记录信息，而不是直接查天气、排日程。",
+            "工具边界和 phase prompt 共同决定了 loop 的行为边界。",
+            "同样的 loop 骨架，在不同 phase 下会表现出不同能力。"
+          ],
+          files: ["backend/agent/loop.py", "backend/tools/engine.py", "backend/tools/update_plan_state.py"],
+          memory:
+            "工具集合不是附属品，它直接限制这轮 loop 能做什么。"
+        },
+        {
+          id: "stream",
+          side: "right",
+          tone: "rose",
+          kicker: "08 · First run",
+          title: "运行第一轮 Loop，并把结果流回前端",
+          short:
+            "loop 调模型、拦截 tool call、执行工具、继续下一轮；结束后把文本和 state_update 用 SSE 回给前端。",
+          stageLabel: "前端可见结果",
+          stageTone: "rose",
+          lead:
+            "到这里，初始化的价值才真正显现出来：第一轮 loop 并不是在真空中自由发挥，而是在一套已定义好的环境里有边界地工作。",
+          actions: [
+            "执行 `agent.run(messages, phase=plan.phase)`。",
+            "如果模型返回 `text_delta`，直接流给前端。",
+            "如果模型返回 `tool_call`，执行工具并把结果追加回 messages。",
+            "结束后保存 plan，并发送 `state_update`。"
+          ],
+          impact: [
+            "用户在聊天区看到的回复，其实是 loop 运行结果的流式投影。",
+            "前端看到的 `tool_call` 和 `state_update` 只是表层事件，真正的组织者仍然是 loop。",
+            "SSE 让 loop 的执行被看见，但不会改变 loop 的核心逻辑。"
+          ],
+          files: ["backend/agent/loop.py", "backend/main.py", "frontend/src/hooks/useSSE.ts"],
+          memory:
+            "初始化完成的标志，不是页面能显示，而是第一轮 loop 能带着上下文跑起来并把结果流出来。"
+        }
+      ];
+
+      const flowGrid = document.getElementById("flowGrid");
+      const detailStage = document.getElementById("detailStage");
+      const detailTitle = document.getElementById("detailTitle");
+      const detailLead = document.getElementById("detailLead");
+      const detailActions = document.getElementById("detailActions");
+      const detailImpact = document.getElementById("detailImpact");
+      const detailFiles = document.getElementById("detailFiles");
+      const detailMemory = document.getElementById("detailMemory");
+
+      function renderFlow() {
+        nodes.forEach((node, index) => {
+          if (node.side === "left") {
+            flowGrid.appendChild(buildNode(node, index));
+            flowGrid.appendChild(buildRail(index + 1));
+            flowGrid.appendChild(document.createElement("div"));
+          } else {
+            flowGrid.appendChild(document.createElement("div"));
+            flowGrid.appendChild(buildRail(index + 1));
+            flowGrid.appendChild(buildNode(node, index));
+          }
+        });
+      }
+
+      function buildNode(node, index) {
+        const button = document.createElement("button");
+        button.className = `node tone-${node.tone}`;
+        button.dataset.id = node.id;
+        button.style.animationDelay = `${index * 0.06}s`;
+        button.innerHTML = `
+          <div class="node-card">
+            <div class="node-kicker">${node.kicker}</div>
+            <div class="node-title">${node.title}</div>
+            <p class="node-copy">${node.short}</p>
+          </div>
+        `;
+        button.addEventListener("click", () => setActive(node.id));
+        return button;
+      }
+
+      function buildRail(step) {
+        const rail = document.createElement("div");
+        rail.className = "flow-rail";
+        rail.innerHTML = `<div class="rail-orb">Step ${step}</div>`;
+        return rail;
+      }
+
+      function setActive(id) {
+        const node = nodes.find((item) => item.id === id);
+        if (!node) return;
+
+        document.querySelectorAll(".node").forEach((button) => {
+          button.classList.toggle("active", button.dataset.id === id);
+        });
+
+        detailStage.className = `detail-stage ${node.stageTone}`;
+        detailStage.textContent = node.stageLabel;
+        detailTitle.textContent = node.title;
+        detailLead.textContent = node.lead;
+        detailMemory.textContent = node.memory;
+
+        detailActions.innerHTML = "";
+        node.actions.forEach((item) => {
+          const li = document.createElement("li");
+          li.textContent = item;
+          detailActions.appendChild(li);
+        });
+
+        detailImpact.innerHTML = "";
+        node.impact.forEach((item) => {
+          const li = document.createElement("li");
+          li.textContent = item;
+          detailImpact.appendChild(li);
+        });
+
+        detailFiles.innerHTML = "";
+        node.files.forEach((file) => {
+          const pill = document.createElement("span");
+          pill.className = "file-pill";
+          pill.textContent = file;
+          detailFiles.appendChild(pill);
+        });
+      }
+
+      renderFlow();
+      setActive("agent");
+    </script>
+  </body>
+</html>
