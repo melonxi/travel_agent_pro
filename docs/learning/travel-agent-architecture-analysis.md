@@ -1,7 +1,7 @@
 # Travel Agent Pro 全阶段架构分析报告
 
 > 分析日期：2026-03-30
-> 文档版本：v1.0
+> 文档版本：v2.0（FlyAI 集成升级）
 > 分析范围：后端 Agent 系统全流程（阶段 1→2→3→4→5→7）
 
 ---
@@ -41,6 +41,7 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 | LLM 提供商 | OpenAI / Anthropic（可切换） |
 | HTTP 客户端 | httpx（异步） |
 | 外部 API | Google Maps/Places, Amadeus, OpenWeather |
+| 数据融合 | FlyAI CLI（飞猪 MCP 封装，Node.js >= 18） |
 | 前端 | React 19 + TypeScript + Vite + Leaflet 地图 |
 | 数据持久化 | JSON 文件系统（`data/sessions/`、`data/users/`） |
 
@@ -63,10 +64,12 @@ graph TD
         G["PhaseRouter<br>(阶段推断)"]
         H["StateManager<br>(状态持久化)"]
         I["MemoryManager<br>(用户画像)"]
+        J["FlyAIClient<br>(异步 CLI 封装)"]
         
         A --> Loop
         B --> Loop
         C --> Loop
+        J -.-> E
     end
 ```
 
@@ -79,11 +82,13 @@ graph TD
 | 阶段 | 名称 | 角色定位 | 控制模式 | 可用工具（运行时实际生效） | 目标产出 | 前置条件 |
 |------|------|---------|----------|---------|---------|---------|
 | **1** | 灵感探索 | 旅行灵感顾问 | `conversational` | `update_plan_state` | 用户偏好列表 | 无（初始状态） |
-| **2** | 目的地选择 | 目的地推荐专家 | `agent_with_guard` | `search_destinations`, `check_feasibility`, `update_plan_state` | 确定目的地 | 用户已表达偏好 |
-| **3** | 天数与节奏 | 行程节奏规划师 | `workflow` | `search_flights`, `search_accommodations`, `get_poi_info`, `update_plan_state` | 确定日期 | 目的地已确定 |
-| **4** | 住宿区域 | 住宿区域顾问 | `conversational` | `search_flights`, `search_accommodations`, `get_poi_info`, `calculate_route`, `assemble_day_plan`, `check_availability`, `update_plan_state` | 确定住宿 | 日期已确定 |
-| **5** | 行程组装 | 行程组装引擎 | `structured` | `get_poi_info`, `calculate_route`, `assemble_day_plan`, `check_availability`, `check_weather`, `update_plan_state` | 完整日程 | 住宿已确定 |
-| **7** | 出发前查漏 | 查漏清单生成器 | `evaluator` | `check_weather`, `generate_summary`, `update_plan_state` | 出行清单 | 所有天日程完成 |
+| **2** | 目的地选择 | 目的地推荐专家 | `agent_with_guard` | `search_destinations`, `check_feasibility`, `quick_travel_search`🆕, `update_plan_state` | 确定目的地 | 用户已表达偏好 |
+| **3** | 天数与节奏 | 行程节奏规划师 | `workflow` | `search_flights`🔀, `search_accommodations`🔀, `get_poi_info`🔀, `quick_travel_search`🆕, `update_plan_state` | 确定日期 | 目的地已确定 |
+| **4** | 住宿区域 | 住宿区域顾问 | `conversational` | `search_flights`🔀, `search_accommodations`🔀, `get_poi_info`🔀, `calculate_route`, `assemble_day_plan`, `check_availability`, `update_plan_state` | 确定住宿 | 日期已确定 |
+| **5** | 行程组装 | 行程组装引擎 | `structured` | `get_poi_info`🔀, `calculate_route`, `assemble_day_plan`, `check_availability`, `check_weather`, `update_plan_state` | 完整日程 | 住宿已确定 |
+| **7** | 出发前查漏 | 查漏清单生成器 | `evaluator` | `check_weather`, `generate_summary`, `search_travel_services`🆕, `update_plan_state` | 出行清单 | 所有天日程完成 |
+
+> 图例：🔀 = 双源融合工具（内部同时查询原始 API + FlyAI），🆕 = FlyAI 独占新工具
 
 ### 控制模式含义
 
@@ -190,6 +195,7 @@ graph TB
 每个候选必须附带：季节适宜度、预算估算、签证要求、与用户偏好的匹配度。
 最终目的地由用户拍板，你只提供信息和建议，不替用户做决定。
 如果用户已经明确了目的地，确认后直接进入下一步。
+你可以使用 quick_travel_search 快速了解候选目的地的产品概览和价格区间，帮助用户做预算估算和目的地对比。
 ```
 
 #### 可用工具
@@ -198,6 +204,7 @@ graph TB
 |--------|------|----------|------|
 | `search_destinations` | `query`, `preferences` | Google Places | 搜索匹配的目的地候选 |
 | `check_feasibility` | `destination`, `travel_date` | OpenWeather | 检查天气和可行性 |
+| `quick_travel_search` 🆕 | `query` | FlyAI CLI | 快速获取目的地产品概览和价格区间 |
 | `update_plan_state` | `field`, `value` | 无 | 记录确定的目的地 |
 
 #### 核心任务
@@ -235,7 +242,10 @@ graph TB
 
 | 工具名 | 参数 | 外部 API | 用途 |
 |--------|------|----------|------|
-| `search_flights` | `origin`, `destination`, `date`, `max_results` | Amadeus | 搜索航班 |
+| `search_flights` 🔀 | `origin`, `destination`, `date`, `max_results` | Amadeus + FlyAI | 搜索航班（双源融合） |
+| `search_accommodations` 🔀 | `destination`, `check_in`, `check_out`, ... | Google Places + FlyAI | 搜索住宿（双源融合） |
+| `get_poi_info` 🔀 | `query`, `location` | Google Places + FlyAI | 搜索景点（双源融合） |
+| `quick_travel_search` 🆕 | `query` | FlyAI CLI | 快速产品概览和价格区间 |
 | `update_plan_state` | `field`, `value` | 无 | 记录日期和约束 |
 
 #### 核心任务
@@ -274,7 +284,7 @@ graph TB
 
 | 工具名 | 参数 | 外部 API | 用途 |
 |--------|------|----------|------|
-| `search_accommodations` | `destination`, `check_in`, `check_out`, `budget_per_night`, `area`, `requirements` | Google Places | 搜索住宿 |
+| `search_accommodations` 🔀 | `destination`, `check_in`, `check_out`, `budget_per_night`, `area`, `requirements` | Google Places + FlyAI | 搜索住宿（双源融合） |
 | `calculate_route` | `origin_lat/lng`, `dest_lat/lng`, `mode` | Google Directions | 计算住宿到景点的距离 |
 | `update_plan_state` | `field`, `value` | 无 | 记录住宿信息 |
 
@@ -315,7 +325,7 @@ graph TB
 
 | 工具名 | 参数 | 外部 API | 用途 |
 |--------|------|----------|------|
-| `get_poi_info` | `query`, `location` | Google Places | 搜索景点详情 |
+| `get_poi_info` 🔀 | `query`, `location` | Google Places + FlyAI | 搜索景点详情（双源融合） |
 | `calculate_route` | 坐标对 + `mode` | Google Directions | 计算景点间路线 |
 | `assemble_day_plan` | `pois`, `start_time`, `end_time`, `max_walk_km` | 无（本地算法） | 贪心算法排序景点 |
 | `check_availability` | `place_name`, `date` | Google Places | 查询景点是否开放 |
@@ -369,6 +379,7 @@ graph TD
 你现在是出发前查漏清单生成器。针对已确认的行程，生成完整的出行检查清单。
 包含：证件准备、货币兑换、天气对应衣物、已规划项目的注意事项、紧急联系方式、目的地实用贴士。
 使用 check_weather 获取最新天气，使用 generate_summary 生成出行摘要。
+你可以使用 search_travel_services 搜索签证办理、旅行保险、电话卡、租车、接送机等实用服务，在最终摘要中附上预订链接。
 逐项检查，确保没有遗漏。
 ```
 
@@ -378,6 +389,7 @@ graph TD
 |--------|------|----------|------|
 | `check_weather` | `city`, `date` | OpenWeather | 获取天气预报 |
 | `generate_summary` | `plan_data` | 无（本地） | 生成行程摘要 |
+| `search_travel_services` 🆕 | `query`, `service_type` | FlyAI CLI | 搜索签证、保险、租车等旅行服务 |
 | `update_plan_state` | `field`, `value` | 无 | 补充信息 |
 
 #### 核心任务
@@ -440,7 +452,7 @@ classDiagram
 
 ### 5.2 工具注册方式
 
-每个工具使用 **工厂函数模式** 创建，通过闭包绑定依赖（如 API Key 或 Plan State）：
+每个工具使用 **工厂函数模式** 创建，通过闭包绑定依赖（如 API Key、Plan State 或 FlyAI Client）：
 
 ```python
 # 绑定外部依赖的工具
@@ -450,6 +462,22 @@ def make_search_destinations_tool(api_keys: ApiKeysConfig):
         # 使用闭包中的 api_keys
         ...
     return search_destinations
+
+# 双源融合工具：同时接收 api_keys 和 flyai_client
+def make_search_flights_tool(api_keys: ApiKeysConfig, flyai_client=None):
+    @tool(name="search_flights", phases=[3, 4], ...)
+    async def search_flights(origin, destination, date, max_results=5):
+        # 并行查询 Amadeus + FlyAI，归一化后合并
+        ...
+    return search_flights
+
+# FlyAI 独占工具：只接收 flyai_client
+def make_quick_travel_search_tool(flyai_client):
+    @tool(name="quick_travel_search", phases=[2, 3], ...)
+    async def quick_travel_search(query):
+        # 调用 FlyAI CLI 的 fliggy-fast-search 命令
+        ...
+    return quick_travel_search
 
 # 绑定状态的工具
 def make_update_plan_state_tool(plan: TravelPlanState):
@@ -471,14 +499,16 @@ def make_update_plan_state_tool(plan: TravelPlanState):
 | update_plan_state | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | search_destinations | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | check_feasibility | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| search_flights | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| search_accommodations | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| get_poi_info | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| search_flights 🔀 | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| search_accommodations 🔀 | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| get_poi_info 🔀 | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
 | calculate_route | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
 | assemble_day_plan | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
 | check_availability | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
 | check_weather | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
 | generate_summary | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| quick_travel_search 🆕 | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| search_travel_services 🆕 | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 > 注意：`PHASE_TOOL_NAMES` 中的配置与上表存在差异（例如 `search_flights` 在 `PHASE_TOOL_NAMES` 中只列在阶段 3，但工具自身声明 `phases=[3, 4]`）。这是代码中的一个设计不一致点，`PHASE_TOOL_NAMES` 作为死代码可能已经过时。
 
@@ -499,14 +529,70 @@ def make_update_plan_state_tool(plan: TravelPlanState):
 | `update_plan_state` | `field`, `value` | — | `updated_field`, `new_value` |
 | `search_destinations` | `query` | `preferences[]` | `destinations[]` (name, address, rating, location) |
 | `check_feasibility` | `destination`, `travel_date` | — | `weather` (temp, description), `feasible` |
-| `search_flights` | `origin`, `destination`, `date` | `max_results` (5) | `flights[]` (id, price, currency, segments) |
-| `search_accommodations` | `destination`, `check_in`, `check_out` | `budget_per_night`, `area`, `requirements[]` | `accommodations[]` (name, address, rating, price_level) |
-| `get_poi_info` | `query` | `location` | `pois[]` (name, address, rating, location, types) |
+| `search_flights` 🔀 | `origin`, `destination`, `date` | `max_results` (5) | `flights[]` (airline, price, currency, departure/arrival, segments, source, booking_url) |
+| `search_accommodations` 🔀 | `destination`, `check_in`, `check_out` | `budget_per_night`, `area`, `requirements[]` | `accommodations[]` (name, address, rating, price_level, price_per_night, source, booking_url) |
+| `get_poi_info` 🔀 | `query` | `location` | `pois[]` (name, address, rating, location, types, source, ticket_price, booking_url) |
 | `calculate_route` | `origin_lat/lng`, `dest_lat/lng` | `mode` (transit) | `distance`, `duration`, `steps[]` |
 | `assemble_day_plan` | `pois[]` | `start_time` (09:00), `end_time` (21:00), `max_walk_km` (10) | `ordered_pois[]`, `total_distance_km`, `estimated_hours` |
 | `check_availability` | `place_name`, `date` | — | `likely_open`, `hours` |
 | `check_weather` | `city`, `date` | — | `forecast` (temp, temp_min/max, description, humidity, wind) |
 | `generate_summary` | `plan_data` | — | `summary` (文本), `total_days`, `total_budget` |
+| `quick_travel_search` 🆕 | `query` | — | `items[]` (title, price, jumpUrl, picUrl, tag) |
+| `search_travel_services` 🆕 | `query` | `service_type` | `services[]` (title, price, detailUrl, picUrl, tag) |
+
+### 5.6 双源融合架构（FlyAI 集成）
+
+v2.0 新增的核心机制。3 个融合工具（`search_flights`、`search_accommodations`、`get_poi_info`）内部同时查询原始 API 和 FlyAI CLI，对 LLM 透明——LLM 只看到一个工具，不感知数据来源差异。
+
+#### 架构总览
+
+```mermaid
+graph LR
+    LLM["LLM 调用<br>search_flights(...)"] --> Tool["融合工具内部"]
+    
+    subgraph Tool["工具内部（并行查询）"]
+        direction TB
+        A["原始 API<br>(Amadeus/Google)"] 
+        B["FlyAI CLI<br>(flyai search-flight)"]
+    end
+    
+    A --> Norm["归一化<br>(normalizers.py)"]
+    B --> Norm
+    Norm --> Merge["合并去重<br>(merge策略)"]
+    Merge --> Result["统一返回格式"]
+```
+
+#### 数据归一化
+
+`backend/tools/normalizers.py` 定义了 3 个标准化数据类和 9 个归一化函数：
+
+| 数据类 | 字段 | 用途 |
+|--------|------|------|
+| `FlightResult` | airline, price, currency, departure, arrival, duration, segments, source, booking_url | 航班统一格式 |
+| `AccommodationResult` | name, address, rating, price_per_night, currency, source, booking_url | 住宿统一格式 |
+| `POIResult` | name, address, rating, lat, lng, types, source, ticket_price, booking_url | 景点统一格式 |
+
+每个数据类有对应的 `normalize_xxx_from_amadeus/google()` 和 `normalize_xxx_from_flyai()` 函数，将不同 API 的异构响应转换为统一结构。
+
+#### 合并策略
+
+3 个 `merge_xxx()` 函数使用**模糊名称匹配 + 去重**策略：
+
+1. 以原始 API 结果为基础列表
+2. 遍历 FlyAI 结果，使用增强的 `_fuzzy_name_ratio()` 计算名称相似度
+3. 相似度 ≥ 0.8 时视为同一条目，将 FlyAI 的 `booking_url` 和 `source` 合并到已有条目
+4. 相似度 < 0.8 时作为新条目追加
+
+`_fuzzy_name_ratio()` 增强了标准 `SequenceMatcher`：提取拉丁字符子串进行额外的子串包含检测，解决中英混合名称匹配问题（如 "金阁寺 Kinkaku-ji" vs "Kinkaku-ji Temple"）。
+
+#### 优雅降级
+
+FlyAI 采用**静默降级**设计：
+
+- `FlyAIClient` 初始化时检测 `flyai` CLI 是否安装（`which flyai`），不可用时 `self.available = False`
+- 工具工厂接收 `flyai_client=None`，客户端缺失时仅使用原始 API
+- CLI 调用超时（默认 30s）或返回错误时，记录 warning 日志并返回空列表
+- 任何单源失败不影响另一源的结果返回
 
 ---
 
@@ -982,17 +1068,21 @@ graph TD
 |---------|--------|----------|
 | `backend/tools/base.py` | （基础设施） | — |
 | `backend/tools/engine.py` | （工具引擎） | — |
+| `backend/tools/flyai_client.py` | （FlyAI CLI 异步封装） | FlyAI CLI |
+| `backend/tools/normalizers.py` | （数据归一化 + 合并策略） | — |
 | `backend/tools/update_plan_state.py` | `update_plan_state` | 无 |
 | `backend/tools/search_destinations.py` | `search_destinations` | Google Places |
 | `backend/tools/check_feasibility.py` | `check_feasibility` | OpenWeather |
-| `backend/tools/search_flights.py` | `search_flights` | Amadeus |
-| `backend/tools/search_accommodations.py` | `search_accommodations` | Google Places |
-| `backend/tools/get_poi_info.py` | `get_poi_info` | Google Places |
+| `backend/tools/search_flights.py` | `search_flights` 🔀 | Amadeus + FlyAI |
+| `backend/tools/search_accommodations.py` | `search_accommodations` 🔀 | Google Places + FlyAI |
+| `backend/tools/get_poi_info.py` | `get_poi_info` 🔀 | Google Places + FlyAI |
 | `backend/tools/calculate_route.py` | `calculate_route` | Google Directions |
 | `backend/tools/assemble_day_plan.py` | `assemble_day_plan` | 无（本地算法） |
 | `backend/tools/check_availability.py` | `check_availability` | Google Places |
 | `backend/tools/check_weather.py` | `check_weather` | OpenWeather |
 | `backend/tools/generate_summary.py` | `generate_summary` | 无（本地格式化） |
+| `backend/tools/quick_travel_search.py` | `quick_travel_search` 🆕 | FlyAI CLI |
+| `backend/tools/search_travel_services.py` | `search_travel_services` 🆕 | FlyAI CLI |
 
 ### 辅助模块
 
@@ -1006,7 +1096,7 @@ graph TD
 | `backend/llm/factory.py` | LLM Provider 工厂 |
 | `backend/llm/openai_provider.py` | OpenAI 实现 |
 | `backend/llm/anthropic_provider.py` | Anthropic 实现 |
-| `backend/config.py` | 配置加载（yaml + 环境变量） |
+| `backend/config.py` | 配置加载（yaml + 环境变量），含 `FlyAIConfig` |
 | `backend/context/soul.md` | Agent 身份定义 |
 
 ### 前端文件
@@ -1027,17 +1117,17 @@ graph TD
 
 ## 附录 A：已知设计不一致点
 
-### A.1 `PHASE_TOOL_NAMES` vs 工具 `phases` 声明
+### A.1 `PHASE_TOOL_NAMES` vs 工具 `phases` 声明 ✅ 已修复 (462fb39)
 
-`prompts.py` 中的 `PHASE_TOOL_NAMES` 和各工具文件中的 `phases` 参数存在不一致。`PHASE_TOOL_NAMES` 从未被运行时调用（`PhaseRouter.get_tool_names()` 是死代码），实际工具过滤由 `ToolEngine.get_tools_for_phase()` 基于各工具文件中的 `phases` 声明执行。建议统一为单一来源。
+`prompts.py` 中的 `PHASE_TOOL_NAMES` 和各工具文件中的 `phases` 参数存在不一致。`PHASE_TOOL_NAMES` 从未被运行时调用（`PhaseRouter.get_tool_names()` 是死代码），实际工具过滤由 `ToolEngine.get_tools_for_phase()` 基于各工具文件中的 `phases` 声明执行。**修复方案**：已移除 `PHASE_TOOL_NAMES` 死代码和对应的 `PhaseRouter.get_tool_names()` 方法，统一为单一来源。
 
-### A.2 `update_plan_state` 的 `_ALLOWED_FIELDS` 不含 `daily_plans`
+### A.2 `update_plan_state` 的 `_ALLOWED_FIELDS` 不含 `daily_plans` ✅ 已修复 (462fb39)
 
-`update_plan_state` 工具通过白名单 `_ALLOWED_FIELDS` 限制可更新字段，但 `daily_plans` 不在其中。这意味着阶段 5（行程组装）生成的日程无法直接通过 `update_plan_state` 写入。实际上日程数据可能需要通过其他路径（如直接在闭包中修改 plan 对象）写入。
+`update_plan_state` 工具通过白名单 `_ALLOWED_FIELDS` 限制可更新字段，但 `daily_plans` 不在其中。**修复方案**：已将 `daily_plans` 添加到 `_ALLOWED_FIELDS` 白名单中。
 
-### A.3 `max_retries` 参数未使用
+### A.3 `max_retries` 参数未使用 ✅ 已修复 (462fb39)
 
-`AgentLoop.__init__` 接受 `max_retries` 参数（默认 3），但 `run()` 方法中只使用了硬编码的 `range(20)` 作为循环上限，`max_retries` 从未被引用。
+`AgentLoop.__init__` 接受 `max_retries` 参数（默认 3），但 `run()` 方法中只使用了硬编码的 `range(20)` 作为循环上限，`max_retries` 从未被引用。**修复方案**：已将 `run()` 中的硬编码 `range(20)` 替换为 `range(self.max_retries)`。
 
 ---
 
