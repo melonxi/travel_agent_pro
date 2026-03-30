@@ -31,10 +31,18 @@ class ApiKeysConfig:
 
 
 @dataclass(frozen=True)
+class TelemetryConfig:
+    enabled: bool = True
+    endpoint: str = "http://localhost:4317"
+    service_name: str = "travel-agent-pro"
+
+
+@dataclass(frozen=True)
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     llm_overrides: dict[str, LLMConfig] = field(default_factory=dict)
     api_keys: ApiKeysConfig = field(default_factory=ApiKeysConfig)
+    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     data_dir: str = "./data"
     max_retries: int = 3
     context_compression_threshold: float = 0.5
@@ -106,6 +114,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         return AppConfig(
             llm=_build_llm_config({}),
             api_keys=_build_api_keys({}),
+            telemetry=TelemetryConfig(),
         )
 
     with open(path) as f:
@@ -121,10 +130,18 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
 
     api_keys = _build_api_keys(raw.get("api_keys", {}))
 
+    tel_raw = raw.get("telemetry", {})
+    telemetry = TelemetryConfig(
+        enabled=tel_raw.get("enabled", True),
+        endpoint=tel_raw.get("endpoint", "http://localhost:4317"),
+        service_name=tel_raw.get("service_name", "travel-agent-pro"),
+    )
+
     return AppConfig(
         llm=llm,
         llm_overrides=overrides,
         api_keys=api_keys,
+        telemetry=telemetry,
         data_dir=raw.get("data_dir", "./data"),
         max_retries=raw.get("max_retries", 3),
         context_compression_threshold=raw.get("context_compression_threshold", 0.5),
