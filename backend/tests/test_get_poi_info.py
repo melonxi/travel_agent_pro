@@ -35,7 +35,7 @@ async def test_get_poi_info(tool_fn):
     result = await tool_fn(query="金阁寺", location="京都")
     assert len(result["pois"]) == 1
     assert result["pois"][0]["name"] == "Kinkaku-ji"
-    assert result["source"] == "google_places"
+    assert result["pois"][0]["source"] == "google"
 
 
 @pytest.mark.asyncio
