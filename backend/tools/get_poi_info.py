@@ -1,10 +1,16 @@
 # backend/tools/get_poi_info.py
 from __future__ import annotations
 
+import asyncio
+import logging
+
 import httpx
 
 from config import ApiKeysConfig
 from tools.base import ToolError, tool
+from tools.normalizers import normalize_google_poi, normalize_flyai_poi, merge_pois
+
+logger = logging.getLogger(__name__)
 
 _PARAMETERS = {
     "type": "object",
@@ -22,52 +28,79 @@ _PARAMETERS = {
 }
 
 
-def make_get_poi_info_tool(api_keys: ApiKeysConfig):
+def make_get_poi_info_tool(api_keys: ApiKeysConfig, flyai_client=None):
     @tool(
         name="get_poi_info",
         description="""获取景点/兴趣点详细信息。
 Use when: 用户在阶段 3-5，需要了解某个景点的详情。
 Don't use when: 已有该景点的完整信息。
-返回景点列表，含名称、地址、评分和位置。""",
+返回景点列表，含名称、地址、评分、门票价格和位置。""",
         phases=[3, 4, 5],
         parameters=_PARAMETERS,
     )
     async def get_poi_info(query: str, location: str | None = None) -> dict:
-        if not api_keys.google_maps:
+        tasks = []
+
+        # Branch 1: Google Places
+        async def _google():
+            if not api_keys.google_maps:
+                return []
+            search_query = query
+            if location:
+                search_query += f" in {location}"
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://maps.googleapis.com/maps/api/place/textsearch/json",
+                    params={
+                        "query": search_query,
+                        "key": api_keys.google_maps,
+                    },
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            return [normalize_google_poi(p) for p in data.get("results", [])[:5]]
+
+        tasks.append(_google())
+
+        # Branch 2: FlyAI
+        async def _flyai():
+            if not flyai_client or not flyai_client.available:
+                return []
+            city = location or ""
+            raw_list = await flyai_client.search_poi(
+                city_name=city,
+                keyword=query,
+            )
+            return [normalize_flyai_poi(r) for r in raw_list]
+
+        tasks.append(_flyai())
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        google_results = results[0] if not isinstance(results[0], BaseException) else []
+        flyai_results = results[1] if not isinstance(results[1], BaseException) else []
+
+        if isinstance(results[0], BaseException):
+            logger.warning("Google POI search failed: %s", results[0])
+        if isinstance(results[1], BaseException):
+            logger.warning("FlyAI POI search failed: %s", results[1])
+
+        if not google_results and not flyai_results:
+            if not api_keys.google_maps:
+                raise ToolError(
+                    "Google Maps API key not configured",
+                    error_code="NO_API_KEY",
+                    suggestion="Set GOOGLE_MAPS_API_KEY",
+                )
             raise ToolError(
-                "Google Maps API key not configured",
-                error_code="NO_API_KEY",
-                suggestion="Set GOOGLE_MAPS_API_KEY",
+                "No POI results from any source",
+                error_code="NO_RESULTS",
+                suggestion="Try a different search query",
             )
 
-        search_query = query
-        if location:
-            search_query += f" in {location}"
+        merged = merge_pois(google_results, flyai_results)
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                "https://maps.googleapis.com/maps/api/place/textsearch/json",
-                params={
-                    "query": search_query,
-                    "key": api_keys.google_maps,
-                },
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-        pois = []
-        for place in data.get("results", [])[:5]:
-            pois.append(
-                {
-                    "name": place.get("name", ""),
-                    "formatted_address": place.get("formatted_address", ""),
-                    "rating": place.get("rating"),
-                    "location": place.get("geometry", {}).get("location", {}),
-                    "types": place.get("types", []),
-                }
-            )
-
-        return {"pois": pois, "source": "google_places", "query": query}
+        return {"pois": [p.to_dict() for p in merged], "query": query}
 
     return get_poi_info

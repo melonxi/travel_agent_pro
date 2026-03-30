@@ -1,10 +1,20 @@
 # backend/tools/search_flights.py
 from __future__ import annotations
 
+import asyncio
+import logging
+
 import httpx
 
 from config import ApiKeysConfig
 from tools.base import ToolError, tool
+from tools.normalizers import (
+    normalize_amadeus_flight,
+    normalize_flyai_flight,
+    merge_flights,
+)
+
+logger = logging.getLogger(__name__)
 
 _PARAMETERS = {
     "type": "object",
@@ -23,57 +33,118 @@ _PARAMETERS = {
     "required": ["origin", "destination", "date"],
 }
 
+# IATA code → Chinese city name (common destinations)
+_IATA_TO_CITY: dict[str, str] = {
+    "PEK": "北京",
+    "PKX": "北京",
+    "SHA": "上海",
+    "PVG": "上海",
+    "CAN": "广州",
+    "SZX": "深圳",
+    "CTU": "成都",
+    "HGH": "杭州",
+    "NKG": "南京",
+    "WUH": "武汉",
+    "CKG": "重庆",
+    "XIY": "西安",
+    "KMG": "昆明",
+    "XMN": "厦门",
+    "NRT": "东京",
+    "HND": "东京",
+    "KIX": "大阪",
+    "ICN": "首尔",
+    "BKK": "曼谷",
+    "SIN": "新加坡",
+    "DPS": "巴厘岛",
+    "HKG": "香港",
+    "TPE": "台北",
+}
 
-def make_search_flights_tool(api_keys: ApiKeysConfig):
+
+def make_search_flights_tool(api_keys: ApiKeysConfig, flyai_client=None):
     @tool(
         name="search_flights",
         description="""搜索航班信息。
 Use when: 用户在阶段 3-4，需要查询航班选项。
 Don't use when: 航班已预订或不需要飞行。
-返回航班列表，含价格、时间和航空公司信息。""",
+返回航班列表，含价格、时间、航空公司信息和预订链接。""",
         phases=[3, 4],
         parameters=_PARAMETERS,
     )
     async def search_flights(
         origin: str, destination: str, date: str, max_results: int = 5
     ) -> dict:
-        if not api_keys.amadeus_key:
+        tasks = []
+
+        # Branch 1: Amadeus
+        async def _amadeus():
+            if not api_keys.amadeus_key:
+                return []
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "https://test.api.amadeus.com/v2/shopping/flight-offers",
+                    json={
+                        "originLocationCode": origin,
+                        "destinationLocationCode": destination,
+                        "departureDate": date,
+                        "adults": 1,
+                        "max": max_results,
+                    },
+                    headers={"Authorization": f"Bearer {api_keys.amadeus_key}"},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            return [
+                normalize_amadeus_flight(o) for o in data.get("data", [])[:max_results]
+            ]
+
+        tasks.append(_amadeus())
+
+        # Branch 2: FlyAI
+        async def _flyai():
+            if not flyai_client or not flyai_client.available:
+                return []
+            origin_city = _IATA_TO_CITY.get(origin.upper(), origin)
+            dest_city = _IATA_TO_CITY.get(destination.upper(), destination)
+            raw_list = await flyai_client.search_flight(
+                origin=origin_city,
+                destination=dest_city,
+                date=date,
+            )
+            return [normalize_flyai_flight(r) for r in raw_list]
+
+        tasks.append(_flyai())
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        amadeus_results = (
+            results[0] if not isinstance(results[0], BaseException) else []
+        )
+        flyai_results = results[1] if not isinstance(results[1], BaseException) else []
+
+        if isinstance(results[0], BaseException):
+            logger.warning("Amadeus search failed: %s", results[0])
+        if isinstance(results[1], BaseException):
+            logger.warning("FlyAI flight search failed: %s", results[1])
+
+        if not amadeus_results and not flyai_results:
+            if not api_keys.amadeus_key:
+                raise ToolError(
+                    "Amadeus API key not configured",
+                    error_code="NO_API_KEY",
+                    suggestion="Set AMADEUS_KEY",
+                )
             raise ToolError(
-                "Amadeus API key not configured",
-                error_code="NO_API_KEY",
-                suggestion="Set AMADEUS_KEY",
+                "No flight results from any source",
+                error_code="NO_RESULTS",
+                suggestion="Try different dates or airports",
             )
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "https://test.api.amadeus.com/v2/shopping/flight-offers",
-                json={
-                    "originLocationCode": origin,
-                    "destinationLocationCode": destination,
-                    "departureDate": date,
-                    "adults": 1,
-                    "max": max_results,
-                },
-                headers={"Authorization": f"Bearer {api_keys.amadeus_key}"},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-        flights = []
-        for offer in data.get("data", [])[:max_results]:
-            flights.append(
-                {
-                    "id": offer.get("id", ""),
-                    "price": offer.get("price", {}).get("total", ""),
-                    "currency": offer.get("price", {}).get("currency", ""),
-                    "segments": offer.get("itineraries", []),
-                }
-            )
+        merged = merge_flights(amadeus_results, flyai_results)
 
         return {
-            "flights": flights,
-            "source": "amadeus",
+            "flights": [f.to_dict() for f in merged],
             "origin": origin,
             "destination": destination,
         }

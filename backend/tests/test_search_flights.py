@@ -32,8 +32,8 @@ async def test_search_flights(tool_fn):
     )
     result = await tool_fn(origin="PEK", destination="NRT", date="2024-07-15")
     assert len(result["flights"]) == 1
-    assert result["flights"][0]["price"] == "3500.00"
-    assert result["source"] == "amadeus"
+    assert result["flights"][0]["price"] == 3500.0
+    assert result["flights"][0]["source"] == "amadeus"
     assert result["origin"] == "PEK"
 
 
