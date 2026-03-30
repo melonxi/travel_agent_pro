@@ -10,12 +10,22 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [plan, setPlan] = useState<TravelPlanState | null>(null)
 
+  const handlePlanUpdate = (newPlan: TravelPlanState) => {
+    console.log('🔄 App received plan update, phase:', newPlan.phase)
+    setPlan(newPlan)
+  }
+
   useEffect(() => {
     fetch('/api/sessions', { method: 'POST' })
       .then((r) => r.json())
       .then((data) => {
         setSessionId(data.session_id)
-        setPlan({ session_id: data.session_id, phase: 1, destination: null, dates: null, budget: null, accommodation: null, daily_plans: [], backtrack_history: [] })
+        // Fetch initial plan state
+        return fetch(`/api/plan/${data.session_id}`)
+      })
+      .then((r) => r.json())
+      .then((planData) => {
+        setPlan(planData)
       })
   }, [])
 
@@ -29,7 +39,7 @@ export default function App() {
       </header>
       <div className="app-body">
         <div className="left-panel">
-          <ChatPanel sessionId={sessionId} onPlanUpdate={setPlan} />
+          <ChatPanel sessionId={sessionId} onPlanUpdate={handlePlanUpdate} />
         </div>
         <div className="right-panel">
           {plan && (
