@@ -12,3 +12,19 @@ PHASE_FROM = "phase.from"
 PHASE_TO = "phase.to"
 CONTEXT_TOKENS_BEFORE = "context.tokens.before"
 CONTEXT_TOKENS_AFTER = "context.tokens.after"
+
+
+# --- Phase B: Span Event Names ---
+
+EVENT_TOOL_INPUT = "tool.input"
+EVENT_TOOL_OUTPUT = "tool.output"
+EVENT_LLM_REQUEST = "llm.request"
+EVENT_LLM_RESPONSE = "llm.response"
+EVENT_PHASE_PLAN_SNAPSHOT = "phase.plan_snapshot"
+EVENT_CONTEXT_COMPRESSION = "context.compression"
+
+
+def truncate(value: str, max_len: int = 512) -> str:
+    if len(value) <= max_len:
+        return value
+    return value[:max_len] + "...(truncated)"
