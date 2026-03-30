@@ -55,3 +55,63 @@ async def test_openai_chat_creates_span(otel_exporter):
     span = next(s for s in spans if s.name == "llm.chat")
     assert span.attributes[LLM_PROVIDER] == "openai"
     assert span.attributes[LLM_MODEL] == "gpt-4o"
+
+
+from telemetry.attributes import EVENT_LLM_REQUEST, EVENT_LLM_RESPONSE
+
+
+async def test_openai_chat_has_request_event(otel_exporter):
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = "hello"
+    mock_choice.message.tool_calls = None
+    mock_response.choices = [mock_choice]
+
+    with patch("llm.openai_provider.AsyncOpenAI") as MockClient:
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        from llm.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(model="gpt-4o")
+        messages = [Message(role=Role.USER, content="hello")]
+
+        async for _ in provider.chat(messages, stream=False):
+            pass
+
+    spans = otel_exporter.get_finished_spans()
+    span = next(s for s in spans if s.name == "llm.chat")
+    events = span.events
+
+    req_event = next(e for e in events if e.name == EVENT_LLM_REQUEST)
+    assert req_event.attributes["message_count"] == 1
+    assert req_event.attributes["has_tools"] is False
+
+    resp_event = next(e for e in events if e.name == EVENT_LLM_RESPONSE)
+    assert "text_preview" in resp_event.attributes
+
+
+async def test_openai_chat_request_event_with_tools(otel_exporter):
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = "ok"
+    mock_choice.message.tool_calls = None
+    mock_response.choices = [mock_choice]
+
+    with patch("llm.openai_provider.AsyncOpenAI") as MockClient:
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        from llm.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(model="gpt-4o")
+        messages = [Message(role=Role.USER, content="hello")]
+        tools = [{"name": "search", "description": "search", "parameters": {}}]
+
+        async for _ in provider.chat(messages, tools=tools, stream=False):
+            pass
+
+    spans = otel_exporter.get_finished_spans()
+    span = next(s for s in spans if s.name == "llm.chat")
+    req_event = next(e for e in span.events if e.name == EVENT_LLM_REQUEST)
+    assert req_event.attributes["has_tools"] is True

@@ -10,7 +10,7 @@ from opentelemetry import trace as otel_trace
 
 from agent.types import Message, Role, ToolCall
 from llm.types import ChunkType, LLMChunk
-from telemetry.attributes import LLM_PROVIDER, LLM_MODEL
+from telemetry.attributes import LLM_PROVIDER, LLM_MODEL, EVENT_LLM_REQUEST, EVENT_LLM_RESPONSE, truncate
 
 
 class OpenAIProvider:
@@ -91,6 +91,12 @@ class OpenAIProvider:
         with tracer.start_as_current_span("llm.chat") as span:
             span.set_attribute(LLM_PROVIDER, "openai")
             span.set_attribute(LLM_MODEL, self.model)
+            total_chars = sum(len(m.content or "") for m in messages)
+            span.add_event(EVENT_LLM_REQUEST, {
+                "message_count": len(messages),
+                "total_chars": total_chars,
+                "has_tools": tools is not None and len(tools) > 0,
+            })
             kwargs: dict[str, Any] = {
                 "model": self.model,
                 "messages": self._convert_messages(messages),
@@ -118,11 +124,20 @@ class OpenAIProvider:
                                 arguments=json.loads(tc.function.arguments),
                             ),
                         )
+                text_preview = truncate(choice.message.content or "", max_len=200)
+                tool_names = []
+                if choice.message.tool_calls:
+                    tool_names = [tc.function.name for tc in choice.message.tool_calls]
+                span.add_event(EVENT_LLM_RESPONSE, {
+                    "text_preview": text_preview,
+                    "tool_calls": json.dumps(tool_names),
+                })
                 yield LLMChunk(type=ChunkType.DONE)
                 return
 
             response = await self.client.chat.completions.create(**kwargs)
             current_tool_calls: dict[int, dict] = {}
+            collected_text = ""
 
             async for chunk in response:
                 delta = chunk.choices[0].delta if chunk.choices else None
@@ -130,6 +145,7 @@ class OpenAIProvider:
                     continue
 
                 if delta.content:
+                    collected_text += delta.content
                     yield LLMChunk(type=ChunkType.TEXT_DELTA, content=delta.content)
 
                 if delta.tool_calls:
@@ -162,6 +178,11 @@ class OpenAIProvider:
                                 else {},
                             ),
                         )
+                    tool_call_names = [entry["name"] for entry in current_tool_calls.values()]
+                    span.add_event(EVENT_LLM_RESPONSE, {
+                        "text_preview": truncate(collected_text, max_len=200),
+                        "tool_calls": json.dumps(tool_call_names),
+                    })
                     yield LLMChunk(type=ChunkType.DONE)
                     return
 
