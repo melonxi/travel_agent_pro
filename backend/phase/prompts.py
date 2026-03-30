@@ -27,21 +27,6 @@ PHASE_PROMPTS: dict[int, str] = {
 逐项检查，确保没有遗漏。""",
 }
 
-PHASE_TOOL_NAMES: dict[int, list[str]] = {
-    1: ["update_plan_state"],
-    2: ["search_destinations", "check_feasibility", "update_plan_state"],
-    3: ["search_flights", "update_plan_state"],
-    4: ["search_accommodations", "calculate_route", "update_plan_state"],
-    5: [
-        "get_poi_info",
-        "calculate_route",
-        "assemble_day_plan",
-        "check_availability",
-        "update_plan_state",
-    ],
-    7: ["check_weather", "generate_summary", "update_plan_state"],
-}
-
 PHASE_CONTROL_MODE: dict[int, str] = {
     1: "conversational",
     2: "agent_with_guard",

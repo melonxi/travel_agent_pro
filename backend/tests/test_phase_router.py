@@ -75,18 +75,6 @@ def test_get_prompt_for_all_phases(router):
         assert len(prompt) > 50
 
 
-def test_get_tool_names_phase_1(router):
-    names = router.get_tool_names(1)
-    assert names == ["update_plan_state"]
-
-
-def test_get_tool_names_phase_5(router):
-    names = router.get_tool_names(5)
-    assert "get_poi_info" in names
-    assert "assemble_day_plan" in names
-    assert "update_plan_state" in names
-
-
 def test_check_transition_no_change(router):
     plan = TravelPlanState(session_id="s1", phase=1)
     changed = router.check_and_apply_transition(plan)

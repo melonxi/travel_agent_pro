@@ -30,7 +30,7 @@ class AgentLoop:
     ) -> AsyncIterator[LLMChunk]:
         tools = tools_override or self.tool_engine.get_tools_for_phase(phase)
 
-        for _ in range(20):  # safety limit on loop iterations
+        for _ in range(self.max_retries):  # safety limit on loop iterations
             await self.hooks.run("before_llm_call", messages=messages, phase=phase)
 
             tool_calls: list[ToolCall] = []
