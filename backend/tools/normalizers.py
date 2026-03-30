@@ -147,14 +147,36 @@ def normalize_google_poi(raw: dict) -> POIResult:
 # ---------------------------------------------------------------------------
 
 
+def _safe_float(val: object) -> float | None:
+    """Parse a price value that may contain currency symbols (¥, $, €, etc.).
+
+    Handles cases like '¥589', '$120.50', '1,200', '1200', 120, 120.5, None, ''.
+    Returns None if the value cannot be parsed.
+    """
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    # Strip common currency symbols, whitespace, and thousand-separators
+    import re
+
+    cleaned = re.sub(r"[¥$€£￥,\s]", "", s)
+    if not cleaned:
+        return None
+    try:
+        return float(cleaned)
+    except (ValueError, TypeError):
+        return None
+
+
 def normalize_flyai_flight(raw: dict) -> FlightResult:
     journeys = raw.get("journeys", [{}])
     first_journey = journeys[0] if journeys else {}
     segments = first_journey.get("segments", [{}])
     first_seg = segments[0] if segments else {}
 
-    price_str = raw.get("price")
-    price = float(price_str) if price_str else None
+    price = _safe_float(raw.get("price"))
 
     return FlightResult(
         airline=first_seg.get("airlineName", ""),
@@ -174,8 +196,7 @@ def normalize_flyai_flight(raw: dict) -> FlightResult:
 
 
 def normalize_flyai_hotel(raw: dict) -> AccommodationResult:
-    price_val = raw.get("price")
-    price = float(price_val) if price_val is not None else None
+    price = _safe_float(raw.get("price"))
 
     score_val = raw.get("score")
     rating = float(score_val) if score_val is not None else None
@@ -197,8 +218,7 @@ def normalize_flyai_hotel(raw: dict) -> AccommodationResult:
 
 def normalize_flyai_poi(raw: dict) -> POIResult:
     ticket_info = raw.get("ticketInfo", {}) or {}
-    ticket_price_val = ticket_info.get("price")
-    ticket_price = float(ticket_price_val) if ticket_price_val is not None else None
+    ticket_price = _safe_float(ticket_info.get("price"))
 
     return POIResult(
         name=raw.get("title", raw.get("name", "")),

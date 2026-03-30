@@ -110,7 +110,7 @@ Don't use when: 航班已预订或不需要飞行。
             raw_list = await flyai_client.search_flight(
                 origin=origin_city,
                 destination=dest_city,
-                date=date,
+                dep_date=date,
             )
             return [normalize_flyai_flight(r) for r in raw_list]
 
@@ -129,16 +129,20 @@ Don't use when: 航班已预订或不需要飞行。
             logger.warning("FlyAI flight search failed: %s", results[1])
 
         if not amadeus_results and not flyai_results:
+            reasons = []
             if not api_keys.amadeus_key:
-                raise ToolError(
-                    "Amadeus API key not configured",
-                    error_code="NO_API_KEY",
-                    suggestion="Set AMADEUS_KEY",
-                )
+                reasons.append("Amadeus API key not configured")
+            elif isinstance(results[0], BaseException):
+                reasons.append(f"Amadeus error: {results[0]}")
+            if not flyai_client or not flyai_client.available:
+                reasons.append("FlyAI CLI not available")
+            elif isinstance(results[1], BaseException):
+                reasons.append(f"FlyAI error: {results[1]}")
             raise ToolError(
-                "No flight results from any source",
+                "No flight results from any source"
+                + (f" ({'; '.join(reasons)})" if reasons else ""),
                 error_code="NO_RESULTS",
-                suggestion="Try different dates or airports",
+                suggestion="Check API keys, install FlyAI CLI, or try different dates/airports",
             )
 
         merged = merge_flights(amadeus_results, flyai_results)
