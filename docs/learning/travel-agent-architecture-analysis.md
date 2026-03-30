@@ -46,27 +46,28 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 
 ### 核心模块关系
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                      main.py (FastAPI)                   │
-│  ┌──────────┐  ┌─────────────┐  ┌────────────────────┐  │
-│  │ 回溯检测  │  │ 事实提取     │  │ 上下文构建          │  │
-│  │ (正则)    │  │ (intake.py) │  │ (ContextManager)   │  │
-│  └────┬─────┘  └──────┬──────┘  └─────────┬──────────┘  │
-│       │               │                    │             │
-│  ┌────▼─────────────────────────────────────▼──────────┐ │
-│  │              AgentLoop (loop.py)                     │ │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │ │
-│  │  │ LLM 调用  │  │ 工具执行  │  │ HookManager      │   │ │
-│  │  │ (流式)    │  │ (Engine) │  │ before/after     │   │ │
-│  │  └──────────┘  └──────────┘  └──────────────────┘   │ │
-│  └─────────────────────────────────────────────────────┘ │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │ PhaseRouter  │  │ StateManager │  │ MemoryManager │  │
-│  │ (阶段推断)   │  │ (状态持久化)  │  │ (用户画像)    │  │
-│  └──────────────┘  └──────────────┘  └───────────────┘  │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Main["main.py (FastAPI)"]
+        A["回溯检测<br>(正则)"]
+        B["事实提取<br>(intake.py)"]
+        C["上下文构建<br>(ContextManager)"]
+        
+        subgraph Loop["AgentLoop (loop.py)"]
+            direction LR
+            D["LLM 调用<br>(流式)"]
+            E["工具执行<br>(Engine)"]
+            F["HookManager<br>(before/after)"]
+        end
+        
+        G["PhaseRouter<br>(阶段推断)"]
+        H["StateManager<br>(状态持久化)"]
+        I["MemoryManager<br>(用户画像)"]
+        
+        A --> Loop
+        B --> Loop
+        C --> Loop
+    end
 ```
 
 ---
@@ -102,26 +103,16 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 
 ### 组成结构
 
-```
-┌─────────────────────────────────────────┐
-│  ① Soul（Agent 身份 / soul.md）         │
-├─────────────────────────────────────────┤
-│  ② 当前阶段指引（Phase Prompt）          │
-├─────────────────────────────────────────┤
-│  ③ 当前规划状态（Runtime Context）       │
-│    - 阶段编号                            │
-│    - 目的地（若有）                      │
-│    - 日期范围（若有）                    │
-│    - 预算 + 已分配金额                   │
-│    - 住宿区域（若有）                    │
-│    - 已规划天数 / 总天数                 │
-│    - 最近回溯事件（若有）                │
-├─────────────────────────────────────────┤
-│  ④ 用户画像（User Profile）              │
-│    - 显式偏好                            │
-│    - 出行历史 + 满意度                   │
-│    - 永久排除项                          │
-└─────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph 系统消息构建结构
+        direction TB
+        A["① Soul（Agent 身份 / soul.md）"]
+        B["② 当前阶段指引（Phase Prompt）"]
+        C["③ 当前规划状态（Runtime Context）<br/>- 阶段编号<br/>- 目的地（若有）<br/>- 日期范围（若有）<br/>- 预算 + 已分配金额<br/>- 住宿区域（若有）<br/>- 已规划天数 / 总天数<br/>- 最近回溯事件（若有）"]
+        D["④ 用户画像（User Profile）<br/>- 显式偏好<br/>- 出行历史 + 满意度<br/>- 永久排除项"]
+        A ~~~ B ~~~ C ~~~ D
+    end
 ```
 
 ### Soul（Agent 身份）
@@ -341,15 +332,17 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 
 #### `assemble_day_plan` 算法详解
 
-```
-输入: POIs 列表（含坐标和游览时长）
-算法: 贪心最近邻
-  1. 取第一个 POI 作为起点
-  2. 从剩余 POI 中找到距离最近的（Haversine 公式）
-  3. 加入有序列表，重复直到所有 POI 排完
-  4. 累计总步行距离
-  5. 估算总时间 = Σ游览时长 + 总距离 × 0.25h/km
-输出: 排序后的 POIs + 总距离 + 估计时长
+```mermaid
+graph TD
+    Input["输入: POIs 列表（含坐标和游览时长）"] --> Step1
+    Step1["1. 取第一个 POI 作为起点"] --> Step2
+    Step2["2. 从剩余 POI 中找到距离最近的<br>(Haversine 公式)"] --> Step3
+    Step3["3. 加入有序列表"] --> LoopCheck{"所有 POI 排完?"}
+    LoopCheck -- 否 --> Step2
+    LoopCheck -- 是 --> Step4
+    Step4["4. 累计总步行距离"] --> Step5
+    Step5["5. 估算总时间<br>= Σ游览时长 + 总距离 × 0.25h/km"] --> Output
+    Output["输出: 排序后的 POIs + 总距离 + 估计时长"]
 ```
 
 #### 转出条件
@@ -408,23 +401,41 @@ Travel Agent Pro 是一个多阶段旅行规划 Agent，采用 **状态驱动的
 
 工具系统由三层组成：
 
-```
-┌──────────────────────────────────────────┐
-│  ToolDef（工具定义）                      │
-│  - name, description, phases, parameters │
-│  - _fn（异步可调用函数）                  │
-│  - @tool 装饰器生成                      │
-├──────────────────────────────────────────┤
-│  ToolEngine（工具引擎）                   │
-│  - register()   注册工具                 │
-│  - get_tools_for_phase()  按阶段过滤     │
-│  - execute()    执行工具调用              │
-├──────────────────────────────────────────┤
-│  ToolCall / ToolResult（调用和结果类型）   │
-│  - ToolCall: id, name, arguments         │
-│  - ToolResult: tool_call_id, status,     │
-│    data, error, error_code, suggestion   │
-└──────────────────────────────────────────┘
+```mermaid
+classDiagram
+    class ToolDef {
+        <<工具定义>>
+        +name: str
+        +description: str
+        +phases: list
+        +parameters: dict
+        +_fn: Callable
+        +@tool 装饰器生成
+    }
+    class ToolEngine {
+        <<工具引擎>>
+        +register()
+        +get_tools_for_phase(phase)
+        +execute()
+    }
+    class ToolCall {
+        <<调用类型>>
+        +id: str
+        +name: str
+        +arguments: dict
+    }
+    class ToolResult {
+        <<结果类型>>
+        +tool_call_id: str
+        +status: str
+        +data: dict
+        +error: str
+        +error_code: str
+        +suggestion: str
+    }
+    ToolEngine --> ToolDef : 注册和执行
+    ToolEngine --> ToolCall : 处理
+    ToolEngine --> ToolResult : 返回
 ```
 
 ### 5.2 工具注册方式
@@ -522,39 +533,19 @@ def infer_phase(self, plan: TravelPlanState) -> int:
 
 ### 6.2 转换判定流程图
 
-```
-                    ┌─────────────┐
-                    │ destination? │
-                    └──────┬──────┘
-                     No    │    Yes
-              ┌────────────┤
-              ▼            ▼
-        ┌──────────┐  ┌────────┐
-        │preferences│  │ dates? │
-        │ 非空?     │  └───┬────┘
-        └──┬───────┘   No  │  Yes
-        No │  Yes      ┌───┘
-        ┌──┘  ┌──┐     ▼
-        ▼     ▼  │  ┌──────────────┐
-     阶段1  阶段2│  │accommodation?│
-              └──┘  └──────┬───────┘
-                     No    │    Yes
-                     ┌─────┘
-                     ▼
-                  阶段4
-                     │
-                     ▼
-              ┌──────────────┐
-              │daily_plans   │
-              │数量 < 总天数? │
-              └──────┬───────┘
-               Yes   │    No
-               ┌─────┘
-               ▼
-            阶段5
-               │
-               ▼
-            阶段7
+```mermaid
+graph TD
+    Dest{"destination 存在?"}
+    Dest -- No --> Pref{"preferences 非空?"}
+    Pref -- No --> P1["阶段 1: 灵感探索"]
+    Pref -- Yes --> P2["阶段 2: 目的地选择"]
+    Dest -- Yes --> Dates{"dates 存在?"}
+    Dates -- No --> P3["阶段 3: 天数与节奏"]
+    Dates -- Yes --> Acc{"accommodation 存在?"}
+    Acc -- No --> P4["阶段 4: 住宿区域"]
+    Acc -- Yes --> Daily{"daily_plans 数量 < 总天数?"}
+    Daily -- Yes --> P5["阶段 5: 行程组装"]
+    Daily -- No --> P7["阶段 7: 出发前查漏"]
 ```
 
 ### 6.3 触发时机
@@ -605,23 +596,22 @@ def check_and_apply_transition(self, plan: TravelPlanState) -> bool:
 
 ### 7.3 回溯执行流程
 
-```
-用户消息包含"换个目的地"
-         │
-         ▼
-  _detect_backtrack() → 目标阶段 2
-         │
-         ▼
-  save_snapshot(plan) → 保存当前状态快照
-         │
-         ▼
-  prepare_backtrack()
-    ├── 记录 BacktrackEvent (from→to, reason, snapshot_path)
-    ├── plan.clear_downstream(from_phase=2) → 清除下游字段
-    └── plan.phase = 2
-         │
-         ▼
-  _build_agent(plan) → 重建 Agent（新的工具集和钩子）
+```mermaid
+graph TD
+    A["用户消息包含（如：'换个目的地'）"] --> B["_detect_backtrack()<br>确定目标阶段（如：阶段 2）"]
+    B --> C["save_snapshot(plan)<br>保存当前状态快照"]
+    C --> D["prepare_backtrack()"]
+    
+    subgraph prepare_backtrack 内部操作
+        direction TB
+        D1["记录 BacktrackEvent<br>(from→to, reason, snapshot_path)"]
+        D2["plan.clear_downstream(from_phase)<br>清除下游字段"]
+        D3["plan.phase = target_phase<br>更新当前阶段"]
+        D1 ~~~ D2 ~~~ D3
+    end
+    
+    D --> prepare_backtrack
+    prepare_backtrack --> E["_build_agent(plan)<br>重建 Agent（新的工具集和钩子）"]
 ```
 
 ### 7.4 下游字段清除规则
@@ -649,18 +639,14 @@ _PHASE_DOWNSTREAM = {
 
 ### 8.1 双层约束架构
 
-```
-┌────────────────────────────────────┐
-│  硬约束验证 (validator.py)          │
-│  ─ 阻塞性：必须修正               │
-│  ─ 触发时机：update_plan_state 后  │
-│  ─ 三项检查：时间冲突/预算超限/天数 │
-├────────────────────────────────────┤
-│  软约束评分 (judge.py)             │
-│  ─ 建议性：用于优化               │
-│  ─ 触发时机：assemble_day_plan 后  │
-│  ─ 四维评分：节奏/地理/连贯/个性化  │
-└────────────────────────────────────┘
+```mermaid
+graph LR
+    subgraph 质量保障系统
+        direction TB
+        A["硬约束验证 (validator.py)<br>• 阻塞性：必须修正<br>• 触发时机：update_plan_state 后<br>• 三项检查：时间冲突 / 预算超限 / 天数"]
+        B["软约束评分 (judge.py)<br>• 建议性：用于优化<br>• 触发时机：assemble_day_plan 后<br>• 四维评分：节奏 / 地理 / 连贯 / 个性化"]
+        A ~~~ B
+    end
 ```
 
 ### 8.2 硬约束验证详情
@@ -805,23 +791,31 @@ JPY: 日元, yen, jpy
 
 ### 10.3 处理流程
 
-```
-用户消息 "去东京，五一5天，预算1万元"
-    │
-    ▼
-extract_trip_facts()
-    ├── _extract_destination() → "东京"
-    ├── parse_dates_value()    → DateRange(2026-05-01, 2026-05-06)
-    └── parse_budget_value()   → Budget(10000, "CNY")
-    │
-    ▼
-apply_trip_facts(plan, message)
-    ├── plan.destination = "东京"
-    ├── plan.dates = DateRange(...)
-    └── plan.budget = Budget(...)
-    │
-    ▼
-check_and_apply_transition(plan) → 可能直接跳到阶段 3 或更后
+```mermaid
+graph TD
+    Input["用户消息<br>'去东京，五一5天，预算1万元'"] --> Extract["extract_trip_facts()"]
+    
+    subgraph extract_trip_facts内部逻辑
+        direction TB
+        E1["_extract_destination() → '东京'"]
+        E2["parse_dates_value() → DateRange(2026-05-01, 2026-05-06)"]
+        E3["parse_budget_value() → Budget(10000, 'CNY')"]
+        E1 ~~~ E2 ~~~ E3
+    end
+    
+    Extract --> extract_trip_facts内部逻辑
+    extract_trip_facts内部逻辑 --> Apply["apply_trip_facts(plan, message)"]
+    
+    subgraph apply_trip_facts状态更新
+        direction TB
+        A1["plan.destination = '东京'"]
+        A2["plan.dates = DateRange(...)"]
+        A3["plan.budget = Budget(...)"]
+        A1 ~~~ A2 ~~~ A3
+    end
+    
+    Apply --> apply_trip_facts状态更新
+    apply_trip_facts状态更新 --> Check["check_and_apply_transition(plan)<br>可能直接跳跃到后续阶段"]
 ```
 
 ### 10.4 设计意义
@@ -881,142 +875,86 @@ Rejection:
 
 ### 12.1 完整请求处理流程
 
-```
-用户发送消息
-     │
-     ▼
-┌────────────────────┐
-│ 1. 回溯检测         │ ←── 正则匹配 _BACKTRACK_PATTERNS
-│    (隐式回溯)       │
-└─────────┬──────────┘
-     匹配? ──Yes──► 保存快照 → prepare_backtrack → 重建Agent
-     │No
-     ▼
-┌────────────────────┐
-│ 2. 事实提取         │ ←── extract_trip_facts（目的地/日期/预算）
-│    (intake.py)      │
-└─────────┬──────────┘
-     有更新? ──Yes──► apply_trip_facts → check_and_apply_transition
-     │No
-     ▼
-┌────────────────────┐
-│ 3. 构建系统消息      │ ←── Soul + Phase Prompt + Runtime Context + User Profile
-│    (ContextManager) │
-└─────────┬──────────┘
-     │
-     ▼
-┌────────────────────┐
-│ 4. 追加用户消息      │
-└─────────┬──────────┘
-     │
-     ▼
-┌───────────────────────────────────────────────┐
-│ 5. Agent Loop（最多 20 次迭代）               │
-│                                                │
-│   ┌─────────────────┐                         │
-│   │ before_llm_call  │ ←── 上下文压缩检查      │
-│   └────────┬────────┘                         │
-│            ▼                                   │
-│   ┌─────────────────┐                         │
-│   │ LLM 流式调用     │ ←── 生成文本 + 工具调用  │
-│   └────────┬────────┘                         │
-│            │                                   │
-│     有工具调用?                                │
-│     │No        │Yes                           │
-│     ▼          ▼                               │
-│   返回文本   ┌─────────────────┐              │
-│   结束循环   │ 执行工具调用      │              │
-│             └────────┬────────┘              │
-│                      ▼                        │
-│             ┌─────────────────┐              │
-│             │ after_tool_call  │              │
-│             │  ├─ 阶段转换检查  │              │
-│             │  ├─ 硬约束验证    │              │
-│             │  └─ 软约束评分    │              │
-│             └────────┬────────┘              │
-│                      │                        │
-│                 回到循环顶部                    │
-└───────────────────────────────────────────────┘
-     │
-     ▼
-┌────────────────────┐
-│ 6. 保存状态         │ ←── state_mgr.save(plan)
-│ 7. 发送状态更新事件  │ ←── SSE: state_update
-└────────────────────┘
+```mermaid
+graph TD
+    Start["用户发送消息"] --> Step1
+    
+    Step1{"1. 回溯检测 (隐式回溯)<br>正则匹配 _BACKTRACK_PATTERNS"}
+    Step1 -- 匹配 --> Backtrack["保存快照 → prepare_backtrack → 重建Agent"]
+    Backtrack --> Step2
+    Step1 -- 未匹配 --> Step2{"2. 事实提取 (intake.py)<br>提取目的地/日期/预算"}
+    
+    Step2 -- 有更新 --> IntakeApply["apply_trip_facts → check_and_apply_transition"]
+    IntakeApply --> Step3
+    Step2 -- 无更新 --> Step3["3. 构建系统消息 (ContextManager)<br>Soul + Phase Prompt + Context + Profile"]
+    
+    Step3 --> Step4["4. 追加用户消息"]
+    Step4 --> LoopStart
+    
+    subgraph AgentLoop["5. Agent Loop (最多 20 次迭代)"]
+        direction TB
+        LoopStart["before_llm_call<br>上下文压缩检查"] --> LLMCall["LLM 流式调用<br>生成文本 + 工具调用"]
+        LLMCall --> HasTool{"有工具调用?"}
+        
+        HasTool -- Yes --> ExecuteTool["执行工具调用"]
+        ExecuteTool --> AfterTool["after_tool_call<br>├─ 阶段转换检查<br>├─ 硬约束验证<br>└─ 软约束评分"]
+        AfterTool -- 回到循环顶部 --> LoopStart
+        
+        HasTool -- No --> EndLoop["返回文本"]
+    end
+    
+    EndLoop --> Step6["6. 保存状态<br>state_mgr.save(plan)"]
+    Step6 --> Step7["7. 发送状态更新事件<br>SSE: state_update"]
 ```
 
 ### 12.2 阶段生命周期流程
 
-```
-         ┌─────────┐
-         │ 新会话   │
-         │ phase=1  │
-         └────┬────┘
-              │ 用户表达偏好
-              │ preferences 非空
-              ▼
-         ┌─────────┐
-    ┌────│ 阶段 2   │◄──── "换个目的地"
-    │    │ 目的地选择│
-    │    └────┬────┘
-    │         │ destination 确定
-    │         ▼
-    │    ┌─────────┐
-    │ ┌──│ 阶段 3   │◄──── "改日期"
-    │ │  │ 天数节奏  │
-    │ │  └────┬────┘
-    │ │       │ dates 确定
-    │ │       ▼
-    │ │  ┌─────────┐
-    │ │ ─│ 阶段 4   │◄──── "换住宿"
-    │ │  │ 住宿区域  │
-    │ │  └────┬────┘
-    │ │       │ accommodation 确定
-    │ │       ▼
-    │ │  ┌─────────┐
-    │ └──│ 阶段 5   │
-    │    │ 行程组装  │
-    │    └────┬────┘
-    │         │ daily_plans 全部完成
-    │         ▼
-    │    ┌─────────┐
-    └────│ 阶段 7   │
-         │ 出发查漏  │
-         └─────────┘
+```mermaid
+graph TD
+    P1["阶段 1: 灵感探索<br>(新会话)"]
+    P2["阶段 2: 目的地选择"]
+    P3["阶段 3: 天数与节奏"]
+    P4["阶段 4: 住宿区域"]
+    P5["阶段 5: 行程组装"]
+    P7["阶段 7: 出发前查漏"]
 
-  ◄──── 表示回溯路径
+    P1 -- "preferences 非空<br>(用户表达偏好)" --> P2
+    P2 -- "destination 确定" --> P3
+    P3 -- "dates 确定" --> P4
+    P4 -- "accommodation 确定" --> P5
+    P5 -- "daily_plans 全部完成" --> P7
+
+    %% 回溯路径展示
+    P7 -. "回溯" .-> P5
+    P5 -. "隐式回溯 ('换住宿')" .-> P4
+    P4 -. "隐式回溯 ('改日期')" .-> P3
+    P3 -. "隐式回溯 ('换个目的地')" .-> P2
+    
+    classDef default fill:#f9f9f9,stroke:#333,stroke-width:2px;
 ```
 
 ### 12.3 Agent Loop 内部数据流
 
-```
-Messages: [System, User₁, Asst₁, User₂, ...]
-              │
-              ▼
-         ┌─────────┐
-         │   LLM    │ ←── tools schema (按阶段过滤)
-         └────┬────┘
-              │
-       ┌──────┴──────┐
-       │             │
-   text_delta    tool_call
-       │             │
-   yield →        ToolEngine
-   前端显示       .execute(tc)
-                     │
-                     ▼
-               ┌──────────┐
-               │ ToolResult│ ──► append Message(role=TOOL)
-               └──────────┘
-                     │
-                     ▼
-               HookManager
-               .run("after_tool_call")
-                     │
-              ┌──────┼──────┐
-              │      │      │
-        阶段转换  硬约束  软约束
-        检查     验证    评分
+```mermaid
+graph TD
+    Messages["Messages:<br>[System, User₁, Asst₁, User₂, ...]"] --> LLM
+    
+    ToolsSchema["tools schema<br>(按阶段过滤)"] -.-> LLM
+    
+    LLM["LLM"] --> TextDelta["text_delta"]
+    LLM --> ToolCall["tool_call"]
+    
+    TextDelta --> FrontEnd["yield → 前端显示"]
+    
+    ToolCall --> ToolEngine["ToolEngine.execute(tc)"]
+    ToolEngine --> ToolResult["ToolResult"]
+    
+    ToolResult -- "append Message(role=TOOL)" --> Messages
+    ToolResult --> HookManager["HookManager.run('after_tool_call')"]
+    
+    HookManager --> PhaseCheck["阶段转换检查"]
+    HookManager --> HardValid["硬约束验证"]
+    HookManager --> SoftScore["软约束评分"]
 ```
 
 ---

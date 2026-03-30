@@ -1,7 +1,7 @@
 # backend/phase/router.py
 from __future__ import annotations
 
-from phase.prompts import PHASE_CONTROL_MODE, PHASE_PROMPTS, PHASE_TOOL_NAMES
+from phase.prompts import PHASE_CONTROL_MODE, PHASE_PROMPTS
 from state.models import BacktrackEvent, TravelPlanState
 
 
@@ -21,9 +21,6 @@ class PhaseRouter:
 
     def get_prompt(self, phase: int) -> str:
         return PHASE_PROMPTS.get(phase, PHASE_PROMPTS[1])
-
-    def get_tool_names(self, phase: int) -> list[str]:
-        return PHASE_TOOL_NAMES.get(phase, PHASE_TOOL_NAMES[1])
 
     def get_control_mode(self, phase: int) -> str:
         return PHASE_CONTROL_MODE.get(phase, "conversational")

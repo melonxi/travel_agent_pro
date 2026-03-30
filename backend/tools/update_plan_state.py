@@ -7,6 +7,7 @@ from state.intake import parse_budget_value, parse_dates_value
 from state.models import (
     Accommodation,
     Constraint,
+    DayPlan,
     Preference,
     Travelers,
     TravelPlanState,
@@ -22,6 +23,7 @@ _ALLOWED_FIELDS = {
     "preferences",
     "constraints",
     "destination_candidates",
+    "daily_plans",
 }
 
 _PARAMETERS = {
@@ -89,6 +91,19 @@ Don't use when: 只是闲聊或询问信息，没有新的决策需要记录。"
                 plan.destination_candidates = value
             else:
                 plan.destination_candidates.append(value)
+        elif field == "daily_plans":
+            if isinstance(value, list):
+                plan.daily_plans = [
+                    DayPlan.from_dict(v) if isinstance(v, dict) else v for v in value
+                ]
+            elif isinstance(value, dict):
+                plan.daily_plans.append(DayPlan.from_dict(value))
+            else:
+                raise ToolError(
+                    "daily_plans 的值必须是 dict（单日）或 list[dict]（多日）",
+                    error_code="INVALID_VALUE",
+                    suggestion='示例: {"day": 1, "date": "2026-05-01", "activities": [...]}',
+                )
 
         return {"updated_field": field, "new_value": str(value)[:200]}
 
