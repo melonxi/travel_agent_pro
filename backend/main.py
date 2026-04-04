@@ -102,6 +102,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         async def on_tool_call(**kwargs):
             if kwargs.get("tool_name") == "update_plan_state":
+                result = kwargs.get("result")
+                if result and result.data and result.data.get("backtracked"):
+                    session = sessions.get(plan.session_id)
+                    if session:
+                        session["needs_rebuild"] = True
+                    return
                 phase_router.check_and_apply_transition(plan)
 
         async def on_validate(**kwargs):
@@ -225,6 +231,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "plan": plan,
             "messages": [],
             "agent": agent,
+            "needs_rebuild": False,
         }
         return {"session_id": plan.session_id, "phase": plan.phase}
 
@@ -253,6 +260,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         )
         await state_mgr.save(plan)
         session["agent"] = _build_agent(plan)
+        session["needs_rebuild"] = False
         return {"phase": plan.phase, "plan": plan.to_dict()}
 
     @app.post("/api/chat/{session_id}")
@@ -263,25 +271,18 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         plan = session["plan"]
         messages = session["messages"]
+
+        # 检查是否需要重建 agent（上一轮回退导致）
+        if session.get("needs_rebuild"):
+            session["agent"] = _build_agent(plan)
+            session["needs_rebuild"] = False
+
         agent = session["agent"]
 
-        # Detect implicit backtrack from user message
-        backtrack_target = _detect_backtrack(req.message, plan)
-        if backtrack_target is not None:
-            snapshot_path = await state_mgr.save_snapshot(plan)
-            phase_router.prepare_backtrack(
-                plan,
-                backtrack_target,
-                f"用户意图回退：{req.message[:50]}",
-                snapshot_path,
-            )
-            session["agent"] = _build_agent(plan)
-            agent = session["agent"]
-        else:
-            # Only extract trip facts when NOT backtracking
-            updated_fields = apply_trip_facts(plan, req.message)
-            if updated_fields:
-                phase_router.check_and_apply_transition(plan)
+        # 提取旅行事实（不再在此处检测回退）
+        updated_fields = apply_trip_facts(plan, req.message)
+        if updated_fields:
+            phase_router.check_and_apply_transition(plan)
 
         # Build system message
         phase_prompt = phase_router.get_prompt(plan.phase)
@@ -289,23 +290,22 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         user_summary = memory_mgr.generate_summary(memory)
         sys_msg = context_mgr.build_system_message(plan, phase_prompt, user_summary)
 
-        # Prepend system message (replace previous one)
+        # Prepend system message
         if messages and messages[0].role == Role.SYSTEM:
             messages[0] = sys_msg
         else:
             messages.insert(0, sys_msg)
 
-        # Add user message
         messages.append(Message(role=Role.USER, content=req.message))
+
+        # 记录 agent.run 之前的 phase，用于判断是否发生了回退
+        phase_before_run = plan.phase
 
         async def event_stream():
             async for chunk in agent.run(messages, phase=plan.phase):
-                # Keepalive: send SSE comment to prevent proxy/client timeout
-                # during long tool executions. Comments are ignored by EventSource.
                 if chunk.type.value == "keepalive":
                     yield {"comment": "ping"}
                     continue
-
                 event_type = (
                     "tool_call"
                     if chunk.tool_call and chunk.type.value == "tool_call_start"
@@ -321,13 +321,22 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     }
                 yield json.dumps(event_data, ensure_ascii=False)
 
-            # After agent completes, save state and send final plan update
+            # Fallback：如果本轮 agent 没触发 backtrack，检查关键词 fallback
+            if plan.phase == phase_before_run:
+                backtrack_target = _detect_backtrack(req.message, plan)
+                if backtrack_target is not None:
+                    snapshot_path = await state_mgr.save_snapshot(plan)
+                    phase_router.prepare_backtrack(
+                        plan,
+                        backtrack_target,
+                        f"fallback回退：{req.message[:50]}",
+                        snapshot_path,
+                    )
+                    session["needs_rebuild"] = True
+
             await state_mgr.save(plan)
             yield json.dumps(
-                {
-                    "type": "state_update",
-                    "plan": plan.to_dict(),
-                },
+                {"type": "state_update", "plan": plan.to_dict()},
                 ensure_ascii=False,
             )
 
