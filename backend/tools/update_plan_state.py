@@ -24,6 +24,7 @@ _ALLOWED_FIELDS = {
     "constraints",
     "destination_candidates",
     "daily_plans",
+    "backtrack",
 }
 
 _PARAMETERS = {
@@ -34,7 +35,7 @@ _PARAMETERS = {
             "description": f"要更新的字段名。可选值：{', '.join(sorted(_ALLOWED_FIELDS))}",
         },
         "value": {
-            "description": "字段的新值。格式取决于字段类型。",
+            "description": '字段的新值。格式取决于字段类型。当 field 为 "backtrack" 时，value 应为 {"to_phase": int, "reason": str}。',
         },
     },
     "required": ["field", "value"],
@@ -46,8 +47,10 @@ def make_update_plan_state_tool(plan: TravelPlanState):
 
     @tool(
         name="update_plan_state",
-        description="""更新旅行规划状态。
-Use when: 用户提供了新的信息需要记录到规划中（目的地、日期、预算、偏好等）。
+        description="""更新旅行规划状态，或触发阶段回退。
+Use when:
+  - 用户提供了新的信息需要记录到规划中（目的地、日期、预算、偏好等）。
+  - 用户想要修改之前的决定，需要回退到更早的规划阶段。回退时使用 field="backtrack"，value={"to_phase": 目标阶段, "reason": "回退原因"}。
 Don't use when: 只是闲聊或询问信息，没有新的决策需要记录。""",
         phases=[1, 2, 3, 4, 5, 7],
         parameters=_PARAMETERS,
@@ -59,6 +62,34 @@ Don't use when: 只是闲聊或询问信息，没有新的决策需要记录。"
                 error_code="INVALID_FIELD",
                 suggestion=f"可用字段: {', '.join(sorted(_ALLOWED_FIELDS))}",
             )
+
+        if field == "backtrack":
+            if not isinstance(value, dict) or "to_phase" not in value:
+                raise ToolError(
+                    "backtrack 的 value 必须包含 to_phase 字段",
+                    error_code="INVALID_VALUE",
+                    suggestion='示例: {"to_phase": 3, "reason": "用户想换目的地"}',
+                )
+            to_phase = int(value["to_phase"])
+            reason = str(value.get("reason", "用户请求回退"))
+            if to_phase >= plan.phase:
+                raise ToolError(
+                    f"只能回退到更早的阶段，当前阶段: {plan.phase}，目标: {to_phase}",
+                    error_code="INVALID_BACKTRACK",
+                    suggestion=f"目标阶段必须小于当前阶段 {plan.phase}",
+                )
+            from_phase = plan.phase
+            from phase.backtrack import BacktrackService
+
+            service = BacktrackService()
+            service.execute(plan, to_phase, reason, snapshot_path="")
+            return {
+                "backtracked": True,
+                "from_phase": from_phase,
+                "to_phase": to_phase,
+                "reason": reason,
+                "next_action": "请向用户确认回退结果，不要继续调用其他工具",
+            }
 
         if field == "destination":
             plan.destination = str(value)

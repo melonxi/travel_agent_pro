@@ -3,12 +3,16 @@ from __future__ import annotations
 
 from opentelemetry import trace
 
+from phase.backtrack import BacktrackService
 from phase.prompts import PHASE_CONTROL_MODE, PHASE_PROMPTS
-from state.models import BacktrackEvent, TravelPlanState
+from state.models import TravelPlanState
 from telemetry.attributes import EVENT_PHASE_PLAN_SNAPSHOT, PHASE_FROM, PHASE_TO
 
 
 class PhaseRouter:
+    def __init__(self) -> None:
+        self._backtrack_service = BacktrackService()
+
     def infer_phase(self, plan: TravelPlanState) -> int:
         if not plan.destination:
             if plan.preferences:
@@ -59,14 +63,5 @@ class PhaseRouter:
         reason: str,
         snapshot_path: str,
     ) -> None:
-        """Execute backtrack: record event, clear downstream, switch phase."""
-        plan.backtrack_history.append(
-            BacktrackEvent(
-                from_phase=plan.phase,
-                to_phase=to_phase,
-                reason=reason,
-                snapshot_path=snapshot_path,
-            )
-        )
-        plan.clear_downstream(from_phase=to_phase)
-        plan.phase = to_phase
+        """Execute backtrack: delegate to BacktrackService."""
+        self._backtrack_service.execute(plan, to_phase, reason, snapshot_path)

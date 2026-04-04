@@ -207,8 +207,17 @@ class BacktrackEvent:
 
 # Phase -> which fields are downstream products (cleared on backtrack)
 _PHASE_DOWNSTREAM: dict[int, list[str]] = {
-    3: ["accommodation", "daily_plans"],
-    4: ["daily_plans"],
+    1: [
+        "destination",
+        "destination_candidates",
+        "dates",
+        "accommodation",
+        "daily_plans",
+    ],
+    2: ["destination", "dates", "accommodation", "daily_plans"],
+    3: ["dates", "accommodation", "daily_plans"],
+    4: ["accommodation", "daily_plans"],
+    5: ["daily_plans"],
 }
 
 
