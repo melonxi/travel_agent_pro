@@ -32,11 +32,11 @@ class AgentLoop:
 
 **逐 tool call 的 phase 检测逻辑：**
 
-在每次迭代中，tool calls 逐个执行。**每执行完一个 tool call 后**立即检测 `plan.phase` 是否变化。如果变了：
+在每次迭代中，tool calls 逐个执行。**每执行完一个 tool call 后**立即检测 `plan.phase` 是否变化（通过 `plan.phase != phase_before` 值比较，不依赖 hook 的具体路径——无论是 `check_and_apply_transition` 修改了 phase，还是 `BacktrackService.execute` 直接写入了 phase，都能统一检测到）。如果变了：
 
 1. **立即中断当前批次** — 跳过该迭代中剩余未执行的 tool calls。
-2. 判断是否为 backtrack（见下方 backtrack 专节），走不同的上下文处理路径。
-3. 若为正常前进：调用 LLM 压缩当前 messages 为摘要（通过 `context_manager.compress_for_transition`）。
+2. **判断是否为 backtrack** — 当 `plan.phase < phase_before` 时为回退，走 backtrack 路径（见下方 backtrack 专节）；当 `plan.phase > phase_before` 时为正常前进，走压缩路径。
+3. 若为正常前进：调用 LLM 压缩当前 messages 为摘要（通过 `context_manager.compress_for_transition`）。**短路条件：当 messages 中非 system 消息少于 4 条时，跳过 LLM 压缩，直接将这些消息原样作为上下文保留。**
 4. 重建 messages：
    - `[0]` = 新的 system message（soul + 新 phase prompt + 最新 plan 状态 + 用户画像）
    - `[1]` = 前序阶段摘要（system 角色）
@@ -63,6 +63,7 @@ async def compress_for_transition(
 ```
 
 - 输入：当前 messages 列表、源 phase、目标 phase、LLM 工厂函数。
+- 短路条件：当 messages 中非 system 消息少于 4 条时，直接拼接原文返回，不调用 LLM。
 - 行为：将 messages 中除 system 外的对话内容交给 LLM，要求生成简要摘要，保留用户偏好、约束和关键决策。
 - 输出：自然语言摘要字符串。
 - LLM 配置：复用项目统一的 `config.llm` 配置（通过 `llm_factory` 创建实例）。
