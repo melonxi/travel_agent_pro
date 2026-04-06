@@ -14,11 +14,12 @@ def tool_fn():
     return make_search_destinations_tool(keys)
 
 
-def test_search_destinations_available_in_phase_1():
+def test_search_destinations_not_exposed_to_any_phase():
     keys = ApiKeysConfig(google_maps="test_key")
     tool_def = make_search_destinations_tool(keys)
-    assert 1 in tool_def.phases
+    assert 1 not in tool_def.phases
     assert 2 not in tool_def.phases
+    assert tool_def.phases == []
 
 
 def _geocode_payload(name: str, formatted_address: str, types: list[str]) -> dict:

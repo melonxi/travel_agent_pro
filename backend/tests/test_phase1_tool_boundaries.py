@@ -7,10 +7,12 @@ import pytest
 import respx
 from httpx import Request, Response
 
+from phase.prompts import PHASE_PROMPTS
 from config import ApiKeysConfig, XhsConfig
 from state.models import Budget, DateRange, Travelers, TravelPlanState
 from tools.base import ToolError
 from tools.check_feasibility import make_check_feasibility_tool
+from tools.engine import ToolEngine
 from tools.quick_travel_search import make_quick_travel_search_tool
 from tools.search_destinations import make_search_destinations_tool
 from tools.update_plan_state import make_update_plan_state_tool
@@ -79,6 +81,17 @@ async def test_search_destinations_filters_non_destination_types_deduplicates_an
     assert len(result["destinations"]) == 3
 
 
+def test_search_destinations_is_not_exposed_in_phase1():
+    engine = ToolEngine()
+    engine.register(make_search_destinations_tool(ApiKeysConfig(google_maps="test_key")))
+
+    phase1_tool_names = [tool["name"] for tool in engine.get_tools_for_phase(1)]
+    phase2_tool_names = [tool["name"] for tool in engine.get_tools_for_phase(2)]
+
+    assert "search_destinations" not in phase1_tool_names
+    assert "search_destinations" not in phase2_tool_names
+
+
 @respx.mock
 @pytest.mark.asyncio
 async def test_check_feasibility_uses_current_weather_only_and_always_returns_feasible():
@@ -101,6 +114,25 @@ async def test_check_feasibility_uses_current_weather_only_and_always_returns_fe
     assert result["weather"]["description"] == "extreme blizzard"
     assert result["visa_info"] == "请自行查询签证要求"
     assert result["feasible"] is True
+
+
+def test_check_feasibility_is_not_exposed_in_phase1():
+    engine = ToolEngine()
+    engine.register(make_check_feasibility_tool(ApiKeysConfig(openweather="test_key")))
+
+    phase1_tool_names = [tool["name"] for tool in engine.get_tools_for_phase(1)]
+    phase3_tool_names = [tool["name"] for tool in engine.get_tools_for_phase(3)]
+
+    assert "check_feasibility" not in phase1_tool_names
+    assert "check_feasibility" not in phase3_tool_names
+
+
+def test_phase1_prompt_does_not_mention_check_feasibility():
+    assert "`check_feasibility`" not in PHASE_PROMPTS[1]
+
+
+def test_phase1_prompt_does_not_mention_search_destinations():
+    assert "`search_destinations`" not in PHASE_PROMPTS[1]
 
 
 @pytest.mark.asyncio

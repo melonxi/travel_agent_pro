@@ -30,6 +30,7 @@ async def test_check_feasibility(tool_fn):
     assert result["feasible"] is True
     assert result["weather"]["temp"] == 28.5
     assert result["visa_info"] == "请自行查询签证要求"
+    assert tool_fn.phases == []
 
 
 @pytest.mark.asyncio

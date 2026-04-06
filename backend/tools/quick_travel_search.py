@@ -41,7 +41,7 @@ Important:
             raise ToolError(
                 "FlyAI service unavailable",
                 error_code="SERVICE_UNAVAILABLE",
-                suggestion="Use search_destinations for destination research instead.",
+                suggestion="Use web_search or xiaohongshu_search for destination research instead.",
             )
 
         raw_list = await flyai_client.fast_search(query=query)
