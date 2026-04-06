@@ -140,7 +140,7 @@ class ContextManager:
             estimated = sum(len(m.content or "") // 3 for m in messages)
             span.set_attribute(CONTEXT_TOKENS_BEFORE, estimated)
             span.set_attribute("context.max_tokens", max_tokens)
-            result = estimated > max_tokens * 0.5
+            result = estimated > max_tokens
             if result:
                 must_keep, _ = self.classify_messages(messages)
                 span.add_event(

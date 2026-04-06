@@ -197,3 +197,68 @@ class OpenAIProvider:
             if msg.content:
                 total += len(enc.encode(msg.content))
         return total
+
+    # Known context windows for common models — used as fallback when
+    # the /v1/models endpoint is unavailable (e.g. behind One API proxy).
+    _KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
+        "gpt-4o": 128000,
+        "gpt-4o-mini": 128000,
+        "gpt-4-turbo": 128000,
+        "gpt-4-1": 1047576,
+        "gpt-4.1": 1047576,
+        "gpt-4": 8192,
+        "gpt-3.5-turbo": 16385,
+        "o1": 200000,
+        "o1-mini": 128000,
+        "o1-pro": 200000,
+        "o3": 200000,
+        "o3-mini": 200000,
+        "o4-mini": 200000,
+        "deepseek-chat": 65536,
+        "deepseek-coder": 65536,
+        "deepseek-r1": 65536,
+        "deepseek-v3": 65536,
+        "qwen-turbo": 131072,
+        "qwen-plus": 131072,
+        "qwen-max": 131072,
+        "qwen-long": 1000000,
+        "glm-4": 128000,
+        "glm-4-plus": 128000,
+        "gemini-2.5-pro": 1048576,
+        "gemini-2.5-flash": 1048576,
+        "gemini-2.0-flash": 1048576,
+        "gemini-1.5-pro": 2097152,
+        "gemini-1.5-flash": 1048576,
+    }
+
+    async def get_context_window(self) -> int | None:
+        """Query the model's context window.
+
+        Strategy:
+        1. Try /v1/models API (works with OpenAI, vLLM, OpenRouter, etc.)
+        2. Fall back to built-in model registry (prefix match)
+        3. Return None if unknown — caller uses config default
+        """
+        # Strategy 1: API query
+        try:
+            model_info = await self.client.models.retrieve(self.model)
+            if hasattr(model_info, "model_dump"):
+                raw = model_info.model_dump()
+            elif isinstance(model_info, dict):
+                raw = model_info
+            else:
+                raw = {}
+            for key in ("context_window", "max_model_len", "context_length", "max_context_length"):
+                value = raw.get(key)
+                if isinstance(value, int) and value > 0:
+                    return value
+        except Exception:
+            pass
+
+        # Strategy 2: known model registry (prefix match)
+        model_lower = self.model.lower()
+        for prefix, window in self._KNOWN_CONTEXT_WINDOWS.items():
+            if model_lower.startswith(prefix):
+                return window
+
+        return None

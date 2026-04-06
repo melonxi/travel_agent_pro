@@ -26,6 +26,7 @@ class AgentLoop:
         llm_factory: Any | None = None,
         memory_mgr: Any | None = None,
         user_id: str = "default_user",
+        compression_events: list[dict] | None = None,
     ):
         self.llm = llm
         self.tool_engine = tool_engine
@@ -37,6 +38,7 @@ class AgentLoop:
         self.llm_factory = llm_factory
         self.memory_mgr = memory_mgr
         self.user_id = user_id
+        self.compression_events: list[dict] = compression_events if compression_events is not None else []
 
     async def run(
         self,
@@ -58,6 +60,14 @@ class AgentLoop:
                     await self.hooks.run(
                         "before_llm_call", messages=messages, phase=current_phase
                     )
+
+                    # Yield pending compression events from hook
+                    while self.compression_events:
+                        info = self.compression_events.pop(0)
+                        yield LLMChunk(
+                            type=ChunkType.CONTEXT_COMPRESSION,
+                            compression_info=info,
+                        )
 
                     tool_calls: list[ToolCall] = []
                     text_chunks: list[str] = []

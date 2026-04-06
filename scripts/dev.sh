@@ -25,23 +25,37 @@ fi
 
 cleanup() {
   local exit_code=$?
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM HUP QUIT
 
-  if [[ -n "${BACKEND_PID:-}" ]] && kill -0 "$BACKEND_PID" 2>/dev/null; then
-    kill "$BACKEND_PID" 2>/dev/null || true
-  fi
-
-  if [[ -n "${FRONTEND_PID:-}" ]] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
-    kill "$FRONTEND_PID" 2>/dev/null || true
-  fi
+  terminate_process_group "${BACKEND_PID:-}"
+  terminate_process_group "${FRONTEND_PID:-}"
 
   wait "${BACKEND_PID:-}" "${FRONTEND_PID:-}" 2>/dev/null || true
   exit "$exit_code"
 }
 
-trap cleanup EXIT INT TERM
+terminate_process_group() {
+  local leader_pid="${1:-}"
+  if [[ -z "$leader_pid" ]] || ! kill -0 "$leader_pid" 2>/dev/null; then
+    return 0
+  fi
+
+  kill -TERM -- "-$leader_pid" 2>/dev/null || kill -TERM "$leader_pid" 2>/dev/null || true
+
+  for _ in {1..20}; do
+    if ! kill -0 "$leader_pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.25
+  done
+
+  kill -KILL -- "-$leader_pid" 2>/dev/null || kill -KILL "$leader_pid" 2>/dev/null || true
+}
+
+trap cleanup EXIT INT TERM HUP QUIT
 
 echo "Starting backend on http://127.0.0.1:8000"
+set -m
 (
   cd "$BACKEND_DIR"
   source .venv/bin/activate
@@ -55,6 +69,7 @@ echo "Starting frontend on http://127.0.0.1:5173"
   exec npm run dev -- --host 127.0.0.1 --strictPort
 ) &
 FRONTEND_PID=$!
+set +m
 
 while true; do
   if ! kill -0 "$BACKEND_PID" 2>/dev/null; then

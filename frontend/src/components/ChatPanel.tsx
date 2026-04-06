@@ -5,7 +5,7 @@ import type { SSEEvent, TravelPlanState } from '../types/plan'
 
 interface ChatMessage {
   id: string
-  role: 'user' | 'assistant' | 'tool'
+  role: 'user' | 'assistant' | 'tool' | 'system'
   content: string
   toolCallId?: string
   toolName?: string
@@ -14,6 +14,14 @@ interface ChatMessage {
   toolResult?: unknown
   toolError?: string
   toolSuggestion?: string
+  compressionInfo?: {
+    message_count_before: number
+    message_count_after: number
+    must_keep_count: number
+    compressed_count: number
+    estimated_tokens_before: number
+    reason: string
+  }
 }
 
 interface Props {
@@ -142,6 +150,16 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
                 : message,
             )
           })
+        } else if (event.type === 'context_compression' && event.compression_info) {
+          const info = event.compression_info
+          setMessages((prev) =>
+            insertBeforeAssistant(prev, assistantId, {
+              id: createMessageId(),
+              role: 'system',
+              content: `${info.message_count_before} 条 → ${info.message_count_after} 条`,
+              compressionInfo: info,
+            }),
+          )
         } else if (event.type === 'state_update' && event.plan) {
           onPlanUpdate(event.plan)
         }
@@ -171,6 +189,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
             toolResult={m.toolResult}
             toolError={m.toolError}
             toolSuggestion={m.toolSuggestion}
+            compressionInfo={m.compressionInfo}
           />
         ))}
         {streaming && lastMsg?.role === 'assistant' && (
@@ -193,11 +212,15 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
             disabled={streaming}
           />
         </div>
-        <button type="button" className="send-btn" onClick={() => void handleSend()} disabled={streaming || !input.trim()}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
+        <button type="button" className={`send-btn${streaming ? ' is-streaming' : ''}`} onClick={() => void handleSend()} disabled={streaming || !input.trim()}>
+          {streaming ? (
+            <span className="send-spinner" />
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
+          )}
         </button>
       </div>
     </div>

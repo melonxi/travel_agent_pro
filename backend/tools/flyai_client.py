@@ -6,15 +6,17 @@ import json
 import logging
 import os
 import shutil
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class FlyAIClient:
-    """Async wrapper around the flyai Node.js CLI tool.
+    """Async wrapper around the flyai Node.js CLI tool (@fly-ai/flyai-cli).
 
-    All public methods return list[dict]. They never raise exceptions —
-    errors are logged and an empty list is returned (graceful degradation).
+    All public methods return list[dict] (or str for ai_search).
+    They never raise exceptions — errors are logged and an empty
+    list/string is returned (graceful degradation).
     """
 
     def __init__(self, timeout: int = 30, api_key: str | None = None) -> None:
@@ -28,21 +30,42 @@ class FlyAIClient:
     def available(self) -> bool:
         return self._available
 
+    # -- broad discovery ------------------------------------------------
+
     async def fast_search(self, query: str) -> list[dict]:
-        return await self._run("fliggy-fast-search", query=query)
+        """keyword-search: cross-category keyword search."""
+        return await self._run("keyword-search", query=query)
+
+    async def ai_search(self, query: str) -> str:
+        """ai-search: semantic search returning a free-text answer."""
+        return await self._run("ai-search", query=query, _raw_data=True)
+
+    # -- category-specific search ----------------------------------------
 
     async def search_flight(self, origin: str, **kwargs) -> list[dict]:
         return await self._run("search-flight", origin=origin, **kwargs)
 
-    async def search_hotels(self, dest_name: str, **kwargs) -> list[dict]:
-        return await self._run("search-hotels", dest_name=dest_name, **kwargs)
+    async def search_hotel(self, dest_name: str, **kwargs) -> list[dict]:
+        """search-hotel (singular) — replaces old search-hotels."""
+        return await self._run("search-hotel", dest_name=dest_name, **kwargs)
+
+    async def search_train(self, origin: str, **kwargs) -> list[dict]:
+        return await self._run("search-train", origin=origin, **kwargs)
 
     async def search_poi(self, city_name: str, **kwargs) -> list[dict]:
         return await self._run("search-poi", city_name=city_name, **kwargs)
 
-    async def _run(self, command: str, **kwargs) -> list[dict]:
+    # -- backward compat alias ------------------------------------------
+
+    async def search_hotels(self, dest_name: str, **kwargs) -> list[dict]:
+        """Deprecated alias — delegates to search_hotel."""
+        return await self.search_hotel(dest_name, **kwargs)
+
+    # -- internals -------------------------------------------------------
+
+    async def _run(self, command: str, *, _raw_data: bool = False, **kwargs) -> Any:
         if not self._available:
-            return []
+            return "" if _raw_data else []
 
         cmd = ["flyai", command]
         for key, value in kwargs.items():
@@ -65,20 +88,23 @@ class FlyAIClient:
                 proc.kill()  # type: ignore[union-attr]
             except ProcessLookupError:
                 pass
-            return []
+            return "" if _raw_data else []
         except Exception as exc:
             logger.warning("FlyAI CLI subprocess error: %s", exc)
-            return []
+            return "" if _raw_data else []
 
         try:
             data = json.loads(stdout.decode())
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             logger.warning("FlyAI CLI invalid JSON: %s", exc)
-            return []
+            return "" if _raw_data else []
 
         if data.get("status") != 0:
-            # Non-zero status is expected (e.g. "not found poi") — degrade silently
             logger.debug("FlyAI CLI non-zero status: %s", data.get("message"))
-            return []
+            return "" if _raw_data else []
+
+        # ai-search returns data as a string, not {itemList: [...]}
+        if _raw_data:
+            return data.get("data", "")
 
         return (data.get("data") or {}).get("itemList", [])

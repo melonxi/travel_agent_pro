@@ -12,6 +12,7 @@ class ChunkType(str, Enum):
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_DELTA = "tool_call_delta"
     TOOL_RESULT = "tool_result"
+    CONTEXT_COMPRESSION = "context_compression"
     KEEPALIVE = (
         "keepalive"  # SSE ping to prevent proxy/client timeout during tool execution
     )
@@ -24,3 +25,4 @@ class LLMChunk:
     content: str | None = None
     tool_call: ToolCall | None = None
     tool_result: ToolResult | None = None
+    compression_info: dict | None = None

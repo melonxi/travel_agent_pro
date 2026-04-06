@@ -1,9 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
+interface CompressionInfo {
+  message_count_before: number
+  message_count_after: number
+  must_keep_count: number
+  compressed_count: number
+  estimated_tokens_before: number
+  reason: string
+}
+
 interface Props {
-  role: 'user' | 'assistant' | 'tool'
+  role: 'user' | 'assistant' | 'tool' | 'system'
   content: string
   toolName?: string
   toolStatus?: 'pending' | 'success' | 'error' | 'skipped'
@@ -11,6 +20,7 @@ interface Props {
   toolResult?: unknown
   toolError?: string
   toolSuggestion?: string
+  compressionInfo?: CompressionInfo
 }
 
 function formatJson(value: unknown) {
@@ -26,16 +36,34 @@ export default function MessageBubble({
   toolResult,
   toolError,
   toolSuggestion,
+  compressionInfo,
 }: Props) {
-  const shouldExpandDetails =
-    role === 'tool' && (toolStatus === 'pending' || toolStatus === 'error')
-  const [detailsExpanded, setDetailsExpanded] = useState(shouldExpandDetails)
+  const [detailsExpanded, setDetailsExpanded] = useState(false)
 
-  useEffect(() => {
-    if (role === 'tool') {
-      setDetailsExpanded(shouldExpandDetails)
-    }
-  }, [role, shouldExpandDetails])
+  if (role === 'system' && compressionInfo) {
+    return (
+      <div className="message system-compression">
+        <div className="compression-card">
+          <div className="compression-header">
+            <span className="compression-icon">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 2v4l4 2-4 2v4" />
+                <path d="M12 2v4l-4 2 4 2v4" />
+              </svg>
+            </span>
+            <span className="compression-title">上下文压缩</span>
+            <span className="compression-badge">{content}</span>
+          </div>
+          <div className="compression-reason">{compressionInfo.reason}</div>
+          <div className="compression-details">
+            <span>保留关键消息 {compressionInfo.must_keep_count} 条</span>
+            <span className="compression-sep" />
+            <span>压缩 {compressionInfo.compressed_count} 条</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (role === 'tool') {
     const statusLabel =

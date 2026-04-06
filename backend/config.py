@@ -20,6 +20,7 @@ class LLMConfig:
     model: str = "gpt-4o"
     temperature: float = 0.7
     max_tokens: int = 4096
+    context_window: int = 200000
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,7 @@ def _build_llm_config(llm_raw: dict) -> LLMConfig:
         model=model,
         temperature=float(llm_raw.get("temperature", 0.7)),
         max_tokens=int(llm_raw.get("max_tokens", 4096)),
+        context_window=int(llm_raw.get("context_window", 200000)),
     )
 
 

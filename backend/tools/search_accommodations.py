@@ -89,7 +89,7 @@ Don't use when: 住宿已确定。
             kwargs = {"check_in_date": check_in, "check_out_date": check_out}
             if budget_per_night:
                 kwargs["max_price"] = str(int(budget_per_night))
-            raw_list = await flyai_client.search_hotels(
+            raw_list = await flyai_client.search_hotel(
                 dest_name=destination,
                 **kwargs,
             )
