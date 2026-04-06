@@ -26,7 +26,7 @@ def test_infer_phase_has_preferences_no_destination(router):
         session_id="s1",
         preferences=[Preference(key="style", value="relaxed")],
     )
-    assert router.infer_phase(plan) == 2
+    assert router.infer_phase(plan) == 1
 
 
 def test_infer_phase_has_destination_no_dates(router):
@@ -66,11 +66,18 @@ def test_infer_phase_plans_complete(router):
 
 def test_get_prompt_for_phase(router):
     prompt = router.get_prompt(1)
-    assert "旅行灵感顾问" in prompt
+    assert "目的地收敛顾问" in prompt
+
+
+def test_phase1_prompt_encourages_reading_recommendation_posts_and_comments(router):
+    prompt = router.get_prompt(1)
+    assert "不要只停留在标题层判断" in prompt
+    assert "求推荐旅行目的地" in prompt
+    assert "评论区提炼高频候选" in prompt
 
 
 def test_get_prompt_for_all_phases(router):
-    for phase in [1, 2, 3, 4, 5, 7]:
+    for phase in [1, 3, 4, 5, 7]:
         prompt = router.get_prompt(phase)
         assert len(prompt) > 50
 

@@ -99,6 +99,24 @@ _GOOGLE_PLACES_RESPONSE = {
     "status": "OK",
 }
 
+_GOOGLE_GEOCODE_RESPONSE = {
+    "results": [
+        {
+            "address_components": [{"long_name": "巴厘岛"}],
+            "formatted_address": "Bali, Indonesia",
+            "types": ["locality", "political"],
+            "geometry": {"location": {"lat": -8.3405, "lng": 115.0920}},
+        },
+        {
+            "address_components": [{"long_name": "普吉岛"}],
+            "formatted_address": "Phuket, Thailand",
+            "types": ["locality", "political"],
+            "geometry": {"location": {"lat": 7.8804, "lng": 98.3923}},
+        },
+    ],
+    "status": "OK",
+}
+
 _OPENWEATHER_RESPONSE = {
     "list": [
         {
@@ -112,15 +130,15 @@ _OPENWEATHER_RESPONSE = {
 
 
 # ---------------------------------------------------------------------------
-# Test: Phase 2 — Destination Search
+# Test: Phase 1 — Destination Search
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_phase2_destination_search(app):
+async def test_phase1_destination_search(app):
     """
-    Phase 2: user has preferences set, agent calls search_destinations to find
+    Phase 1: user has preferences set, agent calls search_destinations to find
     candidates, then calls update_plan_state to record the chosen destination.
-    Verify plan state has destination set and phase advances past 2.
+    Verify plan state has destination set and phase advances past 1.
     """
 
     async def fake_run(self, messages, phase, tools_override=None):
@@ -156,8 +174,8 @@ async def test_phase2_destination_search(app):
         respx.mock(assert_all_called=False) as mock_http,
         patch("agent.loop.AgentLoop.run", fake_run),
     ):
-        mock_http.get("https://maps.googleapis.com/maps/api/place/textsearch/json").mock(
-            return_value=Response(200, json=_GOOGLE_PLACES_RESPONSE),
+        mock_http.get("https://maps.googleapis.com/maps/api/geocode/json").mock(
+            return_value=Response(200, json=_GOOGLE_GEOCODE_RESPONSE),
         )
 
         async with AsyncClient(
@@ -168,11 +186,11 @@ async def test_phase2_destination_search(app):
             assert resp.status_code == 200
             session_id = resp.json()["session_id"]
 
-            # Set up phase 2 state: add preferences so PhaseRouter infers phase 2
+            # Set up destination-confirmation state: add preferences to aid search
             sessions = _get_sessions(app)
             plan = sessions[session_id]["plan"]
             plan.preferences.append(Preference(key="style", value="beach"))
-            plan.phase = 2
+            plan.phase = 1
 
             # Send a chat message that triggers the agent
             resp = await client.post(
@@ -189,7 +207,7 @@ async def test_phase2_destination_search(app):
     assert plan_data["destination"] == "巴厘岛"
     # Destination is set; in real flow hooks trigger phase transition,
     # but with patched run() hooks don't fire — verify state was written.
-    assert plan_data["phase"] >= 2
+    assert plan_data["phase"] >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +431,168 @@ def _populate_daily_plans_from_results(agent_self, ordered_pois: list[dict]):
                 notes=f"第{day_idx + 1}天行程",
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# Test: In-loop phase rebuild after tool-triggered transition
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_phase_change_rebuilds_context_inside_same_chat(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/api/sessions")
+        session_id = resp.json()["session_id"]
+
+        sessions = _get_sessions(app)
+        session = sessions[session_id]
+        plan = session["plan"]
+        agent = session["agent"]
+
+        class SummaryLLM:
+            async def chat(self, messages, tools=None, stream=True):
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content="阶段摘要")
+                yield LLMChunk(type=ChunkType.DONE)
+
+        agent.llm_factory = lambda: SummaryLLM()
+
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, stream=True):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_dest",
+                        name="update_plan_state",
+                        arguments={"field": "destination", "value": "巴厘岛"},
+                    ),
+                )
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_budget_skipped",
+                        name="update_plan_state",
+                        arguments={"field": "budget", "value": "30000"},
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+
+            if call_count == 2:
+                assert plan.phase == 3
+                assert "- 阶段：3" in messages[0].content
+                assert messages[1].content == "[前序阶段摘要]\n阶段摘要"
+                assert [tool["name"] for tool in tools or []].count("update_plan_state") == 1
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_dates",
+                        name="update_plan_state",
+                        arguments={
+                            "field": "dates",
+                            "value": {"start": "2026-04-10", "end": "2026-04-15"},
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+
+            assert plan.phase == 4
+            assert "- 阶段：4" in messages[0].content
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="日期已确认。")
+            yield LLMChunk(type=ChunkType.DONE)
+
+        agent.llm.chat = fake_chat
+
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "帮我定巴厘岛"},
+        )
+        assert resp.status_code == 200
+
+        plan_resp = await client.get(f"/api/plan/{session_id}")
+        plan_data = plan_resp.json()
+
+    assert call_count == 3
+    assert plan_data["destination"] == "巴厘岛"
+    assert plan_data["dates"] == {"start": "2026-04-10", "end": "2026-04-15"}
+    assert plan_data["budget"] == {"total": 30000.0, "currency": "CNY"}
+    assert plan_data["phase"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Test: Backtrack uses hard context boundary in same chat
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_backtrack_rebuild_uses_hard_boundary_context(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/api/sessions")
+        session_id = resp.json()["session_id"]
+
+        sessions = _get_sessions(app)
+        session = sessions[session_id]
+        plan = session["plan"]
+        agent = session["agent"]
+
+        plan.destination = "京都"
+        plan.dates = DateRange(start="2026-04-10", end="2026-04-15")
+        plan.accommodation = Accommodation(area="祇園", hotel="祇園白川旅館")
+        plan.preferences.append(Preference(key="style", value="quiet"))
+        plan.phase = 4
+
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, stream=True):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_backtrack",
+                        name="update_plan_state",
+                        arguments={
+                            "field": "backtrack",
+                            "value": {"to_phase": 1, "reason": "用户想换目的地"},
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+
+            assert plan.phase == 1
+            assert messages[1].content == "[阶段回退]\n用户从 phase 4 回退到 phase 1，原因：用户想换目的地"
+            assert messages[2].content == "不想去京都了，换个目的地"
+            assert "祇園白川旅館" not in messages[0].content
+            assert "2026-04-10" not in messages[1].content
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="我给您重新推荐几个目的地。")
+            yield LLMChunk(type=ChunkType.DONE)
+
+        agent.llm.chat = fake_chat
+
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "不想去京都了，换个目的地"},
+        )
+        assert resp.status_code == 200
+
+        plan_resp = await client.get(f"/api/plan/{session_id}")
+        plan_data = plan_resp.json()
+
+    assert call_count == 2
+    assert plan_data["phase"] == 1
+    assert plan_data["destination"] is None
+    assert plan_data["destination_candidates"] == []
+    assert plan_data["dates"] is None
+    assert plan_data["accommodation"] is None
+    assert plan_data["preferences"] == [{"key": "style", "value": "quiet"}]
 
 
 # ---------------------------------------------------------------------------

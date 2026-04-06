@@ -40,6 +40,25 @@ def test_convert_tool_result_message(provider):
     assert converted[0]["tool_call_id"] == "tc_1"
 
 
+def test_convert_tool_result_message_ignores_metadata(provider):
+    from agent.types import ToolResult
+
+    msg = Message(
+        role=Role.TOOL,
+        tool_result=ToolResult(
+            tool_call_id="tc_1",
+            status="success",
+            data={"flights": []},
+            metadata={"source": "amadeus"},
+        ),
+    )
+    converted = provider._convert_messages([msg])
+    assert json.loads(converted[0]["content"]) == {
+        "status": "success",
+        "data": {"flights": []},
+    }
+
+
 def test_convert_tools(provider):
     tool_defs = [
         {

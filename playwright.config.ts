@@ -5,7 +5,7 @@ export default defineConfig({
   testMatch: 'e2e-test.spec.ts',
   timeout: 180000,
   use: {
-    baseURL: 'http://localhost:5174',
+    baseURL: 'http://127.0.0.1:5173',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
   },

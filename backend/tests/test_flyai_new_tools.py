@@ -26,14 +26,29 @@ async def test_quick_travel_search_normal(mock_flyai_client):
     from tools.quick_travel_search import make_quick_travel_search_tool
 
     mock_flyai_client.fast_search.return_value = [
-        {"title": "杭州3日游", "price": "1500", "jumpUrl": "https://fliggy.com/1"},
-        {"title": "西湖门票", "price": "0", "jumpUrl": "https://fliggy.com/2"},
+        {
+            "info": {
+                "title": "杭州3日游",
+                "price": "1500",
+                "jumpUrl": "https://fliggy.com/1",
+                "picUrl": "https://img.example.com/1.jpg",
+            }
+        },
+        {
+            "info": {
+                "title": "西湖门票",
+                "price": "0",
+                "jumpUrl": "https://fliggy.com/2",
+            }
+        },
     ]
 
     tool_fn = make_quick_travel_search_tool(mock_flyai_client)
     result = await tool_fn(query="杭州三日游")
     assert len(result["results"]) == 2
     assert result["results"][0]["title"] == "杭州3日游"
+    assert result["results"][0]["booking_url"] == "https://fliggy.com/1"
+    assert result["results"][0]["image_url"] == "https://img.example.com/1.jpg"
 
 
 @pytest.mark.asyncio

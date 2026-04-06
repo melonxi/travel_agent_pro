@@ -11,11 +11,11 @@ _PARAMETERS = {
     "properties": {
         "destination": {
             "type": "string",
-            "description": "目的地名称，如 '东京' '巴厘岛'",
+            "description": "要做轻量可行性补充的目的地名称，建议传城市或地区名，如 '东京' '巴厘岛'。",
         },
         "travel_date": {
             "type": "string",
-            "description": "计划出行日期，如 '2024-07-15'",
+            "description": "用户计划出行日期，如 '2024-07-15'。当前实现会原样回显该字段，但不会据此查询未来天气。",
         },
     },
     "required": ["destination", "travel_date"],
@@ -25,11 +25,19 @@ _PARAMETERS = {
 def make_check_feasibility_tool(api_keys: ApiKeysConfig):
     @tool(
         name="check_feasibility",
-        description="""检查旅行目的地的可行性，包括天气和基本信息。
-Use when: 用户在阶段 2，需要评估目的地是否适合出行。
-Don't use when: 已完成可行性分析。
-返回天气信息、签证提示和可行性评估。""",
-        phases=[2],
+        description="""对已明确目的地做轻量可行性补充。
+Use when:
+  - 阶段 1 中已经有明确目的地，且你只需要一个快速 sanity check。
+  - 你想补一个基础天气参考，帮助用户判断是否值得继续考虑这个目的地。
+Don't use when:
+  - 你需要基于具体出行日期的未来天气判断。
+  - 你需要真实签证政策、季节风险、节假日拥挤度或更严肃的可行性评估。
+Important:
+  - 当前实现调用的是当前天气接口，不是按 travel_date 查询未来天气。
+  - visa_info 当前是固定提示。
+  - feasible 当前固定返回 true，更适合做轻量参考而不是最终结论。
+返回目的地、传入日期、天气摘要和基础可行性字段。""",
+        phases=[1],
         parameters=_PARAMETERS,
     )
     async def check_travel_feasibility(destination: str, travel_date: str) -> dict:

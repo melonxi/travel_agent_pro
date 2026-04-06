@@ -6,81 +6,41 @@ from "五一去东京" through all phases to summary generation.
 from __future__ import annotations
 
 import json
-from datetime import date
-from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 
 from agent.types import ToolCall
 from llm.types import ChunkType, LLMChunk
-from state.models import (
-    Accommodation,
-    Activity,
-    Budget,
-    DateRange,
-    DayPlan,
-    Location,
-    TravelPlanState,
-    Travelers,
-)
+from state.models import TravelPlanState
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _text_chunks(*texts: str) -> list[LLMChunk]:
-    """Build a list of TEXT_DELTA chunks + DONE from string fragments."""
-    chunks = [LLMChunk(type=ChunkType.TEXT_DELTA, content=t) for t in texts]
+    chunks = [LLMChunk(type=ChunkType.TEXT_DELTA, content=text) for text in texts]
     chunks.append(LLMChunk(type=ChunkType.DONE))
     return chunks
 
 
-def _tool_then_text(
-    tool_call: ToolCall, *texts: str
-) -> tuple[list[LLMChunk], list[LLMChunk]]:
-    """Return (first-round-chunks-with-tool, second-round-chunks-with-text).
-
-    The caller should wire these into a ``call_count``-based mock so that the
-    first LLM round yields the tool call and the second yields final text.
-    """
-    first = [
-        LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=tool_call),
-        LLMChunk(type=ChunkType.DONE),
-    ]
-    second = _text_chunks(*texts)
-    return first, second
-
-
 async def _collect_sse(response: httpx.Response) -> list[dict]:
-    """Read all SSE 'data:' lines from a streaming response and parse them."""
     events: list[dict] = []
-    raw = response.text
-    for line in raw.splitlines():
+    for line in response.text.splitlines():
         line = line.strip()
-        if line.startswith("data:"):
-            payload = line[len("data:"):].strip()
-            if payload:
-                events.append(json.loads(payload))
+        if not line.startswith("data:"):
+            continue
+        payload = line[len("data:"):].strip()
+        if payload:
+            events.append(json.loads(payload))
     return events
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 @pytest.fixture(autouse=True)
 def _env(monkeypatch, tmp_path):
-    """Set required env vars and override data_dir to a temp directory."""
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    # Use a temp directory so StateManager does not touch the real filesystem
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
 
 
 @pytest.fixture
 def app():
-    """Create a fresh FastAPI app for each test."""
     from main import create_app
 
     return create_app(config_path="__nonexistent__.yaml")
@@ -88,22 +48,10 @@ def app():
 
 @pytest.fixture
 def sessions(app):
-    """Return the internal sessions dict from the app closure.
-
-    ``create_app`` stores ``sessions`` in its closure and every route
-    handler accesses it via the same reference.  We locate it through the
-    ``create_session`` route handler's ``__globals__`` dict which shares
-    the closure namespace.
-    """
-    # All route functions (create_session, chat, …) are closures over the
-    # same local variables.  FastAPI stores them in app.routes[].endpoint.
     for route in app.routes:
         endpoint = getattr(route, "endpoint", None)
         if endpoint is None:
             continue
-        # The closure locals are available through __code__.co_freevars and
-        # the cell contents.  However, the simplest reliable approach is to
-        # look at the endpoint's closure cells.
         closure = getattr(endpoint, "__closure__", None)
         if closure is None:
             continue
@@ -113,67 +61,98 @@ def sessions(app):
             except ValueError:
                 continue
             if isinstance(val, dict):
-                # sessions is the only dict[str, dict] in the closure.
-                # Quick sanity: at this point it should be empty.
                 return val
-    # Fallback: if we cannot find it, tests will fail with a clear message
     pytest.fail("Could not locate 'sessions' dict from app closure")
 
 
-# ---------------------------------------------------------------------------
-# The golden-path test
-# ---------------------------------------------------------------------------
-
 @pytest.mark.asyncio
 async def test_golden_path_tokyo_trip(app, sessions):
-    """Simulate a full user journey: 五一去东京 → summary generation."""
-
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-
-        # ==================================================================
-        # Step 0: Create a session
-        # ==================================================================
         resp = await client.post("/api/sessions")
         assert resp.status_code == 200
-        session_data = resp.json()
-        session_id = session_data["session_id"]
-        assert session_data["phase"] == 1
+        session_id = resp.json()["session_id"]
 
-        # Grab the live plan object from sessions dict
         session = sessions[session_id]
         plan: TravelPlanState = session["plan"]
+        agent = session["agent"]
         assert plan.phase == 1
 
-        # ==================================================================
-        # Step 1  Phase 1 → Needs gathering
-        # "我想五一去东京玩5天，预算2万元，2个大人"
-        #
-        # apply_trip_facts will extract:
-        #   destination = "东京"
-        #   dates       = DateRange(2026-05-01, 2026-05-06)   (五一 + 5天)
-        #   budget      = Budget(total=20000, currency="CNY")
-        #
-        # After extraction, PhaseRouter.infer_phase sees destination+dates
-        # but no accommodation → phase should become 4 (skipping 2 & 3).
-        # ==================================================================
+        class SummaryLLM:
+            async def chat(self, messages, tools=None, stream=True):
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content="阶段摘要")
+                yield LLMChunk(type=ChunkType.DONE)
 
-        async def _agent_run_phase1(messages, phase, **kw):
-            for chunk in _text_chunks(
-                "好的！五一去东京5天，预算2万元。",
-                "我来帮您规划行程，先确认一下住宿偏好。",
-            ):
+        agent.llm_factory = lambda: SummaryLLM()
+
+        phase1_call_count = 0
+
+        async def phase1_chat(messages, tools=None, stream=True):
+            nonlocal phase1_call_count
+            phase1_call_count += 1
+
+            if phase1_call_count == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_destination",
+                        name="update_plan_state",
+                        arguments={"field": "destination", "value": "东京"},
+                    ),
+                )
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_budget_skipped",
+                        name="update_plan_state",
+                        arguments={"field": "budget", "value": "2万元"},
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+
+            if phase1_call_count == 2:
+                assert plan.phase == 3
+                assert plan.dates is None
+                assert "- 阶段：3" in messages[0].content
+                assert messages[1].content == "[前序阶段摘要]\n阶段摘要"
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_dates",
+                        name="update_plan_state",
+                        arguments={
+                            "field": "dates",
+                            "value": {"start": "2026-05-01", "end": "2026-05-06"},
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+
+            if phase1_call_count == 3:
+                assert plan.phase == 4
+                assert plan.budget is not None
+                assert plan.budget.total == 20000.0
+                assert "- 阶段：4" in messages[0].content
+                for chunk in _text_chunks("好的，已记录东京和日期。", "接下来确认住宿偏好。"):
+                    yield chunk
+                return
+
+            for chunk in _text_chunks("额外兜底文本"):
                 yield chunk
 
-        with patch.object(session["agent"], "run", side_effect=_agent_run_phase1):
-            resp = await client.post(
-                f"/api/chat/{session_id}",
-                json={"message": "我想五一去东京玩5天，预算2万元，2个大人"},
-            )
-            assert resp.status_code == 200
+        agent.llm.chat = phase1_chat
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "我想五一去东京玩5天，预算2万元，2个大人"},
+        )
+        assert resp.status_code == 200
+        events = await _collect_sse(resp)
 
-        # Verify intake extraction
+        assert phase1_call_count == 3
+        assert any(event["type"] == "tool_call" for event in events)
         assert plan.destination == "东京"
         assert plan.dates is not None
         assert plan.dates.start == "2026-05-01"
@@ -181,128 +160,149 @@ async def test_golden_path_tokyo_trip(app, sessions):
         assert plan.dates.total_days == 5
         assert plan.budget is not None
         assert plan.budget.total == 20000.0
-        assert plan.budget.currency == "CNY"
+        assert plan.travelers is not None
+        assert plan.travelers.adults == 2
+        assert plan.phase == 4
 
-        # Phase should have advanced past 1/2/3 because destination+dates
-        # are already set.  infer_phase → 4 (no accommodation yet).
-        assert plan.phase == 4, f"Expected phase 4, got {plan.phase}"
+        phase4_call_count = 0
 
-        # ==================================================================
-        # Step 2  Phase 4 → Set accommodation
-        #
-        # The user says "住新宿".  We mock the agent to call
-        # update_plan_state but since the real tool is wired to the plan,
-        # we can just let it execute or set state directly.
-        # For simplicity, we set accommodation directly on the plan object
-        # before the chat call, then let the agent return text only.
-        # ==================================================================
-
-        # Manually set travelers (not extracted by regex in step 1)
-        plan.travelers = Travelers(adults=2, children=0)
-
-        # Now let's simulate the accommodation selection.
-        # We directly set accommodation on the plan, then trigger phase
-        # re-evaluation.
-        plan.accommodation = Accommodation(area="新宿", hotel="新宿华盛顿酒店")
-        from phase.router import PhaseRouter
-
-        router = PhaseRouter()
-        router.check_and_apply_transition(plan)
-
-        # With destination, dates, accommodation set but no daily_plans:
-        # infer_phase → 5
-        assert plan.phase == 5, f"Expected phase 5, got {plan.phase}"
-
-        # Also rebuild the agent since phase changed (mirrors real flow)
-        # In real flow the agent is rebuilt on backtrack; for forward
-        # transitions it keeps going.  For the test we just need the mock.
-
-        # ==================================================================
-        # Step 3  Phase 5 → Assemble day plans
-        #
-        # We simulate the agent calling assemble_day_plan for 5 days.
-        # Since the real tool would need LLM interaction, we set daily_plans
-        # directly on the plan object.
-        # ==================================================================
-
-        sample_activity = Activity(
-            name="浅草寺",
-            location=Location(lat=35.7148, lng=139.7967, name="浅草寺"),
-            start_time="09:00",
-            end_time="11:00",
-            category="景点",
-            cost=0,
-        )
-
-        for day_num in range(1, 6):
-            day_date = f"2026-05-{day_num:02d}"
-            plan.daily_plans.append(
-                DayPlan(
-                    day=day_num,
-                    date=day_date,
-                    activities=[sample_activity],
-                    notes=f"第{day_num}天行程",
+        async def phase4_chat(messages, tools=None, stream=True):
+            nonlocal phase4_call_count
+            phase4_call_count += 1
+            if phase4_call_count == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_budget",
+                        name="update_plan_state",
+                        arguments={"field": "budget", "value": "2万元"},
+                    ),
                 )
-            )
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_travelers",
+                        name="update_plan_state",
+                        arguments={
+                            "field": "travelers",
+                            "value": {"adults": 2, "children": 0},
+                        },
+                    ),
+                )
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_accommodation",
+                        name="update_plan_state",
+                        arguments={
+                            "field": "accommodation",
+                            "value": {"area": "新宿", "hotel": "新宿华盛顿酒店"},
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
 
-        router.check_and_apply_transition(plan)
+            assert plan.phase == 5
+            assert "- 阶段：5" in messages[0].content
+            for chunk in _text_chunks("已锁定新宿住宿。", "接下来开始逐天安排行程。"):
+                yield chunk
 
-        # 5 daily_plans for 5 total_days → infer_phase returns 7
-        assert plan.phase == 7, f"Expected phase 7, got {plan.phase}"
+        agent.llm.chat = phase4_chat
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "住新宿"},
+        )
+        assert resp.status_code == 200
 
-        # ==================================================================
-        # Step 4  Phase 7 → Generate summary
-        #
-        # Mock agent calling check_weather + generate_summary, then
-        # returning final text.
-        # ==================================================================
+        assert phase4_call_count == 2
+        assert plan.budget is not None
+        assert plan.budget.total == 20000.0
+        assert plan.travelers is not None
+        assert plan.travelers.adults == 2
+        assert plan.accommodation is not None
+        assert plan.accommodation.area == "新宿"
+        assert plan.phase == 5
 
-        call_count = 0
+        sample_activity = {
+            "name": "浅草寺",
+            "location": {"lat": 35.7148, "lng": 139.7967, "name": "浅草寺"},
+            "start_time": "09:00",
+            "end_time": "11:00",
+            "category": "景点",
+            "cost": 0,
+        }
+        daily_plans_payload = [
+            {
+                "day": day_num,
+                "date": f"2026-05-{day_num:02d}",
+                "activities": [sample_activity],
+                "notes": f"第{day_num}天行程",
+            }
+            for day_num in range(1, 6)
+        ]
 
-        async def _agent_run_phase7(messages, phase, **kw):
-            nonlocal call_count
-            # First round: tool call for check_weather
-            # (The real agent loop drives multiple rounds, but here we
-            #  mock the entire run() generator to emit the expected chunks.)
-            yield LLMChunk(
-                type=ChunkType.TOOL_CALL_START,
-                tool_call=ToolCall(
-                    id="tc_weather",
-                    name="check_weather",
-                    arguments={"destination": "东京", "date_range": "2026-05-01~2026-05-06"},
-                ),
-            )
-            yield LLMChunk(
-                type=ChunkType.TEXT_DELTA,
-                content="东京五一期间天气温暖，建议带轻便衣物。",
-            )
-            yield LLMChunk(
-                type=ChunkType.TEXT_DELTA,
-                content="\n\n您的5天东京之旅已全部规划完成！祝旅途愉快！",
-            )
-            yield LLMChunk(type=ChunkType.DONE)
+        phase5_call_count = 0
 
-        with patch.object(session["agent"], "run", side_effect=_agent_run_phase7):
-            resp = await client.post(
-                f"/api/chat/{session_id}",
-                json={"message": "帮我生成最终的出行摘要"},
-            )
-            assert resp.status_code == 200
+        async def phase5_chat(messages, tools=None, stream=True):
+            nonlocal phase5_call_count
+            phase5_call_count += 1
+            if phase5_call_count == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_daily_plans",
+                        name="update_plan_state",
+                        arguments={"field": "daily_plans", "value": daily_plans_payload},
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
 
-        # ==================================================================
-        # Final assertions: the plan should be complete
-        # ==================================================================
+            assert plan.phase == 7
+            assert "- 阶段：7" in messages[0].content
+            for chunk in _text_chunks("5天行程已生成。"):
+                yield chunk
+
+        agent.llm.chat = phase5_chat
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "开始安排每天行程"},
+        )
+        assert resp.status_code == 200
+
+        assert phase5_call_count == 2
+        assert plan.phase == 7
+        assert len(plan.daily_plans) == 5
+
+        async def phase7_chat(messages, tools=None, stream=True):
+            for chunk in _text_chunks(
+                "东京五一期间天气温暖，建议带轻便衣物。",
+                "\n\n您的5天东京之旅已全部规划完成！祝旅途愉快！",
+            ):
+                yield chunk
+
+        agent.llm.chat = phase7_chat
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "帮我生成最终的出行摘要"},
+        )
+        assert resp.status_code == 200
+
         assert plan.phase == 7
         assert plan.destination == "东京"
+        assert plan.dates is not None
         assert plan.dates.start == "2026-05-01"
         assert plan.dates.end == "2026-05-06"
+        assert plan.budget is not None
         assert plan.budget.total == 20000.0
+        assert plan.travelers is not None
         assert plan.travelers.adults == 2
+        assert plan.accommodation is not None
         assert plan.accommodation.area == "新宿"
         assert len(plan.daily_plans) == 5
         assert plan.daily_plans[0].activities[0].name == "浅草寺"
 
-        # Verify via the GET /api/plan endpoint
         resp = await client.get(f"/api/plan/{session_id}")
         assert resp.status_code == 200
         plan_dict = resp.json()

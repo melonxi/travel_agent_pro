@@ -1,49 +1,30 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Travel Agent Pro E2E', () => {
-  test('complete travel planning flow', async ({ page }) => {
-    // 1. 打开前端
-    await page.goto('http://localhost:5174');
+test.describe('Travel Agent Pro Phase 1 Flow', () => {
+  test('abstract destination intent triggers destination recommendation flow', async ({ page }) => {
+    await page.goto('/');
 
-    // 2. 等待页面加载
-    await expect(page.locator('text=Travel Agent Pro')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('text=旅行者')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('input[placeholder*="告诉我你想去哪里"]')).toBeVisible({
+      timeout: 15000,
+    });
 
-    // 3. 输入第一条消息
-    const input = page.locator('input[placeholder*="输入"]');
-    await expect(input).toBeVisible({ timeout: 5000 });
-    await input.fill('我想五一去东京玩5天，预算2万元');
+    const input = page.locator('input[placeholder*="告诉我你想去哪里"]');
+    await input.fill('我想找个海边放松、风景好一点的地方');
+    await page.locator('.send-btn').click();
 
-    // 4. 点击发送
-    await page.locator('button:has-text("发送")').click();
+    const toolCard = page.locator('.tool-card').filter({ hasText: 'search_destinations' });
+    await expect(toolCard).toBeVisible({ timeout: 90000 });
+    await expect(toolCard.locator('.tool-status')).toHaveText(/成功|执行中/, {
+      timeout: 90000,
+    });
 
-    // 5. 等待 AI 回复（检查是否出现住宿推荐关键词）
-    await expect(page.locator('text=/涩谷|新宿|浅草/i').first()).toBeVisible({ timeout: 60000 });
-    console.log('✅ Step 1: Initial response received');
-    await page.screenshot({ path: 'screenshots/step1-initial-response.png', fullPage: true });
+    const toggle = toolCard.getByRole('button', { name: /详情/ });
+    await toggle.click();
+    await expect(toolCard.locator('.tool-section')).toBeVisible({ timeout: 15000 });
 
-    // 6. 等待输入框可用（AI 回复完成）
-    await page.waitForTimeout(2000);
-
-    // 7. 选择住宿区域
-    await input.fill('我选新宿吧');
-    await page.locator('button:has-text("发送")').click();
-
-    // 8. 等待住宿确认（检查消息气泡中包含"新宿"）
-    await page.waitForTimeout(5000);
-    await expect(page.locator('.bubble').last()).toBeVisible({ timeout: 60000 });
-    console.log('✅ Step 2: Accommodation selected');
-    await page.screenshot({ path: 'screenshots/step2-accommodation.png', fullPage: true });
-
-    // 9. 请求行程安排
-    await page.waitForTimeout(2000);
-    await input.fill('帮我安排第一天的行程，我想去浅草寺和东京塔');
-    await page.locator('button:has-text("发送")').click();
-
-    // 10. 等待行程生成（检查是否出现景点名称）
-    await expect(page.locator('text=/浅草寺|东京塔/i').first()).toBeVisible({ timeout: 90000 });
-    console.log('✅ Step 3: Itinerary generated');
-    await page.screenshot({ path: 'screenshots/step3-itinerary.png', fullPage: true });
-
-    console.log('✅ E2E test completed successfully');
+    const lastAssistantBubble = page.locator('.message.assistant .bubble').last();
+    await expect(lastAssistantBubble).toBeVisible({ timeout: 90000 });
+    await expect(lastAssistantBubble).not.toHaveText(/^$/, { timeout: 90000 });
   });
 });

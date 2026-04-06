@@ -25,6 +25,27 @@ from tools.engine import ToolEngine
 from tools.update_plan_state import make_update_plan_state_tool
 
 
+class _PhaseRouter:
+    def get_prompt(self, phase: int) -> str:
+        return f"phase-{phase}"
+
+
+class _ContextManager:
+    def build_system_message(self, plan, phase_prompt, user_summary=""):
+        return Message(role=Role.SYSTEM, content=phase_prompt)
+
+    async def compress_for_transition(self, messages, from_phase, to_phase, llm_factory):
+        return "summary"
+
+
+class _MemoryManager:
+    async def load(self, user_id: str):
+        return {}
+
+    def generate_summary(self, memory) -> str:
+        return ""
+
+
 # ---------------------------------------------------------------------------
 # A.1  PHASE_TOOL_NAMES is dead code / inconsistent with tool phases
 # ---------------------------------------------------------------------------
@@ -222,6 +243,12 @@ class TestA3MaxRetriesUnused:
             tool_engine=engine,
             hooks=hooks,
             max_retries=5,
+            phase_router=_PhaseRouter(),
+            context_manager=_ContextManager(),
+            plan=TravelPlanState(session_id="s1", phase=1),
+            llm_factory=lambda: None,
+            memory_mgr=_MemoryManager(),
+            user_id="appendix-user",
         )
 
         messages = [Message(role=Role.USER, content="loop")]

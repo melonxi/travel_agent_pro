@@ -4,13 +4,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from agent.types import ToolCall
+from agent.types import ToolCall, ToolResult
 
 
 class ChunkType(str, Enum):
     TEXT_DELTA = "text_delta"
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_DELTA = "tool_call_delta"
+    TOOL_RESULT = "tool_result"
     KEEPALIVE = (
         "keepalive"  # SSE ping to prevent proxy/client timeout during tool execution
     )
@@ -22,3 +23,4 @@ class LLMChunk:
     type: ChunkType
     content: str | None = None
     tool_call: ToolCall | None = None
+    tool_result: ToolResult | None = None

@@ -1,4 +1,6 @@
 # backend/tests/test_anthropic_provider.py
+import json
+
 import pytest
 
 from agent.types import Message, Role, ToolResult
@@ -36,6 +38,23 @@ def test_convert_tool_result(provider):
     assert converted[0]["role"] == "user"
     assert converted[0]["content"][0]["type"] == "tool_result"
     assert converted[0]["content"][0]["tool_use_id"] == "tc_1"
+
+
+def test_convert_tool_result_ignores_metadata(provider):
+    messages = [
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc_1",
+                status="success",
+                data={"result": 1},
+                metadata={"source": "xiaohongshu_cli"},
+            ),
+        )
+    ]
+    _, converted = provider._split_system_and_convert(messages)
+    payload = json.loads(converted[0]["content"][0]["content"])
+    assert payload == {"status": "success", "data": {"result": 1}}
 
 
 def test_convert_tools(provider):

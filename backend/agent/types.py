@@ -23,7 +23,7 @@ class ToolCall:
 @dataclass
 class ToolResult:
     tool_call_id: str
-    status: str  # "success" | "error"
+    status: str  # "success" | "error" | "skipped"
     data: Any = None
     metadata: dict[str, Any] | None = None
     error: str | None = None
