@@ -9,7 +9,7 @@ from httpx import Request, Response
 
 from phase.prompts import PHASE_PROMPTS
 from config import ApiKeysConfig, XhsConfig
-from state.models import Budget, DateRange, Travelers, TravelPlanState
+from state.models import Accommodation, Budget, DateRange, Travelers, TravelPlanState
 from tools.base import ToolError
 from tools.check_feasibility import make_check_feasibility_tool
 from tools.engine import ToolEngine
@@ -312,10 +312,11 @@ async def test_update_plan_state_invalid_dates_budget_and_travelers_reset_fields
 async def test_update_plan_state_destination_candidates_append_or_replace_and_backtrack_phase_2_maps_to_1():
     plan = TravelPlanState(
         session_id="s1",
-        phase=4,
+        phase=5,
         destination="Kyoto",
         destination_candidates=[{"name": "Kyoto"}],
         dates=DateRange(start="2026-05-01", end="2026-05-04"),
+        accommodation=Accommodation(area="祇園"),
     )
     tool_fn = make_update_plan_state_tool(plan)
 

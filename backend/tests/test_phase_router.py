@@ -35,12 +35,13 @@ def test_infer_phase_has_destination_no_dates(router):
 
 
 def test_infer_phase_has_dates_no_accommodation(router):
+    """After phase 3+4 merge: dates set but no accommodation → still phase 3."""
     plan = TravelPlanState(
         session_id="s1",
         destination="Kyoto",
         dates=DateRange(start="2026-04-10", end="2026-04-15"),
     )
-    assert router.infer_phase(plan) == 4
+    assert router.infer_phase(plan) == 3
 
 
 def test_infer_phase_has_accommodation_no_plans(router):
@@ -77,7 +78,7 @@ def test_phase1_prompt_encourages_reading_recommendation_posts_and_comments(rout
 
 
 def test_get_prompt_for_all_phases(router):
-    for phase in [1, 3, 4, 5, 7]:
+    for phase in [1, 3, 5, 7]:
         prompt = router.get_prompt(phase)
         assert len(prompt) > 50
 

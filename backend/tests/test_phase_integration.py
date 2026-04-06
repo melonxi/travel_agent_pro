@@ -1,7 +1,7 @@
 # backend/tests/test_phase_integration.py
 """
 Phase integration tests — mock external APIs and test the full tool call chain
-for phases 2, 4, 5, and 7.
+for phases 1, 3, 5, and 7.
 
 Each test:
 1. Creates an app and session via POST /api/sessions
@@ -211,13 +211,13 @@ async def test_phase1_destination_search(app):
 
 
 # ---------------------------------------------------------------------------
-# Test: Phase 4 — Accommodation Search
+# Test: Phase 3 — Accommodation Search (merged from former Phase 4)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_phase4_accommodation_search(app):
     """
-    Phase 4: destination and dates are set but no accommodation.
+    Phase 3 (merged): destination and dates are set but no accommodation.
     Agent calls search_accommodations, then update_plan_state to set accommodation.
     Verify accommodation is set in plan state.
     """
@@ -273,12 +273,12 @@ async def test_phase4_accommodation_search(app):
             resp = await client.post("/api/sessions")
             session_id = resp.json()["session_id"]
 
-            # Set up phase 4 state: destination + dates, no accommodation
+            # Set up phase 3 state: destination + dates, no accommodation
             sessions = _get_sessions(app)
             plan = sessions[session_id]["plan"]
             plan.destination = "京都"
             plan.dates = DateRange(start="2026-04-10", end="2026-04-15")
-            plan.phase = 4
+            plan.phase = 3
 
             # Trigger agent via chat
             resp = await client.post(
@@ -295,7 +295,7 @@ async def test_phase4_accommodation_search(app):
     assert plan_data["accommodation"]["area"] == "祇園"
     assert plan_data["accommodation"]["hotel"] == "祇園白川旅館"
     # Accommodation is set; with patched run() hooks don't fire for phase transition
-    assert plan_data["phase"] >= 4
+    assert plan_data["phase"] >= 3
 
 
 # ---------------------------------------------------------------------------
@@ -501,8 +501,8 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
                 yield LLMChunk(type=ChunkType.DONE)
                 return
 
-            assert plan.phase == 4
-            assert "- 阶段：4" in messages[0].content
+            assert plan.phase == 3
+            assert "- 阶段：3" in messages[0].content
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="日期已确认。")
             yield LLMChunk(type=ChunkType.DONE)
 
@@ -521,7 +521,7 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
     assert plan_data["destination"] == "巴厘岛"
     assert plan_data["dates"] == {"start": "2026-04-10", "end": "2026-04-15"}
     assert plan_data["budget"] == {"total": 30000.0, "currency": "CNY"}
-    assert plan_data["phase"] == 4
+    assert plan_data["phase"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -545,7 +545,7 @@ async def test_backtrack_rebuild_uses_hard_boundary_context(app):
         plan.dates = DateRange(start="2026-04-10", end="2026-04-15")
         plan.accommodation = Accommodation(area="祇園", hotel="祇園白川旅館")
         plan.preferences.append(Preference(key="style", value="quiet"))
-        plan.phase = 4
+        plan.phase = 5
 
         call_count = 0
 
@@ -568,7 +568,7 @@ async def test_backtrack_rebuild_uses_hard_boundary_context(app):
                 return
 
             assert plan.phase == 1
-            assert messages[1].content == "[阶段回退]\n用户从 phase 4 回退到 phase 1，原因：用户想换目的地"
+            assert messages[1].content == "[阶段回退]\n用户从 phase 5 回退到 phase 1，原因：用户想换目的地"
             assert messages[2].content == "不想去京都了，换个目的地"
             assert "祇園白川旅館" not in messages[0].content
             assert "2026-04-10" not in messages[1].content

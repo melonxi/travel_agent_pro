@@ -16,10 +16,8 @@ class PhaseRouter:
     def infer_phase(self, plan: TravelPlanState) -> int:
         if not plan.destination:
             return 1
-        if not plan.dates:
+        if not plan.dates or not plan.accommodation:
             return 3
-        if not plan.accommodation:
-            return 4
         if len(plan.daily_plans) < plan.dates.total_days:
             return 5
         return 7

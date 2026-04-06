@@ -26,7 +26,7 @@ def make_check_availability_tool(api_keys: ApiKeysConfig):
 Use when: 用户在阶段 4-5，需要确认景点的开放状态。
 Don't use when: 已知开放时间或不需要确认。
 返回开放状态和营业时间。""",
-        phases=[4, 5],
+        phases=[3, 5],
         parameters=_PARAMETERS,
     )
     async def check_availability(place_name: str, date: str) -> dict:

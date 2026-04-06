@@ -258,7 +258,7 @@ def test_apply_message_fallbacks_replaces_stale_dates_from_message():
     assert plan.dates is not None
     assert plan.dates.start == "2026-05-01"
     assert plan.dates.end == "2026-05-06"
-    assert plan.phase == 4
+    assert plan.phase == 3
 
 
 def test_apply_message_fallbacks_restores_travelers_from_message():

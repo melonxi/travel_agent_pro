@@ -115,7 +115,7 @@ async def test_chat_session_not_found(app):
 
 @pytest.mark.asyncio
 async def test_backtrack_api_success(app, sessions):
-    """Create session, set plan to phase 4, backtrack to phase 1 — verify downstream cleared."""
+    """Create session, set plan to phase 5, backtrack to phase 1 — verify downstream cleared."""
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         # Create session
@@ -123,10 +123,10 @@ async def test_backtrack_api_success(app, sessions):
         assert create_resp.status_code == 200
         session_id = create_resp.json()["session_id"]
 
-    # Directly manipulate plan state to simulate phase 4
+    # Directly manipulate plan state to simulate phase 5
     session = sessions[session_id]
     plan: TravelPlanState = session["plan"]
-    plan.phase = 4
+    plan.phase = 5
     plan.destination = "京都"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-04")
     plan.accommodation = Accommodation(area="祇園", hotel="TEST HOTEL")
@@ -167,10 +167,10 @@ async def test_backtrack_forward_rejected(app, sessions):
     sessions[session_id]["plan"].phase = 3
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        # to_phase=4 is forward → reject
+        # to_phase=5 is forward → reject
         resp = await client.post(
             f"/api/backtrack/{session_id}",
-            json={"to_phase": 4, "reason": "nope"},
+            json={"to_phase": 5, "reason": "nope"},
         )
     assert resp.status_code == 400
 
@@ -195,10 +195,10 @@ async def test_implicit_backtrack_in_chat(app, sessions):
         create_resp = await client.post("/api/sessions")
         session_id = create_resp.json()["session_id"]
 
-    # Set plan to phase 4 with some downstream data
+    # Set plan to phase 5 with some downstream data
     session = sessions[session_id]
     plan: TravelPlanState = session["plan"]
-    plan.phase = 4
+    plan.phase = 5
     plan.destination = "东京"
     plan.dates = DateRange(start="2026-06-01", end="2026-06-05")
     plan.accommodation = Accommodation(area="新宿")

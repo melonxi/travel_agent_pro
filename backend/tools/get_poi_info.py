@@ -35,7 +35,7 @@ def make_get_poi_info_tool(api_keys: ApiKeysConfig, flyai_client=None):
 Use when: 用户在阶段 3-5，需要了解某个景点的详情。
 Don't use when: 已有该景点的完整信息。
 返回景点列表，含名称、地址、评分、门票价格和位置。""",
-        phases=[3, 4, 5],
+        phases=[3, 5],
         parameters=_PARAMETERS,
     )
     async def get_poi_info(query: str, location: str | None = None) -> dict:

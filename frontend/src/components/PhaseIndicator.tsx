@@ -1,9 +1,8 @@
 const PHASE_STEPS = [
   { phase: 1, label: '灵感与目的地', displayNum: '1' },
-  { phase: 3, label: '天数与节奏', displayNum: '2' },
-  { phase: 4, label: '住宿区域', displayNum: '3' },
-  { phase: 5, label: '行程组装', displayNum: '4' },
-  { phase: 7, label: '出发前查漏', displayNum: '5' },
+  { phase: 3, label: '日期与住宿', displayNum: '2' },
+  { phase: 5, label: '行程组装', displayNum: '3' },
+  { phase: 7, label: '出发前查漏', displayNum: '4' },
 ] as const
 
 interface Props {

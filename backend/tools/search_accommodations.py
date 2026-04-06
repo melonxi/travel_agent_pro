@@ -44,7 +44,7 @@ def make_search_accommodations_tool(api_keys: ApiKeysConfig, flyai_client=None):
 Use when: 用户在阶段 3-4，需要查询住宿选项。
 Don't use when: 住宿已确定。
 返回住宿列表，含评分、价格、位置信息和预订链接。""",
-        phases=[3, 4],
+        phases=[3],
         parameters=_PARAMETERS,
     )
     async def search_accommodations(

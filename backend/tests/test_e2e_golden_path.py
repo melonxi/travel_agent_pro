@@ -132,10 +132,10 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 return
 
             if phase1_call_count == 3:
-                assert plan.phase == 4
+                assert plan.phase == 3
                 assert plan.budget is not None
                 assert plan.budget.total == 20000.0
-                assert "- 阶段：4" in messages[0].content
+                assert "- 阶段：3" in messages[0].content
                 for chunk in _text_chunks("好的，已记录东京和日期。", "接下来确认住宿偏好。"):
                     yield chunk
                 return
@@ -162,14 +162,14 @@ async def test_golden_path_tokyo_trip(app, sessions):
         assert plan.budget.total == 20000.0
         assert plan.travelers is not None
         assert plan.travelers.adults == 2
-        assert plan.phase == 4
+        assert plan.phase == 3
 
-        phase4_call_count = 0
+        phase3_accom_call_count = 0
 
-        async def phase4_chat(messages, tools=None, stream=True):
-            nonlocal phase4_call_count
-            phase4_call_count += 1
-            if phase4_call_count == 1:
+        async def phase3_accom_chat(messages, tools=None, stream=True):
+            nonlocal phase3_accom_call_count
+            phase3_accom_call_count += 1
+            if phase3_accom_call_count == 1:
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
@@ -208,14 +208,14 @@ async def test_golden_path_tokyo_trip(app, sessions):
             for chunk in _text_chunks("已锁定新宿住宿。", "接下来开始逐天安排行程。"):
                 yield chunk
 
-        agent.llm.chat = phase4_chat
+        agent.llm.chat = phase3_accom_chat
         resp = await client.post(
             f"/api/chat/{session_id}",
             json={"message": "住新宿"},
         )
         assert resp.status_code == 200
 
-        assert phase4_call_count == 2
+        assert phase3_accom_call_count == 2
         assert plan.budget is not None
         assert plan.budget.total == 20000.0
         assert plan.travelers is not None

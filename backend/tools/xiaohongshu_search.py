@@ -89,7 +89,7 @@ Important:
   - 操作顺序：search_notes 缩小范围 → 有必要时 read_note 读正文 → 评论区观点关键时再 get_comments。
   - 调用应节制：不高频翻页，不无必要地 fetch_all。
 返回归一化的小红书数据结构。""",
-        phases=[1, 3, 4, 5, 7],
+        phases=[1, 3, 5, 7],
         parameters=_PARAMETERS,
     )
     async def xiaohongshu_search(
