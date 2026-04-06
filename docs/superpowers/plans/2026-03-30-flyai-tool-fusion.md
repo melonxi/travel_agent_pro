@@ -1894,7 +1894,6 @@ In `_build_agent` (line 67), add FlyAI client creation before tool registration:
 
         tool_engine.register(make_update_plan_state_tool(plan))
         tool_engine.register(make_search_destinations_tool(config.api_keys))
-        tool_engine.register(make_check_feasibility_tool(config.api_keys))
         tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
         tool_engine.register(make_search_accommodations_tool(config.api_keys, flyai_client))
         tool_engine.register(make_get_poi_info_tool(config.api_keys, flyai_client))

@@ -11,8 +11,8 @@ User <-> React Frontend <-> FastAPI Gateway <-> Agent Loop <-> LLM (OpenAI / Ant
                                                    |
                             +-----------+----------+----------+-----------+
                             |           |          |          |           |
-                        Search    Feasibility   Flights   POI Info    Weather
-                      Destinations  Check       Hotels    Routes     Summary
+                        Search      Flights     POI Info    Weather    Summary
+                      Destinations    Hotels      Routes
 ```
 
 ### 7-Phase Cognitive Decision Flow
@@ -20,7 +20,7 @@ User <-> React Frontend <-> FastAPI Gateway <-> Agent Loop <-> LLM (OpenAI / Ant
 | Phase | Name | Purpose | Tools |
 |-------|------|---------|-------|
 | 1 | Requirements Gathering | Understand travel preferences | - |
-| 2 | Destination Research | Search and evaluate destinations | `search_destinations`, `check_feasibility` |
+| 2 | Destination Research | Search and evaluate destinations | - |
 | 3 | Option Evaluation | Compare flights, hotels, activities | `search_flights`, `search_accommodations`, `get_poi_info` |
 | 4 | Itinerary Planning | Build day-by-day schedule | `calculate_route`, `assemble_day_plan`, `check_availability` |
 | 5 | Validation & Refinement | Verify constraints and quality | `check_weather`, `generate_summary` |

@@ -123,15 +123,13 @@ Anthropic provider 会把内部 schema 转成：
 | 注入模型 | `backend/agent/loop.py` | `self.tool_engine.get_tools_for_phase(current_phase)` |
 | provider 转换 | `backend/llm/*.py` | 转成 OpenAI/Anthropic 的目标格式 |
 
-## 3. 当前注册的 15 个工具
+## 3. 当前注册的 13 个工具
 
-当前 `_build_agent()` 一共注册了 15 个工具：
+当前 `_build_agent()` 一共注册了 13 个工具：
 
 | 工具名 | phases |
 | --- | --- |
 | `update_plan_state` | `1, 2, 3, 4, 5, 7` |
-| `search_destinations` | `1, 2` |
-| `check_feasibility` | `2` |
 | `search_flights` | `3, 4` |
 | `search_accommodations` | `3, 4` |
 | `get_poi_info` | `3, 4, 5` |
@@ -151,8 +149,8 @@ Anthropic provider 会把内部 schema 转成：
 
 | 阶段 | 当前注入工具 |
 | --- | --- |
-| Phase 1 | `update_plan_state`, `search_destinations`, `web_search`, `xiaohongshu_search` |
-| Phase 2 | `update_plan_state`, `search_destinations`, `check_feasibility`, `quick_travel_search`, `web_search`, `xiaohongshu_search` |
+| Phase 1 | `update_plan_state`, `quick_travel_search`, `web_search`, `xiaohongshu_search` |
+| Phase 2 | `update_plan_state`, `quick_travel_search`, `web_search`, `xiaohongshu_search` |
 | Phase 3 | `update_plan_state`, `search_flights`, `search_accommodations`, `get_poi_info`, `quick_travel_search`, `web_search`, `xiaohongshu_search` |
 | Phase 4 | `update_plan_state`, `search_flights`, `search_accommodations`, `get_poi_info`, `calculate_route`, `assemble_day_plan`, `check_availability`, `xiaohongshu_search` |
 | Phase 5 | `update_plan_state`, `get_poi_info`, `calculate_route`, `assemble_day_plan`, `check_availability`, `check_weather`, `xiaohongshu_search` |
@@ -166,17 +164,18 @@ Anthropic provider 会把内部 schema 转成：
 目标偏向信息收集和需求澄清，因此只有：
 
 - `update_plan_state`
-- `search_destinations`
+- `quick_travel_search`
 - `web_search`
 - `xiaohongshu_search`
 
 #### Phase 2
 
-目标偏向目的地推荐和可行性验证，因此在 Phase 1 基础上增加：
+目标偏向目的地推荐和候选比较，因此在 Phase 1 基础上继续允许：
 
-- `search_destinations`
-- `check_feasibility`
 - `quick_travel_search`
+- `web_search`
+- `xiaohongshu_search`
+- `update_plan_state`
 
 #### Phase 3
 
@@ -246,4 +245,5 @@ Anthropic provider 会把内部 schema 转成：
 - 参数解释会传，位置在 `parameters.properties.<field>.description`
 - `phases`、执行函数 `_fn`、返回值 schema 不会传给模型
 - 当前实现只存在 `Phase 1/2/3/4/5/7`
-- Phase 1 当前注入 4 个工具：`update_plan_state`、`search_destinations`、`web_search`、`xiaohongshu_search`
+- Phase 1 当前注入 4 个工具：`update_plan_state`、`quick_travel_search`、`web_search`、`xiaohongshu_search`
+- `search_destinations` 与 `check_feasibility` 当前都保留实现文件，但未注册到运行时，也不对任何 phase 暴露

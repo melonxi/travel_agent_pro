@@ -27,7 +27,7 @@ def make_check_feasibility_tool(api_keys: ApiKeysConfig):
         name="check_feasibility",
         description="""对已明确目的地做轻量可行性补充。
 Use when:
-  - 阶段 1 中已经有明确目的地，且你只需要一个快速 sanity check。
+  - 目的地已经明确，且你只需要一个快速 sanity check。
   - 你想补一个基础天气参考，帮助用户判断是否值得继续考虑这个目的地。
 Don't use when:
   - 你需要基于具体出行日期的未来天气判断。
@@ -37,7 +37,7 @@ Important:
   - visa_info 当前是固定提示。
   - feasible 当前固定返回 true，更适合做轻量参考而不是最终结论。
 返回目的地、传入日期、天气摘要和基础可行性字段。""",
-        phases=[1],
+        phases=[],
         parameters=_PARAMETERS,
     )
     async def check_travel_feasibility(destination: str, travel_date: str) -> dict:

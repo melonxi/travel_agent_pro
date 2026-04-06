@@ -28,12 +28,10 @@ from tools.engine import ToolEngine
 from tools.assemble_day_plan import make_assemble_day_plan_tool
 from tools.calculate_route import make_calculate_route_tool
 from tools.check_availability import make_check_availability_tool
-from tools.check_feasibility import make_check_feasibility_tool
 from tools.check_weather import make_check_weather_tool
 from tools.generate_summary import make_generate_summary_tool
 from tools.get_poi_info import make_get_poi_info_tool
 from tools.search_accommodations import make_search_accommodations_tool
-from tools.search_destinations import make_search_destinations_tool
 from tools.search_flights import make_search_flights_tool
 from tools.update_plan_state import make_update_plan_state_tool
 from tools.quick_travel_search import make_quick_travel_search_tool
@@ -146,8 +144,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             )
 
         tool_engine.register(make_update_plan_state_tool(plan))
-        tool_engine.register(make_search_destinations_tool(config.api_keys))
-        tool_engine.register(make_check_feasibility_tool(config.api_keys))
         tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
         tool_engine.register(
             make_search_accommodations_tool(config.api_keys, flyai_client)

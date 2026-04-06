@@ -201,7 +201,7 @@ Important:
   - preferences 只用于简单关键词触发和扩展辅助，不是硬过滤条件。
   - 对免签、预算、亲子友好、远近、是否折腾等约束，当前实现不会做严格筛选；这些约束需要你再用其他工具或分析补验证。
 返回目的地名称、地址、地理坐标、命中的主题标签和候选种子。""",
-        phases=[1],
+        phases=[],
         parameters=_PARAMETERS,
     )
     async def search_destinations(

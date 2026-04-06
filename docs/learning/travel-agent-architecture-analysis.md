@@ -42,7 +42,7 @@ graph TD
 | 阶段 | 名称 | 角色定位 | 控制模式 | 可用工具（运行时实际生效） | 目标产出 | 前置条件 |
 |------|------|---------|----------|---------|---------|---------|
 | **1** | 灵感探索 | 旅行灵感顾问 | `conversational` | `update_plan_state` | 用户偏好列表 | 无（初始状态） |
-| **2** | 目的地选择 | 目的地推荐专家 | `agent_with_guard` | `search_destinations`, `check_feasibility`, `quick_travel_search`🆕, `update_plan_state` | 确定目的地 | 用户已表达偏好 |
+| **2** | 目的地选择 | 目的地推荐专家 | `agent_with_guard` | `quick_travel_search`🆕, `update_plan_state` | 确定目的地 | 用户已表达偏好 |
 | **3** | 天数与节奏 | 行程节奏规划师 | `workflow` | `search_flights`🔀, `search_accommodations`🔀, `get_poi_info`🔀, `quick_travel_search`🆕, `update_plan_state` | 确定日期 | 目的地已确定 |
 | **4** | 住宿区域 | 住宿区域顾问 | `conversational` | `search_flights`🔀, `search_accommodations`🔀, `get_poi_info`🔀, `calculate_route`, `assemble_day_plan`, `check_availability`, `update_plan_state` | 确定住宿 | 日期已确定 |
 | **5** | 行程组装 | 行程组装引擎 | `structured` | `get_poi_info`🔀, `calculate_route`, `assemble_day_plan`, `check_availability`, `check_weather`, `update_plan_state` | 完整日程 | 住宿已确定 |
@@ -162,8 +162,6 @@ graph TB
 
 | 工具名 | 参数 | 外部 API | 用途 |
 |--------|------|----------|------|
-| `search_destinations` | `query`, `preferences` | Google Places | 搜索匹配的目的地候选 |
-| `check_feasibility` | `destination`, `travel_date` | OpenWeather | 检查天气和可行性 |
 | `quick_travel_search` 🆕 | `query` | FlyAI CLI | 快速获取目的地产品概览和价格区间 |
 | `update_plan_state` | `field`, `value` | 无 | 记录确定的目的地 |
 
@@ -457,8 +455,6 @@ def make_update_plan_state_tool(plan: TravelPlanState):
 | 工具名 | 阶段 1 | 阶段 2 | 阶段 3 | 阶段 4 | 阶段 5 | 阶段 7 |
 |--------|:------:|:------:|:------:|:------:|:------:|:------:|
 | update_plan_state | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| search_destinations | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| check_feasibility | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | search_flights 🔀 | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
 | search_accommodations 🔀 | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
 | get_poi_info 🔀 | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
@@ -487,8 +483,6 @@ def make_update_plan_state_tool(plan: TravelPlanState):
 | 工具名 | 必需参数 | 可选参数 | 返回值关键字段 |
 |--------|---------|---------|--------------|
 | `update_plan_state` | `field`, `value` | — | `updated_field`, `new_value` |
-| `search_destinations` | `query` | `preferences[]` | `destinations[]` (name, address, rating, location) |
-| `check_feasibility` | `destination`, `travel_date` | — | `weather` (temp, description), `feasible` |
 | `search_flights` 🔀 | `origin`, `destination`, `date` | `max_results` (5) | `flights[]` (airline, price, currency, departure/arrival, segments, source, booking_url) |
 | `search_accommodations` 🔀 | `destination`, `check_in`, `check_out` | `budget_per_night`, `area`, `requirements[]` | `accommodations[]` (name, address, rating, price_level, price_per_night, source, booking_url) |
 | `get_poi_info` 🔀 | `query` | `location` | `pois[]` (name, address, rating, location, types, source, ticket_price, booking_url) |
@@ -1031,8 +1025,6 @@ graph TD
 | `backend/tools/flyai_client.py` | （FlyAI CLI 异步封装） | FlyAI CLI |
 | `backend/tools/normalizers.py` | （数据归一化 + 合并策略） | — |
 | `backend/tools/update_plan_state.py` | `update_plan_state` | 无 |
-| `backend/tools/search_destinations.py` | `search_destinations` | Google Places |
-| `backend/tools/check_feasibility.py` | `check_feasibility` | OpenWeather |
 | `backend/tools/search_flights.py` | `search_flights` 🔀 | Amadeus + FlyAI |
 | `backend/tools/search_accommodations.py` | `search_accommodations` 🔀 | Google Places + FlyAI |
 | `backend/tools/get_poi_info.py` | `get_poi_info` 🔀 | Google Places + FlyAI |

@@ -44,7 +44,7 @@ travel_agent_pro/
 │   │   ├── engine.py                  # ToolEngine 注册 + 调度 + 重试
 │   │   ├── update_plan_state.py       # 更新规划状态
 │   │   ├── search_destinations.py     # 目的地搜索
-│   │   ├── check_feasibility.py       # 签证/季节/安全校验
+│   │   ├── check_feasibility.py       # 轻量天气 sanity check（当前未接入）
 │   │   ├── search_flights.py          # 航班搜索
 │   │   ├── search_accommodations.py   # 住宿搜索
 │   │   ├── get_poi_info.py            # POI 详情
@@ -3251,7 +3251,7 @@ async def test_no_api_key():
 
 每个工具遵循完全相同的模式。为保持计划紧凑，这里给出每个工具的核心签名和 API 调用方式，实现时按 `search_destinations` 的模式展开：
 
-**check_feasibility.py** — `check_travel_feasibility(destination, travel_date)` → Sherpa API 查签证 + OpenWeather 查季节
+**check_feasibility.py** — `check_travel_feasibility(destination, travel_date)` → 轻量天气 sanity check（当前未接入运行时）
 
 **search_flights.py** — `search_flights(origin, destination, date, max_results=5)` → Amadeus Flight Offers API
 

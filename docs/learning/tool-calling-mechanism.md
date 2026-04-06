@@ -270,7 +270,7 @@ tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
 阶段 1（需求收集）：LLM 能看到的工具 → [update_plan_state]
                     search_destinations 不在列表中，LLM 根本不知道有这个工具
 
-阶段 2（目的地选择）：LLM 能看到的工具 → [search_destinations, check_feasibility, ...]
+阶段 2（目的地选择）：LLM 能看到的工具 → [search_destinations, quick_travel_search, ...]
                       现在 LLM 看到了，可以决定是否调用
 
 阶段 3（行程规划）：LLM 能看到的工具 → [calculate_route, assemble_day_plan, ...]
