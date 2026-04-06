@@ -30,7 +30,7 @@ def make_calculate_route_tool(api_keys: ApiKeysConfig):
 Use when: 用户在阶段 4-5，需要计算景点之间的路线和时间。
 Don't use when: 不需要路线规划。
 返回距离、时长和路线步骤。""",
-        phases=[4, 5],
+        phases=[3, 5],
         parameters=_PARAMETERS,
     )
     async def calculate_route(

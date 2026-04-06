@@ -324,8 +324,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "不去了",
             "换地方",
         ],
-        3: ["改日期", "换时间", "日期不对"],
-        4: ["换住宿", "不住这", "换个区域"],
+        3: ["改日期", "换时间", "日期不对", "换住宿", "不住这", "换个区域"],
     }
 
     def _detect_backtrack(message: str, plan: TravelPlanState) -> int | None:

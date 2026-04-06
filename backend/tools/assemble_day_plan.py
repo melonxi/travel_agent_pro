@@ -62,7 +62,7 @@ def make_assemble_day_plan_tool():
 Use when: 用户在阶段 4-5，需要将多个景点排列成合理的日程。
 Don't use when: 行程已排好或只有一个景点。
 使用贪心算法按地理临近度排序，返回排序后的景点和总距离。""",
-        phases=[4, 5],
+        phases=[3, 5],
         parameters=_PARAMETERS,
     )
     async def assemble_day_plan(

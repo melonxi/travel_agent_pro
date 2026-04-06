@@ -101,17 +101,16 @@ class TestBacktrackService:
         assert plan.daily_plans == []
 
     def test_backtrack_to_phase_4_clears_accommodation_and_daily_plans(self) -> None:
-        """回退到 phase 4 时清除 accommodation 和 daily_plans，保留 dates 和 destination。"""
+        """Phase 4 no longer exists; backtrack to phase 3 clears dates+accommodation+daily_plans."""
         plan = _make_plan(phase=5)
-        self.service.execute(plan, to_phase=4, reason="换酒店", snapshot_path="/snap/4")
+        self.service.execute(plan, to_phase=3, reason="换酒店", snapshot_path="/snap/4")
 
-        assert plan.phase == 4
-        # phase 4 下游: accommodation, daily_plans
+        assert plan.phase == 3
+        # phase 3 downstream: dates, accommodation, daily_plans
+        assert plan.dates is None
         assert plan.accommodation is None
         assert plan.daily_plans == []
 
-        # 保留
+        # preserved
         assert plan.destination == "Tokyo"
         assert len(plan.destination_candidates) == 2
-        assert plan.dates is not None
-        assert plan.dates.start == "2025-08-01"

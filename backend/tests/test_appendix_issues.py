@@ -72,9 +72,9 @@ class TestA1PhaseToolNamesInconsistency:
         engine = ToolEngine()
         engine.register(only_phase3)
 
-        # Runtime filtering: tool should appear in phase 3, not phase 4
+        # Runtime filtering: tool should appear in phase 3, not phase 5
         assert len(engine.get_tools_for_phase(3)) == 1
-        assert len(engine.get_tools_for_phase(4)) == 0
+        assert len(engine.get_tools_for_phase(5)) == 0
 
     def test_phase_tool_names_removed_from_prompts(self):
         """After fix: PHASE_TOOL_NAMES should no longer exist in prompts module."""

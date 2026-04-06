@@ -7,7 +7,7 @@ from agent.loop import AgentLoop
 from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from phase.router import PhaseRouter
-from state.models import BacktrackEvent, TravelPlanState
+from state.models import Accommodation, BacktrackEvent, DateRange, TravelPlanState
 from tools.engine import ToolEngine
 from tools.base import tool
 from tools.update_plan_state import make_update_plan_state_tool
@@ -68,7 +68,7 @@ def engine():
     @tool(
         name="greet",
         description="Greet",
-        phases=[1, 2, 3, 4, 5, 7],
+        phases=[1, 2, 3, 5, 7],
         parameters={
             "type": "object",
             "properties": {"name": {"type": "string"}},
@@ -292,20 +292,22 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
 
 @pytest.mark.asyncio
 async def test_backtrack_rebuild_uses_hard_boundary_without_compression():
-    plan = TravelPlanState(session_id="s1", phase=4, destination="东京")
+    plan = TravelPlanState(session_id="s1", phase=5, destination="东京",
+                           dates=DateRange(start="2026-05-01", end="2026-05-05"),
+                           accommodation=Accommodation(area="新宿"))
     context_manager = FakeContextManager()
 
     @tool(
         name="trigger_backtrack",
         description="backtrack",
-        phases=[4],
+        phases=[5],
         parameters={"type": "object", "properties": {}},
     )
     async def trigger_backtrack() -> dict:
         plan.phase = 1
         plan.backtrack_history.append(
             BacktrackEvent(
-                from_phase=4,
+                from_phase=5,
                 to_phase=1,
                 reason="用户想换目的地",
                 snapshot_path="",
@@ -350,26 +352,28 @@ async def test_backtrack_rebuild_uses_hard_boundary_without_compression():
     )
 
     messages = [Message(role=Role.USER, content="不想去这里了，换个目的地")]
-    async for _ in agent.run(messages, phase=4):
+    async for _ in agent.run(messages, phase=5):
         pass
 
     assert context_manager.compress_calls == []
     assert observed_second_call["messages"] == [
         "system phase=1 prompt=phase-1-prompt user=memory:u2",
-        "[阶段回退]\n用户从 phase 4 回退到 phase 1，原因：用户想换目的地",
+        "[阶段回退]\n用户从 phase 5 回退到 phase 1，原因：用户想换目的地",
         "不想去这里了，换个目的地",
     ]
 
 
 @pytest.mark.asyncio
 async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
-    plan = TravelPlanState(session_id="s1", phase=4, destination="东京")
+    plan = TravelPlanState(session_id="s1", phase=5, destination="东京",
+                           dates=DateRange(start="2026-05-01", end="2026-05-05"),
+                           accommodation=Accommodation(area="新宿"))
     executed: list[str] = []
 
     @tool(
         name="trigger_backtrack",
         description="backtrack",
-        phases=[4],
+        phases=[5],
         parameters={"type": "object", "properties": {}},
     )
     async def trigger_backtrack() -> dict:
@@ -377,7 +381,7 @@ async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
         plan.phase = 1
         plan.backtrack_history.append(
             BacktrackEvent(
-                from_phase=4,
+                from_phase=5,
                 to_phase=1,
                 reason="用户想换目的地",
                 snapshot_path="",
@@ -388,7 +392,7 @@ async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
     @tool(
         name="should_not_run",
         description="skip",
-        phases=[4],
+        phases=[5],
         parameters={"type": "object", "properties": {}},
     )
     async def should_not_run() -> dict:
@@ -434,7 +438,7 @@ async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
         user_id="u3",
     )
 
-    chunks = [chunk async for chunk in agent.run([Message(role=Role.USER, content="换个目的地")], phase=4)]
+    chunks = [chunk async for chunk in agent.run([Message(role=Role.USER, content="换个目的地")], phase=5)]
 
     skipped = [
         chunk.tool_result
