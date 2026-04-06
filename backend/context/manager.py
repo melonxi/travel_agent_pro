@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
+from typing import Any, Callable
 
 from opentelemetry import trace
 
@@ -56,8 +58,26 @@ class ContextManager:
         phase_prompt: str,
         user_summary: str = "",
     ) -> Message:
+        runtime_clock = self.build_time_context()
         parts = [
             self._load_soul(),
+            "",
+            "---",
+            "",
+            f"## 当前时间\n\n{runtime_clock}",
+            "",
+            "---",
+            "",
+            "## 工具使用硬规则\n\n"
+            "- 当用户提供了明确的规划信息（目的地、日期、预算、人数、偏好、约束、住宿、候选地等）时，如果这些信息尚未写入当前规划状态，或是在修改已有值，必须先调用 `update_plan_state` 写入状态，不能只在自然语言里复述。\n"
+            "- 同一条用户消息里如果包含多个字段，可以连续调用多次 `update_plan_state`。\n"
+            "- 如果某个字段已经准确体现在“当前规划状态”里，不要重复调用 `update_plan_state` 写入相同值。\n"
+            "- 只能写入用户本轮或历史中明确说过的信息，不要把你的推断、推荐、联想、示例、默认值写入状态。\n"
+            "- 如果用户只说了“玩5天”“3万预算”“3个人”，只能记录天数/预算/人数这一层信息；没有明确年月日时，不要擅自写入具体出发和返回日期。\n"
+            "- `preferences` 只用于记录用户明确表达的偏好，例如“节奏轻松”“想住海边”“喜欢美食”；不要把你总结出来的必去景点、推荐区域、住宿分析、行程建议写进 `preferences`。\n"
+            "- `constraints` 只用于用户明确提出的硬/软约束；不要把你为方便规划而脑补的需求写进 `constraints`。\n"
+            "- 当用户要求推翻之前的阶段决策时，必须使用 `update_plan_state(field=\"backtrack\", value={...})`。\n"
+            "- 完成必要的状态写入后，再继续提问、解释或给建议。",
             "",
             "---",
             "",
@@ -72,6 +92,20 @@ class ContextManager:
             parts.extend(["", "---", "", f"## 用户画像\n\n{user_summary}"])
 
         return Message(role=Role.SYSTEM, content="\n".join(parts))
+
+    def build_time_context(self) -> str:
+        now = datetime.now().astimezone()
+        tz_name = now.tzname() or "local"
+        tz_offset = now.strftime("%z")
+        tz_offset = (
+            f"{tz_offset[:3]}:{tz_offset[3:]}" if tz_offset and len(tz_offset) == 5 else tz_offset
+        )
+        return (
+            f"- 当前本地日期：{now.strftime('%Y-%m-%d')}\n"
+            f"- 当前本地时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"- 当前时区：{tz_name} ({tz_offset or 'unknown'})\n"
+            "- 对“今天 / 明天 / 下周 / 五一 / 暑假 / 下个月”等相对时间的理解，必须以上述当前时间为基准。"
+        )
 
     def build_runtime_context(self, plan: TravelPlanState) -> str:
         parts = [f"- 阶段：{plan.phase}"]
@@ -135,3 +169,63 @@ class ContextManager:
                 compressible.append(msg)
 
         return must_keep, compressible
+
+    async def compress_for_transition(
+        self,
+        messages: list[Message],
+        from_phase: int,
+        to_phase: int,
+        llm_factory: Callable[[], Any],
+    ) -> str:
+        transition_messages = [m for m in messages if m.role != Role.SYSTEM]
+        rendered = self._render_transition_messages(transition_messages)
+        if len(transition_messages) < 4:
+            return rendered
+
+        llm = llm_factory()
+        prompt = [
+            Message(
+                role=Role.SYSTEM,
+                content=(
+                    "你负责为旅行规划 agent 做阶段切换摘要。"
+                    "只保留用户偏好、约束、已确认事实、关键决策和待确认事项。"
+                    "输出简洁中文，不要杜撰，不要重复无关寒暄。"
+                ),
+            ),
+            Message(
+                role=Role.USER,
+                content=(
+                    f"当前对话从阶段 {from_phase} 切换到阶段 {to_phase}。\n"
+                    "请基于下面的对话生成一个可供下阶段继续使用的摘要。\n\n"
+                    f"{rendered}"
+                ),
+            ),
+        ]
+
+        parts: list[str] = []
+        async for chunk in llm.chat(prompt, tools=[], stream=False):
+            if chunk.content:
+                parts.append(chunk.content)
+
+        summary = "".join(parts).strip()
+        return summary or rendered
+
+    def _render_transition_messages(self, messages: list[Message]) -> str:
+        lines: list[str] = []
+        for message in messages:
+            line = self._render_transition_message(message)
+            if line:
+                lines.append(line)
+        return "\n".join(lines)
+
+    def _render_transition_message(self, message: Message) -> str:
+        if message.role == Role.USER:
+            return f"用户: {message.content or ''}".strip()
+        if message.role == Role.ASSISTANT:
+            return f"助手: {message.content or ''}".strip()
+        if message.role == Role.TOOL and message.tool_result:
+            result = message.tool_result
+            if result.status == "success":
+                return f"工具结果: {result.data}"
+            return f"工具错误: {result.error or ''}".strip()
+        return message.content or ""

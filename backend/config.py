@@ -28,6 +28,7 @@ class ApiKeysConfig:
     amadeus_key: str = ""
     amadeus_secret: str = ""
     openweather: str = ""
+    tavily: str = ""
 
 
 @dataclass(frozen=True)
@@ -45,15 +46,23 @@ class FlyAIConfig:
 
 
 @dataclass(frozen=True)
+class XhsConfig:
+    enabled: bool = True
+    cli_bin: str = "xhs"
+    cli_timeout: int = 30
+
+
+@dataclass(frozen=True)
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     llm_overrides: dict[str, LLMConfig] = field(default_factory=dict)
     api_keys: ApiKeysConfig = field(default_factory=ApiKeysConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     data_dir: str = "./data"
-    max_retries: int = 3
+    max_retries: int = 30
     context_compression_threshold: float = 0.5
     flyai: FlyAIConfig = field(default_factory=FlyAIConfig)
+    xhs: XhsConfig = field(default_factory=XhsConfig)
 
 
 def _resolve_env(value: object) -> str:
@@ -112,17 +121,36 @@ def _build_api_keys(api_raw: dict) -> ApiKeysConfig:
         amadeus_key=_get("amadeus_key", "AMADEUS_API_KEY"),
         amadeus_secret=_get("amadeus_secret", "AMADEUS_API_SECRET"),
         openweather=_get("openweather", "OPENWEATHER_API_KEY"),
+        tavily=_get("tavily", "TAVILY_API_KEY"),
+    )
+
+
+def _build_xhs_config(xhs_raw: dict) -> XhsConfig:
+    return XhsConfig(
+        enabled=bool(xhs_raw.get("enabled", True)),
+        cli_bin=os.environ.get("XHS_CLI_BIN", _resolve_env(xhs_raw.get("cli_bin", "xhs")) or "xhs"),
+        cli_timeout=int(
+            os.environ.get(
+                "XHS_CLI_TIMEOUT",
+                _resolve_env(xhs_raw.get("cli_timeout", 30)) or "30",
+            )
+        ),
     )
 
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:
     path = Path(path)
+    if not path.is_absolute() and not path.exists():
+        repo_relative = Path(__file__).resolve().parent.parent / path
+        if repo_relative.exists():
+            path = repo_relative
     if not path.exists():
         # No YAML — build entirely from env vars / defaults
         return AppConfig(
             llm=_build_llm_config({}),
             api_keys=_build_api_keys({}),
             telemetry=TelemetryConfig(),
+            xhs=_build_xhs_config({}),
         )
 
     with open(path) as f:
@@ -152,6 +180,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cli_timeout=int(flyai_raw.get("cli_timeout", 30)),
         api_key=_resolve_env(flyai_raw.get("api_key", "")) or None,
     )
+    xhs = _build_xhs_config(raw.get("xhs", {}))
 
     return AppConfig(
         llm=llm,
@@ -159,7 +188,8 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         api_keys=api_keys,
         telemetry=telemetry,
         data_dir=raw.get("data_dir", "./data"),
-        max_retries=raw.get("max_retries", 3),
+        max_retries=raw.get("max_retries", 30),
         context_compression_threshold=raw.get("context_compression_threshold", 0.5),
         flyai=flyai,
+        xhs=xhs,
     )

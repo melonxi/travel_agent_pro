@@ -55,9 +55,25 @@ export interface TravelPlanState {
   backtrack_history: BacktrackEvent[]
 }
 
+export interface ToolCallEvent {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+}
+
+export interface ToolResultEvent {
+  tool_call_id: string
+  status: 'success' | 'error' | 'skipped'
+  data?: unknown
+  error?: string | null
+  error_code?: string | null
+  suggestion?: string | null
+}
+
 export interface SSEEvent {
-  type: 'text_delta' | 'tool_call' | 'state_update' | 'done'
+  type: 'text_delta' | 'tool_call' | 'tool_result' | 'state_update' | 'done'
   content?: string
-  tool_call?: { name: string; arguments: Record<string, unknown> }
+  tool_call?: ToolCallEvent
+  tool_result?: ToolResultEvent
   plan?: TravelPlanState
 }

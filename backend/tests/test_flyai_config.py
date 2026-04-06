@@ -40,3 +40,20 @@ def test_load_config_flyai_missing(tmp_path):
     cfg = load_config(str(cfg_file))
     assert cfg.flyai.enabled is True
     assert cfg.flyai.cli_timeout == 30
+
+
+def test_load_config_falls_back_to_repo_root_for_relative_path(monkeypatch, tmp_path):
+    """Relative config path should resolve from repo root when cwd is backend/."""
+    backend_dir = tmp_path / "project" / "backend"
+    backend_dir.mkdir(parents=True)
+    fake_config_module = backend_dir / "config.py"
+    fake_config_module.write_text("")
+
+    repo_root_config = backend_dir.parent / "config.yaml"
+    repo_root_config.write_text("max_retries: 9\n")
+
+    import config as config_module
+
+    monkeypatch.setattr(config_module, "__file__", str(fake_config_module))
+    cfg = load_config("config.yaml")
+    assert cfg.max_retries == 9

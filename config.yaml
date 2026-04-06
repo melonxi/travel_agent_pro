@@ -22,7 +22,7 @@ api_keys:
   openweather: "${OPENWEATHER_API_KEY}"
 
 data_dir: "./data"
-max_retries: 10
+max_retries: 30
 context_compression_threshold: 0.5
 
 flyai:

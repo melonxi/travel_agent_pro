@@ -72,21 +72,19 @@ class TestBacktrackService:
                 plan, to_phase=5, reason="forward", snapshot_path="/snap/x"
             )
 
-    def test_backtrack_to_phase_2_clears_destination(self) -> None:
-        """回退到 phase 2 时 destination 被清除。"""
+    def test_backtrack_to_phase_1_clears_destination_for_reselection(self) -> None:
+        """回退到 phase 1 重新选目的地时 destination 被清除。"""
         plan = _make_plan(phase=5)
         self.service.execute(
-            plan, to_phase=2, reason="重新选目的地", snapshot_path="/snap/2"
+            plan, to_phase=1, reason="重新选目的地", snapshot_path="/snap/2"
         )
 
-        assert plan.phase == 2
+        assert plan.phase == 1
         assert plan.destination is None
         assert plan.dates is None
         assert plan.accommodation is None
         assert plan.daily_plans == []
-
-        # destination_candidates 保留（不在 phase 2 的下游列表中）
-        assert len(plan.destination_candidates) == 2
+        assert plan.destination_candidates == []
 
     def test_backtrack_to_phase_1_clears_all(self) -> None:
         """回退到 phase 1 时所有下游字段被清除。"""

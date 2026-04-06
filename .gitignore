@@ -49,3 +49,6 @@ test-results/
 # Superpowers
 .superpowers/
 .worktrees/
+
+# Playwright MCP runtime data
+.playwright-mcp/

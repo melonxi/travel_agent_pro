@@ -1,4 +1,10 @@
 {
+  "scripts": {
+    "dev:all": "bash ./scripts/dev.sh",
+    "dev:backend": "bash -lc 'cd backend && source .venv/bin/activate && uvicorn main:app --reload --port 8000'",
+    "dev:frontend": "cd frontend && npm run dev -- --host 127.0.0.1 --strictPort",
+    "test:e2e": "npx playwright test e2e-test.spec.ts"
+  },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "playwright": "^1.58.2"

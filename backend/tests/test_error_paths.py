@@ -115,7 +115,7 @@ async def test_chat_session_not_found(app):
 
 @pytest.mark.asyncio
 async def test_backtrack_api_success(app, sessions):
-    """Create session, set plan to phase 4, backtrack to phase 2 — verify downstream cleared."""
+    """Create session, set plan to phase 4, backtrack to phase 1 — verify downstream cleared."""
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         # Create session
@@ -135,20 +135,20 @@ async def test_backtrack_api_success(app, sessions):
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
             f"/api/backtrack/{session_id}",
-            json={"to_phase": 2, "reason": "换目的地"},
+            json={"to_phase": 1, "reason": "换目的地"},
         )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["phase"] == 2
+    assert body["phase"] == 1
 
-    # Downstream data for phase >= 3 should be cleared
+    # Destination re-selection should clear all destination-stage outputs
     updated_plan: TravelPlanState = sessions[session_id]["plan"]
-    assert updated_plan.phase == 2
+    assert updated_plan.phase == 1
+    assert updated_plan.destination is None
+    assert updated_plan.dates is None
     assert updated_plan.accommodation is None
     assert updated_plan.daily_plans == []
-    # destination is NOT downstream of phase 2 — check clear_downstream logic
-    # Phase 3 clears accommodation + daily_plans; phase 4 clears daily_plans
-    # Since from_phase=2, phases 3 and 4 are both >= 2, so both are cleared.
+    assert updated_plan.destination_candidates == []
 
 
 # ---------------------------------------------------------------------------
@@ -163,14 +163,14 @@ async def test_backtrack_forward_rejected(app, sessions):
         create_resp = await client.post("/api/sessions")
         session_id = create_resp.json()["session_id"]
 
-    # Plan starts at phase 1; set it to 2
-    sessions[session_id]["plan"].phase = 2
+    # Plan starts at phase 1; set it to 3
+    sessions[session_id]["plan"].phase = 3
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        # to_phase=3 is forward → reject
+        # to_phase=4 is forward → reject
         resp = await client.post(
             f"/api/backtrack/{session_id}",
-            json={"to_phase": 3, "reason": "nope"},
+            json={"to_phase": 4, "reason": "nope"},
         )
     assert resp.status_code == 400
 
@@ -178,7 +178,7 @@ async def test_backtrack_forward_rejected(app, sessions):
         # to_phase == current phase → also rejected
         resp = await client.post(
             f"/api/backtrack/{session_id}",
-            json={"to_phase": 2, "reason": "nope"},
+            json={"to_phase": 3, "reason": "nope"},
         )
     assert resp.status_code == 400
 
@@ -217,13 +217,67 @@ async def test_implicit_backtrack_in_chat(app, sessions):
             )
         # chat returns SSE (EventSourceResponse), so status is 200
         assert resp.status_code == 200
+        assert '"type": "tool_call"' in resp.text
+        assert '"field": "backtrack"' in resp.text
+        assert '"type": "tool_result"' in resp.text
 
-    # "换个目的地" / "不想去这里" matches target_phase=2 in _BACKTRACK_PATTERNS
+    # "换个目的地" / "不想去这里" now maps back to the merged destination stage (phase 1)
     updated_plan: TravelPlanState = sessions[session_id]["plan"]
-    assert updated_plan.phase == 2
+    assert updated_plan.phase == 1
+    assert updated_plan.destination is None
+    assert updated_plan.dates is None
     assert updated_plan.accommodation is None
     assert updated_plan.daily_plans == []
     assert len(updated_plan.backtrack_history) >= 1
+
+
+@pytest.mark.asyncio
+async def test_chat_backtrack_restores_new_destination_from_message(app, sessions):
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        create_resp = await client.post("/api/sessions")
+        session_id = create_resp.json()["session_id"]
+
+    session = sessions[session_id]
+    plan: TravelPlanState = session["plan"]
+    plan.phase = 5
+    plan.destination = "东京"
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-05")
+    plan.accommodation = Accommodation(area="新宿", hotel="Hyatt Regency Tokyo")
+    plan.daily_plans = [DayPlan(day=1, date="2026-05-01")]
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        call = ToolCall(
+            id="tc_backtrack_1",
+            name="update_plan_state",
+            arguments={
+                "field": "backtrack",
+                "value": {
+                    "to_phase": 1,
+                    "reason": "用户想要更换目的地，从东京改为大阪",
+                },
+            },
+        )
+        yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=call)
+        result = await self.tool_engine.execute(call)
+        yield LLMChunk(type=ChunkType.TOOL_RESULT, tool_result=result)
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="好的，改成大阪。")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    with patch("agent.loop.AgentLoop.run", fake_run):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "换个目的地，我不想去东京了，改成大阪", "user_id": "u1"},
+            )
+        assert resp.status_code == 200
+
+    updated_plan: TravelPlanState = sessions[session_id]["plan"]
+    assert updated_plan.destination == "大阪"
+    assert updated_plan.phase == 3
+    assert updated_plan.dates is None
+    assert updated_plan.accommodation is None
+    assert updated_plan.daily_plans == []
 
 
 # ---------------------------------------------------------------------------

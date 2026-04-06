@@ -8,7 +8,11 @@ _PARAMETERS = {
     "properties": {
         "query": {
             "type": "string",
-            "description": "自然语言旅行搜索，如 '杭州三日游' '法国签证' '上海邮轮'",
+            "description": (
+                "单个自然语言旅行搜索词，建议把目的地和意图写在一起，"
+                "如 '杭州三日游'、'法国签证'、'东京 旅行产品'。"
+                "当前没有单独的日期、预算、品类过滤参数。"
+            ),
         },
     },
     "required": ["query"],
@@ -18,11 +22,18 @@ _PARAMETERS = {
 def make_quick_travel_search_tool(flyai_client):
     @tool(
         name="quick_travel_search",
-        description="""跨品类快速搜索旅行产品（机票、酒店、门票、跟团游、签证等）。
-Use when: 用户在阶段 2-3，需要快速了解某个目的地的旅行产品概览和价格范围。
-Don't use when: 已确定具体出行方案，应使用专项搜索工具。
-返回多品类产品列表，含标题、价格和预订链接。""",
-        phases=[2, 3],
+        description="""对一个自然语言旅行需求做跨品类快速扫面，返回混合旅行产品卡片。
+Use when:
+  - 你想快速感知某个目的地或主题的大致产品形态、价格带和供给面。
+  - 阶段 1 里需要粗略判断“这个地方大概卖什么、贵不贵、产品多不多”。
+Don't use when:
+  - 你需要结构化查询航班、酒店、景点详情。
+  - 你需要按日期、预算、位置等条件做精确筛选。
+Important:
+  - 返回结果可能是门票、酒店、签证、跟团游等跨品类混合列表。
+  - 这不是结构化预订搜索器，更适合快速扫面而不是精确决策。
+返回标题、价格、预订链接和图片链接。""",
+        phases=[1, 3],
         parameters=_PARAMETERS,
     )
     async def quick_travel_search(query: str) -> dict:
@@ -37,12 +48,14 @@ Don't use when: 已确定具体出行方案，应使用专项搜索工具。
 
         results = []
         for item in raw_list:
+            payload = item.get("info") if isinstance(item.get("info"), dict) else item
             results.append(
                 {
-                    "title": item.get("title", ""),
-                    "price": item.get("price"),
-                    "booking_url": item.get("jumpUrl") or item.get("detailUrl"),
-                    "image_url": item.get("picUrl") or item.get("mainPic"),
+                    "title": payload.get("title", ""),
+                    "price": payload.get("price"),
+                    "booking_url": payload.get("jumpUrl")
+                    or payload.get("detailUrl"),
+                    "image_url": payload.get("picUrl") or payload.get("mainPic"),
                 }
             )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from datetime import date
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +21,7 @@ from harness.validator import validate_hard_constraints
 from llm.factory import create_llm_provider
 from memory.manager import MemoryManager
 from phase.router import PhaseRouter
-from state.intake import apply_trip_facts
+from state.intake import extract_trip_facts
 from state.models import TravelPlanState
 from state.manager import StateManager
 from tools.engine import ToolEngine
@@ -37,6 +38,8 @@ from tools.search_flights import make_search_flights_tool
 from tools.update_plan_state import make_update_plan_state_tool
 from tools.quick_travel_search import make_quick_travel_search_tool
 from tools.search_travel_services import make_search_travel_services_tool
+from tools.web_search import make_web_search_tool
+from tools.xiaohongshu_search import make_xiaohongshu_search_tool
 
 
 class ChatRequest(BaseModel):
@@ -47,6 +50,65 @@ class ChatRequest(BaseModel):
 class BacktrackRequest(BaseModel):
     to_phase: int
     reason: str = ""
+
+
+def _should_replace_dates_with_message_dates(
+    current_dates,
+    message_dates,
+    *,
+    today: date,
+) -> bool:
+    if message_dates is None:
+        return False
+    if current_dates is None:
+        return True
+
+    try:
+        current_start = date.fromisoformat(current_dates.start)
+        message_start = date.fromisoformat(message_dates.start)
+    except ValueError:
+        return False
+
+    return current_start < today <= message_start
+
+
+def _apply_message_fallbacks(
+    plan: TravelPlanState,
+    message: str,
+    phase_router: PhaseRouter,
+    *,
+    today: date | None = None,
+) -> None:
+    today = today or date.today()
+    facts = extract_trip_facts(message, today=today)
+    changed = False
+
+    destination = facts.get("destination")
+    if destination and not plan.destination:
+        plan.destination = destination
+        changed = True
+
+    budget = facts.get("budget")
+    if budget and not plan.budget:
+        plan.budget = budget
+        changed = True
+
+    travelers = facts.get("travelers")
+    if travelers and not plan.travelers:
+        plan.travelers = travelers
+        changed = True
+
+    message_dates = facts.get("dates")
+    if _should_replace_dates_with_message_dates(
+        plan.dates,
+        message_dates,
+        today=today,
+    ):
+        plan.dates = message_dates
+        changed = True
+
+    if changed:
+        phase_router.check_and_apply_transition(plan)
 
 
 def create_app(config_path: str = "config.yaml") -> FastAPI:
@@ -68,8 +130,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         allow_headers=["*"],
     )
 
-    def _build_agent(plan):
+    def _build_agent(plan, user_id: str):
         llm = create_llm_provider(config.llm)
+        llm_factory = lambda: create_llm_provider(config.llm)
         tool_engine = ToolEngine()
 
         # Create FlyAI client if enabled
@@ -97,6 +160,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         tool_engine.register(make_generate_summary_tool())
         tool_engine.register(make_quick_travel_search_tool(flyai_client))
         tool_engine.register(make_search_travel_services_tool(flyai_client))
+        tool_engine.register(make_web_search_tool(config.api_keys))
+        tool_engine.register(make_xiaohongshu_search_tool(config.xhs))
 
         hooks = HookManager()
 
@@ -107,8 +172,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     session = sessions.get(plan.session_id)
                     if session:
                         session["needs_rebuild"] = True
-                    return
-                phase_router.check_and_apply_transition(plan)
+                return
 
         async def on_validate(**kwargs):
             if kwargs.get("tool_name") == "update_plan_state":
@@ -201,12 +265,25 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool_engine=tool_engine,
             hooks=hooks,
             max_retries=config.max_retries,
+            phase_router=phase_router,
+            context_manager=context_mgr,
+            plan=plan,
+            llm_factory=llm_factory,
+            memory_mgr=memory_mgr,
+            user_id=user_id,
         )
 
     # Backtrack detection patterns
     _BACKTRACK_PATTERNS: dict[int, list[str]] = {
-        1: ["重新开始", "从头来", "换个需求"],
-        2: ["换个目的地", "不想去这里", "不去了", "换地方"],
+        1: [
+            "重新开始",
+            "从头来",
+            "换个需求",
+            "换个目的地",
+            "不想去这里",
+            "不去了",
+            "换地方",
+        ],
         3: ["改日期", "换时间", "日期不对"],
         4: ["换住宿", "不住这", "换个区域"],
     }
@@ -226,12 +303,13 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     @app.post("/api/sessions")
     async def create_session():
         plan = await state_mgr.create_session()
-        agent = _build_agent(plan)
+        agent = _build_agent(plan, "default_user")
         sessions[plan.session_id] = {
             "plan": plan,
             "messages": [],
             "agent": agent,
             "needs_rebuild": False,
+            "user_id": "default_user",
         }
         return {"session_id": plan.session_id, "phase": plan.phase}
 
@@ -252,6 +330,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         plan = session["plan"]
+        if req.to_phase == 2:
+            req.to_phase = 1
         if req.to_phase >= plan.phase:
             raise HTTPException(status_code=400, detail="只能回退到更早的阶段")
         snapshot_path = await state_mgr.save_snapshot(plan)
@@ -259,7 +339,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             plan, req.to_phase, req.reason or "用户主动回退", snapshot_path
         )
         await state_mgr.save(plan)
-        session["agent"] = _build_agent(plan)
+        session["agent"] = _build_agent(plan, session.get("user_id", "default_user"))
         session["needs_rebuild"] = False
         return {"phase": plan.phase, "plan": plan.to_dict()}
 
@@ -271,18 +351,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         plan = session["plan"]
         messages = session["messages"]
+        session["user_id"] = req.user_id
 
         # 检查是否需要重建 agent（上一轮回退导致）
         if session.get("needs_rebuild"):
-            session["agent"] = _build_agent(plan)
+            session["agent"] = _build_agent(plan, session["user_id"])
             session["needs_rebuild"] = False
 
         agent = session["agent"]
-
-        # 提取旅行事实（不再在此处检测回退）
-        updated_fields = apply_trip_facts(plan, req.message)
-        if updated_fields:
-            phase_router.check_and_apply_transition(plan)
+        agent.user_id = session["user_id"]
 
         # Build system message
         phase_prompt = phase_router.get_prompt(plan.phase)
@@ -309,6 +386,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 event_type = (
                     "tool_call"
                     if chunk.tool_call and chunk.type.value == "tool_call_start"
+                    else "tool_result"
+                    if chunk.tool_result and chunk.type.value == "tool_result"
                     else chunk.type.value
                 )
                 event_data = {"type": event_type}
@@ -316,8 +395,18 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     event_data["content"] = chunk.content
                 if chunk.tool_call:
                     event_data["tool_call"] = {
+                        "id": chunk.tool_call.id,
                         "name": chunk.tool_call.name,
                         "arguments": chunk.tool_call.arguments,
+                    }
+                if chunk.tool_result:
+                    event_data["tool_result"] = {
+                        "tool_call_id": chunk.tool_result.tool_call_id,
+                        "status": chunk.tool_result.status,
+                        "data": chunk.tool_result.data,
+                        "error": chunk.tool_result.error,
+                        "error_code": chunk.tool_result.error_code,
+                        "suggestion": chunk.tool_result.suggestion,
                     }
                 yield json.dumps(event_data, ensure_ascii=False)
 
@@ -325,14 +414,54 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             if plan.phase == phase_before_run:
                 backtrack_target = _detect_backtrack(req.message, plan)
                 if backtrack_target is not None:
+                    reason = f"fallback回退：{req.message[:50]}"
+                    tool_call_id = f"fallback.update_plan_state:{plan.version}"
+                    yield json.dumps(
+                        {
+                            "type": "tool_call",
+                            "tool_call": {
+                                "id": tool_call_id,
+                                "name": "update_plan_state",
+                                "arguments": {
+                                    "field": "backtrack",
+                                    "value": {
+                                        "to_phase": backtrack_target,
+                                        "reason": reason,
+                                    },
+                                },
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
                     snapshot_path = await state_mgr.save_snapshot(plan)
+                    from_phase = plan.phase
                     phase_router.prepare_backtrack(
                         plan,
                         backtrack_target,
-                        f"fallback回退：{req.message[:50]}",
+                        reason,
                         snapshot_path,
                     )
                     session["needs_rebuild"] = True
+                    yield json.dumps(
+                        {
+                            "type": "tool_result",
+                            "tool_result": {
+                                "tool_call_id": tool_call_id,
+                                "status": "success",
+                                "data": {
+                                    "backtracked": True,
+                                    "from_phase": from_phase,
+                                    "to_phase": backtrack_target,
+                                    "reason": reason,
+                                    "next_action": "请向用户确认回退结果，不要继续调用其他工具",
+                                },
+                                "error": None,
+                                "error_code": None,
+                                "suggestion": None,
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
 
             await state_mgr.save(plan)
             yield json.dumps(

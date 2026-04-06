@@ -4,12 +4,34 @@ import re
 from datetime import date, timedelta
 from typing import Any
 
-from state.models import Budget, DateRange, TravelPlanState
+from state.models import Budget, DateRange, Travelers, TravelPlanState
 
 
 def parse_dates_value(value: Any, *, today: date | None = None) -> DateRange | None:
     if isinstance(value, dict):
-        return DateRange.from_dict(value)
+        start = value.get("start") or value.get("start_date")
+        end = value.get("end") or value.get("end_date")
+        if start and end:
+            return DateRange(start=str(start), end=str(end))
+        duration = (
+            value.get("duration")
+            or value.get("duration_days")
+            or value.get("travel_days")
+            or value.get("total_days")
+            or value.get("days")
+        )
+        time_window = (
+            value.get("time_window")
+            or value.get("period")
+            or value.get("holiday")
+            or value.get("window")
+        )
+        if duration and time_window:
+            duration_text = (
+                f"{duration}天" if isinstance(duration, int | float) else str(duration)
+            )
+            return parse_dates_value(f"{time_window}，{duration_text}", today=today)
+        return None
     if not isinstance(value, str):
         return None
 
@@ -23,6 +45,32 @@ def parse_dates_value(value: Any, *, today: date | None = None) -> DateRange | N
         start = date.fromisoformat(iso_dates[0].replace("/", "-"))
         end = date.fromisoformat(iso_dates[1].replace("/", "-"))
         return DateRange(start=start.isoformat(), end=end.isoformat())
+
+    # Chinese date format: X月X号/日
+    cn_dates = re.findall(r"(\d{1,2})\s*月\s*(\d{1,2})\s*[号日]", text)
+    if len(cn_dates) >= 2:
+        m1, d1 = int(cn_dates[0][0]), int(cn_dates[0][1])
+        m2, d2 = int(cn_dates[1][0]), int(cn_dates[1][1])
+        year = today.year
+        start = date(year, m1, d1)
+        end = date(year, m2, d2)
+        if start < today:
+            start = date(year + 1, m1, d1)
+            end = date(year + 1, m2, d2)
+        return DateRange(start=start.isoformat(), end=end.isoformat())
+    if len(cn_dates) == 1:
+        # Single date + duration: strip the date part to avoid matching "X日" as duration
+        m, d = int(cn_dates[0][0]), int(cn_dates[0][1])
+        date_end = text.index(cn_dates[0][1]) + len(cn_dates[0][1])
+        remainder = text[date_end:]
+        duration_match = re.search(r"(\d+)\s*[天日]", remainder)
+        if duration_match:
+            year = today.year
+            start = date(year, m, d)
+            if start < today:
+                start = date(year + 1, m, d)
+            end = start + timedelta(days=int(duration_match.group(1)) - 1)
+            return DateRange(start=start.isoformat(), end=end.isoformat())
 
     duration_match = re.search(r"(\d+)\s*[天日]", text)
     duration_days = int(duration_match.group(1)) if duration_match else None
@@ -49,6 +97,8 @@ def parse_dates_value(value: Any, *, today: date | None = None) -> DateRange | N
 def parse_budget_value(value: Any) -> Budget | None:
     if isinstance(value, dict):
         return Budget.from_dict(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return Budget(total=float(value))
     if not isinstance(value, str):
         return None
 
@@ -79,7 +129,44 @@ def parse_budget_value(value: Any) -> Budget | None:
     return Budget(total=amount, currency=currency)
 
 
+def parse_travelers_value(value: Any) -> Travelers | None:
+    if isinstance(value, dict):
+        return Travelers.from_dict(value)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return Travelers(adults=value)
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip().lower()
+    if not text:
+        return None
+
+    adults_match = re.search(
+        r"(\d+)\s*(?:个)?\s*(?:大人|成人|adults?)",
+        text,
+        re.IGNORECASE,
+    )
+    children_match = re.search(
+        r"(\d+)\s*(?:个)?\s*(?:小孩|儿童|孩子|child|children)",
+        text,
+        re.IGNORECASE,
+    )
+    total_match = re.search(r"(\d+)\s*(?:位|人)", text)
+
+    adults = int(adults_match.group(1)) if adults_match else None
+    children = int(children_match.group(1)) if children_match else 0
+
+    if adults is None and total_match:
+        adults = int(total_match.group(1))
+
+    if adults is None:
+        return None
+
+    return Travelers(adults=adults, children=children)
+
+
 def extract_trip_facts(message: str, *, today: date | None = None) -> dict[str, Any]:
+    """Deprecated: legacy regex intake path kept only for compatibility/tests."""
     updates: dict[str, Any] = {}
 
     destination = _extract_destination(message)
@@ -95,6 +182,10 @@ def extract_trip_facts(message: str, *, today: date | None = None) -> dict[str, 
     if budget:
         updates["budget"] = budget
 
+    travelers = parse_travelers_value(message)
+    if travelers:
+        updates["travelers"] = travelers
+
     return updates
 
 
@@ -104,6 +195,7 @@ def apply_trip_facts(
     *,
     today: date | None = None,
 ) -> set[str]:
+    """Deprecated: chat entrypoint no longer uses regex pre-extraction."""
     updates = extract_trip_facts(message, today=today)
     for field, value in updates.items():
         setattr(plan, field, value)
@@ -111,11 +203,23 @@ def apply_trip_facts(
 
 
 def _extract_destination(message: str) -> str | None:
+    """Legacy helper for deprecated regex intake."""
+    invalid_candidates = {
+        "这里",
+        "这里了",
+        "那里",
+        "那里了",
+        "这边",
+        "那边",
+        "这儿",
+        "那儿",
+    }
     patterns = (
+        r"(?:改成|改为|改去|改到|换成|换到)([A-Za-z\u4e00-\u9fff·]{2,20})",
         r"(?:去|到|飞往|前往)([A-Za-z\u4e00-\u9fff·]{2,20})",
         r"(?:目的地[是为：:]?)([A-Za-z\u4e00-\u9fff·]{2,20})",
     )
-    for pattern in patterns:
+    for idx, pattern in enumerate(patterns):
         match = re.search(pattern, message)
         if not match:
             continue
@@ -125,14 +229,31 @@ def _extract_destination(message: str) -> str | None:
         candidate = re.sub(r"(预算|大概|大约|准备|打算).*$", "", candidate)
         candidate = re.sub(r"\d.*$", "", candidate)
         candidate = candidate.strip(" ，。,.;；:：")
+        if candidate in invalid_candidates:
+            return None
         if any(token in candidate for token in ("或者", "或", "和", "、", "/")):
+            return None
+        if idx == 1 and _is_negated_destination_message(message, candidate):
             return None
         if len(candidate) >= 2:
             return candidate
     return None
 
 
+def _is_negated_destination_message(message: str, candidate: str) -> bool:
+    candidate_pattern = re.escape(candidate)
+    negation_patterns = (
+        rf"不想去{candidate_pattern}",
+        rf"不去{candidate_pattern}",
+        rf"不要去{candidate_pattern}",
+        rf"别去{candidate_pattern}",
+        rf"不想去{candidate_pattern}了",
+    )
+    return any(re.search(pattern, message) for pattern in negation_patterns)
+
+
 def _extract_budget_text(message: str) -> str | None:
+    """Legacy helper for deprecated regex intake."""
     patterns = (
         r"(?:预算|人均预算|总预算|费用|花费|开销)[^\d$€¥￥]{0,6}([¥￥$€]?\s*\d+(?:\.\d+)?\s*(?:万|千|k)?\s*(?:元|人民币|美元|usd|eur|日元|jpy)?)",
         r"([¥￥$€]\s*\d+(?:\.\d+)?\s*(?:万|千|k)?(?:元|人民币|美元|usd|eur|日元|jpy)?)",

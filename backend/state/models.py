@@ -214,7 +214,6 @@ _PHASE_DOWNSTREAM: dict[int, list[str]] = {
         "accommodation",
         "daily_plans",
     ],
-    2: ["destination", "dates", "accommodation", "daily_plans"],
     3: ["dates", "accommodation", "daily_plans"],
     4: ["accommodation", "daily_plans"],
     5: ["daily_plans"],
@@ -270,9 +269,11 @@ class TravelPlanState:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TravelPlanState:
+        raw_phase = d.get("phase", 1)
+        phase = 1 if raw_phase == 2 else raw_phase
         return cls(
             session_id=d["session_id"],
-            phase=d.get("phase", 1),
+            phase=phase,
             destination=d.get("destination"),
             destination_candidates=d.get("destination_candidates", []),
             dates=DateRange.from_dict(d["dates"]) if d.get("dates") else None,

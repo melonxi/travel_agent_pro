@@ -50,6 +50,11 @@ class ToolEngine:
 
             try:
                 data = await tool_def(**call.arguments)
+                metadata = None
+                if isinstance(data, dict) and "_metadata" in data:
+                    payload = dict(data)
+                    metadata = payload.pop("_metadata")
+                    data = payload
                 span.set_attribute(TOOL_NAME, call.name)
                 span.set_attribute(TOOL_STATUS, "success")
                 span.add_event(EVENT_TOOL_OUTPUT, {
@@ -59,6 +64,7 @@ class ToolEngine:
                     tool_call_id=call.id,
                     status="success",
                     data=data,
+                    metadata=metadata,
                 )
             except ToolError as e:
                 span.set_attribute(TOOL_NAME, call.name)

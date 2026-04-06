@@ -3,6 +3,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from state.intake import extract_trip_facts
 from state.models import TravelPlanState
 from tools.update_plan_state import make_update_plan_state_tool
 
@@ -62,6 +63,46 @@ async def test_set_budget_from_string(tool_fn, plan):
 
 
 @pytest.mark.asyncio
+async def test_set_budget_from_number(tool_fn, plan):
+    await tool_fn(field="budget", value=20000)
+
+    assert plan.budget is not None
+    assert plan.budget.total == 20000
+    assert plan.budget.currency == "CNY"
+
+
+@pytest.mark.asyncio
+async def test_set_travelers_from_string(tool_fn, plan):
+    await tool_fn(field="travelers", value="2个大人")
+
+    assert plan.travelers is not None
+    assert plan.travelers.adults == 2
+    assert plan.travelers.children == 0
+
+
+def test_extract_trip_facts_ignores_negated_destination_without_replacement():
+    facts = extract_trip_facts("不想去京都了，换个目的地")
+
+    assert "destination" not in facts
+
+
+@pytest.mark.asyncio
+async def test_set_accommodation_accepts_alias_fields(tool_fn, plan):
+    await tool_fn(
+        field="accommodation",
+        value={
+            "hotel_name": "Hyatt Regency Tokyo",
+            "location": "西新宿",
+            "address": "东京都新宿区西新宿2-7-2",
+        },
+    )
+
+    assert plan.accommodation is not None
+    assert plan.accommodation.area == "西新宿"
+    assert plan.accommodation.hotel == "Hyatt Regency Tokyo"
+
+
+@pytest.mark.asyncio
 async def test_add_preference(tool_fn, plan):
     result = await tool_fn(
         field="preferences", value={"key": "pace", "value": "relaxed"}
@@ -76,6 +117,17 @@ async def test_add_constraint(tool_fn, plan):
         field="constraints", value={"type": "hard", "description": "预算 1 万"}
     )
     assert len(plan.constraints) == 1
+
+
+@pytest.mark.asyncio
+async def test_add_constraint_accepts_loose_dict(tool_fn, plan):
+    await tool_fn(
+        field="constraints", value={"duration_days": 5, "season": "五一假期"}
+    )
+
+    assert len(plan.constraints) == 1
+    assert plan.constraints[0].type == "soft"
+    assert "duration_days" in plan.constraints[0].description
 
 
 @pytest.mark.asyncio
