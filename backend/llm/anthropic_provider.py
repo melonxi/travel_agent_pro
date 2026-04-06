@@ -201,3 +201,20 @@ class AnthropicProvider:
             if msg.content:
                 total += len(msg.content) // 3  # rough estimate for Claude
         return total
+
+    async def get_context_window(self) -> int | None:
+        """Return context window for known Anthropic models."""
+        _KNOWN_CONTEXT_WINDOWS = {
+            "claude-sonnet-4": 200000,
+            "claude-opus-4": 200000,
+            "claude-haiku-4": 200000,
+            "claude-3-5-sonnet": 200000,
+            "claude-3-5-haiku": 200000,
+            "claude-3-opus": 200000,
+            "claude-3-sonnet": 200000,
+            "claude-3-haiku": 200000,
+        }
+        for prefix, window in _KNOWN_CONTEXT_WINDOWS.items():
+            if self.model.startswith(prefix):
+                return window
+        return None

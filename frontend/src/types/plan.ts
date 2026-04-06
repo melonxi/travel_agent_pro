@@ -70,10 +70,20 @@ export interface ToolResultEvent {
   suggestion?: string | null
 }
 
+export interface CompressionInfo {
+  message_count_before: number
+  message_count_after: number
+  must_keep_count: number
+  compressed_count: number
+  estimated_tokens_before: number
+  reason: string
+}
+
 export interface SSEEvent {
-  type: 'text_delta' | 'tool_call' | 'tool_result' | 'state_update' | 'done'
+  type: 'text_delta' | 'tool_call' | 'tool_result' | 'state_update' | 'context_compression' | 'done'
   content?: string
   tool_call?: ToolCallEvent
   tool_result?: ToolResultEvent
   plan?: TravelPlanState
+  compression_info?: CompressionInfo
 }

@@ -454,3 +454,188 @@ async def test_tool_engine_extracts_xiaohongshu_metadata():
             }
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Tests for bare-ID → URL conversion fix
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_note_url_bare_id_no_token():
+    from tools.xiaohongshu_cli import _ensure_note_url
+
+    url = _ensure_note_url("691944970000000005012159")
+    assert url == "https://www.xiaohongshu.com/explore/691944970000000005012159"
+
+
+def test_ensure_note_url_bare_id_with_token():
+    from tools.xiaohongshu_cli import _ensure_note_url
+
+    url = _ensure_note_url("note_1", "tok_abc")
+    assert "xsec_token=tok_abc" in url
+    assert url.startswith("https://www.xiaohongshu.com/explore/note_1?")
+
+
+def test_ensure_note_url_already_url():
+    from tools.xiaohongshu_cli import _ensure_note_url
+
+    original = "https://www.xiaohongshu.com/explore/note_1?xsec_token=abc"
+    assert _ensure_note_url(original) == original
+
+
+def test_ensure_note_url_xhslink():
+    from tools.xiaohongshu_cli import _ensure_note_url
+
+    original = "https://xhslink.com/abc123"
+    assert _ensure_note_url(original) == original
+
+
+@pytest.mark.asyncio
+async def test_read_note_bare_id_converted_to_url(monkeypatch):
+    """read_note should convert a bare ID to a full URL before calling CLI."""
+    from tools.xiaohongshu_cli import XiaohongshuCliClient
+
+    calls: list[tuple] = []
+    payloads = [
+        # status check
+        _FakeProcess(
+            stdout=json.dumps(
+                {"ok": True, "schema_version": "1", "data": {"authenticated": True}}
+            )
+        ),
+        # read response
+        _FakeProcess(
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "schema_version": "1",
+                    "data": {"note_id": "note_1", "title": "Test"},
+                }
+            )
+        ),
+    ]
+
+    async def fake_exec(*args, **kwargs):
+        calls.append(args)
+        return payloads.pop(0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    client = XiaohongshuCliClient(timeout=3)
+    await client.read_note("note_1", xsec_token="tok_abc")
+
+    # calls[1] = ("xhs", "read", url, "--xsec-token", "tok_abc", "--json")
+    read_args = calls[1]
+    assert read_args[1] == "read"
+    assert "https://www.xiaohongshu.com/explore/note_1" in read_args[2]
+    assert "--xsec-token" in read_args
+    assert "tok_abc" in read_args
+
+
+@pytest.mark.asyncio
+async def test_get_comments_bare_id_converted_to_url(monkeypatch):
+    """get_comments should convert a bare ID to a full URL before calling CLI."""
+    from tools.xiaohongshu_cli import XiaohongshuCliClient
+
+    calls: list[tuple] = []
+    payloads = [
+        _FakeProcess(
+            stdout=json.dumps(
+                {"ok": True, "schema_version": "1", "data": {"authenticated": True}}
+            )
+        ),
+        _FakeProcess(
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "schema_version": "1",
+                    "data": {"comments": [], "has_more": False},
+                }
+            )
+        ),
+    ]
+
+    async def fake_exec(*args, **kwargs):
+        calls.append(args)
+        return payloads.pop(0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    client = XiaohongshuCliClient(timeout=3)
+    await client.get_comments("note_1", xsec_token="tok_abc")
+
+    # calls[1] = ("xhs", "comments", url, "--xsec-token", "tok_abc", "--json")
+    comments_args = calls[1]
+    assert comments_args[1] == "comments"
+    assert "https://www.xiaohongshu.com/explore/note_1" in comments_args[2]
+    assert "--xsec-token" in comments_args
+    assert "tok_abc" in comments_args
+
+
+@pytest.mark.asyncio
+async def test_read_note_extracts_xsec_token_from_url(monkeypatch):
+    """read_note should auto-extract xsec_token from a URL when not explicitly passed."""
+    from tools.xiaohongshu_cli import XiaohongshuCliClient
+
+    calls: list[tuple] = []
+    payloads = [
+        _FakeProcess(
+            stdout=json.dumps(
+                {"ok": True, "schema_version": "1", "data": {"authenticated": True}}
+            )
+        ),
+        _FakeProcess(
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "schema_version": "1",
+                    "data": {"note_id": "note_1", "title": "Test"},
+                }
+            )
+        ),
+    ]
+
+    async def fake_exec(*args, **kwargs):
+        calls.append(args)
+        return payloads.pop(0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    client = XiaohongshuCliClient(timeout=3)
+    url = "https://www.xiaohongshu.com/explore/note_1?xsec_token=tok_from_url&xsec_source=pc_search"
+    await client.read_note(url)
+
+    read_args = calls[1]
+    assert "--xsec-token" in read_args
+    assert "tok_from_url" in read_args
+
+
+@pytest.mark.asyncio
+async def test_search_tool_read_note_extracts_token_from_url():
+    """xiaohongshu_search read_note should extract xsec_token from URL before calling client."""
+    from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+
+    xhs_client = SimpleNamespace(
+        search_notes=AsyncMock(),
+        read_note=AsyncMock(
+            return_value={
+                "note_id": "note_1",
+                "title": "Test",
+                "desc": "",
+                "type": "normal",
+                "user": {"nickname": "Alice"},
+                "interact_info": {},
+                "tag_list": [],
+                "image_list": [],
+            }
+        ),
+        get_comments=AsyncMock(),
+    )
+
+    tool_fn = make_xiaohongshu_search_tool(xhs_client=xhs_client)
+    url = "https://www.xiaohongshu.com/explore/note_1?xsec_token=tok_extracted"
+    await tool_fn(operation="read_note", note_ref=url)
+
+    xhs_client.read_note.assert_awaited_once_with(
+        note_ref=url, xsec_token="tok_extracted"
+    )

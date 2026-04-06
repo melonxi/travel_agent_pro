@@ -48,9 +48,11 @@ class XiaohongshuCliClient:
 
     async def read_note(self, note_ref: str, xsec_token: str = "") -> dict[str, Any]:
         await self.ensure_authenticated()
-        args = ["read", note_ref]
-        if xsec_token:
-            args.extend(["--xsec-token", xsec_token])
+        resolved_token = xsec_token or extract_xsec_token(note_ref)
+        url = _ensure_note_url(note_ref, resolved_token)
+        args = ["read", url]
+        if resolved_token:
+            args.extend(["--xsec-token", resolved_token])
         return await self._run_data(*args)
 
     async def get_comments(
@@ -61,11 +63,13 @@ class XiaohongshuCliClient:
         fetch_all: bool = False,
     ) -> dict[str, Any]:
         await self.ensure_authenticated()
-        args = ["comments", note_ref]
+        resolved_token = xsec_token or extract_xsec_token(note_ref)
+        url = _ensure_note_url(note_ref, resolved_token)
+        args = ["comments", url]
         if cursor:
             args.extend(["--cursor", cursor])
-        if xsec_token:
-            args.extend(["--xsec-token", xsec_token])
+        if resolved_token:
+            args.extend(["--xsec-token", resolved_token])
         if fetch_all:
             args.append("--all")
         return await self._run_data(*args)
@@ -167,6 +171,16 @@ class XiaohongshuCliClient:
             error_code="API_ERROR" if code == "api_error" else code.upper(),
             suggestion="Retry later or upgrade the xiaohongshu-cli tool.",
         )
+
+
+def _ensure_note_url(note_ref: str, xsec_token: str = "") -> str:
+    """Convert a bare note ID to a full URL so the CLI can fetch it directly."""
+    if "xiaohongshu.com" in note_ref or "xhslink.com" in note_ref:
+        return note_ref
+    url = f"https://www.xiaohongshu.com/explore/{note_ref}"
+    if xsec_token:
+        url += f"?xsec_token={xsec_token}&xsec_source=pc_search"
+    return url
 
 
 def extract_xsec_token(note_ref: str) -> str:

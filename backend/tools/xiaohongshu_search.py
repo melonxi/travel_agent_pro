@@ -153,7 +153,8 @@ Important:
             )
 
         if operation == "read_note":
-            data = await client.read_note(note_ref=note_ref, xsec_token=xsec_token)
+            resolved_token = xsec_token or extract_xsec_token(note_ref)
+            data = await client.read_note(note_ref=note_ref, xsec_token=resolved_token)
             return {
                 "operation": operation,
                 "note": _normalize_note_detail(data),

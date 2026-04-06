@@ -19,6 +19,7 @@ from context.manager import ContextManager
 from harness.judge import build_judge_prompt, parse_judge_response
 from harness.validator import validate_hard_constraints
 from llm.factory import create_llm_provider
+from llm.types import ChunkType
 from memory.manager import MemoryManager
 from phase.router import PhaseRouter
 from state.intake import extract_trip_facts
@@ -33,6 +34,8 @@ from tools.generate_summary import make_generate_summary_tool
 from tools.get_poi_info import make_get_poi_info_tool
 from tools.search_accommodations import make_search_accommodations_tool
 from tools.search_flights import make_search_flights_tool
+from tools.search_trains import make_search_trains_tool
+from tools.ai_travel_search import make_ai_travel_search_tool
 from tools.update_plan_state import make_update_plan_state_tool
 from tools.quick_travel_search import make_quick_travel_search_tool
 from tools.search_travel_services import make_search_travel_services_tool
@@ -116,10 +119,32 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     phase_router = PhaseRouter()
     context_mgr = ContextManager()
 
+    # Resolved context window — will be updated at startup via model query
+    resolved_context_window: dict[str, int] = {"value": config.llm.context_window}
+
     # Session-level caches
     sessions: dict[str, dict] = {}  # session_id → {plan, messages, agent}
 
-    app = FastAPI(title="Travel Agent Pro")
+    async def _probe_context_window() -> None:
+        """Query model API for actual context window, fallback to config default."""
+        llm = create_llm_provider(config.llm)
+        try:
+            queried = await llm.get_context_window()
+            if queried and queried > 0:
+                resolved_context_window["value"] = queried
+                import logging
+                logging.getLogger("travel-agent-pro").info(
+                    f"Context window from model API: {queried}"
+                )
+        except Exception:
+            pass  # keep config default
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await _probe_context_window()
+        yield
+
+    app = FastAPI(title="Travel Agent Pro", lifespan=lifespan)
     setup_telemetry(app, config.telemetry)
     app.add_middleware(
         CORSMiddleware,
@@ -128,7 +153,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         allow_headers=["*"],
     )
 
-    def _build_agent(plan, user_id: str):
+    def _build_agent(plan, user_id: str, compression_events: list[dict] | None = None):
         llm = create_llm_provider(config.llm)
         llm_factory = lambda: create_llm_provider(config.llm)
         tool_engine = ToolEngine()
@@ -145,6 +170,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         tool_engine.register(make_update_plan_state_tool(plan))
         tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
+        tool_engine.register(make_search_trains_tool(flyai_client))
+        tool_engine.register(make_ai_travel_search_tool(flyai_client))
         tool_engine.register(
             make_search_accommodations_tool(config.api_keys, flyai_client)
         )
@@ -189,13 +216,17 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             if not msgs:
                 return
             threshold = int(
-                config.llm.max_tokens * config.context_compression_threshold
+                resolved_context_window["value"] * config.context_compression_threshold
             )
             if not context_mgr.should_compress(msgs, threshold):
                 return
             must_keep, compressible = context_mgr.classify_messages(msgs)
             if len(compressible) <= 2:
                 return
+
+            message_count_before = len(msgs)
+            estimated_tokens_before = sum(len(m.content or "") // 3 for m in msgs)
+
             # Summarize compressible messages into one
             summary_parts = []
             for m in compressible:
@@ -219,6 +250,18 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             for m in recent:
                 if m not in msgs:
                     msgs.append(m)
+
+            message_count_after = len(msgs)
+            if compression_events is not None:
+                compression_events.append({
+                    "message_count_before": message_count_before,
+                    "message_count_after": message_count_after,
+                    "must_keep_count": len(must_keep),
+                    "compressed_count": len(compressible),
+                    "estimated_tokens_before": estimated_tokens_before,
+                    "reason": f"对话消息数 {message_count_before} 条，"
+                              f"估算 token {estimated_tokens_before} 超过阈值 {threshold}",
+                })
 
         hooks.register("before_llm_call", on_before_llm)
 
@@ -267,6 +310,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             llm_factory=llm_factory,
             memory_mgr=memory_mgr,
             user_id=user_id,
+            compression_events=compression_events,
         )
 
     # Backtrack detection patterns
@@ -299,13 +343,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     @app.post("/api/sessions")
     async def create_session():
         plan = await state_mgr.create_session()
-        agent = _build_agent(plan, "default_user")
+        compression_events: list[dict] = []
+        agent = _build_agent(plan, "default_user", compression_events=compression_events)
         sessions[plan.session_id] = {
             "plan": plan,
             "messages": [],
             "agent": agent,
             "needs_rebuild": False,
             "user_id": "default_user",
+            "compression_events": compression_events,
         }
         return {"session_id": plan.session_id, "phase": plan.phase}
 
@@ -335,7 +381,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             plan, req.to_phase, req.reason or "用户主动回退", snapshot_path
         )
         await state_mgr.save(plan)
-        session["agent"] = _build_agent(plan, session.get("user_id", "default_user"))
+        session["agent"] = _build_agent(plan, session.get("user_id", "default_user"), compression_events=session.get("compression_events"))
         session["needs_rebuild"] = False
         return {"phase": plan.phase, "plan": plan.to_dict()}
 
@@ -351,7 +397,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         # 检查是否需要重建 agent（上一轮回退导致）
         if session.get("needs_rebuild"):
-            session["agent"] = _build_agent(plan, session["user_id"])
+            session["agent"] = _build_agent(plan, session["user_id"], compression_events=session.get("compression_events"))
             session["needs_rebuild"] = False
 
         agent = session["agent"]
@@ -378,6 +424,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             async for chunk in agent.run(messages, phase=plan.phase):
                 if chunk.type.value == "keepalive":
                     yield {"comment": "ping"}
+                    continue
+                if chunk.type == ChunkType.CONTEXT_COMPRESSION:
+                    yield json.dumps({
+                        "type": "context_compression",
+                        "compression_info": chunk.compression_info,
+                    }, ensure_ascii=False)
                     continue
                 event_type = (
                     "tool_call"

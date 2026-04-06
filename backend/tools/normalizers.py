@@ -67,6 +67,27 @@ class POIResult:
         return asdict(self)
 
 
+@dataclass
+class TrainResult:
+    train_no: str
+    origin: str
+    origin_station: str
+    destination: str
+    destination_station: str
+    dep_time: str
+    arr_time: str
+    duration_min: int
+    stops: int
+    price: float | None
+    currency: str
+    seat_class: str
+    source: str  # "flyai"
+    booking_url: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 # ---------------------------------------------------------------------------
 # Normalize: Amadeus / Google → unified dataclass
 # ---------------------------------------------------------------------------
@@ -176,20 +197,42 @@ def normalize_flyai_flight(raw: dict) -> FlightResult:
     segments = first_journey.get("segments", [{}])
     first_seg = segments[0] if segments else {}
 
-    price = _safe_float(raw.get("price"))
+    # New CLI uses adultPrice at top level; fall back to old price field
+    price = _safe_float(raw.get("adultPrice") or raw.get("price"))
+
+    # New: marketingTransportName / marketingTransportNo; old: airlineName / flightNo
+    airline = first_seg.get("marketingTransportName") or first_seg.get("airlineName", "")
+    flight_no = first_seg.get("marketingTransportNo") or first_seg.get("flightNo", "")
+
+    # New: depDateTime / arrDateTime; old: depTime / arrTime
+    dep_time = first_seg.get("depDateTime") or first_seg.get("depTime", "")
+    arr_time = first_seg.get("arrDateTime") or first_seg.get("arrTime", "")
+
+    # New: duration is string like "140分钟"; old: int minutes
+    duration_min = _parse_cn_duration(first_seg.get("duration", 0))
+
+    # New: journeyType "直达" means 0 stops; old: explicit stopCount
+    stops = int(first_seg.get("stopCount", 0))
+    if not stops and first_journey.get("journeyType") == "直达":
+        stops = 0
+    elif not stops and len(segments) > 1:
+        stops = len(segments) - 1
+
+    # New: seatClassName; old: cabin
+    cabin_class = first_seg.get("seatClassName") or first_seg.get("cabin", "")
 
     return FlightResult(
-        airline=first_seg.get("airlineName", ""),
-        flight_no=first_seg.get("flightNo", ""),
+        airline=airline,
+        flight_no=flight_no,
         origin=first_seg.get("depCityName", ""),
         destination=first_seg.get("arrCityName", ""),
-        dep_time=first_seg.get("depTime", ""),
-        arr_time=first_seg.get("arrTime", ""),
-        duration_min=int(first_seg.get("duration", 0)),
-        stops=int(first_seg.get("stopCount", 0)),
+        dep_time=dep_time,
+        arr_time=arr_time,
+        duration_min=duration_min,
+        stops=stops,
         price=price,
         currency="CNY",
-        cabin_class=first_seg.get("cabin", ""),
+        cabin_class=cabin_class,
         source="flyai",
         booking_url=raw.get("jumpUrl"),
     )
@@ -201,15 +244,22 @@ def normalize_flyai_hotel(raw: dict) -> AccommodationResult:
     score_val = raw.get("score")
     rating = float(score_val) if score_val is not None else None
 
+    # New CLI uses "name"; old used "title"
+    name = raw.get("name") or raw.get("title", "")
+
+    # New CLI provides latitude/longitude
+    lat = float(raw["latitude"]) if raw.get("latitude") else None
+    lng = float(raw["longitude"]) if raw.get("longitude") else None
+
     return AccommodationResult(
-        name=raw.get("title", ""),
+        name=name,
         address=raw.get("address", ""),
-        lat=None,
-        lng=None,
+        lat=lat,
+        lng=lng,
         rating=rating,
         price_per_night=price,
         currency="CNY",
-        star_rating=raw.get("starRating"),
+        star_rating=raw.get("star") or raw.get("starRating"),
         bed_type=raw.get("bedType"),
         source="flyai",
         booking_url=raw.get("detailUrl"),
@@ -220,8 +270,11 @@ def normalize_flyai_poi(raw: dict) -> POIResult:
     ticket_info = raw.get("ticketInfo", {}) or {}
     ticket_price = _safe_float(ticket_info.get("price"))
 
+    # New CLI uses "name"; old used "title" (with fallback)
+    name = raw.get("name") or raw.get("title", "")
+
     return POIResult(
-        name=raw.get("title", raw.get("name", "")),
+        name=name,
         address=raw.get("address", ""),
         lat=None,
         lng=None,
@@ -230,6 +283,40 @@ def normalize_flyai_poi(raw: dict) -> POIResult:
         is_free=raw.get("freePoiStatus", None),
         ticket_price=ticket_price,
         ticket_url=raw.get("jumpUrl"),
+        source="flyai",
+        booking_url=raw.get("jumpUrl"),
+    )
+
+
+def normalize_flyai_train(raw: dict) -> TrainResult:
+    journeys = raw.get("journeys", [{}])
+    first_journey = journeys[0] if journeys else {}
+    segments = first_journey.get("segments", [{}])
+    first_seg = segments[0] if segments else {}
+
+    price = _safe_float(raw.get("adultPrice"))
+
+    duration_min = _parse_cn_duration(
+        first_seg.get("duration") or first_journey.get("totalDuration", 0)
+    )
+
+    stops = 0
+    if first_journey.get("journeyType") != "直达":
+        stops = max(0, len(segments) - 1)
+
+    return TrainResult(
+        train_no=first_seg.get("marketingTransportNo", ""),
+        origin=first_seg.get("depCityName", ""),
+        origin_station=first_seg.get("depStationName", ""),
+        destination=first_seg.get("arrCityName", ""),
+        destination_station=first_seg.get("arrStationName", ""),
+        dep_time=first_seg.get("depDateTime", ""),
+        arr_time=first_seg.get("arrDateTime", ""),
+        duration_min=duration_min,
+        stops=stops,
+        price=price,
+        currency="CNY",
+        seat_class=first_seg.get("seatClassName", ""),
         source="flyai",
         booking_url=raw.get("jumpUrl"),
     )
@@ -403,3 +490,14 @@ def _parse_iso_duration(s: str) -> int:
     if "M" in s:
         minutes = int(s.replace("M", ""))
     return hours * 60 + minutes
+
+
+def _parse_cn_duration(val: int | str) -> int:
+    """Parse duration from FlyAI — either int minutes or string like '140分钟'."""
+    if isinstance(val, int):
+        return val
+    if isinstance(val, str):
+        import re
+        m = re.search(r"(\d+)", val)
+        return int(m.group(1)) if m else 0
+    return 0

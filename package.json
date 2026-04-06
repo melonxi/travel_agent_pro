@@ -1,6 +1,7 @@
 {
   "scripts": {
     "dev:all": "bash ./scripts/dev.sh",
+    "dev:stop": "bash ./scripts/dev-stop.sh",
     "dev:backend": "bash -lc 'cd backend && source .venv/bin/activate && uvicorn main:app --reload --port 8000'",
     "dev:frontend": "cd frontend && npm run dev -- --host 127.0.0.1 --strictPort",
     "test:e2e": "npx playwright test e2e-test.spec.ts"

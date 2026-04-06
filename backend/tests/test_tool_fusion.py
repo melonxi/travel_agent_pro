@@ -72,25 +72,24 @@ async def test_flights_both_succeed(api_keys, mock_flyai_client):
     )
     mock_flyai_client.search_flight.return_value = [
         {
-            "title": "MU5101",
+            "adultPrice": "¥2800.0",
             "journeys": [
                 {
+                    "journeyType": "直达",
                     "segments": [
                         {
-                            "airlineName": "东方航空",
-                            "flightNo": "MU5101",
+                            "marketingTransportName": "东方航空",
+                            "marketingTransportNo": "MU5101",
                             "depCityName": "上海",
                             "arrCityName": "东京",
-                            "depTime": "2026-07-15 10:00",
-                            "arrTime": "2026-07-15 14:00",
-                            "duration": 240,
-                            "stopCount": 0,
-                            "cabin": "经济舱",
+                            "depDateTime": "2026-07-15 10:00:00",
+                            "arrDateTime": "2026-07-15 14:00:00",
+                            "duration": "240分钟",
+                            "seatClassName": "经济舱",
                         }
                     ]
                 }
             ],
-            "price": "2800",
             "jumpUrl": "https://fliggy.com/f/123",
         }
     ]
@@ -157,13 +156,16 @@ async def test_accommodations_both_succeed(api_keys, mock_flyai_client):
     respx.get("https://maps.googleapis.com/maps/api/place/textsearch/json").mock(
         return_value=Response(200, json=GOOGLE_PLACES_RESPONSE)
     )
-    mock_flyai_client.search_hotels.return_value = [
+    mock_flyai_client.search_hotel.return_value = [
         {
-            "title": "全季酒店",
+            "name": "全季酒店",
             "address": "东京新宿",
             "score": "4.2",
             "detailUrl": "https://fliggy.com/h/456",
-            "price": "500",
+            "price": "¥500",
+            "star": "经济型",
+            "latitude": "35.69",
+            "longitude": "139.70",
         }
     ]
 
@@ -200,7 +202,7 @@ async def test_poi_both_succeed(api_keys, mock_flyai_client):
     )
     mock_flyai_client.search_poi.return_value = [
         {
-            "title": "伏见稻荷大社",
+            "name": "伏见稻荷大社",
             "address": "京都市伏見区",
             "score": "4.8",
             "category": "神社寺院",

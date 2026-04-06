@@ -6,6 +6,7 @@ llm:
   model: "gpt-4o"
   temperature: 0.7
   max_tokens: 4096
+  context_window: 200000
 
 llm_overrides:
   phase_1_2:
