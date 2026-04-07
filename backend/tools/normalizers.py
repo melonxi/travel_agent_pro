@@ -197,8 +197,8 @@ def normalize_flyai_flight(raw: dict) -> FlightResult:
     segments = first_journey.get("segments", [{}])
     first_seg = segments[0] if segments else {}
 
-    # New CLI uses adultPrice at top level; fall back to old price field
-    price = _safe_float(raw.get("adultPrice") or raw.get("price"))
+    # New CLI uses ticketPrice at top level; fall back to adultPrice/price
+    price = _safe_float(raw.get("adultPrice") or raw.get("ticketPrice") or raw.get("price"))
 
     # New: marketingTransportName / marketingTransportNo; old: airlineName / flightNo
     airline = first_seg.get("marketingTransportName") or first_seg.get("airlineName", "")
@@ -294,7 +294,7 @@ def normalize_flyai_train(raw: dict) -> TrainResult:
     segments = first_journey.get("segments", [{}])
     first_seg = segments[0] if segments else {}
 
-    price = _safe_float(raw.get("adultPrice"))
+    price = _safe_float(raw.get("adultPrice") or raw.get("price") or raw.get("ticketPrice"))
 
     duration_min = _parse_cn_duration(
         first_seg.get("duration") or first_journey.get("totalDuration", 0)

@@ -29,7 +29,7 @@ Don't use when:
   - 用户只需要查具体航班、酒店、火车等单一品类 → 用专门工具。
   - 只是简单关键词搜索 → 用 quick_travel_search。
 返回 AI 生成的综合旅行建议文本。""",
-        phases=[1, 3],
+        phases=[],
         parameters=_PARAMETERS,
     )
     async def ai_travel_search(query: str) -> dict:

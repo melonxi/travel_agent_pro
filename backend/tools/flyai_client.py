@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -72,14 +73,22 @@ class FlyAIClient:
             if value is not None:
                 cmd.extend([f"--{key.replace('_', '-')}", str(value)])
 
+        # Use a temp file for stdout to avoid Node.js pipe flush truncation.
+        # Node.js process.stdout.write() is async for pipes and may not flush
+        # all data before the process exits.  Shell redirection (>) connects
+        # fd 1 directly to a file descriptor, so all data lands on disk.
+        fd, tmp_path = tempfile.mkstemp(suffix=".json", prefix="flyai_")
+        os.close(fd)
+        shell_cmd = " ".join(_shell_quote(c) for c in cmd) + f" > {_shell_quote(tmp_path)}"
+
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
+            proc = await asyncio.create_subprocess_shell(
+                shell_cmd,
+                stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
                 env=self._env,
             )
-            stdout, stderr = await asyncio.wait_for(
+            _, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self.timeout
             )
         except asyncio.TimeoutError:
@@ -88,13 +97,24 @@ class FlyAIClient:
                 proc.kill()  # type: ignore[union-attr]
             except ProcessLookupError:
                 pass
+            _remove_tmp(tmp_path)
             return "" if _raw_data else []
         except Exception as exc:
             logger.warning("FlyAI CLI subprocess error: %s", exc)
+            _remove_tmp(tmp_path)
             return "" if _raw_data else []
 
         try:
-            data = json.loads(stdout.decode())
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                raw_output = f.read()
+        except OSError as exc:
+            logger.warning("FlyAI CLI failed to read temp file: %s", exc)
+            return "" if _raw_data else []
+        finally:
+            _remove_tmp(tmp_path)
+
+        try:
+            data = json.loads(raw_output)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             logger.warning("FlyAI CLI invalid JSON: %s", exc)
             return "" if _raw_data else []
@@ -108,3 +128,16 @@ class FlyAIClient:
             return data.get("data", "")
 
         return (data.get("data") or {}).get("itemList", [])
+
+
+def _shell_quote(s: str) -> str:
+    """Quote a string for safe shell interpolation."""
+    import shlex
+    return shlex.quote(s)
+
+
+def _remove_tmp(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
