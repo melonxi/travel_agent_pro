@@ -11,6 +11,12 @@ interface CompressionInfo {
   reason: string
 }
 
+interface StateChange {
+  icon: string
+  label: string
+  value: string
+}
+
 interface Props {
   role: 'user' | 'assistant' | 'tool' | 'system'
   content: string
@@ -20,6 +26,7 @@ interface Props {
   toolResult?: unknown
   toolError?: string
   toolSuggestion?: string
+  stateChanges?: StateChange[]
   compressionInfo?: CompressionInfo
 }
 
@@ -36,9 +43,35 @@ export default function MessageBubble({
   toolResult,
   toolError,
   toolSuggestion,
+  stateChanges,
   compressionInfo,
 }: Props) {
   const [detailsExpanded, setDetailsExpanded] = useState(false)
+
+  if (role === 'system' && stateChanges && stateChanges.length > 0) {
+    return (
+      <div className="message system-state-update">
+        <div className="state-update-card">
+          <div className="state-update-header">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 8a6 6 0 1 1-2-4.5" />
+              <path d="M14 2v4h-4" />
+            </svg>
+            <span className="state-update-title">旅行计划已更新</span>
+          </div>
+          <div className="state-update-chips">
+            {stateChanges.map((change, i) => (
+              <span key={i} className="state-chip">
+                <span className="state-chip-icon">{change.icon}</span>
+                <span className="state-chip-label">{change.label}</span>
+                <span className="state-chip-value">{change.value}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (role === 'system' && compressionInfo) {
     return (

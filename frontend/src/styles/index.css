@@ -727,6 +727,68 @@ body::after {
   background: var(--text-muted);
 }
 
+/* ── State Update Inline Card ─────────────────────── */
+.message.system-state-update {
+  align-items: center;
+  padding: 4px 0;
+}
+
+.state-update-card {
+  width: min(100%, 620px);
+  margin: 0 auto;
+  background: rgba(212, 162, 76, 0.06);
+  border: 1px solid rgba(212, 162, 76, 0.14);
+  border-left: 3px solid var(--accent-amber);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  animation: sectionReveal 0.4s var(--ease-out-expo) both;
+}
+
+.state-update-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent-amber);
+  margin-bottom: 8px;
+}
+
+.state-update-title {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+}
+
+.state-update-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(212, 162, 76, 0.08);
+  border: 1px solid rgba(212, 162, 76, 0.12);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.state-chip-icon {
+  font-size: 0.72rem;
+}
+
+.state-chip-label {
+  color: var(--text-muted);
+}
+
+.state-chip-value {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
 /* ── Input Bar ────────────────────────────────────── */
 .input-bar {
   display: flex;
@@ -1146,9 +1208,11 @@ body::after {
 .destination-banner {
   text-align: center;
   padding: 32px 24px;
-  background: linear-gradient(180deg, rgba(212, 162, 76, 0.06) 0%, transparent 100%);
+  background: linear-gradient(180deg, rgba(212, 162, 76, 0.06) 0%, var(--bg-surface) 100%);
   border-bottom: 1px solid var(--border-subtle);
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 10;
   overflow: hidden;
 }
 
@@ -1618,6 +1682,10 @@ body::after {
 :root[data-theme="light"] .map-empty,
 :root[data-theme="light"] .timeline-empty {
   border-color: rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme="light"] .destination-banner {
+  background: linear-gradient(180deg, rgba(212, 162, 76, 0.06) 0%, var(--bg-surface) 100%);
 }
 
 :root[data-theme="light"] .destination-banner::before {

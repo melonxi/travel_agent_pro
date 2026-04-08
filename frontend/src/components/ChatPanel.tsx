@@ -3,6 +3,12 @@ import MessageBubble from './MessageBubble'
 import { useSSE } from '../hooks/useSSE'
 import type { SSEEvent, TravelPlanState } from '../types/plan'
 
+interface StateChange {
+  icon: string
+  label: string
+  value: string
+}
+
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'tool' | 'system'
@@ -14,6 +20,7 @@ interface ChatMessage {
   toolResult?: unknown
   toolError?: string
   toolSuggestion?: string
+  stateChanges?: StateChange[]
   compressionInfo?: {
     message_count_before: number
     message_count_after: number
@@ -22,6 +29,62 @@ interface ChatMessage {
     estimated_tokens_before: number
     reason: string
   }
+}
+
+const PHASE_NAMES: Record<number, string> = {
+  1: '需求收集', 2: '信息探索', 3: '方案设计', 4: '精细规划', 5: '最终确认',
+}
+
+function computeStateChanges(
+  prev: TravelPlanState | null,
+  next: TravelPlanState,
+): StateChange[] {
+  const changes: StateChange[] = []
+
+  if (next.phase !== prev?.phase) {
+    changes.push({ icon: '🔄', label: '阶段', value: PHASE_NAMES[next.phase] ?? `Phase ${next.phase}` })
+  }
+  if (next.destination && next.destination !== prev?.destination) {
+    changes.push({ icon: '📍', label: '目的地', value: next.destination })
+  }
+  if (next.dates && JSON.stringify(next.dates) !== JSON.stringify(prev?.dates)) {
+    changes.push({ icon: '📅', label: '日期', value: `${next.dates.start} → ${next.dates.end}` })
+  }
+  if (next.budget && next.budget.total !== prev?.budget?.total) {
+    changes.push({ icon: '💰', label: '预算', value: `¥${next.budget.total.toLocaleString()}` })
+  }
+  if (next.travelers && JSON.stringify(next.travelers) !== JSON.stringify(prev?.travelers)) {
+    const t = next.travelers
+    const parts: string[] = []
+    if (t.adults) parts.push(`${t.adults}成人`)
+    if (t.children) parts.push(`${t.children}儿童`)
+    if (parts.length) changes.push({ icon: '👥', label: '旅行者', value: parts.join(' ') })
+  }
+  if (next.accommodation && JSON.stringify(next.accommodation) !== JSON.stringify(prev?.accommodation)) {
+    changes.push({ icon: '🏨', label: '住宿', value: next.accommodation.hotel ?? next.accommodation.area })
+  }
+
+  const countField = (
+    field: 'candidate_pool' | 'shortlist' | 'skeleton_plans' | 'daily_plans' | 'risks' | 'constraints' | 'preferences',
+    icon: string,
+    label: string,
+    unit: string,
+  ) => {
+    const prevLen = (prev?.[field] as unknown[] | undefined)?.length ?? 0
+    const nextLen = (next[field] as unknown[] | undefined)?.length ?? 0
+    if (nextLen > 0 && nextLen !== prevLen) {
+      changes.push({ icon, label, value: `${nextLen} ${unit}` })
+    }
+  }
+  countField('candidate_pool', '🎯', '候选景点', '个')
+  countField('shortlist', '⭐', '精选景点', '个')
+  countField('skeleton_plans', '📋', '方案草案', '个')
+  countField('daily_plans', '🗓️', '每日行程', '天')
+  countField('risks', '⚠️', '风险提示', '项')
+  countField('constraints', '📌', '约束条件', '项')
+  countField('preferences', '💡', '偏好', '项')
+
+  return changes
 }
 
 interface Props {
@@ -38,6 +101,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
   const messagesRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
+  const prevPlanRef = useRef<TravelPlanState | null>(null)
   const { sendMessage } = useSSE()
 
   const createMessageId = () =>
@@ -82,13 +146,13 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
 
     sendingRef.current = true
     const userMsg = input.trim()
-    const assistantId = createMessageId()
+    let currentAssistantId = createMessageId()
     const toolMessageIds = new Map<string, string>()
     setInput('')
     setMessages((prev) => [
       ...prev,
       { id: createMessageId(), role: 'user', content: userMsg },
-      { id: assistantId, role: 'assistant', content: '' },
+      { id: currentAssistantId, role: 'assistant', content: '' },
     ])
     setStreaming(true)
 
@@ -98,34 +162,51 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
       await sendMessage(sessionId, userMsg, (event: SSEEvent) => {
         if (event.type === 'text_delta' && event.content) {
           assistantContent += event.content
-          setMessages((prev) =>
-            prev.map((message) =>
-              message.id === assistantId
+          const targetId = currentAssistantId
+          setMessages((prev) => {
+            const exists = prev.some((m) => m.id === targetId)
+            if (!exists) {
+              return [...prev, { id: targetId, role: 'assistant' as const, content: assistantContent }]
+            }
+            return prev.map((message) =>
+              message.id === targetId
                 ? { ...message, content: assistantContent }
                 : message,
-            ),
-          )
+            )
+          })
         } else if (event.type === 'tool_call' && event.tool_call) {
           const toolCall = event.tool_call
           const toolMessageId = createMessageId()
           toolMessageIds.set(toolCall.id, toolMessageId)
-          setMessages((prev) =>
-            insertBeforeAssistant(prev, assistantId, {
-              id: toolMessageId,
-              role: 'tool',
-              content: '',
-              toolCallId: toolCall.id,
-              toolName: toolCall.name,
-              toolStatus: 'pending',
-              toolArguments: toolCall.arguments,
-            }),
-          )
+          const toolMsg: ChatMessage = {
+            id: toolMessageId,
+            role: 'tool',
+            content: '',
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            toolStatus: 'pending',
+            toolArguments: toolCall.arguments,
+          }
+
+          if (assistantContent.trim()) {
+            // Freeze current assistant text, append tool card
+            // New assistant bubble will be created lazily on next text_delta
+            const newAssistantId = createMessageId()
+            currentAssistantId = newAssistantId
+            assistantContent = ''
+            setMessages((prev) => [...prev, toolMsg])
+          } else {
+            // No text yet — insert tool before the current assistant placeholder
+            setMessages((prev) =>
+              insertBeforeAssistant(prev, currentAssistantId, toolMsg),
+            )
+          }
         } else if (event.type === 'tool_result' && event.tool_result) {
           const toolResult = event.tool_result
           const toolMessageId = toolMessageIds.get(toolResult.tool_call_id)
           setMessages((prev) => {
             if (!toolMessageId) {
-              return insertBeforeAssistant(prev, assistantId, {
+              return insertBeforeAssistant(prev, currentAssistantId, {
                 id: createMessageId(),
                 role: 'tool',
                 content: '',
@@ -153,7 +234,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
         } else if (event.type === 'context_compression' && event.compression_info) {
           const info = event.compression_info
           setMessages((prev) =>
-            insertBeforeAssistant(prev, assistantId, {
+            insertBeforeAssistant(prev, currentAssistantId, {
               id: createMessageId(),
               role: 'system',
               content: `${info.message_count_before} 条 → ${info.message_count_after} 条`,
@@ -161,15 +242,30 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
             }),
           )
         } else if (event.type === 'state_update' && event.plan) {
+          const changes = computeStateChanges(prevPlanRef.current, event.plan)
+          prevPlanRef.current = event.plan
           onPlanUpdate(event.plan)
+          if (changes.length > 0) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: createMessageId(),
+                role: 'system',
+                content: '',
+                stateChanges: changes,
+              },
+            ])
+          }
         }
       })
     } finally {
       sendingRef.current = false
       setStreaming(false)
-      if (!assistantContent.trim()) {
-        setMessages((prev) => prev.filter((message) => message.id !== assistantId))
-      }
+      // Remove the last assistant placeholder if it ended up empty
+      const lastId = currentAssistantId
+      setMessages((prev) => prev.filter((message) =>
+        !(message.id === lastId && message.role === 'assistant' && !message.content.trim())
+      ))
     }
   }
 
@@ -189,6 +285,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
             toolResult={m.toolResult}
             toolError={m.toolError}
             toolSuggestion={m.toolSuggestion}
+            stateChanges={m.stateChanges}
             compressionInfo={m.compressionInfo}
           />
         ))}
