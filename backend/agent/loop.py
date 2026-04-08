@@ -214,9 +214,12 @@ class AgentLoop:
                             messages.append(
                                 Message(role=Role.SYSTEM, content=repair_message)
                             )
-                            repair_hints_used.add(
-                                f"p{current_phase}_{getattr(self.plan, 'phase3_step', '')}"
-                            )
+                            if current_phase == 5:
+                                repair_hints_used.add("p5_daily")
+                            else:
+                                repair_hints_used.add(
+                                    f"p{current_phase}_{getattr(self.plan, 'phase3_step', '')}"
+                                )
                             continue
                         yield LLMChunk(type=ChunkType.DONE)
                         return
@@ -520,7 +523,7 @@ class AgentLoop:
             return None
 
         step = getattr(self.plan, "phase3_step", "")
-        repair_key = step
+        repair_key = f"p3_{step}"
         if repair_key in repair_hints_used:
             return None
 
@@ -607,7 +610,14 @@ class AgentLoop:
             return None
 
         total_days = self.plan.dates.total_days
-        planned_count = len(self.plan.daily_plans)
+        # Use unique day numbers to avoid counting duplicate entries
+        planned_days = set()
+        for dp in self.plan.daily_plans:
+            if hasattr(dp, "day"):
+                planned_days.add(dp.day)
+            elif isinstance(dp, dict):
+                planned_days.add(dp.get("day"))
+        planned_count = len(planned_days)
 
         if planned_count >= total_days:
             return None
@@ -621,8 +631,17 @@ class AgentLoop:
         has_activity_markers = any(
             kw in text for kw in ("活动", "景点", "行程", "安排", "上午", "下午", "晚上", "餐厅")
         )
+        # Also detect JSON-schema style itinerary output
+        has_json_markers = sum(
+            1 for kw in ('"day"', '"date"', '"activities"', '"start_time"')
+            if kw in text
+        ) >= 2
+        # Detect date-based patterns like 2026-04-15
+        has_date_patterns = bool(re.search(r"\d{4}-\d{2}-\d{2}", text))
 
-        if day_pattern_count >= 1 and (has_time_slots or has_activity_markers):
+        if (day_pattern_count >= 1 and (has_time_slots or has_activity_markers)) \
+                or has_json_markers \
+                or (has_date_patterns and has_activity_markers):
             remaining = total_days - planned_count
             return (
                 "[状态同步提醒]\n"
