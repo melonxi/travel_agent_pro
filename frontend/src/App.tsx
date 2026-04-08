@@ -4,6 +4,7 @@ import PhaseIndicator from './components/PhaseIndicator'
 import MapView from './components/MapView'
 import Timeline from './components/Timeline'
 import BudgetChart from './components/BudgetChart'
+import Phase3Workbench from './components/Phase3Workbench'
 import type { TravelPlanState } from './types/plan'
 
 function useTheme() {
@@ -53,6 +54,17 @@ export default function App() {
   const [plan, setPlan] = useState<TravelPlanState | null>(null)
   const { dark, toggle: toggleTheme } = useTheme()
   const initializedRef = useRef(false)
+  const showPhase3Workbench = Boolean(
+    plan && (
+      plan.phase === 3 ||
+      plan.trip_brief ||
+      plan.candidate_pool?.length ||
+      plan.shortlist?.length ||
+      plan.skeleton_plans?.length ||
+      plan.risks?.length ||
+      plan.alternatives?.length
+    )
+  )
 
   const handlePlanUpdate = (newPlan: TravelPlanState) => {
     setPlan(newPlan)
@@ -124,6 +136,11 @@ export default function App() {
           )}
           {plan && (
             <>
+              {showPhase3Workbench && (
+                <div className="sidebar-section">
+                  <Phase3Workbench plan={plan} />
+                </div>
+              )}
               <div className="sidebar-section">
                 <BudgetChart plan={plan} />
               </div>

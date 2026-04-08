@@ -20,6 +20,11 @@ def _make_plan(phase: int = 5) -> TravelPlanState:
         destination="Tokyo",
         destination_candidates=[{"name": "Tokyo"}, {"name": "Osaka"}],
         dates=DateRange(start="2025-08-01", end="2025-08-05"),
+        phase3_step="lock",
+        trip_brief={"goal": "城市漫游"},
+        candidate_pool=[{"name": "浅草寺"}],
+        skeleton_plans=[{"id": "balanced"}],
+        selected_skeleton_id="balanced",
         accommodation=Accommodation(area="Shinjuku", hotel="Hotel A"),
         daily_plans=[
             DayPlan(day=1, date="2025-08-01"),
@@ -47,8 +52,13 @@ class TestBacktrackService:
         assert event.reason == "日期变更"
         assert event.snapshot_path == "/snap/1"
 
-        # phase 3 清除: dates, accommodation, daily_plans
+        # phase 3 清除: dates + phase3 产物 + accommodation + daily_plans
         assert plan.dates is None
+        assert plan.phase3_step == "brief"
+        assert plan.trip_brief == {}
+        assert plan.candidate_pool == []
+        assert plan.skeleton_plans == []
+        assert plan.selected_skeleton_id is None
         assert plan.accommodation is None
         assert plan.daily_plans == []
 
@@ -82,6 +92,7 @@ class TestBacktrackService:
         assert plan.phase == 1
         assert plan.destination is None
         assert plan.dates is None
+        assert plan.trip_brief == {}
         assert plan.accommodation is None
         assert plan.daily_plans == []
         assert plan.destination_candidates == []
@@ -97,6 +108,7 @@ class TestBacktrackService:
         assert plan.destination is None
         assert plan.destination_candidates == []
         assert plan.dates is None
+        assert plan.selected_skeleton_id is None
         assert plan.accommodation is None
         assert plan.daily_plans == []
 
@@ -106,8 +118,9 @@ class TestBacktrackService:
         self.service.execute(plan, to_phase=3, reason="换酒店", snapshot_path="/snap/4")
 
         assert plan.phase == 3
-        # phase 3 downstream: dates, accommodation, daily_plans
+        # phase 3 downstream: dates + phase3 产物 + accommodation + daily_plans
         assert plan.dates is None
+        assert plan.selected_skeleton_id is None
         assert plan.accommodation is None
         assert plan.daily_plans == []
 

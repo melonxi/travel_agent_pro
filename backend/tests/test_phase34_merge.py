@@ -49,6 +49,7 @@ class TestInferPhaseAfterMerge:
             session_id="s",
             destination="Tokyo",
             dates=DateRange(start="2026-05-01", end="2026-05-05"),
+            selected_skeleton_id="balanced",
             accommodation=Accommodation(area="新宿"),
         )
         assert router.infer_phase(plan) == 5
@@ -62,9 +63,11 @@ class TestInferPhaseAfterMerge:
                             dates=DateRange(start="2026-01-01", end="2026-01-03")),
             TravelPlanState(session_id="s", destination="A",
                             dates=DateRange(start="2026-01-01", end="2026-01-03"),
+                            selected_skeleton_id="balanced",
                             accommodation=Accommodation(area="X")),
             TravelPlanState(session_id="s", destination="A",
                             dates=DateRange(start="2026-01-01", end="2026-01-03"),
+                            selected_skeleton_id="balanced",
                             accommodation=Accommodation(area="X"),
                             daily_plans=[DayPlan(day=i, date=f"2026-01-0{i}") for i in range(1, 3)]),
         ]
@@ -93,6 +96,11 @@ class TestPromptsAfterMerge:
         prompt = PHASE_PROMPTS[3]
         assert "日期" in prompt
 
+    def test_phase3_prompt_covers_skeleton(self):
+        prompt = PHASE_PROMPTS[3]
+        assert "骨架" in prompt
+        assert "candidate" in prompt
+
     def test_remaining_phases_still_exist(self):
         for phase in [1, 3, 5, 7]:
             assert phase in PHASE_PROMPTS
@@ -116,6 +124,10 @@ class TestDownstreamAfterMerge:
 
     def test_phase3_downstream_includes_daily_plans(self):
         assert "daily_plans" in _PHASE_DOWNSTREAM[3]
+
+    def test_phase3_downstream_includes_skeleton_fields(self):
+        assert "skeleton_plans" in _PHASE_DOWNSTREAM[3]
+        assert "selected_skeleton_id" in _PHASE_DOWNSTREAM[3]
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +237,8 @@ class TestBacktrackAfterMerge:
             phase=5,
             destination="Tokyo",
             dates=DateRange(start="2026-05-01", end="2026-05-05"),
+            selected_skeleton_id="balanced",
+            skeleton_plans=[{"id": "balanced"}],
             accommodation=Accommodation(area="新宿"),
             daily_plans=[DayPlan(day=1, date="2026-05-01")],
         )
@@ -234,6 +248,8 @@ class TestBacktrackAfterMerge:
         assert plan.dates is None
         assert plan.accommodation is None
         assert plan.daily_plans == []
+        assert plan.selected_skeleton_id is None
+        assert plan.skeleton_plans == []
         assert plan.destination == "Tokyo"  # preserved
 
 

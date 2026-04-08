@@ -21,7 +21,10 @@ def test_load_soul(ctx_manager):
 def test_build_system_message(ctx_manager):
     plan = TravelPlanState(session_id="s1", phase=1)
     msg = ctx_manager.build_system_message(
-        plan, phase_prompt="你是灵感顾问", user_summary=""
+        plan,
+        phase_prompt="你是灵感顾问",
+        user_summary="",
+        available_tools=["update_plan_state", "xiaohongshu_search"],
     )
     assert msg.role == Role.SYSTEM
     assert "旅行规划 Agent" in msg.content  # from SOUL
@@ -31,6 +34,7 @@ def test_build_system_message(ctx_manager):
     assert "当前时区" in msg.content
     assert "必须先调用 `update_plan_state`" in msg.content
     assert "不要重复调用 `update_plan_state` 写入相同值" in msg.content
+    assert "当前可用工具：update_plan_state, xiaohongshu_search" in msg.content
 
 
 def test_build_runtime_context(ctx_manager):
@@ -41,10 +45,14 @@ def test_build_runtime_context(ctx_manager):
         dates=DateRange(start="2026-04-10", end="2026-04-15"),
         budget=Budget(total=15000),
     )
-    ctx = ctx_manager.build_runtime_context(plan)
+    ctx = ctx_manager.build_runtime_context(
+        plan,
+        available_tools=["update_plan_state", "web_search"],
+    )
     assert "Kyoto" in ctx
     assert "15000" in ctx
     assert "阶段：3" in ctx or "阶段: 3" in ctx
+    assert "当前可用工具：update_plan_state, web_search" in ctx
 
 
 def test_should_compress_false(ctx_manager):

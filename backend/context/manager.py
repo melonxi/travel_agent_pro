@@ -57,6 +57,7 @@ class ContextManager:
         plan: TravelPlanState,
         phase_prompt: str,
         user_summary: str = "",
+        available_tools: list[str] | None = None,
     ) -> Message:
         runtime_clock = self.build_time_context()
         parts = [
@@ -77,6 +78,7 @@ class ContextManager:
             "- `preferences` 只用于记录用户明确表达的偏好，例如“节奏轻松”“想住海边”“喜欢美食”；不要把你总结出来的必去景点、推荐区域、住宿分析、行程建议写进 `preferences`。\n"
             "- `constraints` 只用于用户明确提出的硬/软约束；不要把你为方便规划而脑补的需求写进 `constraints`。\n"
             "- 当用户要求推翻之前的阶段决策时，必须使用 `update_plan_state(field=\"backtrack\", value={...})`。\n"
+            "- 如果用户问“你现在在哪个阶段 / 当前有哪些工具 / 现在能不能查航班或酒店”，必须严格按照“当前规划状态”和本轮提供的工具列表回答，不要凭记忆猜测。\n"
             "- 完成必要的状态写入后，再继续提问、解释或给建议。",
             "",
             "---",
@@ -84,7 +86,7 @@ class ContextManager:
             f"## 当前阶段指引\n\n{phase_prompt}",
         ]
 
-        runtime = self.build_runtime_context(plan)
+        runtime = self.build_runtime_context(plan, available_tools=available_tools)
         if runtime:
             parts.extend(["", "---", "", f"## 当前规划状态\n\n{runtime}"])
 
@@ -107,14 +109,35 @@ class ContextManager:
             "- 对“今天 / 明天 / 下周 / 五一 / 暑假 / 下个月”等相对时间的理解，必须以上述当前时间为基准。"
         )
 
-    def build_runtime_context(self, plan: TravelPlanState) -> str:
+    def build_runtime_context(
+        self,
+        plan: TravelPlanState,
+        *,
+        available_tools: list[str] | None = None,
+    ) -> str:
         parts = [f"- 阶段：{plan.phase}"]
+        if plan.phase == 3:
+            parts.append(f"- Phase 3 子阶段：{plan.phase3_step}")
+        if available_tools:
+            parts.append(f"- 当前可用工具：{', '.join(available_tools)}")
         if plan.destination:
             parts.append(f"- 目的地：{plan.destination}")
         if plan.dates:
             parts.append(
                 f"- 日期：{plan.dates.start} 至 {plan.dates.end}（{plan.dates.total_days} 天）"
             )
+        if plan.trip_brief:
+            parts.append(f"- 已生成旅行画像：{len(plan.trip_brief)} 项")
+        if plan.candidate_pool:
+            parts.append(f"- 候选池：{len(plan.candidate_pool)} 项")
+        if plan.shortlist:
+            parts.append(f"- shortlist：{len(plan.shortlist)} 项")
+        if plan.skeleton_plans:
+            parts.append(f"- 骨架方案：{len(plan.skeleton_plans)} 套")
+        if plan.selected_skeleton_id:
+            parts.append(f"- 已选骨架：{plan.selected_skeleton_id}")
+        if plan.selected_transport:
+            parts.append("- 已选大交通：是")
         if plan.budget:
             allocated = sum(
                 act.cost for day in plan.daily_plans for act in day.activities

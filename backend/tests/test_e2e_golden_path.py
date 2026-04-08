@@ -136,7 +136,7 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 assert plan.budget is not None
                 assert plan.budget.total == 20000.0
                 assert "- 阶段：3" in messages[0].content
-                for chunk in _text_chunks("好的，已记录东京和日期。", "接下来确认住宿偏好。"):
+                for chunk in _text_chunks("好的，已记录东京和日期。", "接下来我先给你几套行程骨架方案。"):
                     yield chunk
                 return
 
@@ -160,8 +160,9 @@ async def test_golden_path_tokyo_trip(app, sessions):
         assert plan.dates.total_days == 5
         assert plan.budget is not None
         assert plan.budget.total == 20000.0
-        assert plan.travelers is not None
-        assert plan.travelers.adults == 2
+        assert plan.trip_brief["destination"] == "东京"
+        assert plan.trip_brief["total_days"] == 5
+        assert plan.phase3_step == "candidate"
         assert plan.phase == 3
 
         phase3_accom_call_count = 0
@@ -192,6 +193,17 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
+                        id="tc_skeleton",
+                        name="update_plan_state",
+                        arguments={
+                            "field": "selected_skeleton_id",
+                            "value": "balanced",
+                        },
+                    ),
+                )
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
                         id="tc_accommodation",
                         name="update_plan_state",
                         arguments={
@@ -205,7 +217,7 @@ async def test_golden_path_tokyo_trip(app, sessions):
 
             assert plan.phase == 5
             assert "- 阶段：5" in messages[0].content
-            for chunk in _text_chunks("已锁定新宿住宿。", "接下来开始逐天安排行程。"):
+            for chunk in _text_chunks("已锁定平衡版骨架和新宿住宿。", "接下来开始逐天安排行程。"):
                 yield chunk
 
         agent.llm.chat = phase3_accom_chat
@@ -220,8 +232,10 @@ async def test_golden_path_tokyo_trip(app, sessions):
         assert plan.budget.total == 20000.0
         assert plan.travelers is not None
         assert plan.travelers.adults == 2
+        assert plan.selected_skeleton_id == "balanced"
         assert plan.accommodation is not None
         assert plan.accommodation.area == "新宿"
+        assert plan.phase3_step == "lock"
         assert plan.phase == 5
 
         sample_activity = {

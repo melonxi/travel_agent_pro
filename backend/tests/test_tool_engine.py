@@ -2,6 +2,7 @@
 import pytest
 
 from agent.types import ToolCall, ToolResult
+from state.models import TravelPlanState
 from tools.base import ToolDef, ToolError, tool
 from tools.engine import ToolEngine
 
@@ -42,6 +43,48 @@ def test_get_tools_for_phase(engine):
     phase2_tools = engine.get_tools_for_phase(2)
     assert len(phase2_tools) == 1
     assert phase2_tools[0]["name"] == "greet"
+
+
+def test_get_tools_for_phase3_respects_substep(engine):
+    @tool(
+        name="search_accommodations",
+        description="stay",
+        phases=[3],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def search_accommodations() -> dict:
+        return {}
+
+    @tool(
+        name="web_search",
+        description="web",
+        phases=[3],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def web_search() -> dict:
+        return {}
+
+    @tool(
+        name="update_plan_state",
+        description="state",
+        phases=[3],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def update_plan_state() -> dict:
+        return {}
+
+    engine.register(search_accommodations)
+    engine.register(web_search)
+    engine.register(update_plan_state)
+
+    plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
+    brief_tools = {tool["name"] for tool in engine.get_tools_for_phase(3, plan)}
+    assert "search_accommodations" not in brief_tools
+    assert "web_search" in brief_tools
+
+    plan.phase3_step = "lock"
+    lock_tools = {tool["name"] for tool in engine.get_tools_for_phase(3, plan)}
+    assert "search_accommodations" in lock_tools
 
 
 @pytest.mark.asyncio

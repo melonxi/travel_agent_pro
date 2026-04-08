@@ -1,6 +1,7 @@
 # backend/state/models.py
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -211,12 +212,85 @@ _PHASE_DOWNSTREAM: dict[int, list[str]] = {
         "destination",
         "destination_candidates",
         "dates",
+        "phase3_step",
+        "trip_brief",
+        "candidate_pool",
+        "shortlist",
+        "skeleton_plans",
+        "selected_skeleton_id",
+        "transport_options",
+        "selected_transport",
+        "accommodation_options",
         "accommodation",
+        "risks",
+        "alternatives",
         "daily_plans",
     ],
-    3: ["dates", "accommodation", "daily_plans"],
+    3: [
+        "dates",
+        "phase3_step",
+        "trip_brief",
+        "candidate_pool",
+        "shortlist",
+        "skeleton_plans",
+        "selected_skeleton_id",
+        "transport_options",
+        "selected_transport",
+        "accommodation_options",
+        "accommodation",
+        "risks",
+        "alternatives",
+        "daily_plans",
+    ],
     5: ["daily_plans"],
 }
+
+_FIELD_DEFAULTS: dict[str, Any] = {
+    "destination": None,
+    "destination_candidates": [],
+    "dates": None,
+    "phase3_step": "brief",
+    "trip_brief": {},
+    "candidate_pool": [],
+    "shortlist": [],
+    "skeleton_plans": [],
+    "selected_skeleton_id": None,
+    "transport_options": [],
+    "selected_transport": None,
+    "accommodation_options": [],
+    "accommodation": None,
+    "risks": [],
+    "alternatives": [],
+    "daily_plans": [],
+}
+
+
+def infer_phase3_step_from_state(
+    *,
+    phase: int,
+    dates: DateRange | None,
+    trip_brief: dict[str, Any] | None,
+    candidate_pool: list[dict[str, Any]] | None,
+    shortlist: list[dict[str, Any]] | None,
+    skeleton_plans: list[dict[str, Any]] | None,
+    selected_skeleton_id: str | None,
+    accommodation: Accommodation | None,
+) -> str:
+    if phase < 3:
+        return "brief"
+    if phase > 3:
+        return "lock"
+    if not dates or not trip_brief:
+        return "brief"
+    if not selected_skeleton_id:
+        if skeleton_plans:
+            return "skeleton"
+        if shortlist or candidate_pool:
+            return "candidate"
+        return "candidate"
+    if not accommodation:
+        return "lock"
+    return "lock"
 
 
 @dataclass
@@ -226,9 +300,20 @@ class TravelPlanState:
     destination: str | None = None
     destination_candidates: list[dict] = field(default_factory=list)
     dates: DateRange | None = None
+    phase3_step: str = "brief"
+    trip_brief: dict[str, Any] = field(default_factory=dict)
+    candidate_pool: list[dict[str, Any]] = field(default_factory=list)
+    shortlist: list[dict[str, Any]] = field(default_factory=list)
+    skeleton_plans: list[dict[str, Any]] = field(default_factory=list)
+    selected_skeleton_id: str | None = None
+    transport_options: list[dict[str, Any]] = field(default_factory=list)
+    selected_transport: dict[str, Any] | None = None
+    accommodation_options: list[dict[str, Any]] = field(default_factory=list)
     travelers: Travelers | None = None
     budget: Budget | None = None
     accommodation: Accommodation | None = None
+    risks: list[dict[str, Any]] = field(default_factory=list)
+    alternatives: list[dict[str, Any]] = field(default_factory=list)
     daily_plans: list[DayPlan] = field(default_factory=list)
     constraints: list[Constraint] = field(default_factory=list)
     preferences: list[Preference] = field(default_factory=list)
@@ -242,8 +327,7 @@ class TravelPlanState:
         for phase in sorted(_PHASE_DOWNSTREAM):
             if phase >= from_phase:
                 for attr in _PHASE_DOWNSTREAM[phase]:
-                    default = [] if isinstance(getattr(self, attr), list) else None
-                    setattr(self, attr, default)
+                    setattr(self, attr, deepcopy(_FIELD_DEFAULTS[attr]))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -252,11 +336,22 @@ class TravelPlanState:
             "destination": self.destination,
             "destination_candidates": self.destination_candidates,
             "dates": self.dates.to_dict() if self.dates else None,
+            "phase3_step": self.phase3_step,
+            "trip_brief": self.trip_brief,
+            "candidate_pool": self.candidate_pool,
+            "shortlist": self.shortlist,
+            "skeleton_plans": self.skeleton_plans,
+            "selected_skeleton_id": self.selected_skeleton_id,
+            "transport_options": self.transport_options,
+            "selected_transport": self.selected_transport,
+            "accommodation_options": self.accommodation_options,
             "travelers": self.travelers.to_dict() if self.travelers else None,
             "budget": self.budget.to_dict() if self.budget else None,
             "accommodation": self.accommodation.to_dict()
             if self.accommodation
             else None,
+            "risks": self.risks,
+            "alternatives": self.alternatives,
             "daily_plans": [dp.to_dict() for dp in self.daily_plans],
             "constraints": [c.to_dict() for c in self.constraints],
             "preferences": [p.to_dict() for p in self.preferences],
@@ -270,19 +365,51 @@ class TravelPlanState:
     def from_dict(cls, d: dict[str, Any]) -> TravelPlanState:
         raw_phase = d.get("phase", 1)
         phase = 1 if raw_phase == 2 else (3 if raw_phase == 4 else raw_phase)
+        dates = DateRange.from_dict(d["dates"]) if d.get("dates") else None
+        accommodation = (
+            Accommodation.from_dict(d["accommodation"])
+            if d.get("accommodation")
+            else None
+        )
+        trip_brief = d.get("trip_brief", {})
+        candidate_pool = d.get("candidate_pool", [])
+        shortlist = d.get("shortlist", [])
+        skeleton_plans = d.get("skeleton_plans", [])
+        selected_skeleton_id = d.get("selected_skeleton_id")
         return cls(
             session_id=d["session_id"],
             phase=phase,
             destination=d.get("destination"),
             destination_candidates=d.get("destination_candidates", []),
-            dates=DateRange.from_dict(d["dates"]) if d.get("dates") else None,
+            dates=dates,
+            phase3_step=d.get(
+                "phase3_step",
+                infer_phase3_step_from_state(
+                    phase=phase,
+                    dates=dates,
+                    trip_brief=trip_brief,
+                    candidate_pool=candidate_pool,
+                    shortlist=shortlist,
+                    skeleton_plans=skeleton_plans,
+                    selected_skeleton_id=selected_skeleton_id,
+                    accommodation=accommodation,
+                ),
+            ),
+            trip_brief=trip_brief,
+            candidate_pool=candidate_pool,
+            shortlist=shortlist,
+            skeleton_plans=skeleton_plans,
+            selected_skeleton_id=selected_skeleton_id,
+            transport_options=d.get("transport_options", []),
+            selected_transport=d.get("selected_transport"),
+            accommodation_options=d.get("accommodation_options", []),
             travelers=Travelers.from_dict(d["travelers"])
             if d.get("travelers")
             else None,
             budget=Budget.from_dict(d["budget"]) if d.get("budget") else None,
-            accommodation=Accommodation.from_dict(d["accommodation"])
-            if d.get("accommodation")
-            else None,
+            accommodation=accommodation,
+            risks=d.get("risks", []),
+            alternatives=d.get("alternatives", []),
             daily_plans=[DayPlan.from_dict(dp) for dp in d.get("daily_plans", [])],
             constraints=[Constraint.from_dict(c) for c in d.get("constraints", [])],
             preferences=[Preference.from_dict(p) for p in d.get("preferences", [])],

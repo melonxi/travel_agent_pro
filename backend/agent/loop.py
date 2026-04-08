@@ -1,6 +1,7 @@
 # backend/agent/loop.py
 from __future__ import annotations
 
+import re
 from typing import Any, AsyncIterator
 
 from opentelemetry import trace
@@ -50,8 +51,12 @@ class AgentLoop:
         with tracer.start_as_current_span("agent_loop.run") as span:
             span.set_attribute(AGENT_PHASE, phase)
             current_phase = self.plan.phase if self.plan is not None else phase
-            tools = tools_override or self.tool_engine.get_tools_for_phase(current_phase)
+            tools = tools_override or self.tool_engine.get_tools_for_phase(
+                current_phase,
+                self.plan,
+            )
             original_user_message = self._extract_original_user_message(messages)
+            repair_hints_used: set[str] = set()
 
             for iteration in range(self.max_retries):  # safety limit on loop iterations
                 with tracer.start_as_current_span("agent_loop.iteration") as iter_span:
@@ -89,10 +94,21 @@ class AgentLoop:
                     # If no tool calls, we're done — the LLM gave a final text response
                     if not tool_calls:
                         full_text = "".join(text_chunks)
+                        repair_message = self._build_phase3_state_repair_message(
+                            current_phase=current_phase,
+                            assistant_text=full_text,
+                            repair_hints_used=repair_hints_used,
+                        )
                         if full_text:
                             messages.append(
                                 Message(role=Role.ASSISTANT, content=full_text)
                             )
+                        if repair_message:
+                            messages.append(
+                                Message(role=Role.SYSTEM, content=repair_message)
+                            )
+                            repair_hints_used.add(self.plan.phase3_step)
+                            continue
                         yield LLMChunk(type=ChunkType.DONE)
                         return
 
@@ -108,6 +124,11 @@ class AgentLoop:
                     # Execute one tool batch, then evaluate phase transition once.
                     phase_before_batch = (
                         self.plan.phase if self.plan is not None else current_phase
+                    )
+                    phase3_step_before_batch = (
+                        getattr(self.plan, "phase3_step", None)
+                        if self.plan is not None
+                        else None
                     )
                     needs_rebuild = False
                     saw_state_update = False
@@ -179,7 +200,10 @@ class AgentLoop:
                             ),
                         )
                         current_phase = phase_after_batch
-                        tools = self.tool_engine.get_tools_for_phase(current_phase)
+                        tools = self.tool_engine.get_tools_for_phase(
+                            current_phase,
+                            self.plan,
+                        )
                         continue
 
                     phase_after_batch = (
@@ -197,7 +221,10 @@ class AgentLoop:
                             ),
                         )
                         current_phase = phase_after_batch
-                        tools = self.tool_engine.get_tools_for_phase(current_phase)
+                        tools = self.tool_engine.get_tools_for_phase(
+                            current_phase,
+                            self.plan,
+                        )
                         continue
 
                     if (
@@ -221,8 +248,22 @@ class AgentLoop:
                                 ),
                             )
                             current_phase = phase_after_batch
-                            tools = self.tool_engine.get_tools_for_phase(current_phase)
+                            tools = self.tool_engine.get_tools_for_phase(
+                                current_phase,
+                                self.plan,
+                            )
                             continue
+
+                    phase3_step_after_batch = (
+                        getattr(self.plan, "phase3_step", None)
+                        if self.plan is not None
+                        else None
+                    )
+                    if phase3_step_after_batch != phase3_step_before_batch:
+                        tools = self.tool_engine.get_tools_for_phase(
+                            current_phase,
+                            self.plan,
+                        )
 
                     # Loop continues — LLM will see tool results and decide next step
 
@@ -268,7 +309,10 @@ class AgentLoop:
         user_summary = self.memory_mgr.generate_summary(memory)
         rebuilt = [
             self.context_manager.build_system_message(
-                self.plan, phase_prompt, user_summary
+                self.plan,
+                phase_prompt,
+                user_summary,
+                available_tools=self._current_tool_names(to_phase),
             )
         ]
 
@@ -290,6 +334,10 @@ class AgentLoop:
                 rebuilt.append(
                     Message(role=Role.SYSTEM, content=f"[前序阶段摘要]\n{summary}")
                 )
+            # Keep the user's current request as a non-system anchor for the next
+            # phase. Some Anthropic-compatible gateways reject payloads whose
+            # messages array is empty even when a system prompt is present.
+            rebuilt.append(self._copy_message(original_user_message))
 
         if to_phase < from_phase:
             rebuilt.append(self._copy_message(original_user_message))
@@ -327,6 +375,100 @@ class AgentLoop:
             error_code=error_code,
             suggestion=suggestion,
         )
+
+    def _current_tool_names(self, phase: int | None = None) -> list[str]:
+        target_phase = phase if phase is not None else (
+            self.plan.phase if self.plan is not None else None
+        )
+        if target_phase is None:
+            return []
+        return [
+            tool["name"]
+            for tool in self.tool_engine.get_tools_for_phase(target_phase, self.plan)
+        ]
+
+    def _build_phase3_state_repair_message(
+        self,
+        *,
+        current_phase: int,
+        assistant_text: str,
+        repair_hints_used: set[str],
+    ) -> str | None:
+        if current_phase != 3 or self.plan is None:
+            return None
+        if not self.plan.destination:
+            return None
+        text = assistant_text.strip()
+        if len(text) < 12:
+            return None
+
+        step = getattr(self.plan, "phase3_step", "")
+        repair_key = step
+        if repair_key in repair_hints_used:
+            return None
+
+        if (
+            step == "brief"
+            and not self.plan.trip_brief
+            and any(token in text for token in ("画像", "偏好", "约束", "预算", "日期", "旅行"))
+        ):
+            return (
+                "[状态同步提醒]\n"
+                "你刚刚已经完成了旅行画像说明，但 `trip_brief` 仍为空。"
+                "请先调用 `update_plan_state(field=\"trip_brief\", value={...})`"
+                " 写入结构化 brief；如果日期、预算、人数、偏好、约束是用户明确说过的，也要补写对应状态。"
+                "写完后再继续，不要重复整段面向用户解释。"
+            )
+
+        if (
+            step == "candidate"
+            and not self.plan.candidate_pool
+            and not self.plan.shortlist
+            and any(token in text for token in ("候选", "推荐", "不建议", "why", "why_not"))
+        ):
+            return (
+                "[状态同步提醒]\n"
+                "你刚刚已经给出了候选筛选结果，但 `candidate_pool` / `shortlist` 仍为空。"
+                "请先调用 `update_plan_state` 把候选全集写入 `candidate_pool`，把第一轮筛选结果写入 `shortlist`。"
+                "如果 shortlist 已足以支撑骨架生成，再把 `phase3_step` 更新为 `skeleton`。"
+            )
+
+        if (
+            step == "skeleton"
+            and not self.plan.skeleton_plans
+            and (
+                "骨架" in text
+                or re.search(r"方案\s*[A-C1-3]", text)
+                or any(token in text for token in ("轻松版", "平衡版", "高密度版"))
+            )
+        ):
+            return (
+                "[状态同步提醒]\n"
+                "你刚刚已经给出了 2-3 套骨架方案，但 `skeleton_plans` 仍为空。"
+                "请先调用 `update_plan_state(field=\"skeleton_plans\", value=[...])`"
+                " 写入结构化骨架方案列表。"
+                "如果用户已经明确选中某套方案，再写 `selected_skeleton_id`，并把 `phase3_step` 更新为 `lock`。"
+            )
+
+        if (
+            step == "lock"
+            and not self.plan.transport_options
+            and not self.plan.accommodation_options
+            and not self.plan.risks
+            and not self.plan.alternatives
+            and self.plan.accommodation is None
+            and any(
+                token in text
+                for token in ("住宿", "酒店", "航班", "火车", "交通", "风险", "备选")
+            )
+        ):
+            return (
+                "[状态同步提醒]\n"
+                "你刚刚已经给出了锁定阶段建议，但 `transport_options` / `accommodation_options` / `risks` / `alternatives` 仍未写入。"
+                "请先把结构化结果写入对应字段；只有用户明确选中了交通或住宿时，才写 `selected_transport` 或 `accommodation`。"
+            )
+
+        return None
 
     def _should_skip_redundant_update(self, tool_call: ToolCall) -> bool:
         if tool_call.name != "update_plan_state" or self.plan is None:

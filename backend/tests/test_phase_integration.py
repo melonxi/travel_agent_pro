@@ -136,24 +136,13 @@ _OPENWEATHER_RESPONSE = {
 @pytest.mark.asyncio
 async def test_phase1_destination_search(app):
     """
-    Phase 1: user has preferences set, agent calls search_destinations to find
-    candidates, then calls update_plan_state to record the chosen destination.
+    Phase 1: user has preferences set, agent completes destination selection and
+    records the chosen destination via update_plan_state.
     Verify plan state has destination set and phase advances past 1.
     """
 
     async def fake_run(self, messages, phase, tools_override=None):
-        # Step 1: simulate agent calling search_destinations
-        tc_search = ToolCall(
-            id="tc_sd_1",
-            name="search_destinations",
-            arguments={"query": "海岛度假", "preferences": ["海滩", "美食"]},
-        )
-        yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=tc_search)
-        # Execute the real tool (HTTP is mocked by respx)
-        result = await self.tool_engine.execute(tc_search)
-        assert result.status == "success"
-
-        # Step 2: agent decides on destination, calls update_plan_state
+        # Step 1: agent decides on destination and records it
         tc_update = ToolCall(
             id="tc_ups_1",
             name="update_plan_state",
@@ -163,21 +152,14 @@ async def test_phase1_destination_search(app):
         result = await self.tool_engine.execute(tc_update)
         assert result.status == "success"
 
-        # Step 3: final text
+        # Step 2: final text
         yield LLMChunk(
             type=ChunkType.TEXT_DELTA,
             content="已为您选择巴厘岛作为目的地！",
         )
         yield LLMChunk(type=ChunkType.DONE)
 
-    with (
-        respx.mock(assert_all_called=False) as mock_http,
-        patch("agent.loop.AgentLoop.run", fake_run),
-    ):
-        mock_http.get("https://maps.googleapis.com/maps/api/geocode/json").mock(
-            return_value=Response(200, json=_GOOGLE_GEOCODE_RESPONSE),
-        )
-
+    with patch("agent.loop.AgentLoop.run", fake_run):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:

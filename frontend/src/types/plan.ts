@@ -14,9 +14,60 @@ export interface Budget {
   currency: string
 }
 
+export interface Travelers {
+  adults: number
+  children: number
+}
+
 export interface Accommodation {
   area: string
   hotel: string | null
+}
+
+export interface Constraint {
+  type: string
+  description: string
+}
+
+export interface Preference {
+  key: string
+  value: string
+}
+
+export interface CandidateItem {
+  name?: string
+  title?: string
+  category?: string
+  bucket?: string
+  why?: string
+  why_not?: string
+  time_cost?: string | number
+  area?: string
+  theme?: string
+  [key: string]: unknown
+}
+
+export interface SkeletonPlan {
+  id?: string
+  title?: string
+  name?: string
+  style?: string
+  summary?: string
+  fatigue?: string
+  budget_level?: string
+  tradeoffs?: string[] | string
+  days?: Array<Record<string, unknown>>
+  [key: string]: unknown
+}
+
+export interface PlanRisk {
+  title?: string
+  name?: string
+  level?: string
+  description?: string
+  summary?: string
+  mitigation?: string
+  [key: string]: unknown
 }
 
 export interface Activity {
@@ -49,8 +100,22 @@ export interface TravelPlanState {
   phase: number
   destination: string | null
   dates: DateRange | null
+  phase3_step?: 'brief' | 'candidate' | 'skeleton' | 'lock'
+  trip_brief?: Record<string, unknown>
+  candidate_pool?: CandidateItem[]
+  shortlist?: CandidateItem[]
+  skeleton_plans?: SkeletonPlan[]
+  selected_skeleton_id?: string | null
+  transport_options?: Array<Record<string, unknown>>
+  selected_transport?: Record<string, unknown> | null
+  accommodation_options?: Array<Record<string, unknown>>
   budget: Budget | null
+  travelers?: Travelers | null
   accommodation: Accommodation | null
+  constraints?: Constraint[]
+  preferences?: Preference[]
+  risks?: PlanRisk[]
+  alternatives?: Array<Record<string, unknown>>
   daily_plans: DayPlan[]
   backtrack_history: BacktrackEvent[]
 }
