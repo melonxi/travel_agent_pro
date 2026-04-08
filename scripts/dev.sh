@@ -63,10 +63,10 @@ set -m
 ) &
 BACKEND_PID=$!
 
-echo "Starting frontend on http://127.0.0.1:5173"
+echo "Starting frontend on http://0.0.0.0:5173"
 (
   cd "$FRONTEND_DIR"
-  exec npm run dev -- --host 127.0.0.1 --strictPort
+  exec npm run dev -- --host 0.0.0.0 --strictPort
 ) &
 FRONTEND_PID=$!
 set +m
