@@ -172,7 +172,8 @@ _PARAMETERS = {
                 "要更新的字段名。可选值："
                 f"{', '.join(sorted(_ALLOWED_FIELDS))}。"
                 "阶段 1 常用：destination、dates、travelers、budget、preferences、constraints、destination_candidates、backtrack。"
-                "阶段 3 新增：phase3_step、trip_brief、candidate_pool、shortlist、skeleton_plans、selected_skeleton_id、transport_options、selected_transport、accommodation_options、risks、alternatives。"
+                "阶段 3 新增：trip_brief、candidate_pool、shortlist、skeleton_plans、selected_skeleton_id、transport_options、selected_transport、accommodation_options、risks、alternatives。"
+                "注意：phase3_step 由系统自动推导，通常不需要手动写入。"
             ),
         },
         "value": {
@@ -182,7 +183,8 @@ _PARAMETERS = {
                 'travelers 建议传结构化人数或可解析短语；budget 建议传数字、金额字符串或 {"total": number, "currency": "..."}；'
                 'preferences/constraints 为追加写入；destination_candidates 传单个对象会追加，传列表会整体替换；'
                 'trip_brief 建议传 dict 并做增量合并；candidate_pool/shortlist/skeleton_plans/transport_options/accommodation_options/risks/alternatives 传 list 可整体替换、传单个对象会追加；'
-                'selected_skeleton_id 建议传字符串；selected_transport 建议传 dict；phase3_step 仅允许 brief/candidate/skeleton/lock；'
+                'selected_skeleton_id 建议传字符串（必须精确匹配 skeleton_plans 中某项的 id 字段）；selected_transport 建议传 dict；'
+                'phase3_step 由系统自动推导，通常不需要手动写入（如需手动纠正，仅允许 brief/candidate/skeleton/lock）；'
                 'daily_plans 传单个 dict 追加一天（形如 {"day":1,"date":"2026-05-01","activities":[...]}），'
                 '传 list[dict] 整体替换全部天数；每个 activity 必须是 dict，且 location 必须是 {"name":..,"lat":..,"lng":..} dict，'
                 'start_time/end_time 必须是 "HH:MM" 字符串，category 必须提供，cost 必须是数字；'

@@ -132,9 +132,9 @@ class ContextManager:
                 + (f"、{plan.travelers.children} 儿童" if plan.travelers.children else "")
             )
 
-        # Phase 5+: inject trip_brief content (not just count)
+        # Phase 3 later sub-stages & Phase 5+: inject trip_brief content
         if plan.trip_brief:
-            if plan.phase >= 5:
+            if plan.phase >= 5 or (plan.phase == 3 and plan.phase3_step in ("candidate", "skeleton", "lock")):
                 parts.append("- 旅行画像：")
                 for key, val in plan.trip_brief.items():
                     parts.append(f"  - {key}: {val}")
@@ -143,12 +143,22 @@ class ContextManager:
 
         if plan.candidate_pool:
             parts.append(f"- 候选池：{len(plan.candidate_pool)} 项")
-        if plan.shortlist:
-            parts.append(f"- shortlist：{len(plan.shortlist)} 项")
+            # Phase 3 skeleton+: show shortlist item summaries
+            if plan.phase == 3 and plan.phase3_step in ("skeleton", "lock") and plan.shortlist:
+                parts.append(f"- shortlist（{len(plan.shortlist)} 项）：")
+                for item in plan.shortlist[:8]:
+                    if isinstance(item, dict):
+                        label = item.get("name") or item.get("title") or item.get("area") or str(item)[:60]
+                        parts.append(f"  - {label}")
+            elif plan.shortlist:
+                parts.append(f"- shortlist：{len(plan.shortlist)} 项")
 
         # Phase 5+: inject selected skeleton full content
+        # Phase 3 lock: also inject selected skeleton content
         if plan.skeleton_plans:
-            if plan.phase >= 5 and plan.selected_skeleton_id:
+            inject_skeleton = (plan.phase >= 5 and plan.selected_skeleton_id) or \
+                              (plan.phase == 3 and plan.phase3_step == "lock" and plan.selected_skeleton_id)
+            if inject_skeleton:
                 selected = self._find_selected_skeleton(plan)
                 if selected:
                     parts.append(f"- 已选骨架方案（{plan.selected_skeleton_id}）：")
@@ -178,12 +188,12 @@ class ContextManager:
             if plan.accommodation.hotel:
                 parts.append(f"- 住宿酒店：{plan.accommodation.hotel}")
 
-        # Phase 5+: inject preferences and constraints content
-        if plan.preferences and plan.phase >= 5:
+        # Phase 3 later sub-stages & Phase 5+: inject preferences and constraints
+        if plan.preferences and (plan.phase >= 5 or (plan.phase == 3 and plan.phase3_step in ("skeleton", "lock"))):
             pref_strs = [f"{p.key}: {p.value}" for p in plan.preferences if p.key]
             if pref_strs:
                 parts.append(f"- 用户偏好：{'; '.join(pref_strs)}")
-        if plan.constraints and plan.phase >= 5:
+        if plan.constraints and (plan.phase >= 5 or (plan.phase == 3 and plan.phase3_step in ("skeleton", "lock"))):
             cons_strs = [f"[{c.type}] {c.description}" for c in plan.constraints]
             if cons_strs:
                 parts.append(f"- 用户约束：{'; '.join(cons_strs)}")

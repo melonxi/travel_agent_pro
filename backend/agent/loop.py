@@ -550,7 +550,7 @@ class AgentLoop:
                 "[状态同步提醒]\n"
                 "你刚刚已经给出了候选筛选结果，但 `candidate_pool` / `shortlist` 仍为空。"
                 "请先调用 `update_plan_state` 把候选全集写入 `candidate_pool`，把第一轮筛选结果写入 `shortlist`。"
-                "如果 shortlist 已足以支撑骨架生成，再把 `phase3_step` 更新为 `skeleton`。"
+                "写入 shortlist 后系统会自动推进子阶段。"
             )
 
         if (
@@ -566,8 +566,8 @@ class AgentLoop:
                 "[状态同步提醒]\n"
                 "你刚刚已经给出了 2-3 套骨架方案，但 `skeleton_plans` 仍为空。"
                 "请先调用 `update_plan_state(field=\"skeleton_plans\", value=[...])`"
-                " 写入结构化骨架方案列表。"
-                "如果用户已经明确选中某套方案，再写 `selected_skeleton_id`，并把 `phase3_step` 更新为 `lock`。"
+                " 写入结构化骨架方案列表（传 list 整体替换）。"
+                "如果用户已经明确选中某套方案，再写 `selected_skeleton_id`，系统会自动推进到 lock 子阶段。"
             )
 
         if (
