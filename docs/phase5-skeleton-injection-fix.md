@@ -221,7 +221,7 @@ npx playwright test e2e-test.spec.ts
 
 1. **为什么只在 Phase 5+ 注入详细内容？** Phase 3 对话中 LLM 自己生成了骨架，不需要重新注入。Phase 5 是全新的 LLM 上下文（经过转场压缩），需要看到前一阶段的完整产出。
 
-2. **为什么用模糊匹配 `_find_selected_skeleton`？** LLM 在写入 `selected_skeleton_id` 和 skeleton plan 的 `id` 字段时可能有微小差异（如 `planA` vs `plan_A`）。模糊匹配提高了鲁棒性。
+2. **为什么 `_find_selected_skeleton` 只做精确匹配？** 早期版本使用子串模糊匹配，但 code review 发现 `plan_A` 会错误匹配 `plan_A_plus`，可能注入错误骨架。现在只允许精确 `id`/`name` 匹配；若只有唯一骨架则作为无歧义回退。
 
 3. **为什么同时做 Prompt 增强和 State Repair？** Prompt 引导是第一道防线（降低 LLM 犯错概率），State Repair 是第二道防线（即使 LLM 忘了写状态，也能被自动纠正）。两者互补。
 
@@ -234,6 +234,26 @@ npx playwright test e2e-test.spec.ts
 | `backend/context/manager.py` | 改进 | `build_runtime_context` 增加 Phase 5 骨架/画像/偏好/约束/进度注入；新增 `_find_selected_skeleton` |
 | `backend/agent/loop.py` | 新增 | `_build_phase5_state_repair_message` 方法；repair 链路整合 |
 | `backend/phase/prompts.py` | 增强 | Phase 5 prompt 增加输入来源说明、增量生成指引、最重要提醒 |
-| `backend/tests/test_context_manager.py` | 新增 | 8 个 Phase 5 注入相关测试 |
-| `backend/tests/test_agent_loop.py` | 新增 | 1 个 Phase 5 repair 测试 |
+| `backend/tests/test_context_manager.py` | 新增 | 9 个 Phase 5 注入相关测试（含歧义骨架 ID 安全测试） |
+| `backend/tests/test_agent_loop.py` | 新增 | 3 个 Phase 5 repair 测试（含去重、JSON 格式检测） |
 | `docs/phase5-skeleton-injection-fix.md` | 新增 | 本文档 |
+
+## 后续 Review 修正（基于 Rubber-Duck 批评）
+
+基于独立 code review 反馈，在初始修复基础上做了以下改进：
+
+### 1. 修复 `repair_hints_used` 去重键不一致（阻断级）
+- **问题**：Phase 3 repair 检查 `step`（如 `"brief"`），Phase 5 检查 `"p5_daily"`，但主循环统一添加 `f"p{phase}_{phase3_step}"`。键永远匹配不上，导致 repair hint 无限重复注入。
+- **修复**：Phase 3 使用 `f"p3_{step}"`；Phase 5 使用 `"p5_daily"`；主循环根据 `current_phase` 添加对应键。
+
+### 2. 移除不安全的子串匹配（高危）
+- **问题**：`_find_selected_skeleton` 的子串回退 `sid in skeleton_id or skeleton_id in sid` 会让 `plan_A` 错误匹配 `plan_A_plus`。
+- **修复**：移除子串匹配，仅保留精确 `id`/`name` 匹配 + 唯一骨架无歧义回退。
+
+### 3. 增强 Phase 5 repair 检测能力（中等）
+- **问题**：仅检测中文 `第N天` 格式，漏检 JSON 格式 `"day": 1, "activities": [...]` 和日期格式 `2026-04-15` 的行程输出。
+- **修复**：新增 JSON schema 标记检测（`"day"`, `"date"`, `"activities"`, `"start_time"`）和日期模式检测。
+
+### 4. 使用唯一天数计算完成度（中等）
+- **问题**：`planned_count = len(daily_plans)` 在存在重复天数条目时会误判完成。
+- **修复**：改为统计唯一 `day` 值数量。

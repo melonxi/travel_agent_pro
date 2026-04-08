@@ -354,7 +354,8 @@ def test_find_selected_skeleton_by_id(ctx_manager):
     assert result["theme"] == "经典"
 
 
-def test_find_selected_skeleton_fallback_partial_match(ctx_manager):
+def test_find_selected_skeleton_fallback_single_skeleton(ctx_manager):
+    """When only one skeleton exists and exact match fails, return it (no ambiguity)."""
     plan = TravelPlanState(
         session_id="s1",
         phase=5,
@@ -368,11 +369,27 @@ def test_find_selected_skeleton_fallback_partial_match(ctx_manager):
     assert result["theme"] == "轻松"
 
 
-def test_find_selected_skeleton_returns_none_when_no_match(ctx_manager):
+def test_find_selected_skeleton_no_partial_match_with_multiple(ctx_manager):
+    """When multiple skeletons exist and no exact match, return None (avoid ambiguity)."""
     plan = TravelPlanState(
         session_id="s1",
         phase=5,
-        skeleton_plans=[{"id": "X"}],
+        skeleton_plans=[
+            {"id": "plan_A_plus", "theme": "升级"},
+            {"id": "plan_A_basic", "theme": "基础"},
+        ],
+        selected_skeleton_id="plan_A",
+    )
+    result = ctx_manager._find_selected_skeleton(plan)
+    assert result is None
+
+
+def test_find_selected_skeleton_returns_none_when_no_match(ctx_manager):
+    """With multiple skeletons and no exact match, return None."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        skeleton_plans=[{"id": "X"}, {"id": "Z"}],
         selected_skeleton_id="Y",
     )
     result = ctx_manager._find_selected_skeleton(plan)

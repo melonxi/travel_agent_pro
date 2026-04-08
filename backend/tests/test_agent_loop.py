@@ -915,3 +915,111 @@ async def test_phase5_text_only_daily_plan_triggers_state_repair():
         for content in call_messages
         if content
     )
+
+
+@pytest.mark.asyncio
+async def test_phase5_repair_hint_not_repeated():
+    """After a repair hint is sent once, it should not be repeated even if LLM
+    outputs itinerary text again."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="大阪",
+        dates=DateRange(start="2026-04-15", end="2026-04-17"),
+        skeleton_plans=[{"id": "plan_A", "theme": "经典大阪"}],
+        selected_skeleton_id="plan_A",
+    )
+    engine = ToolEngine()
+    engine.register(make_update_plan_state_tool(plan))
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            # Keep outputting text without tool calls
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content="第1天：道顿堀 09:00-18:00 景点游览\n第2天：大阪城",
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        # Third call: give up with final text
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="好的")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=4,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u_p5_dedup",
+    )
+
+    messages = [Message(role=Role.USER, content="帮我排出每天的行程")]
+    async for _ in agent.run(messages, phase=5):
+        pass
+
+    # Repair fires on call 1 (dedup key added), call 2 skips repair → agent ends.
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_phase5_repair_detects_json_style_output():
+    """Repair should also trigger when LLM outputs JSON-style itinerary."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="京都",
+        dates=DateRange(start="2026-05-01", end="2026-05-03"),
+        skeleton_plans=[{"id": "planB"}],
+        selected_skeleton_id="planB",
+    )
+    engine = ToolEngine()
+    engine.register(make_update_plan_state_tool(plan))
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # JSON-style output without tool call
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content='[{"day": 1, "date": "2026-05-01", "activities": [{"name": "金阁寺", "start_time": "09:00"}]}]',
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已完成")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=4,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u_p5_json",
+    )
+
+    messages = [Message(role=Role.USER, content="排行程")]
+    async for _ in agent.run(messages, phase=5):
+        pass
+
+    # Repair should have fired (call_count > 1)
+    assert call_count >= 2

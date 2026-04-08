@@ -222,13 +222,10 @@ class ContextManager:
                 continue
             if skeleton.get("id") == sid or skeleton.get("name") == sid:
                 return skeleton
-        # Fallback: if only one skeleton or ID matches partially
-        for skeleton in plan.skeleton_plans:
-            if not isinstance(skeleton, dict):
-                continue
-            skeleton_id = str(skeleton.get("id", ""))
-            if sid in skeleton_id or skeleton_id in sid:
-                return skeleton
+        # Fallback: if exactly one skeleton exists, use it (no ambiguity)
+        valid = [s for s in plan.skeleton_plans if isinstance(s, dict)]
+        if len(valid) == 1:
+            return valid[0]
         return None
 
     def should_compress(self, messages: list[Message], max_tokens: int) -> bool:
