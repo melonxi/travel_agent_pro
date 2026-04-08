@@ -318,10 +318,11 @@ def test_phase5_runtime_context_shows_daily_plans_progress(ctx_manager):
 
 
 def test_phase3_runtime_context_shows_count_only(ctx_manager):
-    """Phase 3 should still show count-only format (no regression)."""
+    """Phase 3 brief sub-stage should still show count-only format (no regression)."""
     plan = TravelPlanState(
         session_id="s1",
         phase=3,
+        phase3_step="brief",
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-05"),
         trip_brief={"goal": "文化深度游", "pace": "relaxed"},
@@ -329,14 +330,12 @@ def test_phase3_runtime_context_shows_count_only(ctx_manager):
             {"id": "plan_A", "theme": "经典"},
             {"id": "plan_B", "theme": "美食"},
         ],
-        selected_skeleton_id="plan_A",
     )
     ctx = ctx_manager.build_runtime_context(plan)
     assert "已生成旅行画像：2 项" in ctx
     assert "骨架方案：2 套" in ctx
-    assert "已选骨架：plan_A" in ctx
-    # Should NOT have detailed content
-    assert "旅行画像：" not in ctx or "已生成旅行画像" in ctx
+    # brief sub-stage should NOT have detailed trip_brief content
+    assert "goal: 文化深度游" not in ctx
 
 
 def test_find_selected_skeleton_by_id(ctx_manager):
@@ -394,3 +393,129 @@ def test_find_selected_skeleton_returns_none_when_no_match(ctx_manager):
     )
     result = ctx_manager._find_selected_skeleton(plan)
     assert result is None
+
+
+# ── Phase 3 sub-stage context injection tests ──
+
+
+def test_phase3_candidate_stage_shows_trip_brief_content(ctx_manager):
+    """Phase 3 candidate sub-stage should show trip_brief content, not just count."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="candidate",
+        trip_brief={"goal": "亲子度假", "pace": "relaxed"},
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "goal: 亲子度假" in ctx
+    assert "pace: relaxed" in ctx
+
+
+def test_phase3_brief_stage_shows_count_only(ctx_manager):
+    """Phase 3 brief sub-stage should still only show count for trip_brief."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="brief",
+        trip_brief={"goal": "亲子度假"},
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "1 项" in ctx
+    assert "goal: 亲子度假" not in ctx
+
+
+def test_phase3_skeleton_stage_shows_shortlist_summary(ctx_manager):
+    """Phase 3 skeleton sub-stage should show shortlist item summaries."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="skeleton",
+        trip_brief={"goal": "test"},
+        candidate_pool=[{"name": "A"}, {"name": "B"}],
+        shortlist=[{"name": "清迈古城"}, {"name": "素贴山"}],
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "清迈古城" in ctx
+    assert "素贴山" in ctx
+
+
+def test_phase3_lock_stage_shows_selected_skeleton(ctx_manager):
+    """Phase 3 lock sub-stage should show selected skeleton full content."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="lock",
+        trip_brief={"goal": "test"},
+        skeleton_plans=[
+            {"id": "plan_A", "name": "轻松版", "days": [{"day": 1}]},
+            {"id": "plan_B", "name": "紧凑版", "days": [{"day": 1}]},
+        ],
+        selected_skeleton_id="plan_A",
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "轻松版" in ctx
+    assert "plan_A" in ctx
+
+
+def test_phase3_skeleton_stage_shows_preferences(ctx_manager):
+    """Phase 3 skeleton+ stages should inject preferences content."""
+    from state.models import Preference
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="skeleton",
+        trip_brief={"goal": "test"},
+        preferences=[Preference(key="pace", value="relaxed")],
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "pace: relaxed" in ctx
+
+
+# ── infer_phase3_step_from_state dangling skeleton tests ──
+
+from state.models import infer_phase3_step_from_state
+
+
+def test_infer_phase3_step_dangling_skeleton_id():
+    """selected_skeleton_id that doesn't match any skeleton should stay in skeleton stage."""
+    step = infer_phase3_step_from_state(
+        phase=3,
+        dates=DateRange(start="2025-08-01", end="2025-08-05"),
+        trip_brief={"goal": "test"},
+        candidate_pool=None,
+        shortlist=None,
+        skeleton_plans=[{"id": "plan_A"}, {"id": "plan_B"}],
+        selected_skeleton_id="nonexistent_plan",
+        accommodation=None,
+    )
+    assert step == "skeleton"
+
+
+def test_infer_phase3_step_valid_skeleton_id_by_name():
+    """selected_skeleton_id matching by name should advance to lock."""
+    step = infer_phase3_step_from_state(
+        phase=3,
+        dates=DateRange(start="2025-08-01", end="2025-08-05"),
+        trip_brief={"goal": "test"},
+        candidate_pool=None,
+        shortlist=None,
+        skeleton_plans=[{"id": "plan_A", "name": "轻松版"}],
+        selected_skeleton_id="轻松版",
+        accommodation=None,
+    )
+    assert step == "lock"
+
+
+def test_infer_phase3_step_valid_skeleton_id_by_id():
+    """selected_skeleton_id matching by id should advance to lock."""
+    step = infer_phase3_step_from_state(
+        phase=3,
+        dates=DateRange(start="2025-08-01", end="2025-08-05"),
+        trip_brief={"goal": "test"},
+        candidate_pool=None,
+        shortlist=None,
+        skeleton_plans=[{"id": "plan_A", "name": "轻松版"}],
+        selected_skeleton_id="plan_A",
+        accommodation=None,
+    )
+    assert step == "lock"

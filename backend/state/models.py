@@ -314,6 +314,15 @@ def infer_phase3_step_from_state(
         if shortlist or candidate_pool:
             return "candidate"
         return "candidate"
+    # Validate selected_skeleton_id resolves to an actual skeleton
+    if skeleton_plans:
+        matched = any(
+            s.get("id") == selected_skeleton_id or s.get("name") == selected_skeleton_id
+            for s in skeleton_plans
+        )
+        if not matched:
+            # Dangling reference — stay in skeleton stage
+            return "skeleton"
     if not accommodation:
         return "lock"
     return "lock"
