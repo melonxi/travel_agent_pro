@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 from agent.types import Message, Role, ToolCall, ToolResult
 from context.manager import ContextManager
-from state.models import TravelPlanState, DateRange, Budget
+from state.models import TravelPlanState, DateRange, Budget, Accommodation, Preference, Constraint, DayPlan, Activity, Location
 from llm.types import ChunkType, LLMChunk
 
 
@@ -214,3 +214,166 @@ async def test_compress_for_transition_renders_tool_success_and_failure(ctx_mana
     assert "工具 check_weather 失败" in summary
     assert "NOT_FOUND" in summary
     assert "City not found" in summary
+
+
+# ---------- Phase 5 skeleton injection tests ----------
+
+
+def test_phase5_runtime_context_injects_selected_skeleton(ctx_manager):
+    """Phase 5 runtime context must include the full selected skeleton content."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="大阪",
+        dates=DateRange(start="2026-04-15", end="2026-04-18"),
+        skeleton_plans=[
+            {
+                "id": "plan_A",
+                "theme": "经典大阪",
+                "day1": "道顿堀 + 心斋桥",
+                "day2": "大阪城 + 天守阁",
+                "day3": "环球影城",
+            },
+            {"id": "plan_B", "theme": "美食之旅"},
+        ],
+        selected_skeleton_id="plan_A",
+        accommodation=Accommodation(area="心斋桥"),
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "已选骨架方案（plan_A）" in ctx
+    assert "经典大阪" in ctx
+    assert "道顿堀" in ctx
+    assert "环球影城" in ctx
+    # Should NOT show count-only format
+    assert "骨架方案：2 套" not in ctx
+
+
+def test_phase5_runtime_context_injects_trip_brief_content(ctx_manager):
+    """Phase 5 runtime context must include trip_brief fields, not just count."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="东京",
+        dates=DateRange(start="2026-05-01", end="2026-05-05"),
+        trip_brief={"goal": "文化深度游", "pace": "relaxed", "focus": "寺庙和庭园"},
+        skeleton_plans=[{"id": "A", "theme": "文化"}],
+        selected_skeleton_id="A",
+        accommodation=Accommodation(area="新宿"),
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "旅行画像" in ctx
+    assert "文化深度游" in ctx
+    assert "relaxed" in ctx
+    assert "寺庙和庭园" in ctx
+    # Should NOT show count-only format
+    assert "已生成旅行画像：3 项" not in ctx
+
+
+def test_phase5_runtime_context_injects_preferences_and_constraints(ctx_manager):
+    """Phase 5 must show user preferences and constraints content."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="京都",
+        dates=DateRange(start="2026-04-10", end="2026-04-13"),
+        skeleton_plans=[{"id": "A"}],
+        selected_skeleton_id="A",
+        accommodation=Accommodation(area="河原町"),
+        preferences=[Preference(key="pace", value="轻松")],
+        constraints=[Constraint(type="hard", description="不坐红眼航班")],
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "用户偏好" in ctx
+    assert "轻松" in ctx
+    assert "用户约束" in ctx
+    assert "不坐红眼航班" in ctx
+
+
+def test_phase5_runtime_context_shows_daily_plans_progress(ctx_manager):
+    """Phase 5 must show which days are done and which are pending."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="东京",
+        dates=DateRange(start="2026-05-01", end="2026-05-04"),
+        skeleton_plans=[{"id": "A"}],
+        selected_skeleton_id="A",
+        accommodation=Accommodation(area="新宿"),
+        daily_plans=[
+            DayPlan(day=1, date="2026-05-01", activities=[
+                Activity(
+                    name="明治神宫", location=Location(lat=35.67, lng=139.69, name="明治神宫"),
+                    start_time="09:00", end_time="11:00", category="shrine",
+                )
+            ]),
+        ],
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "已规划 1/3 天" in ctx
+    assert "第1天" in ctx
+    assert "明治神宫" in ctx
+    assert "待规划天数" in ctx
+    assert "2" in ctx  # day 2 missing
+    assert "3" in ctx  # day 3 missing
+
+
+def test_phase3_runtime_context_shows_count_only(ctx_manager):
+    """Phase 3 should still show count-only format (no regression)."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        destination="东京",
+        dates=DateRange(start="2026-05-01", end="2026-05-05"),
+        trip_brief={"goal": "文化深度游", "pace": "relaxed"},
+        skeleton_plans=[
+            {"id": "plan_A", "theme": "经典"},
+            {"id": "plan_B", "theme": "美食"},
+        ],
+        selected_skeleton_id="plan_A",
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "已生成旅行画像：2 项" in ctx
+    assert "骨架方案：2 套" in ctx
+    assert "已选骨架：plan_A" in ctx
+    # Should NOT have detailed content
+    assert "旅行画像：" not in ctx or "已生成旅行画像" in ctx
+
+
+def test_find_selected_skeleton_by_id(ctx_manager):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        skeleton_plans=[
+            {"id": "plan_A", "theme": "经典"},
+            {"id": "plan_B", "theme": "美食"},
+        ],
+        selected_skeleton_id="plan_A",
+    )
+    result = ctx_manager._find_selected_skeleton(plan)
+    assert result is not None
+    assert result["theme"] == "经典"
+
+
+def test_find_selected_skeleton_fallback_partial_match(ctx_manager):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        skeleton_plans=[
+            {"id": "planA_relaxed", "theme": "轻松"},
+        ],
+        selected_skeleton_id="planA",
+    )
+    result = ctx_manager._find_selected_skeleton(plan)
+    assert result is not None
+    assert result["theme"] == "轻松"
+
+
+def test_find_selected_skeleton_returns_none_when_no_match(ctx_manager):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        skeleton_plans=[{"id": "X"}],
+        selected_skeleton_id="Y",
+    )
+    result = ctx_manager._find_selected_skeleton(plan)
+    assert result is None

@@ -126,16 +126,44 @@ class ContextManager:
             parts.append(
                 f"- 日期：{plan.dates.start} 至 {plan.dates.end}（{plan.dates.total_days} 天）"
             )
+        if plan.travelers:
+            parts.append(
+                f"- 出行人数：{plan.travelers.adults} 成人"
+                + (f"、{plan.travelers.children} 儿童" if plan.travelers.children else "")
+            )
+
+        # Phase 5+: inject trip_brief content (not just count)
         if plan.trip_brief:
-            parts.append(f"- 已生成旅行画像：{len(plan.trip_brief)} 项")
+            if plan.phase >= 5:
+                parts.append("- 旅行画像：")
+                for key, val in plan.trip_brief.items():
+                    parts.append(f"  - {key}: {val}")
+            else:
+                parts.append(f"- 已生成旅行画像：{len(plan.trip_brief)} 项")
+
         if plan.candidate_pool:
             parts.append(f"- 候选池：{len(plan.candidate_pool)} 项")
         if plan.shortlist:
             parts.append(f"- shortlist：{len(plan.shortlist)} 项")
+
+        # Phase 5+: inject selected skeleton full content
         if plan.skeleton_plans:
-            parts.append(f"- 骨架方案：{len(plan.skeleton_plans)} 套")
-        if plan.selected_skeleton_id:
-            parts.append(f"- 已选骨架：{plan.selected_skeleton_id}")
+            if plan.phase >= 5 and plan.selected_skeleton_id:
+                selected = self._find_selected_skeleton(plan)
+                if selected:
+                    parts.append(f"- 已选骨架方案（{plan.selected_skeleton_id}）：")
+                    for key, val in selected.items():
+                        if key == "id":
+                            continue
+                        parts.append(f"  - {key}: {val}")
+                else:
+                    parts.append(f"- 骨架方案：{len(plan.skeleton_plans)} 套")
+                    parts.append(f"- 已选骨架：{plan.selected_skeleton_id}")
+            else:
+                parts.append(f"- 骨架方案：{len(plan.skeleton_plans)} 套")
+                if plan.selected_skeleton_id:
+                    parts.append(f"- 已选骨架：{plan.selected_skeleton_id}")
+
         if plan.selected_transport:
             parts.append("- 已选大交通：是")
         if plan.budget:
@@ -147,15 +175,61 @@ class ContextManager:
             )
         if plan.accommodation:
             parts.append(f"- 住宿区域：{plan.accommodation.area}")
+            if plan.accommodation.hotel:
+                parts.append(f"- 住宿酒店：{plan.accommodation.hotel}")
+
+        # Phase 5+: inject preferences and constraints content
+        if plan.preferences and plan.phase >= 5:
+            pref_strs = [f"{p.key}: {p.value}" for p in plan.preferences if p.key]
+            if pref_strs:
+                parts.append(f"- 用户偏好：{'; '.join(pref_strs)}")
+        if plan.constraints and plan.phase >= 5:
+            cons_strs = [f"[{c.type}] {c.description}" for c in plan.constraints]
+            if cons_strs:
+                parts.append(f"- 用户约束：{'; '.join(cons_strs)}")
+
+        # Phase 5: inject daily_plans progress with summary
         if plan.daily_plans:
             total_days = plan.dates.total_days if plan.dates else "?"
             parts.append(f"- 已规划 {len(plan.daily_plans)}/{total_days} 天")
+            if plan.phase == 5:
+                for dp in plan.daily_plans:
+                    act_names = [a.name for a in dp.activities[:5]]
+                    act_summary = "、".join(act_names) if act_names else "无活动"
+                    parts.append(f"  - 第{dp.day}天（{dp.date}）：{act_summary}")
+                if plan.dates:
+                    planned_days = {dp.day for dp in plan.daily_plans}
+                    missing = [
+                        d for d in range(1, plan.dates.total_days + 1)
+                        if d not in planned_days
+                    ]
+                    if missing:
+                        parts.append(f"  - 待规划天数：{', '.join(map(str, missing))}")
         if plan.backtrack_history:
             last = plan.backtrack_history[-1]
             parts.append(
                 f"- 最近回溯：阶段{last.from_phase}→{last.to_phase}，原因：{last.reason}"
             )
         return "\n".join(parts)
+
+    def _find_selected_skeleton(self, plan: TravelPlanState) -> dict | None:
+        """Find the skeleton plan matching selected_skeleton_id."""
+        if not plan.selected_skeleton_id or not plan.skeleton_plans:
+            return None
+        sid = plan.selected_skeleton_id
+        for skeleton in plan.skeleton_plans:
+            if not isinstance(skeleton, dict):
+                continue
+            if skeleton.get("id") == sid or skeleton.get("name") == sid:
+                return skeleton
+        # Fallback: if only one skeleton or ID matches partially
+        for skeleton in plan.skeleton_plans:
+            if not isinstance(skeleton, dict):
+                continue
+            skeleton_id = str(skeleton.get("id", ""))
+            if sid in skeleton_id or skeleton_id in sid:
+                return skeleton
+        return None
 
     def should_compress(self, messages: list[Message], max_tokens: int) -> bool:
         tracer = trace.get_tracer("travel-agent-pro")
