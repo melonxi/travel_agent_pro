@@ -820,3 +820,98 @@ async def test_redundant_update_plan_state_is_skipped_after_phase_rebuild():
     assert [result.status for result in tool_results] == ["success", "skipped"]
     assert tool_results[1].error_code == "REDUNDANT_STATE_UPDATE"
     assert any(chunk.content == "继续确认日期" for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_phase5_text_only_daily_plan_triggers_state_repair():
+    """When Phase 5 LLM outputs day-by-day text but forgets to call
+    update_plan_state, the repair mechanism should inject a reminder."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="大阪",
+        dates=DateRange(start="2026-04-15", end="2026-04-18"),
+        skeleton_plans=[{"id": "plan_A", "theme": "经典大阪"}],
+        selected_skeleton_id="plan_A",
+        accommodation=Accommodation(area="心斋桥"),
+    )
+    engine = ToolEngine()
+    engine.register(make_update_plan_state_tool(plan))
+
+    observed_messages: list[list[str | None]] = []
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        observed_messages.append([message.content for message in messages])
+
+        if call_count == 1:
+            # LLM outputs itinerary text but no tool call
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content="第1天（4/15）：道顿堀 + 心斋桥 09:00-18:00\n第2天（4/16）：大阪城\n第3天：环球影城",
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        if call_count == 2:
+            # After repair hint, LLM writes daily_plans
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="update_plan_state",
+                    arguments={
+                        "field": "daily_plans",
+                        "value": [
+                            {"day": 1, "date": "2026-04-15", "activities": [
+                                {"name": "道顿堀", "location": {"name": "道顿堀", "lat": 34.6, "lng": 135.5},
+                                 "start_time": "09:00", "end_time": "12:00", "category": "food", "cost": 0}
+                            ]},
+                            {"day": 2, "date": "2026-04-16", "activities": [
+                                {"name": "大阪城", "location": {"name": "大阪城", "lat": 34.6, "lng": 135.5},
+                                 "start_time": "09:00", "end_time": "15:00", "category": "landmark", "cost": 600}
+                            ]},
+                            {"day": 3, "date": "2026-04-17", "activities": [
+                                {"name": "环球影城", "location": {"name": "USJ", "lat": 34.6, "lng": 135.4},
+                                 "start_time": "09:00", "end_time": "20:00", "category": "theme_park", "cost": 8600}
+                            ]},
+                        ],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="行程已写入")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=4,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u_p5",
+    )
+
+    messages = [Message(role=Role.USER, content="帮我排出每天的行程")]
+    async for _ in agent.run(messages, phase=5):
+        pass
+
+    # daily_plans should be written
+    assert len(plan.daily_plans) == 3
+    # The repair hint should have been injected
+    assert any(
+        content and "daily_plans" in content and "状态同步提醒" in content
+        for call_messages in observed_messages[1:]
+        for content in call_messages
+        if content
+    )

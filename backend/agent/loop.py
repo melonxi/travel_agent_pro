@@ -194,10 +194,17 @@ class AgentLoop:
                     # If no tool calls, we're done — the LLM gave a final text response
                     if not tool_calls:
                         full_text = "".join(text_chunks)
-                        repair_message = self._build_phase3_state_repair_message(
-                            current_phase=current_phase,
-                            assistant_text=full_text,
-                            repair_hints_used=repair_hints_used,
+                        repair_message = (
+                            self._build_phase3_state_repair_message(
+                                current_phase=current_phase,
+                                assistant_text=full_text,
+                                repair_hints_used=repair_hints_used,
+                            )
+                            or self._build_phase5_state_repair_message(
+                                current_phase=current_phase,
+                                assistant_text=full_text,
+                                repair_hints_used=repair_hints_used,
+                            )
                         )
                         if full_text:
                             messages.append(
@@ -207,7 +214,9 @@ class AgentLoop:
                             messages.append(
                                 Message(role=Role.SYSTEM, content=repair_message)
                             )
-                            repair_hints_used.add(self.plan.phase3_step)
+                            repair_hints_used.add(
+                                f"p{current_phase}_{getattr(self.plan, 'phase3_step', '')}"
+                            )
                             continue
                         yield LLMChunk(type=ChunkType.DONE)
                         return
@@ -576,6 +585,54 @@ class AgentLoop:
                 "请先把结构化结果写入对应字段；只有用户明确选中了交通或住宿时，才写 `selected_transport` 或 `accommodation`。"
             )
 
+        return None
+
+    def _build_phase5_state_repair_message(
+        self,
+        *,
+        current_phase: int,
+        assistant_text: str,
+        repair_hints_used: set[str],
+    ) -> str | None:
+        """Detect when Phase 5 LLM outputs itinerary text but forgets to call update_plan_state."""
+        if current_phase != 5 or self.plan is None:
+            return None
+        if not self.plan.dates:
+            return None
+        repair_key = f"p5_daily"
+        if repair_key in repair_hints_used:
+            return None
+        text = assistant_text.strip()
+        if len(text) < 20:
+            return None
+
+        total_days = self.plan.dates.total_days
+        planned_count = len(self.plan.daily_plans)
+
+        if planned_count >= total_days:
+            return None
+
+        # Detect itinerary-like content in text without state write
+        day_pattern_count = len(re.findall(
+            r"第\s*[1-9一二三四五六七八九十]\s*天|Day\s*\d|DAY\s*\d",
+            text,
+        ))
+        has_time_slots = bool(re.search(r"\d{1,2}:\d{2}", text))
+        has_activity_markers = any(
+            kw in text for kw in ("活动", "景点", "行程", "安排", "上午", "下午", "晚上", "餐厅")
+        )
+
+        if day_pattern_count >= 1 and (has_time_slots or has_activity_markers):
+            remaining = total_days - planned_count
+            return (
+                "[状态同步提醒]\n"
+                f"你刚刚已经给出了逐日行程安排，但 `daily_plans` 仍只有 {planned_count}/{total_days} 天。"
+                f"还需要写入 {remaining} 天的行程。"
+                "请立即调用 `update_plan_state(field=\"daily_plans\", value=[...])` "
+                "把你刚才描述的每一天行程以结构化 JSON 写入。"
+                "每天必须包含 day、date、activities（含 name/location/start_time/end_time/category/cost）。"
+                "可以一次性传入 list[dict] 写入全部天数，也可以逐天传入单个 dict 追加。"
+            )
         return None
 
     def _should_skip_redundant_update(self, tool_call: ToolCall) -> bool:
