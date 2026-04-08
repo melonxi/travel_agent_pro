@@ -1,9 +1,11 @@
 # backend/tests/test_anthropic_provider.py
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agent.types import Message, Role, ToolResult
+from llm.types import ChunkType
 from llm.anthropic_provider import AnthropicProvider
 
 
@@ -72,3 +74,51 @@ def test_convert_tools(provider):
     converted = provider._convert_tools(tool_defs)
     assert converted[0]["name"] == "search_flights"
     assert converted[0]["input_schema"]["type"] == "object"
+
+
+@pytest.mark.asyncio
+async def test_streaming_with_tools_falls_back_to_nonstream_create(provider):
+    mock_response = MagicMock()
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = "先记录信息。"
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.id = "tool_1"
+    tool_block.name = "update_plan_state"
+    tool_block.input = {"field": "destination", "value": "东京"}
+    mock_response.content = [text_block, tool_block]
+
+    with patch("llm.anthropic_provider.AsyncAnthropic") as MockClient:
+        instance = MockClient.return_value
+        instance.messages.create = AsyncMock(return_value=mock_response)
+        instance.messages.stream = MagicMock()
+
+        test_provider = AnthropicProvider(
+            model="claude-sonnet-4-20250514",
+            temperature=0.7,
+            max_tokens=4096,
+        )
+        chunks = [
+            chunk
+            async for chunk in test_provider.chat(
+                [Message(role=Role.USER, content="去东京")],
+                tools=[
+                    {
+                        "name": "update_plan_state",
+                        "description": "state",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+                stream=True,
+            )
+        ]
+
+    instance.messages.create.assert_awaited_once()
+    instance.messages.stream.assert_not_called()
+    assert chunks[0].type == ChunkType.TEXT_DELTA
+    assert chunks[0].content == "先记录信息。"
+    assert chunks[1].type == ChunkType.TOOL_CALL_START
+    assert chunks[1].tool_call is not None
+    assert chunks[1].tool_call.name == "update_plan_state"
+    assert chunks[-1].type == ChunkType.DONE

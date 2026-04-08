@@ -360,9 +360,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         if not session:
             try:
                 plan = await state_mgr.load(session_id)
+                phase_router.sync_phase_state(plan)
                 return plan.to_dict()
             except (FileNotFoundError, ValueError):
                 raise HTTPException(status_code=404, detail="Session not found")
+        phase_router.sync_phase_state(session["plan"])
         return session["plan"].to_dict()
 
     @app.post("/api/backtrack/{session_id}")
@@ -403,10 +405,20 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         agent.user_id = session["user_id"]
 
         # Build system message
+        phase_router.sync_phase_state(plan)
         phase_prompt = phase_router.get_prompt(plan.phase)
+        available_tools = [
+            tool["name"]
+            for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)
+        ]
         memory = await memory_mgr.load(req.user_id)
         user_summary = memory_mgr.generate_summary(memory)
-        sys_msg = context_mgr.build_system_message(plan, phase_prompt, user_summary)
+        sys_msg = context_mgr.build_system_message(
+            plan,
+            phase_prompt,
+            user_summary,
+            available_tools=available_tools,
+        )
 
         # Prepend system message
         if messages and messages[0].role == Role.SYSTEM:
@@ -420,6 +432,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         phase_before_run = plan.phase
 
         async def event_stream():
+            tool_call_names: dict[str, str] = {}
             async for chunk in agent.run(messages, phase=plan.phase):
                 if chunk.type.value == "keepalive":
                     yield {"comment": "ping"}
@@ -441,6 +454,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 if chunk.content:
                     event_data["content"] = chunk.content
                 if chunk.tool_call:
+                    tool_call_names[chunk.tool_call.id] = chunk.tool_call.name
                     event_data["tool_call"] = {
                         "id": chunk.tool_call.id,
                         "name": chunk.tool_call.name,
@@ -456,6 +470,16 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         "suggestion": chunk.tool_result.suggestion,
                     }
                 yield json.dumps(event_data, ensure_ascii=False)
+                if (
+                    chunk.tool_result
+                    and chunk.tool_result.status == "success"
+                    and tool_call_names.get(chunk.tool_result.tool_call_id)
+                    == "update_plan_state"
+                ):
+                    yield json.dumps(
+                        {"type": "state_update", "plan": plan.to_dict()},
+                        ensure_ascii=False,
+                    )
 
             # Fallback：如果本轮 agent 没触发 backtrack，检查关键词 fallback
             if plan.phase == phase_before_run:

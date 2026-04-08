@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
 from anthropic import AsyncAnthropic
@@ -29,6 +31,54 @@ class AnthropicProvider:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.client = AsyncAnthropic()
+
+    def _summarize_converted_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        content = message.get("content")
+        summary: dict[str, Any] = {"role": message.get("role")}
+        if isinstance(content, str):
+            summary["content_kind"] = "text"
+            summary["content_length"] = len(content)
+            summary["content_preview"] = truncate(content, max_len=120)
+            return summary
+
+        if isinstance(content, list):
+            blocks: list[dict[str, Any]] = []
+            for block in content:
+                block_summary = {"type": block.get("type")}
+                if block.get("type") == "text":
+                    text = block.get("text", "")
+                    block_summary["length"] = len(text)
+                    block_summary["preview"] = truncate(text, max_len=120)
+                elif block.get("type") == "tool_use":
+                    block_summary["id"] = block.get("id")
+                    block_summary["name"] = block.get("name")
+                    block_summary["input_keys"] = sorted((block.get("input") or {}).keys())
+                elif block.get("type") == "tool_result":
+                    tool_content = block.get("content", "")
+                    block_summary["tool_use_id"] = block.get("tool_use_id")
+                    block_summary["content_length"] = len(tool_content)
+                    block_summary["preview"] = truncate(tool_content, max_len=120)
+                blocks.append(block_summary)
+            summary["content_kind"] = "blocks"
+            summary["blocks"] = blocks
+            return summary
+
+        summary["content_kind"] = type(content).__name__
+        summary["content_repr"] = truncate(repr(content), max_len=120)
+        return summary
+
+    def _write_debug_log(self, event: str, payload: dict[str, Any]) -> None:
+        log_path = os.environ.get("ANTHROPIC_DEBUG_LOG")
+        if not log_path:
+            return
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "model": self.model,
+            **payload,
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def _split_system_and_convert(
         self, messages: list[Message]
@@ -92,6 +142,37 @@ class AnthropicProvider:
             for t in tool_defs
         ]
 
+    async def _emit_nonstream_response(
+        self,
+        response: Any,
+        *,
+        span: Any,
+    ) -> AsyncIterator[LLMChunk]:
+        collected_text = ""
+        tool_names: list[str] = []
+        for block in response.content:
+            if block.type == "text":
+                collected_text += block.text
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content=block.text)
+            elif block.type == "tool_use":
+                tool_names.append(block.name)
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id=block.id,
+                        name=block.name,
+                        arguments=block.input,
+                    ),
+                )
+        span.add_event(
+            EVENT_LLM_RESPONSE,
+            {
+                "text_preview": truncate(collected_text, max_len=200),
+                "tool_calls": json.dumps(tool_names),
+            },
+        )
+        yield LLMChunk(type=ChunkType.DONE)
+
     async def chat(
         self,
         messages: list[Message],
@@ -122,78 +203,94 @@ class AnthropicProvider:
             if tools:
                 kwargs["tools"] = self._convert_tools(tools)
 
-            if not stream:
-                response = await self.client.messages.create(**kwargs)
-                collected_text = ""
-                tool_names: list[str] = []
-                for block in response.content:
-                    if block.type == "text":
-                        collected_text += block.text
-                        yield LLMChunk(type=ChunkType.TEXT_DELTA, content=block.text)
-                    elif block.type == "tool_use":
-                        tool_names.append(block.name)
-                        yield LLMChunk(
-                            type=ChunkType.TOOL_CALL_START,
-                            tool_call=ToolCall(
-                                id=block.id, name=block.name, arguments=block.input
-                            ),
-                        )
-                span.add_event(
-                    EVENT_LLM_RESPONSE,
+            self._write_debug_log(
+                "request",
+                {
+                    "stream": stream,
+                    "used_nonstream_fallback": (not stream) or bool(tools),
+                    "system_length": len(system),
+                    "message_count": len(converted),
+                    "messages": [
+                        self._summarize_converted_message(message)
+                        for message in converted
+                    ],
+                    "tool_count": len(kwargs.get("tools", [])),
+                    "tool_names": [tool["name"] for tool in kwargs.get("tools", [])],
+                },
+            )
+
+            # Anthropic streaming tool-use currently hits an SDK event accumulation
+            # bug in our runtime. When tools are available, fall back to a
+            # non-streaming completion and re-emit chunks in our internal format.
+            try:
+                if not stream or tools:
+                    response = await self.client.messages.create(**kwargs)
+                    async for chunk in self._emit_nonstream_response(
+                        response,
+                        span=span,
+                    ):
+                        yield chunk
+                    return
+
+                async with self.client.messages.stream(**kwargs) as stream_resp:
+                    current_tool_id: str | None = None
+                    current_tool_name: str | None = None
+                    current_tool_json: str = ""
+                    collected_text = ""
+                    tool_call_names: list[str] = []
+
+                    async for event in stream_resp:
+                        if event.type == "content_block_start":
+                            if hasattr(event.content_block, "type"):
+                                if event.content_block.type == "tool_use":
+                                    current_tool_id = event.content_block.id
+                                    current_tool_name = event.content_block.name
+                                    current_tool_json = ""
+                        elif event.type == "content_block_delta":
+                            if hasattr(event.delta, "text"):
+                                collected_text += event.delta.text
+                                yield LLMChunk(
+                                    type=ChunkType.TEXT_DELTA, content=event.delta.text
+                                )
+                            elif hasattr(event.delta, "partial_json"):
+                                current_tool_json += event.delta.partial_json
+                        elif event.type == "content_block_stop":
+                            if current_tool_id and current_tool_name:
+                                tool_call_names.append(current_tool_name)
+                                yield LLMChunk(
+                                    type=ChunkType.TOOL_CALL_START,
+                                    tool_call=ToolCall(
+                                        id=current_tool_id,
+                                        name=current_tool_name,
+                                        arguments=json.loads(current_tool_json)
+                                        if current_tool_json
+                                        else {},
+                                    ),
+                                )
+                                current_tool_id = None
+                                current_tool_name = None
+                        elif event.type == "message_stop":
+                            span.add_event(
+                                EVENT_LLM_RESPONSE,
+                                {
+                                    "text_preview": truncate(collected_text, max_len=200),
+                                    "tool_calls": json.dumps(tool_call_names),
+                                },
+                            )
+                            yield LLMChunk(type=ChunkType.DONE)
+            except Exception as exc:
+                self._write_debug_log(
+                    "error",
                     {
-                        "text_preview": truncate(collected_text, max_len=200),
-                        "tool_calls": json.dumps(tool_names),
+                        "stream": stream,
+                        "used_nonstream_fallback": (not stream) or bool(tools),
+                        "message_count": len(converted),
+                        "tool_count": len(kwargs.get("tools", [])),
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
                     },
                 )
-                yield LLMChunk(type=ChunkType.DONE)
-                return
-
-            async with self.client.messages.stream(**kwargs) as stream_resp:
-                current_tool_id: str | None = None
-                current_tool_name: str | None = None
-                current_tool_json: str = ""
-                collected_text = ""
-                tool_call_names: list[str] = []
-
-                async for event in stream_resp:
-                    if event.type == "content_block_start":
-                        if hasattr(event.content_block, "type"):
-                            if event.content_block.type == "tool_use":
-                                current_tool_id = event.content_block.id
-                                current_tool_name = event.content_block.name
-                                current_tool_json = ""
-                    elif event.type == "content_block_delta":
-                        if hasattr(event.delta, "text"):
-                            collected_text += event.delta.text
-                            yield LLMChunk(
-                                type=ChunkType.TEXT_DELTA, content=event.delta.text
-                            )
-                        elif hasattr(event.delta, "partial_json"):
-                            current_tool_json += event.delta.partial_json
-                    elif event.type == "content_block_stop":
-                        if current_tool_id and current_tool_name:
-                            tool_call_names.append(current_tool_name)
-                            yield LLMChunk(
-                                type=ChunkType.TOOL_CALL_START,
-                                tool_call=ToolCall(
-                                    id=current_tool_id,
-                                    name=current_tool_name,
-                                    arguments=json.loads(current_tool_json)
-                                    if current_tool_json
-                                    else {},
-                                ),
-                            )
-                            current_tool_id = None
-                            current_tool_name = None
-                    elif event.type == "message_stop":
-                        span.add_event(
-                            EVENT_LLM_RESPONSE,
-                            {
-                                "text_preview": truncate(collected_text, max_len=200),
-                                "tool_calls": json.dumps(tool_call_names),
-                            },
-                        )
-                        yield LLMChunk(type=ChunkType.DONE)
+                raise
 
     async def count_tokens(self, messages: list[Message]) -> int:
         total = 0

@@ -18,8 +18,80 @@ class ToolEngine:
     def register(self, tool_def: ToolDef) -> None:
         self._tools[tool_def.name] = tool_def
 
-    def get_tools_for_phase(self, phase: int) -> list[dict[str, Any]]:
-        return [t.to_schema() for t in self._tools.values() if phase in t.phases]
+    def get_tools_for_phase(
+        self,
+        phase: int,
+        plan: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        allowed_names = None
+        if phase == 3 and plan is not None:
+            allowed_names = self._phase3_tool_names(getattr(plan, "phase3_step", "brief"))
+            known_phase3_names = self._phase3_builtin_tool_names()
+        return [
+            t.to_schema()
+            for t in self._tools.values()
+            if phase in t.phases
+            and (
+                allowed_names is None
+                or t.name in allowed_names
+                or t.name not in known_phase3_names
+            )
+        ]
+
+    def _phase3_tool_names(self, step: str) -> set[str]:
+        step_order = {
+            "brief": {
+                "update_plan_state",
+                "web_search",
+                "xiaohongshu_search",
+            },
+            "candidate": {
+                "update_plan_state",
+                "web_search",
+                "xiaohongshu_search",
+                "quick_travel_search",
+                "get_poi_info",
+            },
+            "skeleton": {
+                "update_plan_state",
+                "web_search",
+                "xiaohongshu_search",
+                "quick_travel_search",
+                "get_poi_info",
+                "calculate_route",
+                "assemble_day_plan",
+                "check_availability",
+            },
+            "lock": {
+                "update_plan_state",
+                "web_search",
+                "xiaohongshu_search",
+                "quick_travel_search",
+                "get_poi_info",
+                "calculate_route",
+                "assemble_day_plan",
+                "check_availability",
+                "search_flights",
+                "search_trains",
+                "search_accommodations",
+            },
+        }
+        return step_order.get(step, step_order["brief"])
+
+    def _phase3_builtin_tool_names(self) -> set[str]:
+        return {
+            "update_plan_state",
+            "web_search",
+            "xiaohongshu_search",
+            "quick_travel_search",
+            "get_poi_info",
+            "calculate_route",
+            "assemble_day_plan",
+            "check_availability",
+            "search_flights",
+            "search_trains",
+            "search_accommodations",
+        }
 
     def get_tool(self, name: str) -> ToolDef | None:
         return self._tools.get(name)

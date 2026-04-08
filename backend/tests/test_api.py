@@ -124,6 +124,36 @@ async def test_chat_stream_emits_tool_result_event(app):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_emits_incremental_state_update_after_successful_update_plan_state(app):
+    async def fake_run(self, messages, phase, tools_override=None):
+        call = ToolCall(
+            id="tc_state_1",
+            name="update_plan_state",
+            arguments={"field": "destination", "value": "东京"},
+        )
+        yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=call)
+        result = await self.tool_engine.execute(call)
+        yield LLMChunk(type=ChunkType.TOOL_RESULT, tool_result=result)
+        yield LLMChunk(type=ChunkType.DONE)
+
+    with patch("agent.loop.AgentLoop.run", fake_run):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "去东京"},
+            )
+
+    assert resp.status_code == 200
+    assert resp.text.count('"type": "state_update"') >= 2
+    assert '"destination": "东京"' in resp.text
+
+
+@pytest.mark.asyncio
 async def test_chat_does_not_mutate_plan_without_tool_call(app):
     async def fake_run(self, messages, phase, tools_override=None):
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续确认同行人")

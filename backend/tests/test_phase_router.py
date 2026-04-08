@@ -49,6 +49,7 @@ def test_infer_phase_has_accommodation_no_plans(router):
         session_id="s1",
         destination="Kyoto",
         dates=DateRange(start="2026-04-10", end="2026-04-15"),
+        selected_skeleton_id="balanced",
         accommodation=Accommodation(area="祇園"),
     )
     assert router.infer_phase(plan) == 5
@@ -59,10 +60,49 @@ def test_infer_phase_plans_complete(router):
         session_id="s1",
         destination="Kyoto",
         dates=DateRange(start="2026-04-10", end="2026-04-15"),
+        selected_skeleton_id="balanced",
         accommodation=Accommodation(area="祇園"),
         daily_plans=[DayPlan(day=i, date=f"2026-04-{10 + i}") for i in range(5)],
     )
     assert router.infer_phase(plan) == 7
+
+
+def test_infer_phase_keeps_phase3_until_skeleton_selected(router):
+    plan = TravelPlanState(
+        session_id="s1",
+        destination="Kyoto",
+        dates=DateRange(start="2026-04-10", end="2026-04-15"),
+        accommodation=Accommodation(area="祇園"),
+    )
+    assert router.infer_phase(plan) == 3
+
+
+def test_sync_phase_state_updates_phase3_step(router):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        destination="Kyoto",
+        dates=DateRange(start="2026-04-10", end="2026-04-15"),
+        trip_brief={"goal": "慢旅行"},
+        skeleton_plans=[{"id": "balanced"}],
+    )
+    router.sync_phase_state(plan)
+    assert plan.phase3_step == "skeleton"
+    assert plan.trip_brief["destination"] == "Kyoto"
+    assert plan.trip_brief["dates"]["start"] == "2026-04-10"
+
+
+def test_sync_phase_state_hydrates_minimal_trip_brief_from_explicit_state(router):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        destination="Kyoto",
+        dates=DateRange(start="2026-04-10", end="2026-04-15"),
+    )
+    router.sync_phase_state(plan)
+    assert plan.trip_brief["destination"] == "Kyoto"
+    assert plan.trip_brief["total_days"] == 5
+    assert plan.phase3_step == "candidate"
 
 
 def test_get_prompt_for_phase(router):

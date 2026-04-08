@@ -32,10 +32,14 @@ class FakeContextManager:
         plan: TravelPlanState,
         phase_prompt: str,
         user_summary: str = "",
+        available_tools: list[str] | None = None,
     ) -> Message:
+        suffix = ""
+        if available_tools:
+            suffix = f" tools={','.join(available_tools)}"
         return Message(
             role=Role.SYSTEM,
-            content=f"system phase={plan.phase} prompt={phase_prompt} user={user_summary}",
+            content=f"system phase={plan.phase} prompt={phase_prompt} user={user_summary}{suffix}",
         )
 
     async def compress_for_transition(
@@ -47,6 +51,18 @@ class FakeContextManager:
     ) -> str:
         self.compress_calls.append((from_phase, to_phase))
         return f"summary {from_phase}->{to_phase}"
+
+
+class EmptySummaryContextManager(FakeContextManager):
+    async def compress_for_transition(
+        self,
+        messages: list[Message],
+        from_phase: int,
+        to_phase: int,
+        llm_factory,
+    ) -> str:
+        self.compress_calls.append((from_phase, to_phase))
+        return ""
 
 
 class FakeMemoryManager:
@@ -284,8 +300,9 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
     assert context_manager.compress_calls == [(1, 3)]
     assert observed_second_call["tool_names"] == ["phase3_only"]
     assert observed_second_call["messages"] == [
-        "system phase=3 prompt=phase-3-prompt user=memory:u1",
+        "system phase=3 prompt=phase-3-prompt user=memory:u1 tools=phase3_only",
         "[前序阶段摘要]\nsummary 1->3",
+        "帮我继续规划",
     ]
     assert any(chunk.content == "phase 3 ready" for chunk in chunks)
 
@@ -361,6 +378,283 @@ async def test_backtrack_rebuild_uses_hard_boundary_without_compression():
         "[阶段回退]\n用户从 phase 5 回退到 phase 1，原因：用户想换目的地",
         "不想去这里了，换个目的地",
     ]
+
+
+@pytest.mark.asyncio
+async def test_forward_phase_rebuild_keeps_user_anchor_when_summary_empty():
+    plan = TravelPlanState(session_id="s1", phase=1)
+    context_manager = EmptySummaryContextManager()
+
+    @tool(
+        name="advance_phase",
+        description="advance",
+        phases=[1],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def advance_phase() -> dict:
+        plan.phase = 3
+        return {"ok": True}
+
+    engine = ToolEngine()
+    engine.register(advance_phase)
+
+    call_index = 0
+    observed_second_call: dict[str, object] = {}
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_index
+        call_index += 1
+        if call_index == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(id="tc1", name="advance_phase", arguments={}),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        observed_second_call["messages"] = [m.content for m in messages]
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 3 ready")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=3,
+        phase_router=FakePhaseRouter(),
+        context_manager=context_manager,
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u-empty",
+    )
+
+    messages = [Message(role=Role.USER, content="帮我继续规划")]
+    async for _ in agent.run(messages, phase=1):
+        pass
+
+    assert context_manager.compress_calls == [(1, 3)]
+    assert observed_second_call["messages"] == [
+        "system phase=3 prompt=phase-3-prompt user=memory:u-empty",
+        "帮我继续规划",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_phase3_substep_change_refreshes_tools():
+    plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
+
+    @tool(
+        name="update_plan_state",
+        description="state",
+        phases=[3],
+        parameters={"type": "object", "properties": {"field": {"type": "string"}, "value": {}}},
+    )
+    async def update_plan_state(field: str, value):
+        if field == "phase3_step":
+            plan.phase3_step = value
+        return {"ok": True}
+
+    @tool(
+        name="search_accommodations",
+        description="stay",
+        phases=[3],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def search_accommodations() -> dict:
+        return {"ok": True}
+
+    engine = ToolEngine()
+    engine.register(update_plan_state)
+    engine.register(search_accommodations)
+
+    observed_tool_names: list[list[str]] = []
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        observed_tool_names.append([tool["name"] for tool in tools or []])
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="update_plan_state",
+                    arguments={"field": "phase3_step", "value": "lock"},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已进入 lock")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=3,
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u3",
+    )
+
+    messages = [Message(role=Role.USER, content="进入 lock")]
+    async for _ in agent.run(messages, phase=3):
+        pass
+
+    assert observed_tool_names[0] == ["update_plan_state"]
+    assert observed_tool_names[1] == ["update_plan_state", "search_accommodations"]
+
+
+@pytest.mark.asyncio
+async def test_phase3_inferred_substep_refreshes_tools_after_dates_written():
+    plan = TravelPlanState(session_id="s1", phase=3, destination="东京")
+    engine = ToolEngine()
+    engine.register(make_update_plan_state_tool(plan))
+
+    @tool(
+        name="quick_travel_search",
+        description="quick",
+        phases=[3],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def quick_travel_search() -> dict:
+        return {"ok": True}
+
+    engine.register(quick_travel_search)
+
+    observed_tool_names: list[list[str]] = []
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        observed_tool_names.append([tool["name"] for tool in tools or []])
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="update_plan_state",
+                    arguments={
+                        "field": "dates",
+                        "value": {"start": "2026-05-01", "end": "2026-05-06"},
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="进入 candidate")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=3,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u4",
+    )
+
+    messages = [Message(role=Role.USER, content="五一去东京玩5天")]
+    async for _ in agent.run(messages, phase=3):
+        pass
+
+    assert observed_tool_names[0] == ["update_plan_state"]
+    assert "quick_travel_search" in observed_tool_names[1]
+    assert plan.phase3_step == "candidate"
+    assert plan.trip_brief["destination"] == "东京"
+
+
+@pytest.mark.asyncio
+async def test_phase3_text_only_skeleton_response_triggers_state_repair():
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="skeleton",
+        destination="东京",
+        dates=DateRange(start="2026-05-01", end="2026-05-06"),
+        trip_brief={"goal": "慢旅行"},
+    )
+    engine = ToolEngine()
+    engine.register(make_update_plan_state_tool(plan))
+
+    observed_messages: list[list[str | None]] = []
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        observed_messages.append([message.content for message in messages])
+
+        if call_count == 1:
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="方案A：轻松版\n方案B：平衡版\n方案C：高密度版")
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        if call_count == 2:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="update_plan_state",
+                    arguments={
+                        "field": "skeleton_plans",
+                        "value": [
+                            {"id": "relaxed", "title": "轻松版"},
+                            {"id": "balanced", "title": "平衡版"},
+                            {"id": "dense", "title": "高密度版"},
+                        ],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已写入骨架方案")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=4,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u5",
+    )
+
+    messages = [Message(role=Role.USER, content="给我三套骨架方案")]
+    async for _ in agent.run(messages, phase=3):
+        pass
+
+    assert [item["id"] for item in plan.skeleton_plans] == ["relaxed", "balanced", "dense"]
+    assert any(
+        content and "skeleton_plans" in content
+        for call_messages in observed_messages[1:]
+        for content in call_messages
+    )
 
 
 @pytest.mark.asyncio

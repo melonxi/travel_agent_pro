@@ -112,6 +112,18 @@ async def test_add_preference(tool_fn, plan):
 
 
 @pytest.mark.asyncio
+async def test_add_preference_accepts_loose_dict(tool_fn, plan):
+    await tool_fn(
+        field="preferences",
+        value={"不去": ["迪士尼"], "节奏": "不想太赶", "住宿区域": ["新宿", "涩谷"]},
+    )
+
+    assert [pref.key for pref in plan.preferences] == ["不去", "节奏", "住宿区域"]
+    assert plan.preferences[0].value == "迪士尼"
+    assert plan.preferences[2].value == "新宿 · 涩谷"
+
+
+@pytest.mark.asyncio
 async def test_add_constraint(tool_fn, plan):
     result = await tool_fn(
         field="constraints", value={"type": "hard", "description": "预算 1 万"}
@@ -128,6 +140,31 @@ async def test_add_constraint_accepts_loose_dict(tool_fn, plan):
     assert len(plan.constraints) == 1
     assert plan.constraints[0].type == "soft"
     assert "duration_days" in plan.constraints[0].description
+
+
+@pytest.mark.asyncio
+async def test_phase3_structured_fields_accept_json_strings(tool_fn, plan):
+    await tool_fn(
+        field="trip_brief",
+        value='{"goal":"慢旅行","pace":"relaxed"}',
+    )
+    await tool_fn(
+        field="candidate_pool",
+        value='[{"name":"浅草寺","area":"浅草","theme":"传统文化"}]',
+    )
+    await tool_fn(
+        field="skeleton_plans",
+        value='[{"id":"balanced","title":"平衡版"}]',
+    )
+    await tool_fn(
+        field="preferences",
+        value='["轻松","美食"]',
+    )
+
+    assert plan.trip_brief == {"goal": "慢旅行", "pace": "relaxed"}
+    assert plan.candidate_pool == [{"name": "浅草寺", "area": "浅草", "theme": "传统文化"}]
+    assert plan.skeleton_plans == [{"id": "balanced", "title": "平衡版"}]
+    assert [pref.key for pref in plan.preferences] == ["轻松", "美食"]
 
 
 @pytest.mark.asyncio
