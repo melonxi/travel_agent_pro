@@ -64,6 +64,80 @@ def test_plan_serialization():
     assert restored.selected_skeleton_id == "balanced"
 
 
+def test_location_from_dict_tolerates_string():
+    """LLM 有时把 location 直接写成字符串名字；必须优雅降级。"""
+    loc = Location.from_dict("明治神宫")
+    assert loc.name == "明治神宫"
+    assert loc.lat == 0.0
+    assert loc.lng == 0.0
+
+
+def test_location_from_dict_tolerates_none():
+    loc = Location.from_dict(None)
+    assert loc.name == ""
+    assert loc.lat == 0.0
+    assert loc.lng == 0.0
+
+
+def test_location_from_dict_tolerates_partial_dict_with_address_alias():
+    loc = Location.from_dict({"address": "东京都涩谷区"})
+    assert loc.name == "东京都涩谷区"
+
+
+def test_location_from_dict_tolerates_non_numeric_lat_lng():
+    loc = Location.from_dict({"name": "x", "lat": "abc", "lng": None})
+    assert loc.name == "x"
+    assert loc.lat == 0.0
+    assert loc.lng == 0.0
+
+
+def test_activity_from_dict_with_string_location_and_missing_category():
+    """LLM 常见错误：location 传字符串 + 省略 category。必须不崩。"""
+    act = Activity.from_dict(
+        {
+            "name": "明治神宫",
+            "location": "明治神宫",
+            "start_time": "09:00",
+            "end_time": "11:00",
+        }
+    )
+    assert act.name == "明治神宫"
+    assert isinstance(act.location, Location)
+    assert act.location.name == "明治神宫"
+    assert act.category == "activity"
+    assert act.cost == 0
+    assert act.transport_duration_min == 0
+
+
+def test_activity_from_dict_raises_on_non_dict():
+    import pytest
+
+    with pytest.raises(TypeError):
+        Activity.from_dict("not a dict")
+
+
+def test_day_plan_from_dict_tolerates_loose_activities():
+    dp = DayPlan.from_dict(
+        {
+            "day": "2",  # 字符串数字
+            "date": "2026-05-02",
+            "activities": [
+                {"name": "清水寺", "location": "京都清水寺"},  # location 是字符串
+            ],
+        }
+    )
+    assert dp.day == 2
+    assert len(dp.activities) == 1
+    assert dp.activities[0].location.name == "京都清水寺"
+
+
+def test_day_plan_from_dict_raises_on_non_dict():
+    import pytest
+
+    with pytest.raises(TypeError):
+        DayPlan.from_dict(["not a dict"])
+
+
 def test_plan_clear_downstream_from_phase_3():
     plan = TravelPlanState(
         session_id="sess_001",

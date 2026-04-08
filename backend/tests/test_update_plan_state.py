@@ -173,3 +173,58 @@ async def test_invalid_field(tool_fn):
 
     with pytest.raises(ToolError):
         await tool_fn(field="nonexistent", value="x")
+
+
+@pytest.mark.asyncio
+async def test_daily_plans_tolerates_string_location_and_missing_category(
+    tool_fn, plan
+):
+    """回归：LLM 在 phase 5 常把 activity.location 写成字符串、省略 category。
+    修复后必须不抛 KeyError / TypeError，而是优雅降级写入。"""
+    day1 = {
+        "day": 1,
+        "date": "2026-05-01",
+        "activities": [
+            {
+                "name": "明治神宫",
+                "location": "明治神宫",  # 字符串，不是 dict
+                "start_time": "09:00",
+                "end_time": "11:00",
+                # 没有 category、cost、transport_from_prev 等字段
+            }
+        ],
+    }
+    result = await tool_fn(field="daily_plans", value=day1)
+    assert result["updated_field"] == "daily_plans"
+    assert len(plan.daily_plans) == 1
+    activity = plan.daily_plans[0].activities[0]
+    assert activity.name == "明治神宫"
+    assert activity.location.name == "明治神宫"
+    assert activity.category == "activity"  # 默认值
+    assert activity.cost == 0
+
+
+@pytest.mark.asyncio
+async def test_daily_plans_list_replaces_with_loose_shapes(tool_fn, plan):
+    """list 整体替换时，每个元素都必须容错。"""
+    plans_list = [
+        {"day": 1, "date": "2026-05-01", "activities": []},
+        {
+            "day": 2,
+            "date": "2026-05-02",
+            "activities": [
+                {"name": "清水寺", "location": "京都", "start_time": "10:00", "end_time": "12:00"},
+            ],
+        },
+    ]
+    await tool_fn(field="daily_plans", value=plans_list)
+    assert len(plan.daily_plans) == 2
+    assert plan.daily_plans[1].activities[0].location.name == "京都"
+
+
+@pytest.mark.asyncio
+async def test_daily_plans_rejects_scalar(tool_fn):
+    from tools.base import ToolError
+
+    with pytest.raises(ToolError):
+        await tool_fn(field="daily_plans", value="not a dict or list")

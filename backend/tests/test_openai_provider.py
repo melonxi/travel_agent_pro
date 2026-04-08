@@ -1,5 +1,6 @@
 # backend/tests/test_openai_provider.py
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -76,3 +77,81 @@ def test_convert_tools(provider):
     converted = provider._convert_tools(tool_defs)
     assert converted[0]["type"] == "function"
     assert converted[0]["function"]["name"] == "search_flights"
+
+
+class _AsyncChunkStream:
+    def __init__(self, chunks):
+        self._chunks = iter(chunks)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._chunks)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
+def _stream_chunk(*, delta=None, finish_reason=None):
+    return SimpleNamespace(
+        choices=[SimpleNamespace(delta=delta, finish_reason=finish_reason)]
+    )
+
+
+def _delta(*, content=None, tool_calls=None):
+    return SimpleNamespace(content=content, tool_calls=tool_calls)
+
+
+async def test_streaming_chat_emits_done_when_finish_reason_arrives_without_delta(
+    provider,
+):
+    stream = _AsyncChunkStream(
+        [
+            _stream_chunk(delta=_delta(content="hello")),
+            _stream_chunk(delta=None, finish_reason="stop"),
+        ]
+    )
+
+    with patch("llm.openai_provider.AsyncOpenAI") as MockClient:
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(return_value=stream)
+        provider.client = instance
+
+        chunks = [chunk async for chunk in provider.chat([Message(role=Role.USER, content="hi")])]
+
+    assert [chunk.type for chunk in chunks] == [ChunkType.TEXT_DELTA, ChunkType.DONE]
+    assert chunks[0].content == "hello"
+
+
+async def test_streaming_chat_flushes_tool_calls_when_finish_reason_chunk_has_no_delta(
+    provider,
+):
+    tool_call_delta = SimpleNamespace(
+        index=0,
+        id="call_1",
+        function=SimpleNamespace(
+            name="search_poi",
+            arguments='{"query":"东京塔"}',
+        ),
+    )
+    stream = _AsyncChunkStream(
+        [
+            _stream_chunk(delta=_delta(tool_calls=[tool_call_delta])),
+            _stream_chunk(delta=None, finish_reason="tool_calls"),
+        ]
+    )
+
+    with patch("llm.openai_provider.AsyncOpenAI") as MockClient:
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(return_value=stream)
+        provider.client = instance
+
+        chunks = [chunk async for chunk in provider.chat([Message(role=Role.USER, content="hi")], tools=[])]
+
+    assert [chunk.type for chunk in chunks] == [ChunkType.TOOL_CALL_START, ChunkType.DONE]
+    assert chunks[0].tool_call == ToolCall(
+        id="call_1",
+        name="search_poi",
+        arguments={"query": "东京塔"},
+    )

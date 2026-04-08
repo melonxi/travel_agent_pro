@@ -140,33 +140,35 @@ class OpenAIProvider:
             collected_text = ""
 
             async for chunk in response:
-                delta = chunk.choices[0].delta if chunk.choices else None
-                if not delta:
+                choice = chunk.choices[0] if chunk.choices else None
+                if not choice:
                     continue
 
-                if delta.content:
-                    collected_text += delta.content
-                    yield LLMChunk(type=ChunkType.TEXT_DELTA, content=delta.content)
+                delta = choice.delta
+                if delta:
+                    if delta.content:
+                        collected_text += delta.content
+                        yield LLMChunk(type=ChunkType.TEXT_DELTA, content=delta.content)
 
-                if delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in current_tool_calls:
-                            current_tool_calls[idx] = {
-                                "id": tc_delta.id or "",
-                                "name": "",
-                                "arguments": "",
-                            }
-                        entry = current_tool_calls[idx]
-                        if tc_delta.id:
-                            entry["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                entry["name"] = tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                entry["arguments"] += tc_delta.function.arguments
+                    if delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in current_tool_calls:
+                                current_tool_calls[idx] = {
+                                    "id": tc_delta.id or "",
+                                    "name": "",
+                                    "arguments": "",
+                                }
+                            entry = current_tool_calls[idx]
+                            if tc_delta.id:
+                                entry["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    entry["name"] = tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    entry["arguments"] += tc_delta.function.arguments
 
-                if chunk.choices[0].finish_reason:
+                if choice.finish_reason:
                     for entry in current_tool_calls.values():
                         yield LLMChunk(
                             type=ChunkType.TOOL_CALL_START,
@@ -178,13 +180,33 @@ class OpenAIProvider:
                                 else {},
                             ),
                         )
-                    tool_call_names = [entry["name"] for entry in current_tool_calls.values()]
+                    tool_call_names = [
+                        entry["name"] for entry in current_tool_calls.values()
+                    ]
                     span.add_event(EVENT_LLM_RESPONSE, {
                         "text_preview": truncate(collected_text, max_len=200),
                         "tool_calls": json.dumps(tool_call_names),
                     })
                     yield LLMChunk(type=ChunkType.DONE)
                     return
+
+            tool_call_names = [entry["name"] for entry in current_tool_calls.values()]
+            span.add_event(EVENT_LLM_RESPONSE, {
+                "text_preview": truncate(collected_text, max_len=200),
+                "tool_calls": json.dumps(tool_call_names),
+            })
+            for entry in current_tool_calls.values():
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id=entry["id"],
+                        name=entry["name"],
+                        arguments=json.loads(entry["arguments"])
+                        if entry["arguments"]
+                        else {},
+                    ),
+                )
+            yield LLMChunk(type=ChunkType.DONE)
 
     async def count_tokens(self, messages: list[Message]) -> int:
         try:

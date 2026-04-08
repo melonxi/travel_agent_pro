@@ -13,10 +13,13 @@ test.describe('Travel Agent Pro Phase 1 Flow', () => {
     await input.fill('我想找个海边放松、风景好一点的地方');
     await page.locator('.send-btn').click();
 
-    const toolCard = page.locator('.tool-card').filter({ hasText: 'search_destinations' });
+    const toolCard = page.locator('.tool-card').first();
     await expect(toolCard).toBeVisible({ timeout: 90000 });
     await expect(toolCard.locator('.tool-status')).toHaveText(/成功|执行中/, {
       timeout: 90000,
+    });
+    await expect(toolCard).toContainText(/xiaohongshu_search|web_search|quick_travel_search|update_plan_state/, {
+      timeout: 15000,
     });
 
     const toggle = toolCard.getByRole('button', { name: /详情/ });

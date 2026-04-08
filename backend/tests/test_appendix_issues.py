@@ -109,6 +109,7 @@ class TestA2DailyPlansBlocked:
             phase=5,
             destination="Tokyo",
             dates=DateRange(start="2026-05-01", end="2026-05-04"),
+            selected_skeleton_id="balanced",
             accommodation=Accommodation(area="Shinjuku"),
             preferences=[Preference(key="pace", value="relaxed")],
         )
