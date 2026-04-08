@@ -275,6 +275,7 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
 
         observed_second_call["tool_names"] = [tool["name"] for tool in tools or []]
         observed_second_call["messages"] = [m.content for m in messages]
+        observed_second_call["roles"] = [m.role for m in messages]
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 3 ready")
         yield LLMChunk(type=ChunkType.DONE)
 
@@ -301,9 +302,14 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
     assert observed_second_call["tool_names"] == ["phase3_only"]
     assert observed_second_call["messages"] == [
         "system phase=3 prompt=phase-3-prompt user=memory:u1 tools=phase3_only",
-        "[前序阶段摘要]\nsummary 1->3",
+        "以下是阶段 1 的对话与工具调用回顾，现在进入阶段 3。\nsummary 1->3",
         "帮我继续规划",
     ]
+    # The transition summary must ride on an assistant turn, not a second
+    # system message — multi-system payloads are flaky across providers.
+    observed_roles = observed_second_call.get("roles")
+    if observed_roles is not None:
+        assert observed_roles == [Role.SYSTEM, Role.ASSISTANT, Role.USER]
     assert any(chunk.content == "phase 3 ready" for chunk in chunks)
 
 

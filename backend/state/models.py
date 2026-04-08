@@ -17,8 +17,24 @@ class Location:
         return {"lat": self.lat, "lng": self.lng, "name": self.name}
 
     @classmethod
-    def from_dict(cls, d: dict) -> Location:
-        return cls(lat=d["lat"], lng=d["lng"], name=d.get("name", ""))
+    def from_dict(cls, d: Any) -> Location:
+        # Tolerate LLM-provided payloads: accept str / None / partial dict.
+        if d is None:
+            return cls(lat=0.0, lng=0.0, name="")
+        if isinstance(d, str):
+            return cls(lat=0.0, lng=0.0, name=d)
+        if not isinstance(d, dict):
+            return cls(lat=0.0, lng=0.0, name=str(d))
+        try:
+            lat = float(d.get("lat", 0) or 0)
+        except (TypeError, ValueError):
+            lat = 0.0
+        try:
+            lng = float(d.get("lng", 0) or 0)
+        except (TypeError, ValueError):
+            lng = 0.0
+        name = d.get("name") or d.get("address") or ""
+        return cls(lat=lat, lng=lng, name=str(name))
 
 
 @dataclass
@@ -114,16 +130,20 @@ class Activity:
 
     @classmethod
     def from_dict(cls, d: dict) -> Activity:
+        # Tolerate LLM-provided payloads where optional fields are missing or
+        # where location is passed as a string name instead of a full dict.
+        if not isinstance(d, dict):
+            raise TypeError(f"Activity.from_dict expects dict, got {type(d).__name__}")
         return cls(
-            name=d["name"],
-            location=Location.from_dict(d["location"]),
-            start_time=d["start_time"],
-            end_time=d["end_time"],
-            category=d["category"],
-            cost=d.get("cost", 0),
+            name=str(d.get("name", "")),
+            location=Location.from_dict(d.get("location")),
+            start_time=str(d.get("start_time", "")),
+            end_time=str(d.get("end_time", "")),
+            category=str(d.get("category") or "activity"),
+            cost=d.get("cost", 0) or 0,
             transport_from_prev=d.get("transport_from_prev"),
-            transport_duration_min=d.get("transport_duration_min", 0),
-            notes=d.get("notes", ""),
+            transport_duration_min=d.get("transport_duration_min", 0) or 0,
+            notes=str(d.get("notes", "") or ""),
         )
 
 
@@ -144,11 +164,17 @@ class DayPlan:
 
     @classmethod
     def from_dict(cls, d: dict) -> DayPlan:
+        if not isinstance(d, dict):
+            raise TypeError(f"DayPlan.from_dict expects dict, got {type(d).__name__}")
+        try:
+            day_value = int(d.get("day", 0))
+        except (TypeError, ValueError):
+            day_value = 0
         return cls(
-            day=d["day"],
-            date=d["date"],
-            activities=[Activity.from_dict(a) for a in d.get("activities", [])],
-            notes=d.get("notes", ""),
+            day=day_value,
+            date=str(d.get("date", "")),
+            activities=[Activity.from_dict(a) for a in d.get("activities", []) or []],
+            notes=str(d.get("notes", "") or ""),
         )
 
 

@@ -10,7 +10,7 @@ import json
 import httpx
 import pytest
 
-from agent.types import ToolCall
+from agent.types import Role, ToolCall
 from llm.types import ChunkType, LLMChunk
 from state.models import TravelPlanState
 
@@ -116,7 +116,11 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 assert plan.phase == 3
                 assert plan.dates is None
                 assert "- 阶段：3" in messages[0].content
-                assert messages[1].content == "[前序阶段摘要]\n阶段摘要"
+                # The transition summary now rides on an assistant turn
+                # and is built deterministically from the prior messages.
+                assert messages[1].role == Role.ASSISTANT
+                assert "进入阶段 3" in messages[1].content
+                assert "决策: update_plan_state destination = 东京" in messages[1].content
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(

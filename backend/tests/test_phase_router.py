@@ -110,11 +110,61 @@ def test_get_prompt_for_phase(router):
     assert "目的地收敛顾问" in prompt
 
 
+def test_phase5_prompt_mentions_daily_plan_commit_and_backtrack(router):
+    prompt = router.get_prompt(5)
+    assert "daily_plans" in prompt
+    assert "backtrack" in prompt
+    assert "selected_skeleton_id" in prompt
+
+
+def test_phase5_prompt_mentions_actual_phase5_tools(router):
+    prompt = router.get_prompt(5)
+    for tool_name in [
+        "assemble_day_plan",
+        "get_poi_info",
+        "calculate_route",
+        "check_availability",
+        "check_weather",
+        "xiaohongshu_search",
+        "update_plan_state",
+    ]:
+        assert tool_name in prompt
+
+
+def test_phase5_prompt_avoids_unavailable_phase5_tools(router):
+    prompt = router.get_prompt(5)
+    for tool_name in [
+        "web_search",
+        "search_flights",
+        "search_trains",
+        "search_accommodations",
+    ]:
+        assert tool_name not in prompt
+
+
 def test_phase1_prompt_encourages_reading_recommendation_posts_and_comments(router):
     prompt = router.get_prompt(1)
     assert "不要只停留在标题层判断" in prompt
     assert "求推荐旅行目的地" in prompt
     assert "评论区提炼高频候选" in prompt
+
+
+def test_phase1_prompt_skips_search_when_destination_is_already_confirmed(router):
+    prompt = router.get_prompt(1)
+    assert "不要先调 `xiaohongshu_search` 或 `web_search`" in prompt
+
+
+def test_phase3_prompt_prioritizes_brief_sync_before_external_search(router):
+    prompt = router.get_prompt(3)
+    assert "优先先写 `trip_brief` 并进入 `candidate`" in prompt
+    assert "不要在 brief 已经足够成型时先去做外部搜索" in prompt
+
+
+def test_phase3_candidate_prompt_limits_search_and_forbids_search_narration(router):
+    prompt = router.get_prompt(3)
+    assert "先写状态，再按需补充验证" in prompt
+    assert "优先控制在 1 次 `xiaohongshu_search` 加 0-1 次 `web_search`" in prompt
+    assert "不要在正文里反复说“我先搜一下”" in prompt
 
 
 def test_get_prompt_for_all_phases(router):

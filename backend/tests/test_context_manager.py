@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from agent.types import Message, Role, ToolResult
+from agent.types import Message, Role, ToolCall, ToolResult
 from context.manager import ContextManager
 from state.models import TravelPlanState, DateRange, Budget
 from llm.types import ChunkType, LLMChunk
@@ -72,11 +72,23 @@ def test_classify_messages(ctx_manager):
 
 
 @pytest.mark.asyncio
-async def test_compress_for_transition_short_circuits_for_small_context(ctx_manager):
+async def test_compress_for_transition_is_rule_based(ctx_manager):
+    """The transition summary is now built deterministically from messages,
+    without any extra LLM call. The factory must not be touched."""
     messages = [
         Message(role=Role.SYSTEM, content="system"),
         Message(role=Role.USER, content="我想去东京"),
-        Message(role=Role.ASSISTANT, content="好的，先确认日期"),
+        Message(
+            role=Role.ASSISTANT,
+            content="好的，先确认日期",
+            tool_calls=[
+                ToolCall(
+                    id="tc1",
+                    name="update_plan_state",
+                    arguments={"field": "destination", "value": "东京"},
+                )
+            ],
+        ),
         Message(
             role=Role.TOOL,
             tool_result=ToolResult(
@@ -97,25 +109,27 @@ async def test_compress_for_transition_short_circuits_for_small_context(ctx_mana
     )
 
     factory.assert_not_called()
+    # User message kept verbatim.
     assert "用户: 我想去东京" in summary
+    # Assistant text is kept (truncated at 200 chars; this one is short).
     assert "助手: 好的，先确认日期" in summary
-    assert "updated_field" in summary
+    # update_plan_state rendered as a "决策" line referring to the tc arguments.
+    assert "决策: update_plan_state destination = 东京" in summary
 
 
 @pytest.mark.asyncio
-async def test_compress_for_transition_uses_llm_for_longer_context(ctx_manager):
-    async def fake_chat(messages, tools=None, stream=True):
-        assert len(messages) == 2
-        assert messages[0].role == Role.SYSTEM
-        assert "阶段 1" in messages[1].content
-        assert "预算 2 万以内" in messages[1].content
-        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="用户想去东京，预算 2 万以内。")
-        yield LLMChunk(type=ChunkType.DONE)
+async def test_compress_for_transition_never_calls_llm_even_for_long_context(ctx_manager):
+    """Regression: older design spun up an LLM for 4+ messages. The new
+    implementation must stay deterministic regardless of length."""
+
+    async def should_not_be_called(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("llm_factory must not be invoked")
+        yield  # pragma: no cover — keeps it a valid async generator
 
     fake_llm = MagicMock()
-    fake_llm.chat = fake_chat
-
+    fake_llm.chat = should_not_be_called
     factory = MagicMock(return_value=fake_llm)
+
     messages = [
         Message(role=Role.SYSTEM, content="system"),
         Message(role=Role.USER, content="我想五一去东京"),
@@ -131,5 +145,72 @@ async def test_compress_for_transition_uses_llm_for_longer_context(ctx_manager):
         llm_factory=factory,
     )
 
-    factory.assert_called_once()
-    assert summary == "用户想去东京，预算 2 万以内。"
+    factory.assert_not_called()
+    assert "用户: 我想五一去东京" in summary
+    assert "用户: 预算 2 万以内" in summary
+    assert "助手: 好的" in summary
+    assert "助手: 明白" in summary
+
+
+@pytest.mark.asyncio
+async def test_compress_for_transition_truncates_long_assistant_text(ctx_manager):
+    long_text = "这是一段非常长的解释。" * 60
+    messages = [
+        Message(role=Role.USER, content="问题"),
+        Message(role=Role.ASSISTANT, content=long_text),
+    ]
+    summary = await ctx_manager.compress_for_transition(
+        messages=messages,
+        from_phase=1,
+        to_phase=3,
+        llm_factory=None,
+    )
+    assistant_line = next(
+        line for line in summary.splitlines() if line.startswith("助手:")
+    )
+    # Ellipsis suffix indicates truncation
+    assert assistant_line.endswith("…")
+    assert len(assistant_line) <= len("助手: ") + 201
+
+
+@pytest.mark.asyncio
+async def test_compress_for_transition_renders_tool_success_and_failure(ctx_manager):
+    messages = [
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=[
+                ToolCall(id="tc_ok", name="web_search", arguments={"query": "kyoto"}),
+                ToolCall(id="tc_err", name="check_weather", arguments={"city": "东京"}),
+            ],
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc_ok",
+                status="success",
+                data={"answer": "京都樱花已经开了"},
+            ),
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc_err",
+                status="error",
+                error="City not found",
+                error_code="NOT_FOUND",
+            ),
+        ),
+    ]
+
+    summary = await ctx_manager.compress_for_transition(
+        messages=messages,
+        from_phase=1,
+        to_phase=3,
+        llm_factory=None,
+    )
+
+    assert "工具 web_search 成功" in summary
+    assert "京都樱花已经开了" in summary
+    assert "工具 check_weather 失败" in summary
+    assert "NOT_FOUND" in summary
+    assert "City not found" in summary

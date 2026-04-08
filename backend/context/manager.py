@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from opentelemetry import trace
 
-from agent.types import Message, Role
+from agent.types import Message, Role, ToolCall, ToolResult
 from state.models import TravelPlanState
 from telemetry.attributes import (
     CONTEXT_TOKENS_AFTER,
@@ -198,57 +198,101 @@ class ContextManager:
         messages: list[Message],
         from_phase: int,
         to_phase: int,
-        llm_factory: Callable[[], Any],
+        llm_factory: Callable[[], Any] | None = None,
     ) -> str:
-        transition_messages = [m for m in messages if m.role != Role.SYSTEM]
-        rendered = self._render_transition_messages(transition_messages)
-        if len(transition_messages) < 4:
-            return rendered
+        """Produce a rule-based, deterministic summary of prior-phase context.
 
-        llm = llm_factory()
-        prompt = [
-            Message(
-                role=Role.SYSTEM,
-                content=(
-                    "你负责为旅行规划 agent 做阶段切换摘要。"
-                    "只保留用户偏好、约束、已确认事实、关键决策和待确认事项。"
-                    "输出简洁中文，不要杜撰，不要重复无关寒暄。"
-                ),
-            ),
-            Message(
-                role=Role.USER,
-                content=(
-                    f"当前对话从阶段 {from_phase} 切换到阶段 {to_phase}。\n"
-                    "请基于下面的对话生成一个可供下阶段继续使用的摘要。\n\n"
-                    f"{rendered}"
-                ),
-            ),
-        ]
+        This used to spin up an extra LLM call per phase transition. That cost
+        real latency and money, and the summarizer could silently drop details.
+        We now build the summary from the message log directly:
 
-        parts: list[str] = []
-        async for chunk in llm.chat(prompt, tools=[], stream=False):
-            if chunk.content:
-                parts.append(chunk.content)
+        - Keep every user message verbatim.
+        - Condense each assistant text turn to its first 200 chars.
+        - Render every tool call as one line (``update_plan_state`` shows
+          ``field → value``; other tools show name + status + a short result
+          fingerprint).
+        - System messages are skipped; they are re-emitted by the new phase's
+          system message rebuild path.
 
-        summary = "".join(parts).strip()
-        return summary or rendered
+        The ``llm_factory`` parameter is accepted for signature compatibility
+        with older callers/tests but is no longer used.
+        """
+        del llm_factory  # explicitly unused
 
-    def _render_transition_messages(self, messages: list[Message]) -> str:
         lines: list[str] = []
+        # Track the assistant message whose tool_calls produced each tool
+        # result, so ``update_plan_state(field=..., value=...)`` can be
+        # rendered as a single decision line.
+        pending_tool_calls: dict[str, ToolCall] = {}
+
         for message in messages:
-            line = self._render_transition_message(message)
-            if line:
-                lines.append(line)
+            if message.role == Role.SYSTEM:
+                continue
+
+            if message.role == Role.USER and message.content:
+                lines.append(f"用户: {message.content.strip()}")
+                continue
+
+            if message.role == Role.ASSISTANT:
+                if message.tool_calls:
+                    for tc in message.tool_calls:
+                        pending_tool_calls[tc.id] = tc
+                if message.content:
+                    snippet = message.content.strip()
+                    if len(snippet) > 200:
+                        snippet = snippet[:200].rstrip() + "…"
+                    lines.append(f"助手: {snippet}")
+                continue
+
+            if message.role == Role.TOOL and message.tool_result:
+                tool_call = pending_tool_calls.get(message.tool_result.tool_call_id)
+                line = self._render_tool_event(tool_call, message.tool_result)
+                if line:
+                    lines.append(line)
+                continue
+
         return "\n".join(lines)
 
-    def _render_transition_message(self, message: Message) -> str:
-        if message.role == Role.USER:
-            return f"用户: {message.content or ''}".strip()
-        if message.role == Role.ASSISTANT:
-            return f"助手: {message.content or ''}".strip()
-        if message.role == Role.TOOL and message.tool_result:
-            result = message.tool_result
+    def _render_tool_event(
+        self,
+        tool_call: ToolCall | None,
+        result: ToolResult,
+    ) -> str:
+        name = tool_call.name if tool_call else "tool"
+
+        # update_plan_state is the richest signal — render it as a decision.
+        if tool_call and tool_call.name == "update_plan_state":
+            field = tool_call.arguments.get("field", "?")
+            value = tool_call.arguments.get("value")
+            value_preview = self._short_repr(value)
             if result.status == "success":
-                return f"工具结果: {result.data}"
-            return f"工具错误: {result.error or ''}".strip()
-        return message.content or ""
+                return f"决策: update_plan_state {field} = {value_preview}"
+            if result.status == "skipped":
+                return f"跳过: update_plan_state {field}（{result.error_code or 'skipped'}）"
+            return (
+                f"失败: update_plan_state {field} — {result.error_code or ''} "
+                f"{(result.error or '').strip()}"
+            ).strip()
+
+        if result.status == "success":
+            data_preview = self._short_repr(result.data)
+            return f"工具 {name} 成功: {data_preview}"
+        if result.status == "skipped":
+            return f"工具 {name} 跳过: {result.error_code or ''} {(result.error or '').strip()}".strip()
+        return f"工具 {name} 失败: {result.error_code or ''} {(result.error or '').strip()}".strip()
+
+    def _short_repr(self, value: Any, limit: int = 160) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            text = value.strip()
+        elif isinstance(value, (int, float, bool)):
+            text = str(value)
+        else:
+            # dict / list / other — use a compact str() rather than JSON to
+            # avoid dependency surprises with non-serializable entries.
+            text = str(value)
+        text = text.replace("\n", " ")
+        if len(text) > limit:
+            return text[:limit].rstrip() + "…"
+        return text

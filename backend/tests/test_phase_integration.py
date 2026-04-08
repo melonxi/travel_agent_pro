@@ -19,7 +19,7 @@ import pytest
 import respx
 from httpx import ASGITransport, AsyncClient, Response
 
-from agent.types import ToolCall
+from agent.types import Role, ToolCall
 from llm.types import ChunkType, LLMChunk
 from main import create_app
 from state.models import (
@@ -467,7 +467,9 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
             if call_count == 2:
                 assert plan.phase == 3
                 assert "- 阶段：3" in messages[0].content
-                assert messages[1].content == "[前序阶段摘要]\n阶段摘要"
+                assert messages[1].role == Role.ASSISTANT
+                assert "进入阶段 3" in messages[1].content
+                assert "决策: update_plan_state destination = 巴厘岛" in messages[1].content
                 assert [tool["name"] for tool in tools or []].count("update_plan_state") == 1
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
