@@ -14,106 +14,6 @@ from tools.engine import ToolEngine
 from tools.update_plan_state import is_redundant_update_plan_state
 
 
-# Payload compaction for rich search tools. Only the copy that lands in
-# ``messages`` is trimmed — the streamed ToolResult yielded to the UI keeps
-# the original, uncompacted data.
-_WEB_SEARCH_SNIPPET_MAX = 220
-_WEB_SEARCH_ANSWER_MAX = 400
-_XHS_TEXT_MAX = 220
-
-
-def _truncate_text(value: Any, limit: int) -> Any:
-    if not isinstance(value, str):
-        return value
-    if len(value) <= limit:
-        return value
-    return value[:limit].rstrip() + "…"
-
-
-def _compact_web_search_data(data: Any) -> Any:
-    if not isinstance(data, dict):
-        return data
-    compact = dict(data)
-    if "answer" in compact:
-        compact["answer"] = _truncate_text(compact["answer"], _WEB_SEARCH_ANSWER_MAX)
-    results = compact.get("results")
-    if isinstance(results, list):
-        trimmed: list[Any] = []
-        for item in results:
-            if not isinstance(item, dict):
-                trimmed.append(item)
-                continue
-            new_item = dict(item)
-            if "content" in new_item:
-                new_item["content"] = _truncate_text(
-                    new_item["content"], _WEB_SEARCH_SNIPPET_MAX
-                )
-            trimmed.append(new_item)
-        compact["results"] = trimmed
-    return compact
-
-
-def _compact_xiaohongshu_data(data: Any) -> Any:
-    if not isinstance(data, dict):
-        return data
-    operation = data.get("operation")
-    compact = dict(data)
-    if operation == "read_note":
-        note = compact.get("note")
-        if isinstance(note, dict):
-            new_note = dict(note)
-            if "desc" in new_note:
-                new_note["desc"] = _truncate_text(new_note["desc"], _XHS_TEXT_MAX)
-            compact["note"] = new_note
-    elif operation == "get_comments":
-        comments = compact.get("comments")
-        if isinstance(comments, list):
-            trimmed: list[Any] = []
-            for comment in comments:
-                if not isinstance(comment, dict):
-                    trimmed.append(comment)
-                    continue
-                new_comment = dict(comment)
-                if "content" in new_comment:
-                    new_comment["content"] = _truncate_text(
-                        new_comment["content"], _XHS_TEXT_MAX
-                    )
-                trimmed.append(new_comment)
-            compact["comments"] = trimmed
-    return compact
-
-
-def compact_tool_result_for_messages(
-    tool_name: str, result: ToolResult
-) -> ToolResult:
-    """Return a trimmed copy of ``result`` suitable for the messages log.
-
-    Rich search tools return large payloads (article bodies, comment threads,
-    raw snippets) that blow up the context window on subsequent LLM calls.
-    The streamed tool_result yielded to the UI keeps the full payload; only
-    the copy persisted into ``messages`` is trimmed.
-    """
-    if result.status != "success" or not isinstance(result.data, dict):
-        return result
-    if tool_name == "web_search":
-        compact_data = _compact_web_search_data(result.data)
-    elif tool_name == "xiaohongshu_search":
-        compact_data = _compact_xiaohongshu_data(result.data)
-    else:
-        return result
-    if compact_data is result.data:
-        return result
-    return ToolResult(
-        tool_call_id=result.tool_call_id,
-        status=result.status,
-        data=compact_data,
-        metadata=result.metadata,
-        error=result.error,
-        error_code=result.error_code,
-        suggestion=result.suggestion,
-    )
-
-
 class AgentLoop:
     def __init__(
         self,
@@ -163,7 +63,10 @@ class AgentLoop:
                     iter_span.set_attribute(AGENT_ITERATION, iteration)
 
                     await self.hooks.run(
-                        "before_llm_call", messages=messages, phase=current_phase
+                        "before_llm_call",
+                        messages=messages,
+                        phase=current_phase,
+                        tools=tools,
                     )
 
                     # Yield pending compression events from hook
@@ -261,9 +164,7 @@ class AgentLoop:
                         messages.append(
                             Message(
                                 role=Role.TOOL,
-                                tool_result=compact_tool_result_for_messages(
-                                    tc.name, result
-                                ),
+                                tool_result=result,
                             )
                         )
 
