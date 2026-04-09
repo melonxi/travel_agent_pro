@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from opentelemetry import trace
 
+from agent.compaction import estimate_messages_tokens
 from agent.types import Message, Role, ToolCall, ToolResult
 from state.models import TravelPlanState
 from telemetry.attributes import (
@@ -238,10 +239,16 @@ class ContextManager:
             return valid[0]
         return None
 
-    def should_compress(self, messages: list[Message], max_tokens: int) -> bool:
+    def should_compress(
+        self,
+        messages: list[Message],
+        max_tokens: int,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> bool:
         tracer = trace.get_tracer("travel-agent-pro")
         with tracer.start_as_current_span("context.should_compress") as span:
-            estimated = sum(len(m.content or "") // 3 for m in messages)
+            estimated = estimate_messages_tokens(messages, tools=tools)
             span.set_attribute(CONTEXT_TOKENS_BEFORE, estimated)
             span.set_attribute("context.max_tokens", max_tokens)
             result = estimated > max_tokens

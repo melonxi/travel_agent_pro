@@ -60,6 +60,37 @@ def test_should_compress_false(ctx_manager):
     assert not ctx_manager.should_compress(messages, max_tokens=100000)
 
 
+def test_should_compress_counts_tool_result_payload_and_tools(ctx_manager):
+    messages = [
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=[
+                ToolCall(
+                    id="tc1",
+                    name="web_search",
+                    arguments={"query": "京都 樱花 2026"},
+                )
+            ],
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc1",
+                status="success",
+                data={"answer": "a" * 900},
+            ),
+        ),
+    ]
+    tools = [
+        {
+            "name": "web_search",
+            "description": "d" * 600,
+            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+        }
+    ]
+    assert ctx_manager.should_compress(messages, max_tokens=100, tools=tools)
+
+
 def test_classify_messages(ctx_manager):
     messages = [
         Message(role=Role.USER, content="我不坐红眼航班"),

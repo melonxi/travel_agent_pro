@@ -1,209 +1,245 @@
 # backend/tests/test_loop_payload_compaction.py
-"""Unit tests for the payload compaction utilities added to agent.loop.
-
-These helpers trim rich search tool payloads before they are persisted back
-into the messages log, in order to keep the LLM context window under
-control. The streamed tool_result yielded to the UI must keep the full
-payload — only the copy that lands in ``messages`` is trimmed.
-"""
 from __future__ import annotations
 
-from agent.loop import (
-    _WEB_SEARCH_ANSWER_MAX,
-    _WEB_SEARCH_SNIPPET_MAX,
-    _XHS_TEXT_MAX,
-    _compact_web_search_data,
-    _compact_xiaohongshu_data,
-    _truncate_text,
-    compact_tool_result_for_messages,
+from agent.compaction import (
+    compact_messages_for_prompt,
+    compute_prompt_budget,
+    estimate_message_tokens,
+    estimate_messages_tokens,
 )
-from agent.types import ToolResult
+from agent.types import Message, Role, ToolCall, ToolResult
 
 
-def test_truncate_text_under_limit_returns_unchanged():
-    assert _truncate_text("short", 10) == "short"
+def test_compute_prompt_budget_reserves_output_and_safety_margin():
+    assert compute_prompt_budget(128000, 4096) == 121904
+    assert compute_prompt_budget(2000, 1500) == 1024
 
 
-def test_truncate_text_over_limit_adds_ellipsis():
-    text = "a" * 50
-    out = _truncate_text(text, 20)
-    assert out.endswith("…")
-    # 20 chars of content + ellipsis
-    assert len(out) == 21
-
-
-def test_truncate_text_non_string_passthrough():
-    assert _truncate_text(None, 5) is None
-    assert _truncate_text(123, 5) == 123
-    payload = {"k": "v"}
-    assert _truncate_text(payload, 5) is payload
-
-
-def test_compact_web_search_trims_answer_and_snippets():
-    long_answer = "答" * (_WEB_SEARCH_ANSWER_MAX + 100)
-    long_snippet = "s" * (_WEB_SEARCH_SNIPPET_MAX + 100)
-    data = {
-        "answer": long_answer,
-        "results": [
-            {"title": "t1", "content": long_snippet, "url": "https://a"},
-            {"title": "t2", "content": "short", "url": "https://b"},
-            "not-a-dict",
+def test_estimate_message_tokens_counts_tool_calls_and_tool_results():
+    message = Message(
+        role=Role.ASSISTANT,
+        content="先查资料",
+        tool_calls=[
+            ToolCall(
+                id="tc1",
+                name="web_search",
+                arguments={"query": "京都 樱花 2026", "max_results": 5},
+            )
         ],
-    }
-
-    compact = _compact_web_search_data(data)
-
-    assert compact is not data  # returns a new dict
-    assert compact["answer"].endswith("…")
-    assert len(compact["answer"]) <= _WEB_SEARCH_ANSWER_MAX + 1
-    assert compact["results"][0]["content"].endswith("…")
-    assert (
-        len(compact["results"][0]["content"]) <= _WEB_SEARCH_SNIPPET_MAX + 1
     )
-    # URL / title are preserved verbatim.
-    assert compact["results"][0]["title"] == "t1"
-    assert compact["results"][0]["url"] == "https://a"
-    # Short snippets are left alone.
-    assert compact["results"][1]["content"] == "short"
-    # Non-dict list items pass through unchanged.
-    assert compact["results"][2] == "not-a-dict"
-    # Original payload is not mutated.
-    assert data["answer"] == long_answer
-    assert data["results"][0]["content"] == long_snippet
-
-
-def test_compact_web_search_non_dict_passthrough():
-    assert _compact_web_search_data("oops") == "oops"
-    assert _compact_web_search_data(None) is None
-
-
-def test_compact_xiaohongshu_read_note_trims_desc():
-    long_desc = "d" * (_XHS_TEXT_MAX + 50)
-    data = {
-        "operation": "read_note",
-        "note": {"id": "n1", "desc": long_desc, "title": "t"},
-    }
-
-    compact = _compact_xiaohongshu_data(data)
-
-    assert compact["note"]["desc"].endswith("…")
-    assert len(compact["note"]["desc"]) <= _XHS_TEXT_MAX + 1
-    assert compact["note"]["id"] == "n1"
-    assert compact["note"]["title"] == "t"
-    # Original untouched.
-    assert data["note"]["desc"] == long_desc
-
-
-def test_compact_xiaohongshu_get_comments_trims_each_comment():
-    long_comment = "c" * (_XHS_TEXT_MAX + 30)
-    data = {
-        "operation": "get_comments",
-        "comments": [
-            {"id": "c1", "content": long_comment},
-            {"id": "c2", "content": "short"},
-            "not-a-dict",
-        ],
-    }
-
-    compact = _compact_xiaohongshu_data(data)
-
-    assert compact["comments"][0]["content"].endswith("…")
-    assert len(compact["comments"][0]["content"]) <= _XHS_TEXT_MAX + 1
-    assert compact["comments"][1]["content"] == "short"
-    assert compact["comments"][2] == "not-a-dict"
-    # Original untouched.
-    assert data["comments"][0]["content"] == long_comment
-
-
-def test_compact_xiaohongshu_unknown_operation_passthrough():
-    data = {"operation": "search", "items": [1, 2, 3]}
-    compact = _compact_xiaohongshu_data(data)
-    # New dict, but the underlying data is preserved.
-    assert compact == data
-
-
-def test_compact_tool_result_web_search_trims_payload():
-    long_snippet = "x" * (_WEB_SEARCH_SNIPPET_MAX + 50)
-    result = ToolResult(
-        tool_call_id="tc1",
-        status="success",
-        data={
-            "results": [{"content": long_snippet, "title": "t"}],
-        },
-        metadata={"source": "test"},
+    tool_result_message = Message(
+        role=Role.TOOL,
+        tool_result=ToolResult(
+            tool_call_id="tc1",
+            status="success",
+            data={"answer": "a" * 900},
+        ),
     )
 
-    compacted = compact_tool_result_for_messages("web_search", result)
-
-    assert compacted is not result
-    assert compacted.tool_call_id == "tc1"
-    assert compacted.status == "success"
-    assert compacted.metadata == {"source": "test"}
-    assert compacted.data["results"][0]["content"].endswith("…")
-    # Original result not mutated — caller may still emit full payload to UI.
-    assert result.data["results"][0]["content"] == long_snippet
+    assert estimate_message_tokens(message) > 0
+    assert estimate_message_tokens(tool_result_message) >= 300
 
 
-def test_compact_tool_result_xiaohongshu_trims_payload():
-    long_desc = "y" * (_XHS_TEXT_MAX + 50)
-    result = ToolResult(
-        tool_call_id="tc2",
-        status="success",
-        data={"operation": "read_note", "note": {"desc": long_desc}},
-    )
+def test_estimate_messages_tokens_includes_tool_schemas():
+    messages = [Message(role=Role.USER, content="帮我查京都樱花")]
+    tools = [
+        {
+            "name": "web_search",
+            "description": "d" * 900,
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "q" * 300}},
+            },
+        }
+    ]
 
-    compacted = compact_tool_result_for_messages("xiaohongshu_search", result)
+    base = estimate_messages_tokens(messages)
+    with_tools = estimate_messages_tokens(messages, tools=tools)
 
-    assert compacted is not result
-    assert compacted.data["note"]["desc"].endswith("…")
-    assert result.data["note"]["desc"] == long_desc
-
-
-def test_compact_tool_result_non_target_tool_passthrough():
-    result = ToolResult(
-        tool_call_id="tc3",
-        status="success",
-        data={"whatever": "payload"},
-    )
-    assert compact_tool_result_for_messages("update_plan_state", result) is result
-    assert compact_tool_result_for_messages("check_weather", result) is result
+    assert with_tools > base
 
 
-def test_compact_tool_result_error_status_passthrough():
-    result = ToolResult(
-        tool_call_id="tc4",
-        status="error",
-        data=None,
-        error="boom",
-        error_code="BOOM",
-    )
-    assert compact_tool_result_for_messages("web_search", result) is result
+def test_compact_messages_for_prompt_keeps_full_payload_under_soft_ratio():
+    long_snippet = "s" * 500
+    messages = [
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=[ToolCall(id="tc1", name="web_search", arguments={"query": "京都"})],
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc1",
+                status="success",
+                data={
+                    "answer": "简短答案",
+                    "results": [{"title": "t1", "url": "https://a", "content": long_snippet}],
+                },
+            ),
+        ),
+    ]
+
+    outcome = compact_messages_for_prompt(messages, prompt_budget=10000, tools=[])
+
+    assert not outcome.changed
+    assert outcome.messages is messages
+    assert messages[1].tool_result.data["results"][0]["content"] == long_snippet
 
 
-def test_compact_tool_result_non_dict_data_passthrough():
-    result = ToolResult(
-        tool_call_id="tc5",
-        status="success",
-        data="raw text",
-    )
-    assert compact_tool_result_for_messages("web_search", result) is result
+def test_compact_messages_for_prompt_trims_web_search_and_caps_results():
+    long_answer = "答" * 1200
+    long_snippet = "s" * 1200
+    messages = [
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=[ToolCall(id="tc1", name="web_search", arguments={"query": "京都"})],
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc1",
+                status="success",
+                data={
+                    "answer": long_answer,
+                    "results": [
+                        {
+                            "title": f"title-{i}",
+                            "url": f"https://example.com/{i}",
+                            "content": long_snippet,
+                            "score": 0.9,
+                        }
+                        for i in range(10)
+                    ],
+                },
+            ),
+        ),
+    ]
+
+    outcome = compact_messages_for_prompt(messages, prompt_budget=1000, tools=[])
+
+    assert outcome.changed
+    assert outcome.mode in {"moderate", "aggressive"}
+    compacted = outcome.messages[1].tool_result.data
+    assert compacted["answer"].endswith("…")
+    assert compacted["results"][0]["url"] == "https://example.com/0"
+    assert len(compacted["results"]) <= 8
+    assert compacted["results_omitted_count"] >= 2
+    assert messages[1].tool_result.data["answer"] == long_answer
+    assert len(messages[1].tool_result.data["results"]) == 10
 
 
-def test_compact_tool_result_short_payload_returns_same_instance():
-    """When nothing actually needs trimming, the helper should return the
-    original result object — avoiding pointless allocations on the hot path.
-    """
-    result = ToolResult(
-        tool_call_id="tc6",
-        status="success",
-        data={
-            "answer": "short answer",
-            "results": [{"content": "short", "title": "t"}],
-        },
-    )
-    compacted = compact_tool_result_for_messages("web_search", result)
-    # _compact_web_search_data always returns a new dict, so the helper will
-    # wrap it in a new ToolResult. That's fine — but the trimmed contents
-    # must equal the originals.
-    assert compacted.data["answer"] == "short answer"
-    assert compacted.data["results"][0]["content"] == "short"
+def test_compact_messages_for_prompt_trims_xiaohongshu_search_notes_handles():
+    items = [
+        {
+            "note_id": f"note_{i}",
+            "title": f"title-{i}",
+            "liked_count": str(i),
+            "note_type": "image",
+            "url": f"https://www.xiaohongshu.com/explore/{i}?xsec_token=token_{i}",
+            "extra": "ignored",
+        }
+        for i in range(15)
+    ]
+    messages = [
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=[
+                ToolCall(
+                    id="tc2",
+                    name="xiaohongshu_search",
+                    arguments={"operation": "search_notes", "keyword": "京都 旅行"},
+                )
+            ],
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc2",
+                status="success",
+                data={
+                    "operation": "search_notes",
+                    "keyword": "京都 旅行",
+                    "has_more": True,
+                    "items": items,
+                },
+            ),
+        ),
+    ]
+
+    outcome = compact_messages_for_prompt(messages, prompt_budget=500, tools=[])
+
+    assert outcome.changed
+    compacted = outcome.messages[1].tool_result.data
+    assert len(compacted["items"]) <= 8
+    assert compacted["items"][0]["url"].startswith("https://www.xiaohongshu.com/explore/")
+    assert "extra" not in compacted["items"][0]
+    assert compacted["items_omitted_count"] >= 7
+
+
+def test_compact_messages_for_prompt_trims_xiaohongshu_note_and_comments():
+    long_desc = "d" * 900
+    long_comment = "c" * 700
+    messages = [
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=[
+                ToolCall(
+                    id="tc3",
+                    name="xiaohongshu_search",
+                    arguments={"operation": "read_note", "note_ref": "note_1"},
+                )
+            ],
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc3",
+                status="success",
+                data={
+                    "operation": "read_note",
+                    "note": {
+                        "note_id": "note_1",
+                        "title": "京都慢旅行",
+                        "desc": long_desc,
+                        "url": "https://www.xiaohongshu.com/explore/note_1",
+                        "tags": ["京都", "赏樱"],
+                    },
+                },
+            ),
+        ),
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=[
+                ToolCall(
+                    id="tc4",
+                    name="xiaohongshu_search",
+                    arguments={"operation": "get_comments", "note_ref": "note_1"},
+                )
+            ],
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc4",
+                status="success",
+                data={
+                    "operation": "get_comments",
+                    "comments": [
+                        {"nickname": f"user-{i}", "content": long_comment, "like_count": str(i)}
+                        for i in range(14)
+                    ],
+                },
+            ),
+        ),
+    ]
+
+    outcome = compact_messages_for_prompt(messages, prompt_budget=800, tools=[])
+
+    assert outcome.changed
+    note = outcome.messages[1].tool_result.data["note"]
+    comments = outcome.messages[3].tool_result.data
+    assert note["desc"].endswith("…")
+    assert note["url"] == "https://www.xiaohongshu.com/explore/note_1"
+    assert len(comments["comments"]) <= 12
+    assert comments["comments"][0]["content"].endswith("…")
+    assert comments["comments_omitted_count"] >= 2

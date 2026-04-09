@@ -10,6 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from agent.compaction import (
+    compact_messages_for_prompt,
+    compute_prompt_budget,
+    estimate_messages_tokens,
+)
 from agent.hooks import HookManager
 from agent.loop import AgentLoop
 from agent.types import Message, Role
@@ -213,54 +218,109 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         async def on_before_llm(**kwargs):
             msgs = kwargs.get("messages")
+            tools = kwargs.get("tools") or []
+            phase = kwargs.get("phase", plan.phase)
             if not msgs:
                 return
-            threshold = int(
-                resolved_context_window["value"] * config.context_compression_threshold
+            prompt_budget = compute_prompt_budget(
+                resolved_context_window["value"],
+                config.llm.max_tokens,
             )
-            if not context_mgr.should_compress(msgs, threshold):
-                return
-            must_keep, compressible = context_mgr.classify_messages(msgs)
-            if len(compressible) <= 2:
-                return
-
+            estimated_tokens_before = estimate_messages_tokens(msgs, tools=tools)
             message_count_before = len(msgs)
-            estimated_tokens_before = sum(len(m.content or "") // 3 for m in msgs)
 
-            # Summarize compressible messages into one
-            summary_parts = []
-            for m in compressible:
-                if m.content and m.role in (Role.USER, Role.ASSISTANT):
-                    label = "用户" if m.role == Role.USER else "助手"
-                    summary_parts.append(f"{label}: {m.content[:200]}")
+            tool_compaction = compact_messages_for_prompt(
+                msgs,
+                prompt_budget=prompt_budget,
+                tools=tools,
+            )
+            if tool_compaction.changed:
+                msgs[:] = tool_compaction.messages
+
+            estimated_after_tool_compaction = estimate_messages_tokens(msgs, tools=tools)
+            if (
+                tool_compaction.changed
+                and estimated_after_tool_compaction <= prompt_budget
+            ):
+                if compression_events is not None:
+                    compression_events.append({
+                        "message_count_before": message_count_before,
+                        "message_count_after": len(msgs),
+                        "must_keep_count": 0,
+                        "compressed_count": tool_compaction.compacted_tool_messages,
+                        "estimated_tokens_before": estimated_tokens_before,
+                        "estimated_tokens_after": estimated_after_tool_compaction,
+                        "mode": "tool_compaction",
+                        "reason": (
+                            f"prompt 预算 {prompt_budget} 内进行 {tool_compaction.mode or 'moderate'}"
+                            f" TOOL 压缩，usage_ratio={tool_compaction.usage_ratio_before:.2f}"
+                        ),
+                    })
+                return
+
+            if not context_mgr.should_compress(msgs, prompt_budget, tools=tools):
+                return
+
+            must_keep, compressible = context_mgr.classify_messages(msgs)
+            recent = msgs[-4:]
+            recent_ids = {id(m) for m in recent}
+            older_compressible = [
+                m for m in compressible if id(m) not in recent_ids
+            ]
+            summary_source = older_compressible if len(older_compressible) > 2 else compressible
+            if len(summary_source) <= 2:
+                return
+
+            summary_text = await context_mgr.compress_for_transition(
+                messages=summary_source,
+                from_phase=phase,
+                to_phase=phase,
+                llm_factory=None,
+            )
+            if not summary_text:
+                return
+
+            summary_lines = summary_text.splitlines()
             summary = Message(
                 role=Role.SYSTEM,
-                content=f"[对话摘要]\n" + "\n".join(summary_parts[-10:]),
+                content="[对话摘要]\n" + "\n".join(summary_lines[-12:]),
             )
-            # Rebuild: system msg + must_keep + summary + last 4 messages
-            sys_msg = msgs[0] if msgs[0].role == Role.SYSTEM else None
-            recent = msgs[-4:]
-            msgs.clear()
-            if sys_msg:
-                msgs.append(sys_msg)
-            for m in must_keep:
-                if m not in msgs:
-                    msgs.append(m)
-            msgs.append(summary)
-            for m in recent:
-                if m not in msgs:
-                    msgs.append(m)
 
-            message_count_after = len(msgs)
+            rebuilt: list[Message] = []
+            seen_ids: set[int] = set()
+
+            def append_unique(message: Message) -> None:
+                ident = id(message)
+                if ident in seen_ids:
+                    return
+                rebuilt.append(message)
+                seen_ids.add(ident)
+
+            sys_msg = msgs[0] if msgs and msgs[0].role == Role.SYSTEM else None
+            if sys_msg:
+                append_unique(sys_msg)
+            for message in must_keep:
+                append_unique(message)
+            append_unique(summary)
+            for message in recent:
+                append_unique(message)
+
+            msgs[:] = rebuilt
+
+            estimated_after_summary = estimate_messages_tokens(msgs, tools=tools)
             if compression_events is not None:
                 compression_events.append({
                     "message_count_before": message_count_before,
-                    "message_count_after": message_count_after,
+                    "message_count_after": len(msgs),
                     "must_keep_count": len(must_keep),
-                    "compressed_count": len(compressible),
+                    "compressed_count": len(summary_source),
                     "estimated_tokens_before": estimated_tokens_before,
-                    "reason": f"对话消息数 {message_count_before} 条，"
-                              f"估算 token {estimated_tokens_before} 超过阈值 {threshold}",
+                    "estimated_tokens_after": estimated_after_summary,
+                    "mode": "history_summary",
+                    "reason": (
+                        f"prompt 预算 {prompt_budget} 仍不足，"
+                        f"压缩旧消息并保留最近 {len(recent)} 条"
+                    ),
                 })
 
         hooks.register("before_llm_call", on_before_llm)
