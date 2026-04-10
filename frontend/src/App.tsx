@@ -5,7 +5,9 @@ import MapView from './components/MapView'
 import Timeline from './components/Timeline'
 import BudgetChart from './components/BudgetChart'
 import Phase3Workbench from './components/Phase3Workbench'
+import SessionSidebar from './components/SessionSidebar'
 import type { TravelPlanState } from './types/plan'
+import type { SessionMeta } from './types/session'
 
 function useTheme() {
   const [dark, setDark] = useState(() => {
@@ -52,6 +54,9 @@ function BrandMark() {
 export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [plan, setPlan] = useState<TravelPlanState | null>(null)
+  const [sessionList, setSessionList] = useState<SessionMeta[]>([])
+  const [chatKey, setChatKey] = useState(0)
+  const [bootstrapping, setBootstrapping] = useState(true)
   const { dark, toggle: toggleTheme } = useTheme()
   const initializedRef = useRef(false)
   const showPhase3Workbench = Boolean(
@@ -66,25 +71,102 @@ export default function App() {
     )
   )
 
-  const handlePlanUpdate = (newPlan: TravelPlanState) => {
+  const refreshSessionList = useCallback(async () => {
+    try {
+      const response = await fetch('/api/sessions')
+      if (!response.ok) return []
+      const data = (await response.json()) as SessionMeta[]
+      setSessionList(data)
+      return data
+    } catch {
+      return []
+    }
+  }, [])
+
+  const loadPlan = useCallback(async (id: string) => {
+    const response = await fetch(`/api/plan/${id}`)
+    if (!response.ok) {
+      throw new Error(`Failed to load plan for ${id}`)
+    }
+    return response.json() as Promise<TravelPlanState>
+  }, [])
+
+  const openSession = useCallback(async (id: string) => {
+    const planData = await loadPlan(id)
+    setSessionId(id)
+    setPlan(planData)
+    setChatKey((value) => value + 1)
+  }, [loadPlan])
+
+  const createSession = useCallback(async () => {
+    const response = await fetch('/api/sessions', { method: 'POST' })
+    if (!response.ok) {
+      throw new Error('Failed to create session')
+    }
+
+    const data = (await response.json()) as { session_id: string }
+    await openSession(data.session_id)
+    await refreshSessionList()
+  }, [openSession, refreshSessionList])
+
+  const handlePlanUpdate = useCallback((newPlan: TravelPlanState) => {
     setPlan(newPlan)
-  }
+    void refreshSessionList()
+  }, [refreshSessionList])
+
+  const handleNewSession = useCallback(async () => {
+    await createSession()
+  }, [createSession])
+
+  const handleSelectSession = useCallback(async (id: string) => {
+    if (id === sessionId) return
+    await openSession(id)
+  }, [openSession, sessionId])
+
+  const handleDeleteSession = useCallback(async (id: string) => {
+    const response = await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
+    if (!response.ok) {
+      return
+    }
+
+    const remaining = await refreshSessionList()
+    if (id !== sessionId) {
+      return
+    }
+
+    const nextSession = remaining.find((session) => session.status === 'active') ?? remaining[0]
+    if (nextSession) {
+      await openSession(nextSession.session_id)
+      return
+    }
+
+    await createSession()
+  }, [createSession, openSession, refreshSessionList, sessionId])
 
   useEffect(() => {
     if (initializedRef.current) return
     initializedRef.current = true
 
-    fetch('/api/sessions', { method: 'POST' })
-      .then((r) => r.json())
-      .then((data) => {
-        setSessionId(data.session_id)
-        return fetch(`/api/plan/${data.session_id}`)
-      })
-      .then((r) => r.json())
-      .then((planData) => setPlan(planData))
-  }, [])
+    const bootstrap = async () => {
+      try {
+        const sessions = await refreshSessionList()
 
-  if (!sessionId) {
+        if (sessions.length === 0) {
+          await createSession()
+          return
+        }
+
+        const activeSession = sessions.find((session) => session.status === 'active') ?? sessions[0]
+        await openSession(activeSession.session_id)
+      } finally {
+        setBootstrapping(false)
+      }
+    }
+
+    void bootstrap()
+  }, [createSession, openSession, refreshSessionList])
+
+  if (bootstrapping || !sessionId) {
     return (
       <div className="loading-screen">
         <BrandMark />
@@ -111,7 +193,20 @@ export default function App() {
         </div>
       </header>
       <div className="app-body">
-        <ChatPanel sessionId={sessionId} onPlanUpdate={handlePlanUpdate} />
+        <SessionSidebar
+          sessions={sessionList}
+          activeSessionId={sessionId}
+          onSelectSession={(id) => {
+            void handleSelectSession(id)
+          }}
+          onNewSession={() => {
+            void handleNewSession()
+          }}
+          onDeleteSession={(id) => {
+            void handleDeleteSession(id)
+          }}
+        />
+        <ChatPanel key={chatKey} sessionId={sessionId} onPlanUpdate={handlePlanUpdate} />
         <div className="right-panel">
           {plan && plan.destination && (
             <div className="destination-banner">
