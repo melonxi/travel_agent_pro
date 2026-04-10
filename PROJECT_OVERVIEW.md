@@ -37,6 +37,7 @@ travel_agent_pro/
 │   │   ├── compaction.py       # 上下文压缩: token 预算计算、渐进式压缩
 │   │   ├── hooks.py            # 钩子系统 (before_llm_call, after_tool_call)
 │   │   ├── reflection.py       # ReflectionInjector: 关键阶段自省 prompt 注入
+│   │   ├── tool_choice.py      # ToolChoiceDecider: 强制 update_plan_state 调用判定
 │   │   └── types.py            # Message, ToolCall, ToolResult 数据类
 │   ├── llm/                    # LLM 抽象层
 │   │   ├── base.py             # LLMProvider Protocol (chat, count_tokens, get_context_window)
@@ -255,6 +256,7 @@ lock      → + search_flights, search_trains, search_accommodations
 | 类别 | 工具 | 说明 |
 |------|------|------|
 | 状态 | `update_plan_state` | 核心状态写入 (394 行), 冗余检测 |
+| 决策 | `tool_choice.py` | 根据阶段和对话内容决定是否强制 `update_plan_state` |
 | 搜索 | `xiaohongshu_search`, `web_search`, `quick_travel_search` | 信息获取 |
 | 交通 | `search_flights`, `search_trains`, `calculate_route` | 路线规划 |
 | 住宿 | `search_accommodations` | 酒店搜索 |
