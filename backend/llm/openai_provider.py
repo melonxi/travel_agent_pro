@@ -86,6 +86,7 @@ class OpenAIProvider:
         messages: list[Message],
         tools: list[dict] | None = None,
         stream: bool = True,
+        tool_choice: dict | str | None = None,
     ) -> AsyncIterator[LLMChunk]:
         tracer = otel_trace.get_tracer("travel-agent-pro")
         with tracer.start_as_current_span("llm.chat") as span:
@@ -106,6 +107,8 @@ class OpenAIProvider:
             }
             if tools:
                 kwargs["tools"] = self._convert_tools(tools)
+            if tools and tool_choice is not None:
+                kwargs["tool_choice"] = tool_choice
 
             if not stream:
                 response = await self.client.chat.completions.create(**kwargs)
