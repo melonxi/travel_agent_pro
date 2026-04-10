@@ -171,7 +171,7 @@ def test_compact_messages_for_prompt_trims_xiaohongshu_search_notes_handles():
     assert outcome.changed
     compacted = outcome.messages[1].tool_result.data
     assert len(compacted["items"]) <= 8
-    assert compacted["items"][0]["url"].startswith("https://www.xiaohongshu.com/explore/")
+    assert compacted["items"][0]["url"] == "https://www.xiaohongshu.com/explore/0"
     assert "extra" not in compacted["items"][0]
     assert compacted["items_omitted_count"] >= 7
 
@@ -243,3 +243,42 @@ def test_compact_messages_for_prompt_trims_xiaohongshu_note_and_comments():
     assert len(comments["comments"]) <= 12
     assert comments["comments"][0]["content"].endswith("…")
     assert comments["comments_omitted_count"] >= 2
+
+
+def test_compact_messages_for_prompt_does_not_overcompress_medium_xhs_note_when_budget_has_room():
+    long_desc = "京都攻略\n" * 110
+    messages = [
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=[
+                ToolCall(
+                    id="tc5",
+                    name="xiaohongshu_search",
+                    arguments={"operation": "read_note", "note_ref": "note_1"},
+                )
+            ],
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc5",
+                status="success",
+                data={
+                    "operation": "read_note",
+                    "note": {
+                        "note_id": "note_1",
+                        "title": "京都攻略",
+                        "desc": long_desc,
+                        "url": "https://www.xiaohongshu.com/explore/note_1",
+                        "tags": ["京都"],
+                    },
+                },
+            ),
+        ),
+    ]
+
+    outcome = compact_messages_for_prompt(messages, prompt_budget=1500, tools=[])
+
+    assert not outcome.changed
+    assert outcome.messages is messages
+    assert outcome.messages[1].tool_result.data["note"]["desc"] == long_desc
