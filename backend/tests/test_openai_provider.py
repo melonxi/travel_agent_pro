@@ -155,3 +155,36 @@ async def test_streaming_chat_flushes_tool_calls_when_finish_reason_chunk_has_no
         name="search_poi",
         arguments={"query": "东京塔"},
     )
+
+
+async def test_chat_passes_tool_choice_when_tools_are_present(provider):
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="done", tool_calls=None))]
+    )
+
+    with patch("llm.openai_provider.AsyncOpenAI") as MockClient:
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(return_value=response)
+        provider.client = instance
+
+        chunks = [
+            chunk
+            async for chunk in provider.chat(
+                [Message(role=Role.USER, content="hi")],
+                tools=[
+                    {
+                        "name": "search_flights",
+                        "description": "Search flights",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+                tool_choice={"type": "function", "function": {"name": "search_flights"}},
+                stream=False,
+            )
+        ]
+
+    assert chunks[-1].type == ChunkType.DONE
+    assert instance.chat.completions.create.await_args.kwargs["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "search_flights"},
+    }

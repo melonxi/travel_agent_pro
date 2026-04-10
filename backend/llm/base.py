@@ -14,6 +14,7 @@ class LLMProvider(Protocol):
         messages: list[Message],
         tools: list[dict] | None = None,
         stream: bool = True,
+        tool_choice: dict | str | None = None,
     ) -> AsyncIterator[LLMChunk]: ...
 
     async def count_tokens(self, messages: list[Message]) -> int: ...
