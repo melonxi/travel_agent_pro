@@ -147,10 +147,19 @@ class AnthropicProvider:
         if isinstance(tool_choice, str):
             if tool_choice == "auto":
                 return {"type": "auto"}
+            if tool_choice == "none":
+                return {"type": "none"}
+            if tool_choice == "required":
+                return {"type": "any"}
             return tool_choice
-        if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
-            fn = tool_choice.get("function", {})
-            return {"type": "tool", "name": fn.get("name", "")}
+        if isinstance(tool_choice, dict):
+            if tool_choice.get("type") == "function":
+                fn = tool_choice.get("function", {})
+                name = fn.get("name")
+                if isinstance(name, str) and name:
+                    return {"type": "tool", "name": name}
+            if tool_choice.get("type") in {"auto", "none", "any", "tool"}:
+                return tool_choice
         return tool_choice
 
     async def _emit_nonstream_response(
