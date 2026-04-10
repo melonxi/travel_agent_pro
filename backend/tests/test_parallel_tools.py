@@ -34,6 +34,12 @@ def _make_engine() -> ToolEngine:
 
 
 @pytest.mark.asyncio
+async def test_execute_batch_returns_empty_list_for_no_calls():
+    engine = _make_engine()
+    assert await engine.execute_batch([]) == []
+
+
+@pytest.mark.asyncio
 async def test_execute_batch_returns_results_in_original_order():
     engine = _make_engine()
     calls = [
@@ -65,20 +71,25 @@ async def test_execute_batch_reads_run_in_parallel():
 
 @pytest.mark.asyncio
 async def test_execute_batch_writes_after_reads():
-    execution_order = []
+    read_finished = asyncio.Event()
+    write_started = asyncio.Event()
+    write_finished = asyncio.Event()
 
-    async def tracked_read(**kwargs):
-        execution_order.append(f"read_{kwargs.get('q', '')}")
+    async def blocking_read(**kwargs):
+        await asyncio.sleep(0.05)
+        read_finished.set()
         return {}
 
     async def tracked_write(**kwargs):
-        execution_order.append(f"write_{kwargs.get('field', '')}")
+        write_started.set()
+        await asyncio.sleep(0)
+        write_finished.set()
         return {}
 
     engine = ToolEngine()
     engine.register(ToolDef(
         name="search_a", description="", phases=[1], parameters={},
-        _fn=tracked_read, side_effect="read",
+        _fn=blocking_read, side_effect="read",
     ))
     engine.register(ToolDef(
         name="update_state", description="", phases=[1], parameters={},
@@ -88,11 +99,12 @@ async def test_execute_batch_writes_after_reads():
         ToolCall(id="1", name="search_a", arguments={"q": "a"}),
         ToolCall(id="2", name="update_state", arguments={"field": "x"}),
     ]
-    await engine.execute_batch(calls)
-    # Write must come after read
-    read_idx = execution_order.index("read_a")
-    write_idx = execution_order.index("write_x")
-    assert read_idx < write_idx
+    batch_task = asyncio.create_task(engine.execute_batch(calls))
+    await asyncio.wait_for(read_finished.wait(), timeout=0.2)
+    assert not write_started.is_set()
+    await batch_task
+    assert write_started.is_set()
+    assert write_finished.is_set()
 
 
 @pytest.mark.asyncio
@@ -124,4 +136,27 @@ async def test_execute_batch_read_failure_does_not_block_others():
     ]
     results = await engine.execute_batch(calls)
     assert results[0].status == "error"
+    assert results[1].status == "success"
+
+
+@pytest.mark.asyncio
+async def test_execute_batch_maps_gather_exception_to_internal_error_result():
+    async def execute_stub(call):
+        if call.name == "bad_search":
+            raise RuntimeError("boom")
+        return ToolResult(tool_call_id=call.id, status="success", data={"ok": True})
+
+    engine = _make_engine()
+    engine.execute = execute_stub  # type: ignore[method-assign]
+    calls = [
+        ToolCall(id="1", name="bad_search", arguments={}),
+        ToolCall(id="2", name="search_a", arguments={"q": "ok"}),
+    ]
+
+    results = await engine.execute_batch(calls)
+
+    assert results[0].status == "error"
+    assert results[0].error_code == "INTERNAL_ERROR"
+    assert results[0].error == "boom"
+    assert results[0].suggestion == "An unexpected error occurred"
     assert results[1].status == "success"
