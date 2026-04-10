@@ -36,6 +36,7 @@ travel_agent_pro/
 │   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复 (568 行)
 │   │   ├── compaction.py       # 上下文压缩: token 预算计算、渐进式压缩
 │   │   ├── hooks.py            # 钩子系统 (before_llm_call, after_tool_call)
+│   │   ├── reflection.py       # ReflectionInjector: 关键阶段自省 prompt 注入
 │   │   └── types.py            # Message, ToolCall, ToolResult 数据类
 │   ├── llm/                    # LLM 抽象层
 │   │   ├── base.py             # LLMProvider Protocol (chat, count_tokens, get_context_window)
@@ -173,6 +174,7 @@ travel_agent_pro/
     │
     ├─ [Hook: before_llm_call]
     │   ├─ ContextManager.build_system_message() → 注入 soul + 阶段提示 + 状态快照
+    │   ├─ ReflectionInjector.check_and_inject() → 在 Phase 3 lock / Phase 5 complete 注入自检提示
     │   └─ compact_messages_for_prompt() → token 预算内渐进压缩
     │
     ├─ [LLMProvider.chat()] → 流式输出 text_delta + tool_calls
