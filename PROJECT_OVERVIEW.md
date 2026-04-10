@@ -59,7 +59,7 @@ travel_agent_pro/
 │   │   └── backtrack.py        # BacktrackService: 回退至早期阶段
 │   ├── tools/                  # 领域工具 (24+ 个)
 │   │   ├── base.py             # @tool 装饰器, ToolDef, ToolError
-│   │   ├── engine.py           # ToolEngine: 注册/执行/阶段过滤
+│   │   ├── engine.py           # ToolEngine: 注册/执行/批量调度/阶段过滤
 │   │   ├── update_plan_state.py # 核心状态写入工具 (394 行)
 │   │   ├── xiaohongshu_search.py # 小红书搜索/阅读/评论
 │   │   ├── web_search.py       # Tavily 网页搜索
@@ -176,7 +176,7 @@ travel_agent_pro/
     │
     ├─ [LLMProvider.chat()] → 流式输出 text_delta + tool_calls
     │
-    ├─ [ToolEngine.execute()] → 顺序执行工具，yield TOOL_RESULT 事件
+    ├─ [ToolEngine.execute()/execute_batch()] → 顺序/并行调度工具，yield TOOL_RESULT 事件
     │
     ├─ [PhaseRouter.check_and_apply_transition()] → 检测阶段变化
     │
