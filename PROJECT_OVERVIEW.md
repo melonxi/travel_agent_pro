@@ -81,6 +81,7 @@ travel_agent_pro/
 │   │   ├── message_store.py    # 消息读写 (按 seq 排序)
 │   │   └── archive_store.py    # 快照与归档
 │   ├── harness/                # 质量守护
+│   │   ├── guardrail.py        # 输入/输出护栏 (提示注入、日期、预算、结果异常)
 │   │   ├── validator.py        # 硬约束检查 (时间冲突/预算超支/天数超限)
 │   │   └── judge.py            # 软评分 (pace/geography/coherence/personalization 各1-5)
 │   ├── telemetry/              # 可观测性
