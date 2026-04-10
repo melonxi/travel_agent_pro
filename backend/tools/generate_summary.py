@@ -24,6 +24,7 @@ Don't use when: 计划尚未完成。
 返回格式化的行程摘要，含天数、预算等关键信息。""",
         phases=[7],
         parameters=_PARAMETERS,
+        side_effect="write",
     )
     async def generate_trip_summary(plan_data: dict) -> dict:
         if not isinstance(plan_data, dict):

@@ -19,6 +19,7 @@ class ToolDef:
     phases: list[int]
     parameters: dict[str, Any]
     _fn: Callable[..., Coroutine[Any, Any, Any]] = field(repr=False)
+    side_effect: str = "read"
 
     async def __call__(self, **kwargs: Any) -> Any:
         return await self._fn(**kwargs)
@@ -36,6 +37,7 @@ def tool(
     description: str,
     phases: list[int],
     parameters: dict[str, Any],
+    side_effect: str = "read",
 ) -> Callable:
     def decorator(fn: Callable) -> ToolDef:
         return ToolDef(
@@ -44,6 +46,7 @@ def tool(
             phases=phases,
             parameters=parameters,
             _fn=fn,
+            side_effect=side_effect,
         )
 
     return decorator
