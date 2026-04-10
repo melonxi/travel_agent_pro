@@ -69,14 +69,33 @@ def test_force_when_phase5_has_itinerary_text(decider):
     assert result != "auto"
 
 
+def test_no_force_when_phase5_day_label_is_multi_digit(decider):
+    from state.models import DateRange
+
+    plan = _make_plan(
+        phase=5,
+        dates=DateRange(start="2026-04-10", end="2026-04-13"),
+        daily_plans=[],
+    )
+    messages = [
+        _msg(Role.USER, "开始排行程"),
+        _msg(Role.ASSISTANT, "第 12 天 09:00 金阁寺"),
+    ]
+    result = decider.decide(plan, messages, phase=5)
+    assert result == "auto"
+
+
 def test_no_force_when_phase5_daily_plans_filled(decider):
     from state.models import DateRange, DayPlan
     plan = _make_plan(
         phase=5,
         dates=DateRange(start="2026-04-10", end="2026-04-12"),
-        daily_plans=[DayPlan(day=1, date="2026-04-10"), DayPlan(day=2, date="2026-04-11")],
+        daily_plans=[DayPlan(day=1, date="2026-04-10"), DayPlan(day=1, date="2026-04-11")],
     )
-    messages = [_msg(Role.USER, "看看行程")]
+    messages = [
+        _msg(Role.USER, "看看行程"),
+        _msg(Role.ASSISTANT, "第1天 09:00 金阁寺"),
+    ]
     result = decider.decide(plan, messages, phase=5)
     assert result == "auto"
 
