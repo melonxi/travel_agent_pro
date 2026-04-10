@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import MessageBubble from './MessageBubble'
 import { useSSE } from '../hooks/useSSE'
 import type { SSEEvent, TravelPlanState } from '../types/plan'
+import type { SessionMessage } from '../types/session'
 
 interface StateChange {
   icon: string
@@ -118,6 +119,81 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
       inputRef.current?.focus()
     }
   }, [streaming])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const restoreMessages = async () => {
+      try {
+        const response = await fetch(`/api/messages/${sessionId}`)
+        if (!response.ok) {
+          throw new Error(`Failed to load messages for ${sessionId}`)
+        }
+
+        const data = (await response.json()) as SessionMessage[]
+        if (cancelled) return
+
+        const toolNameByCallId = new Map<string, string>()
+        for (const entry of data) {
+          if (entry.role !== 'assistant' || !entry.tool_calls) continue
+          for (const toolCall of entry.tool_calls) {
+            toolNameByCallId.set(toolCall.id, toolCall.name)
+          }
+        }
+
+        const restored: ChatMessage[] = []
+        for (const entry of data) {
+          if (entry.role === 'system') continue
+
+          if (entry.role === 'tool') {
+            const toolCallId = entry.tool_call_id ?? undefined
+            const toolName = toolCallId
+              ? (toolNameByCallId.get(toolCallId) ?? toolCallId)
+              : 'tool'
+            let toolResult: unknown = entry.content ?? ''
+            if (entry.content) {
+              try {
+                toolResult = JSON.parse(entry.content)
+              } catch {
+                toolResult = entry.content
+              }
+            }
+
+            restored.push({
+              id: createMessageId(),
+              role: 'tool',
+              content: entry.content ?? '',
+              toolCallId,
+              toolName,
+              toolStatus: 'success',
+              toolResult,
+            })
+            continue
+          }
+
+          restored.push({
+            id: createMessageId(),
+            role: entry.role,
+            content: entry.content ?? '',
+          })
+        }
+
+        setMessages(restored)
+        prevPlanRef.current = null
+        setAutoScroll(true)
+      } catch {
+        if (!cancelled) {
+          setMessages([])
+          prevPlanRef.current = null
+        }
+      }
+    }
+
+    void restoreMessages()
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId])
 
   const handleScroll = () => {
     if (!messagesRef.current) return

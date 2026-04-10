@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from datetime import date
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +18,7 @@ from agent.compaction import (
 )
 from agent.hooks import HookManager
 from agent.loop import AgentLoop
-from agent.types import Message, Role
+from agent.types import Message, Role, ToolCall, ToolResult
 from config import load_config
 from telemetry import setup_telemetry
 from context.manager import ContextManager
@@ -27,6 +28,10 @@ from llm.factory import create_llm_provider
 from llm.types import ChunkType
 from memory.manager import MemoryManager
 from phase.router import PhaseRouter
+from storage.archive_store import ArchiveStore
+from storage.database import Database
+from storage.message_store import MessageStore
+from storage.session_store import SessionStore
 from state.intake import extract_trip_facts
 from state.models import TravelPlanState
 from state.manager import StateManager
@@ -129,6 +134,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
     # Session-level caches
     sessions: dict[str, dict] = {}  # session_id → {plan, messages, agent}
+    db = Database(db_path=str(Path(config.data_dir) / "sessions.db"))
+    session_store = SessionStore(db)
+    message_store = MessageStore(db)
+    archive_store = ArchiveStore(db)
 
     async def _probe_context_window() -> None:
         """Query model API for actual context window, fallback to config default."""
@@ -144,10 +153,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         except Exception:
             pass  # keep config default
 
+    async def _ensure_storage_ready() -> None:
+        await db.initialize()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        await db.initialize()
         await _probe_context_window()
         yield
+        await db.close()
 
     app = FastAPI(title="Travel Agent Pro", lifespan=lifespan)
     setup_telemetry(app, config.telemetry)
@@ -395,12 +409,134 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 return target_phase
         return None
 
+    def _generate_title(plan: TravelPlanState) -> str:
+        destination = plan.destination or "未定"
+        if plan.dates:
+            days = plan.dates.total_days
+            nights = max(days - 1, 0)
+            return f"{destination} · {days}天{nights}晚"
+        return f"{destination} · 新会话"
+
+    def _serialize_tool_result_data(data: object) -> str | None:
+        if data is None:
+            return None
+        if isinstance(data, str):
+            return data
+        return json.dumps(data, ensure_ascii=False)
+
+    def _deserialize_message_content(content: str | None) -> object:
+        if content is None:
+            return None
+        try:
+            return json.loads(content)
+        except (TypeError, json.JSONDecodeError):
+            return content
+
+    async def _persist_messages(session_id: str, messages: list[Message]) -> None:
+        await _ensure_storage_ready()
+        await db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        rows: list[dict[str, object]] = []
+        for index, message in enumerate(messages):
+            tool_calls_json = None
+            if message.tool_calls:
+                tool_calls_json = json.dumps(
+                    [
+                        {
+                            "id": tool_call.id,
+                            "name": tool_call.name,
+                            "arguments": tool_call.arguments,
+                        }
+                        for tool_call in message.tool_calls
+                    ],
+                    ensure_ascii=False,
+                )
+
+            content = message.content
+            tool_call_id = None
+            if message.tool_result is not None:
+                content = _serialize_tool_result_data(message.tool_result.data)
+                tool_call_id = message.tool_result.tool_call_id
+
+            rows.append(
+                {
+                    "role": message.role.value,
+                    "content": content,
+                    "tool_calls": tool_calls_json,
+                    "tool_call_id": tool_call_id,
+                    "seq": index,
+                }
+            )
+
+        await message_store.append_batch(session_id, rows)
+
+    async def _restore_session(session_id: str) -> dict | None:
+        await _ensure_storage_ready()
+        meta = await session_store.load(session_id)
+        if meta is None or meta["status"] == "deleted":
+            return None
+
+        try:
+            plan = await state_mgr.load(session_id)
+        except FileNotFoundError:
+            snapshot = await archive_store.load_latest_snapshot(session_id)
+            if snapshot is None:
+                return None
+            plan = TravelPlanState.from_dict(json.loads(snapshot["plan_json"]))
+
+        restored_messages: list[Message] = []
+        for row in await message_store.load_all(session_id):
+            role = Role(row["role"])
+            tool_calls = None
+            if row.get("tool_calls"):
+                tool_calls = [
+                    ToolCall(
+                        id=payload["id"],
+                        name=payload["name"],
+                        arguments=payload["arguments"],
+                    )
+                    for payload in json.loads(row["tool_calls"])
+                ]
+
+            tool_result = None
+            if row.get("tool_call_id"):
+                tool_result = ToolResult(
+                    tool_call_id=row["tool_call_id"],
+                    status="success",
+                    data=_deserialize_message_content(row.get("content")),
+                )
+
+            restored_messages.append(
+                Message(
+                    role=role,
+                    content=row.get("content") if tool_result is None else None,
+                    tool_calls=tool_calls,
+                    tool_result=tool_result,
+                )
+            )
+
+        phase_router.sync_phase_state(plan)
+        compression_events: list[dict] = []
+        agent = _build_agent(
+            plan,
+            meta["user_id"],
+            compression_events=compression_events,
+        )
+        return {
+            "plan": plan,
+            "messages": restored_messages,
+            "agent": agent,
+            "needs_rebuild": False,
+            "user_id": meta["user_id"],
+            "compression_events": compression_events,
+        }
+
     @app.get("/health")
     async def health():
         return {"status": "ok"}
 
     @app.post("/api/sessions")
     async def create_session():
+        await _ensure_storage_ready()
         plan = await state_mgr.create_session()
         compression_events: list[dict] = []
         agent = _build_agent(plan, "default_user", compression_events=compression_events)
@@ -412,26 +548,96 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "user_id": "default_user",
             "compression_events": compression_events,
         }
+        await session_store.create(plan.session_id, "default_user")
         return {"session_id": plan.session_id, "phase": plan.phase}
+
+    @app.get("/api/sessions")
+    async def list_sessions():
+        await _ensure_storage_ready()
+        rows = await session_store.list_sessions()
+        return [
+            {
+                "session_id": row["session_id"],
+                "title": row["title"],
+                "phase": row["phase"],
+                "status": row["status"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
 
     @app.get("/api/plan/{session_id}")
     async def get_plan(session_id: str):
+        await _ensure_storage_ready()
         session = sessions.get(session_id)
         if not session:
-            try:
-                plan = await state_mgr.load(session_id)
-                phase_router.sync_phase_state(plan)
-                return plan.to_dict()
-            except (FileNotFoundError, ValueError):
-                raise HTTPException(status_code=404, detail="Session not found")
+            restored = await _restore_session(session_id)
+            if restored is not None:
+                sessions[session_id] = restored
+                session = restored
+            else:
+                try:
+                    plan = await state_mgr.load(session_id)
+                    phase_router.sync_phase_state(plan)
+                    return plan.to_dict()
+                except (FileNotFoundError, ValueError):
+                    raise HTTPException(status_code=404, detail="Session not found")
         phase_router.sync_phase_state(session["plan"])
         return session["plan"].to_dict()
 
+    @app.delete("/api/sessions/{session_id}")
+    async def delete_session(session_id: str):
+        await _ensure_storage_ready()
+        meta = await session_store.load(session_id)
+        if meta is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        await session_store.soft_delete(session_id)
+        sessions.pop(session_id, None)
+        return {"status": "deleted"}
+
+    @app.get("/api/messages/{session_id}")
+    async def get_messages(session_id: str):
+        await _ensure_storage_ready()
+        meta = await session_store.load(session_id)
+        if meta is None or meta["status"] == "deleted":
+            raise HTTPException(status_code=404, detail="Session not found")
+        rows = await message_store.load_all(session_id)
+        return [
+            {
+                "role": row["role"],
+                "content": row["content"],
+                "tool_calls": (
+                    json.loads(row["tool_calls"]) if row.get("tool_calls") else None
+                ),
+                "tool_call_id": row.get("tool_call_id"),
+                "seq": row["seq"],
+            }
+            for row in rows
+        ]
+
+    @app.get("/api/archives/{session_id}")
+    async def get_archive(session_id: str):
+        await _ensure_storage_ready()
+        result = await archive_store.load(session_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Archive not found")
+        return {
+            "session_id": result["session_id"],
+            "plan": json.loads(result["plan_json"]),
+            "summary": result["summary"],
+            "created_at": result["created_at"],
+        }
+
     @app.post("/api/backtrack/{session_id}")
     async def backtrack(session_id: str, req: BacktrackRequest):
+        await _ensure_storage_ready()
         session = sessions.get(session_id)
         if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
+            restored = await _restore_session(session_id)
+            if restored is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            sessions[session_id] = restored
+            session = restored
         plan = session["plan"]
         if req.to_phase == 2:
             req.to_phase = 1
@@ -444,13 +650,28 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         await state_mgr.save(plan)
         session["agent"] = _build_agent(plan, session.get("user_id", "default_user"), compression_events=session.get("compression_events"))
         session["needs_rebuild"] = False
+        await session_store.update(
+            session_id,
+            phase=plan.phase,
+            title=_generate_title(plan),
+        )
+        await archive_store.save_snapshot(
+            session_id,
+            plan.phase,
+            json.dumps(plan.to_dict(), ensure_ascii=False),
+        )
         return {"phase": plan.phase, "plan": plan.to_dict()}
 
     @app.post("/api/chat/{session_id}")
     async def chat(session_id: str, req: ChatRequest):
+        await _ensure_storage_ready()
         session = sessions.get(session_id)
         if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
+            restored = await _restore_session(session_id)
+            if restored is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            sessions[session_id] = restored
+            session = restored
 
         plan = session["plan"]
         messages = session["messages"]
@@ -594,7 +815,29 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         ensure_ascii=False,
                     )
 
+            if plan.phase < phase_before_run:
+                _apply_message_fallbacks(plan, req.message, phase_router)
+
             await state_mgr.save(plan)
+            await _persist_messages(plan.session_id, messages)
+            await session_store.update(
+                plan.session_id,
+                phase=plan.phase,
+                title=_generate_title(plan),
+            )
+            if plan.phase != phase_before_run:
+                await archive_store.save_snapshot(
+                    plan.session_id,
+                    plan.phase,
+                    json.dumps(plan.to_dict(), ensure_ascii=False),
+                )
+            if plan.phase == 7:
+                await archive_store.save(
+                    plan.session_id,
+                    json.dumps(plan.to_dict(), ensure_ascii=False),
+                    summary=_generate_title(plan),
+                )
+                await session_store.update(plan.session_id, status="archived")
             yield json.dumps(
                 {"type": "state_update", "plan": plan.to_dict()},
                 ensure_ascii=False,
