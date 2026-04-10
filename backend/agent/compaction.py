@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from agent.types import Message, Role, ToolCall, ToolResult
 
@@ -11,6 +12,7 @@ MIN_PROMPT_BUDGET = 1024
 SOFT_COMPACT_RATIO = 0.6
 AGGRESSIVE_COMPACT_RATIO = 0.85
 OVERSIZED_TOOL_RATIO = 0.2
+OVERSIZED_TOOL_MIN_TOKENS = 600
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,7 @@ def compact_messages_for_prompt(
     soft_ratio: float = SOFT_COMPACT_RATIO,
     aggressive_ratio: float = AGGRESSIVE_COMPACT_RATIO,
     oversized_tool_ratio: float = OVERSIZED_TOOL_RATIO,
+    oversized_tool_min_tokens: int = OVERSIZED_TOOL_MIN_TOKENS,
 ) -> CompactionOutcome:
     estimated_before = estimate_messages_tokens(messages, tools=tools)
     usage_ratio_before = estimated_before / prompt_budget if prompt_budget else 0.0
@@ -96,7 +99,8 @@ def compact_messages_for_prompt(
     oversized_tool = (
         bool(tool_message_specs)
         and prompt_budget > 0
-        and largest_tool_tokens >= int(prompt_budget * oversized_tool_ratio)
+        and largest_tool_tokens
+        >= max(int(prompt_budget * oversized_tool_ratio), oversized_tool_min_tokens)
     )
     if usage_ratio_before < soft_ratio and not oversized_tool:
         return CompactionOutcome(
@@ -111,7 +115,8 @@ def compact_messages_for_prompt(
     mode = (
         "aggressive"
         if usage_ratio_before >= aggressive_ratio
-        or largest_tool_tokens >= int(prompt_budget * max(oversized_tool_ratio * 1.6, 0.3))
+        or largest_tool_tokens
+        >= max(int(prompt_budget * max(oversized_tool_ratio * 1.6, 0.3)), oversized_tool_min_tokens * 2)
         else "moderate"
     )
 
@@ -286,7 +291,7 @@ def _compact_xhs_search_item(item: Any) -> Any:
         "title": item.get("title", ""),
         "liked_count": item.get("liked_count", ""),
         "note_type": item.get("note_type", ""),
-        "url": item.get("url", ""),
+        "url": _strip_url_query(item.get("url", "")),
     }
 
 
@@ -330,3 +335,10 @@ def _truncate_text(value: Any, limit: int) -> Any:
     if len(value) <= limit:
         return value
     return value[:limit].rstrip() + "…"
+
+
+def _strip_url_query(url: str) -> str:
+    if not isinstance(url, str) or not url:
+        return url
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
