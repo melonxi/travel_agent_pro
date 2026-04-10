@@ -88,3 +88,11 @@ def test_output_price_anomaly_warned(guardrail):
     })
     assert result.level == "warn"
     assert "异常" in result.reason
+
+
+def test_output_price_anomaly_warned_for_non_search_tool(guardrail):
+    result = guardrail.validate_output("some_other_tool", {
+        "results": [{"price": 200000}]
+    })
+    assert result.level == "warn"
+    assert "异常" in result.reason

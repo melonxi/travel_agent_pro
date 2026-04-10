@@ -65,17 +65,16 @@ class ToolGuardrail:
         if not isinstance(data, dict):
             return GuardrailResult()
 
-        if tool_name in _SEARCH_OUTPUT_TOOLS:
-            results = data.get("results")
-            if isinstance(results, list) and not results:
-                return GuardrailResult(allowed=True, reason="未找到结果", level="warn")
+        results = data.get("results")
+        if tool_name in _SEARCH_OUTPUT_TOOLS and isinstance(results, list) and not results:
+            return GuardrailResult(allowed=True, reason="未找到结果", level="warn")
 
-            if isinstance(results, list):
-                for item in results:
-                    if isinstance(item, dict):
-                        price = item.get("price")
-                        if isinstance(price, (int, float)) and price > 100_000:
-                            return GuardrailResult(allowed=True, reason="结果中存在异常高价", level="warn")
+        if isinstance(results, list):
+            for item in results:
+                if isinstance(item, dict):
+                    price = item.get("price")
+                    if isinstance(price, (int, float)) and price > 100_000:
+                        return GuardrailResult(allowed=True, reason="结果中存在异常高价", level="warn")
 
         return GuardrailResult()
 
