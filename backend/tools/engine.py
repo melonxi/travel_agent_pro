@@ -1,6 +1,7 @@
 # backend/tools/engine.py
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -96,6 +97,15 @@ class ToolEngine:
     def get_tool(self, name: str) -> ToolDef | None:
         return self._tools.get(name)
 
+    def _internal_error_result(self, call: ToolCall, error: Exception | str) -> ToolResult:
+        return ToolResult(
+            tool_call_id=call.id,
+            status="error",
+            error=str(error),
+            error_code="INTERNAL_ERROR",
+            suggestion="An unexpected error occurred",
+        )
+
     async def execute(self, call: ToolCall) -> ToolResult:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("tool.execute") as span:
@@ -162,10 +172,37 @@ class ToolEngine:
                     "error": truncate(str(e)),
                     "error_code": "INTERNAL_ERROR",
                 })
-                return ToolResult(
-                    tool_call_id=call.id,
-                    status="error",
-                    error=str(e),
-                    error_code="INTERNAL_ERROR",
-                    suggestion="An unexpected error occurred",
-                )
+                return self._internal_error_result(call, e)
+
+    async def execute_batch(self, calls: list[ToolCall]) -> list[ToolResult]:
+        if not calls:
+            return []
+        if len(calls) == 1:
+            return [await self.execute(calls[0])]
+
+        indexed_results: list[tuple[int, ToolResult]] = []
+
+        read_calls: list[tuple[int, ToolCall]] = []
+        write_calls: list[tuple[int, ToolCall]] = []
+        for index, call in enumerate(calls):
+            tool_def = self._tools.get(call.name)
+            if tool_def and tool_def.side_effect == "write":
+                write_calls.append((index, call))
+            else:
+                read_calls.append((index, call))
+
+        read_results = await asyncio.gather(
+            *(self.execute(call) for _, call in read_calls),
+            return_exceptions=True,
+        )
+        for (index, call), result in zip(read_calls, read_results):
+            if isinstance(result, Exception):
+                result = self._internal_error_result(call, result)
+            indexed_results.append((index, result))
+
+        for index, call in write_calls:
+            result = await self.execute(call)
+            indexed_results.append((index, result))
+
+        indexed_results.sort(key=lambda item: item[0])
+        return [result for _, result in indexed_results]

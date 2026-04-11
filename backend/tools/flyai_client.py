@@ -82,13 +82,15 @@ class FlyAIClient:
         shell_cmd = " ".join(_shell_quote(c) for c in cmd) + f" > {_shell_quote(tmp_path)}"
 
         try:
-            proc = await asyncio.create_subprocess_shell(
+            proc = await asyncio.create_subprocess_exec(
+                "sh",
+                "-c",
                 shell_cmd,
-                stdout=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=self._env,
             )
-            _, stderr = await asyncio.wait_for(
+            stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self.timeout
             )
         except asyncio.TimeoutError:
@@ -112,6 +114,9 @@ class FlyAIClient:
             return "" if _raw_data else []
         finally:
             _remove_tmp(tmp_path)
+
+        if not raw_output and stdout:
+            raw_output = stdout.decode("utf-8", errors="replace")
 
         try:
             data = json.loads(raw_output)

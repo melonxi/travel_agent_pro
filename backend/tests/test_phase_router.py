@@ -173,16 +173,18 @@ def test_get_prompt_for_all_phases(router):
         assert len(prompt) > 50
 
 
-def test_check_transition_no_change(router):
+@pytest.mark.asyncio
+async def test_check_transition_no_change(router):
     plan = TravelPlanState(session_id="s1", phase=1)
-    changed = router.check_and_apply_transition(plan)
+    changed = await router.check_and_apply_transition(plan)
     assert not changed
     assert plan.phase == 1
 
 
-def test_check_transition_phase_advance(router):
+@pytest.mark.asyncio
+async def test_check_transition_phase_advance(router):
     plan = TravelPlanState(session_id="s1", phase=1, destination="Kyoto")
-    changed = router.check_and_apply_transition(plan)
+    changed = await router.check_and_apply_transition(plan)
     assert changed
     assert plan.phase == 3  # destination present, no preferences → skip 2
 

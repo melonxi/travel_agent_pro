@@ -54,6 +54,24 @@ class XhsConfig:
 
 
 @dataclass(frozen=True)
+class QualityGateConfig:
+    threshold: float = 3.5
+    max_retries: int = 2
+
+
+@dataclass(frozen=True)
+class MemoryExtractionConfig:
+    enabled: bool = True
+    model: str = "gpt-4o-mini"
+
+
+@dataclass(frozen=True)
+class GuardrailsConfig:
+    enabled: bool = True
+    disabled_rules: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     llm_overrides: dict[str, LLMConfig] = field(default_factory=dict)
@@ -64,6 +82,12 @@ class AppConfig:
     context_compression_threshold: float = 0.5
     flyai: FlyAIConfig = field(default_factory=FlyAIConfig)
     xhs: XhsConfig = field(default_factory=XhsConfig)
+    quality_gate: QualityGateConfig = field(default_factory=QualityGateConfig)
+    parallel_tool_execution: bool = True
+    memory_extraction: MemoryExtractionConfig = field(
+        default_factory=MemoryExtractionConfig
+    )
+    guardrails: GuardrailsConfig = field(default_factory=GuardrailsConfig)
 
 
 def _resolve_env(value: object) -> str:
@@ -140,6 +164,30 @@ def _build_xhs_config(xhs_raw: dict) -> XhsConfig:
     )
 
 
+def _build_quality_gate_config(raw: dict) -> QualityGateConfig:
+    return QualityGateConfig(
+        threshold=float(raw.get("threshold", 3.5)),
+        max_retries=int(raw.get("max_retries", 2)),
+    )
+
+
+def _build_memory_extraction_config(raw: dict) -> MemoryExtractionConfig:
+    return MemoryExtractionConfig(
+        enabled=bool(raw.get("enabled", True)),
+        model=str(raw.get("model", "gpt-4o-mini")),
+    )
+
+
+def _build_guardrails_config(raw: dict) -> GuardrailsConfig:
+    disabled_rules = raw.get("disabled_rules", [])
+    if not isinstance(disabled_rules, list):
+        disabled_rules = []
+    return GuardrailsConfig(
+        enabled=bool(raw.get("enabled", True)),
+        disabled_rules=[str(rule) for rule in disabled_rules],
+    )
+
+
 def load_config(path: str | Path = "config.yaml") -> AppConfig:
     path = Path(path)
     if not path.is_absolute() and not path.exists():
@@ -153,6 +201,9 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             api_keys=_build_api_keys({}),
             telemetry=TelemetryConfig(),
             xhs=_build_xhs_config({}),
+            quality_gate=_build_quality_gate_config({}),
+            memory_extraction=_build_memory_extraction_config({}),
+            guardrails=_build_guardrails_config({}),
         )
 
     with open(path) as f:
@@ -183,6 +234,11 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         api_key=_resolve_env(flyai_raw.get("api_key", "")) or None,
     )
     xhs = _build_xhs_config(raw.get("xhs", {}))
+    quality_gate = _build_quality_gate_config(raw.get("quality_gate", {}))
+    memory_extraction = _build_memory_extraction_config(
+        raw.get("memory_extraction", {})
+    )
+    guardrails = _build_guardrails_config(raw.get("guardrails", {}))
 
     return AppConfig(
         llm=llm,
@@ -194,4 +250,8 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         context_compression_threshold=raw.get("context_compression_threshold", 0.5),
         flyai=flyai,
         xhs=xhs,
+        quality_gate=quality_gate,
+        parallel_tool_execution=bool(raw.get("parallel_tool_execution", True)),
+        memory_extraction=memory_extraction,
+        guardrails=guardrails,
     )

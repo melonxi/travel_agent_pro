@@ -142,6 +142,28 @@ class AnthropicProvider:
             for t in tool_defs
         ]
 
+    def _convert_tool_choice(self, tool_choice: dict | str) -> dict | str:
+        """Convert OpenAI tool_choice format to Anthropic format."""
+        if isinstance(tool_choice, str):
+            if tool_choice == "auto":
+                return {"type": "auto"}
+            if tool_choice == "none":
+                return {}
+            if tool_choice == "required":
+                return {"type": "any"}
+            return tool_choice
+        if isinstance(tool_choice, dict):
+            if tool_choice.get("type") == "function":
+                fn = tool_choice.get("function", {})
+                name = fn.get("name")
+                if isinstance(name, str) and name:
+                    return {"type": "tool", "name": name}
+            if tool_choice.get("type") == "none":
+                return {}
+            if tool_choice.get("type") in {"auto", "any", "tool"}:
+                return tool_choice
+        return tool_choice
+
     async def _emit_nonstream_response(
         self,
         response: Any,
@@ -178,6 +200,7 @@ class AnthropicProvider:
         messages: list[Message],
         tools: list[dict] | None = None,
         stream: bool = True,
+        tool_choice: dict | str | None = None,
     ) -> AsyncIterator[LLMChunk]:
         tracer = otel_trace.get_tracer("travel-agent-pro")
         with tracer.start_as_current_span("llm.chat") as span:
@@ -202,6 +225,10 @@ class AnthropicProvider:
             }
             if tools:
                 kwargs["tools"] = self._convert_tools(tools)
+            if tools and tool_choice is not None:
+                converted_choice = self._convert_tool_choice(tool_choice)
+                if converted_choice:
+                    kwargs["tool_choice"] = converted_choice
 
             self._write_debug_log(
                 "request",

@@ -174,7 +174,7 @@ class TestA2DailyPlansBlocked:
 
         # Now daily_plans count (3) >= dates.total_days (3)
         assert len(plan_at_phase5.daily_plans) >= plan_at_phase5.dates.total_days
-        changed = router.check_and_apply_transition(plan_at_phase5)
+        changed = await router.check_and_apply_transition(plan_at_phase5)
         assert changed is True
         assert plan_at_phase5.phase == 7
 

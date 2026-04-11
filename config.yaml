@@ -30,3 +30,17 @@ flyai:
   enabled: true
   cli_timeout: 30
   # api_key: ${FLYAI_API_KEY}
+
+quality_gate:
+  threshold: 3.5
+  max_retries: 2
+
+parallel_tool_execution: true
+
+memory_extraction:
+  enabled: true
+  model: "gpt-4o-mini"
+
+guardrails:
+  enabled: true
+  disabled_rules: []

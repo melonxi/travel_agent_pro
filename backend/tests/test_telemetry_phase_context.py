@@ -30,12 +30,13 @@ def otel_exporter():
     _reset_tracer_provider()
 
 
-def test_phase_transition_creates_span(otel_exporter):
+@pytest.mark.asyncio
+async def test_phase_transition_creates_span(otel_exporter):
     """Test that phase transition creates a span with correct attributes."""
     router = PhaseRouter()
     plan = TravelPlanState(session_id="s1", destination="Tokyo")
 
-    changed = router.check_and_apply_transition(plan)
+    changed = await router.check_and_apply_transition(plan)
 
     assert changed
     assert plan.phase == 3
@@ -49,12 +50,13 @@ def test_phase_transition_creates_span(otel_exporter):
     assert span.attributes["phase.to"] == 3
 
 
-def test_no_transition_no_span(otel_exporter):
+@pytest.mark.asyncio
+async def test_no_transition_no_span(otel_exporter):
     """Test that no transition means no phase.transition span is created."""
     router = PhaseRouter()
     plan = TravelPlanState(session_id="s1", phase=1)
 
-    changed = router.check_and_apply_transition(plan)
+    changed = await router.check_and_apply_transition(plan)
 
     assert not changed
     assert plan.phase == 1
@@ -85,7 +87,8 @@ def test_context_compress_check_creates_span(otel_exporter):
     assert span.attributes["context.max_tokens"] == 1000
 
 
-def test_phase_transition_has_plan_snapshot_event(otel_exporter):
+@pytest.mark.asyncio
+async def test_phase_transition_has_plan_snapshot_event(otel_exporter):
     router = PhaseRouter()
     plan = TravelPlanState(
         session_id="s1",
@@ -93,7 +96,7 @@ def test_phase_transition_has_plan_snapshot_event(otel_exporter):
         dates=DateRange(start="2026-04-01", end="2026-04-05"),
     )
 
-    changed = router.check_and_apply_transition(plan)
+    changed = await router.check_and_apply_transition(plan)
     assert changed
 
     spans = otel_exporter.get_finished_spans()

@@ -1,6 +1,8 @@
 # backend/telemetry/setup.py
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
 
 from config import TelemetryConfig
@@ -8,7 +10,7 @@ from config import TelemetryConfig
 
 def setup_telemetry(app: FastAPI, config: TelemetryConfig) -> None:
     """初始化 OTel tracing。enabled=False 时为 no-op。"""
-    if not config.enabled:
+    if not config.enabled or os.getenv("OTEL_SDK_DISABLED", "").lower() == "true":
         return
 
     from opentelemetry import trace
