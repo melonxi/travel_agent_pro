@@ -92,7 +92,7 @@ def _normalize_memory_value(value: Any) -> str:
     if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, str):
-        return value.strip()
+        return value.strip().lower()
     if isinstance(value, list):
         return "|".join(sorted(_normalize_memory_value(item) for item in value))
     if isinstance(value, dict):

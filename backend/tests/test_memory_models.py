@@ -46,6 +46,26 @@ def test_rejection_id_includes_value():
     assert red_eye != layover
 
 
+def test_rejection_id_normalizes_string_value():
+    compact = generate_memory_id(
+        user_id="u1",
+        type="rejection",
+        domain="flight",
+        key="avoid",
+        scope="global",
+        value="red_eye",
+    )
+    spaced = generate_memory_id(
+        user_id="u1",
+        type="rejection",
+        domain="flight",
+        key="avoid",
+        scope="global",
+        value=" Red_Eye ",
+    )
+    assert compact == spaced
+
+
 def test_memory_item_round_trip():
     item = MemoryItem(
         id="mem123",
