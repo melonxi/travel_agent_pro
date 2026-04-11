@@ -1,4 +1,6 @@
 # backend/tests/test_api.py
+import asyncio
+import json
 import pytest
 from datetime import date
 from unittest.mock import patch
@@ -16,6 +18,18 @@ from state.models import DateRange, TravelPlanState
 def app(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     return create_app()
+
+
+def _get_sessions(app) -> dict:
+    for route in app.routes:
+        endpoint = getattr(route, "endpoint", None)
+        if endpoint is None or not hasattr(endpoint, "__closure__"):
+            continue
+        free_vars = getattr(endpoint.__code__, "co_freevars", ())
+        for name, cell in zip(free_vars, endpoint.__closure__ or ()):
+            if name == "sessions":
+                return cell.cell_contents
+    raise RuntimeError("Cannot locate sessions dict")
 
 
 @pytest.mark.asyncio
@@ -37,6 +51,96 @@ async def test_create_session(app):
     assert resp.status_code == 200
     data = resp.json()
     assert "session_id" in data
+
+
+@pytest.mark.asyncio
+async def test_create_session_wires_agent_intelligence_components(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/api/sessions")
+
+    session_id = resp.json()["session_id"]
+    agent = _get_sessions(app)[session_id]["agent"]
+
+    assert agent.reflection is not None
+    assert agent.tool_choice_decider is not None
+    assert agent.guardrail is not None
+    assert agent.parallel_tool_execution is True
+
+
+@pytest.mark.asyncio
+async def test_phase1_to3_chat_extracts_memory_async(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path / "data"
+    config_file.write_text(
+        f"""
+llm:
+  provider: openai
+  model: gpt-4o
+data_dir: "{data_dir}"
+flyai:
+  enabled: false
+memory_extraction:
+  enabled: true
+  model: gpt-4o-mini
+telemetry:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    class FakeProvider:
+        async def chat(self, *args, **kwargs):
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content=json.dumps(
+                    {
+                        "preferences": {"饮食": "不吃辣"},
+                        "rejections": [],
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    def fake_provider(_config):
+        return FakeProvider()
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        self.plan.phase = 3
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr("main.create_llm_provider", fake_provider)
+
+    with patch("agent.loop.AgentLoop.run", fake_run):
+        app = create_app(str(config_file))
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "我不吃辣，喜欢住民宿", "user_id": "u_mem"},
+            )
+
+    assert resp.status_code == 200
+    for _ in range(20):
+        memory_path = data_dir / "users" / "u_mem" / "memory.json"
+        if memory_path.exists():
+            break
+        await asyncio.sleep(0.01)
+
+    data = json.loads(memory_path.read_text(encoding="utf-8"))
+    assert data["explicit_preferences"]["饮食"] == "不吃辣"
 
 
 @pytest.mark.asyncio
