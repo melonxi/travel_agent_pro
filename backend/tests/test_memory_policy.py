@@ -44,11 +44,20 @@ def make_item(**overrides):
 
 
 def test_low_risk_high_confidence_auto_saves():
-    policy = MemoryPolicy(auto_save_low_risk=True)
+    policy = MemoryPolicy()
 
     status = policy.classify(make_candidate(risk="low", confidence=0.7))
 
     assert status == "auto_save"
+
+
+def test_low_risk_auto_save_item_becomes_active():
+    policy = MemoryPolicy()
+    candidate = make_candidate(risk="low", confidence=0.7)
+
+    item = policy.to_item(candidate, user_id="u1", session_id="s1", now="2026-04-11T00:00:00")
+
+    assert item.status == "active"
 
 
 def test_medium_risk_defaults_pending():
@@ -108,6 +117,19 @@ def test_candidate_to_item_sets_pending_status_and_trims_quote():
     assert item.source.quote == evidence[:120]
 
 
+def test_candidate_to_item_rejects_drop_actions():
+    policy = MemoryPolicy()
+    candidate = make_candidate(domain="payment")
+
+    try:
+        policy.to_item(candidate, user_id="u1", session_id="s1", now="2026-04-11T00:00:00")
+        raised = False
+    except ValueError:
+        raised = True
+
+    assert raised is True
+
+
 def test_candidate_to_item_uses_trip_id_only_for_trip_scope():
     policy = MemoryPolicy()
     candidate = make_candidate(scope="global")
@@ -121,6 +143,41 @@ def test_candidate_to_item_uses_trip_id_only_for_trip_scope():
     )
 
     assert item.trip_id is None
+
+
+def test_rejection_ids_include_value():
+    policy = MemoryPolicy()
+    first = make_candidate(
+        type="rejection",
+        domain="flight",
+        key="avoid",
+        scope="global",
+        value="red_eye",
+        risk="low",
+        confidence=0.7,
+    )
+    second = make_candidate(
+        type="rejection",
+        domain="flight",
+        key="avoid",
+        scope="global",
+        value="long_layover",
+        risk="low",
+        confidence=0.7,
+    )
+
+    first_item = policy.to_item(first, user_id="u1", session_id="s1", now="2026-04-11T00:00:00")
+    second_item = policy.to_item(second, user_id="u1", session_id="s1", now="2026-04-11T00:00:00")
+
+    assert first_item.id != second_item.id
+
+
+def test_document_phrases_are_dropped():
+    policy = MemoryPolicy()
+
+    assert policy.classify(make_candidate(value="护照号 E12345678")) == "drop"
+    assert policy.classify(make_candidate(value="passport number E12345678")) == "drop"
+    assert policy.classify(make_candidate(value="身份证 X")) == "drop"
 
 
 def test_merge_same_scalar_conflict_obsoletes_existing_and_marks_incoming():

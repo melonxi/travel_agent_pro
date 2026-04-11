@@ -9,13 +9,14 @@ from memory.models import MemoryCandidate, MemoryItem, MemorySource, generate_me
 
 _DENIED_DOMAINS = {"payment", "membership"}
 _PII_SEQUENCE_RE = re.compile(r"\d{9,18}")
+_PII_PHRASES = ("护照号", "身份证", "passport number", "id number")
 
 
 class MemoryPolicy:
     def __init__(
         self,
         *,
-        auto_save_low_risk: bool = False,
+        auto_save_low_risk: bool = True,
         auto_save_medium_risk: bool = False,
     ) -> None:
         self.auto_save_low_risk = auto_save_low_risk
@@ -47,6 +48,9 @@ class MemoryPolicy:
         trip_id: str | None = None,
     ) -> MemoryItem:
         status = self.classify(candidate)
+        if status == "drop":
+            raise ValueError("drop candidates cannot be converted to MemoryItem")
+        persistent_status = "active" if status == "auto_save" else status
         item_trip_id = trip_id if candidate.scope == "trip" else None
         return MemoryItem(
             id=generate_memory_id(
@@ -56,6 +60,7 @@ class MemoryPolicy:
                 key=candidate.key,
                 scope=candidate.scope,
                 trip_id=item_trip_id,
+                value=candidate.value,
             ),
             user_id=user_id,
             type=candidate.type,
@@ -65,7 +70,7 @@ class MemoryPolicy:
             scope=candidate.scope,
             polarity=candidate.polarity,
             confidence=candidate.confidence,
-            status=status,
+            status=persistent_status,
             source=MemorySource(
                 kind="message",
                 session_id=session_id,
@@ -87,6 +92,9 @@ class MemoryPolicy:
         if isinstance(value, float):
             return False
         if isinstance(value, str):
+            lowered = value.lower()
+            if any(phrase in lowered for phrase in _PII_PHRASES):
+                return True
             return bool(_PII_SEQUENCE_RE.search(value))
         if isinstance(value, dict):
             for key, nested in value.items():
