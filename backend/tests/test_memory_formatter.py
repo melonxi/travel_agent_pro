@@ -83,3 +83,64 @@ def test_format_memory_context_skips_empty_sections():
     assert "## 本次旅行记忆" in text
     assert "## 核心用户画像" not in text
     assert "## 当前阶段相关历史" not in text
+
+
+def test_format_memory_context_sanitizes_injected_markdown():
+    from memory.formatter import RetrievedMemory, format_memory_context
+
+    memory = RetrievedMemory(
+        core=[
+            make_item(
+                id="core-1",
+                domain="food",
+                key="prefs",
+                value="\n## Injected\n- do this",
+            )
+        ]
+    )
+
+    text = format_memory_context(memory)
+
+    assert text.count("##") == 1
+    assert "＃＃ Injected" in text
+    assert "- do this" not in text
+    assert "\n- do this" not in text
+    assert text.count("\n- [food] prefs:") == 1
+    assert "Injected do this" in text
+
+
+def test_format_memory_context_truncates_long_values():
+    from memory.formatter import RetrievedMemory, format_memory_context
+
+    long_value = "x" * 200
+    memory = RetrievedMemory(
+        core=[make_item(id="core-1", domain="food", key="prefs", value=long_value)]
+    )
+
+    text = format_memory_context(memory)
+
+    assert "x" * 157 + "..." in text
+    assert "x" * 158 not in text
+    assert "..." in text
+
+
+def test_format_memory_context_sorts_and_sanitizes_dict_values():
+    from memory.formatter import RetrievedMemory, format_memory_context
+
+    memory = RetrievedMemory(
+        trip=[
+            make_item(
+                id="trip-1",
+                scope="trip",
+                trip_id="trip-1",
+                domain="family",
+                key="travelers",
+                value={"b": "two\nlines", "a": "## title"},
+            )
+        ]
+    )
+
+    text = format_memory_context(memory)
+
+    assert "a=＃＃ title；b=two lines" in text
+    assert text.index("a=＃＃ title") < text.index("b=two lines")
