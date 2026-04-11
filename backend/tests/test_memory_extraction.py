@@ -2,10 +2,32 @@ import pytest
 
 from memory.extraction import (
     MemoryMerger,
+    build_candidate_extraction_prompt,
     build_extraction_prompt,
+    parse_candidate_extraction_response,
     parse_extraction_response,
 )
-from memory.models import Rejection, UserMemory
+from memory.models import MemoryItem, MemorySource, Rejection, UserMemory
+
+
+def make_memory_item(**overrides):
+    base = {
+        "id": "item-1",
+        "user_id": "u1",
+        "type": "preference",
+        "domain": "food",
+        "key": "spicy",
+        "value": "no spicy food",
+        "scope": "trip",
+        "polarity": "neutral",
+        "confidence": 0.8,
+        "status": "active",
+        "source": MemorySource(kind="message", session_id="s1"),
+        "created_at": "2026-04-11T00:00:00",
+        "updated_at": "2026-04-11T00:00:00",
+    }
+    base.update(overrides)
+    return MemoryItem(**base)
 
 
 class TestBuildExtractionPrompt:
@@ -27,6 +49,17 @@ class TestBuildExtractionPrompt:
             existing_memory=memory,
         )
         assert "民宿" in prompt
+
+
+class TestBuildCandidateExtractionPrompt:
+    def test_includes_user_messages_and_trip_rule(self):
+        prompt = build_candidate_extraction_prompt(
+            user_messages=["我这次去京都", "预算 3000 元"],
+            existing_items=[make_memory_item()],
+            plan_facts={"destination": "京都", "dates": "4 月 1 日 - 4 月 5 日"},
+        )
+        assert "我这次去京都" in prompt
+        assert "本次目的地、日期、预算默认不是 global memory" in prompt
 
 
 class TestParseExtractionResponse:
@@ -53,6 +86,79 @@ class TestParseExtractionResponse:
         )
         assert prefs == {}
         assert rejections == []
+
+
+class TestParseCandidateExtractionResponse:
+    def test_valid_candidate_response(self):
+        response = """
+        [
+          {
+            "type": "preference",
+            "domain": "food",
+            "key": "spicy",
+            "value": "no spicy food",
+            "scope": "trip",
+            "polarity": "neutral",
+            "confidence": 0.82,
+            "risk": "low",
+            "evidence": "我不吃辣",
+            "reason": "用户明确表达"
+          }
+        ]
+        """
+        candidates = parse_candidate_extraction_response(response)
+        assert len(candidates) == 1
+        assert candidates[0].domain == "food"
+        assert candidates[0].key == "spicy"
+
+    def test_fenced_json_candidate_response(self):
+        response = """```json
+        [
+          {
+            "type": "preference",
+            "domain": "hotel",
+            "key": "room",
+            "value": "high floor",
+            "scope": "trip",
+            "polarity": "neutral",
+            "confidence": 0.7,
+            "risk": "medium",
+            "evidence": "想住高楼层",
+            "reason": "用户明确表达"
+          }
+        ]
+        ```"""
+        candidates = parse_candidate_extraction_response(response)
+        assert len(candidates) == 1
+        assert candidates[0].domain == "hotel"
+
+    def test_unknown_domain_maps_to_general(self):
+        response = """
+        [
+          {
+            "type": "preference",
+            "domain": "unknown_domain",
+            "key": "something",
+            "value": "value",
+            "scope": "trip",
+            "polarity": "neutral",
+            "confidence": 0.5,
+            "risk": "low",
+            "evidence": "something",
+            "reason": "用户明确表达"
+          }
+        ]
+        """
+        candidates = parse_candidate_extraction_response(response)
+        assert len(candidates) == 1
+        assert candidates[0].domain == "general"
+        assert candidates[0].attributes["raw_domain"] == "unknown_domain"
+
+    def test_invalid_json_returns_empty(self):
+        assert parse_candidate_extraction_response("not json") == []
+
+    def test_non_list_candidates_returns_empty(self):
+        assert parse_candidate_extraction_response('{"domain": "food"}') == []
 
 
 class TestMemoryMerger:
