@@ -39,7 +39,8 @@ parallel_tool_execution: true
 
 memory_extraction:
   enabled: true
-  model: "gpt-4o-mini"
+  # 与主模型一致；若 gateway 支持独立轻量模型可替换为 gpt-4o-mini 等
+  model: "astron-code-latest"
 
 guardrails:
   enabled: true
