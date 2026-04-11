@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from memory.models import (
     MemorySource,
     Rejection,
     TripEpisode,
+    TripSummary,
     UserMemory,
 )
 from memory.store import FileMemoryStore
@@ -72,6 +74,61 @@ async def test_migrates_legacy_user_memory(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_migration_merges_duplicate_preference_keys(tmp_path: Path):
+    user_dir = tmp_path / "users" / "u1"
+    user_dir.mkdir(parents=True)
+    legacy = UserMemory(
+        user_id="u1",
+        explicit_preferences={"节奏": "轻松"},
+        implicit_preferences={"节奏": "慢速", "住宿": "酒店"},
+    )
+    (user_dir / "memory.json").write_text(
+        json.dumps(legacy.to_dict(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    store = FileMemoryStore(tmp_path)
+    items = await store.list_items("u1")
+    pace_items = [item for item in items if item.key == "节奏"]
+
+    assert len(pace_items) == 1
+    assert pace_items[0].value == "轻松"
+    assert pace_items[0].confidence == 0.8
+    assert {item.key for item in items} == {"节奏", "住宿"}
+
+
+@pytest.mark.asyncio
+async def test_legacy_trip_history_is_visible_through_list_episodes(tmp_path: Path):
+    user_dir = tmp_path / "users" / "u1"
+    user_dir.mkdir(parents=True)
+    legacy = UserMemory(
+        user_id="u1",
+        trip_history=[
+            TripSummary(
+                destination="Osaka",
+                dates="2025-10",
+                satisfaction=4,
+                notes="节奏舒适",
+            )
+        ],
+    )
+    (user_dir / "memory.json").write_text(
+        json.dumps(legacy.to_dict(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    store = FileMemoryStore(tmp_path)
+    episodes = await store.list_episodes("u1")
+
+    assert len(episodes) == 1
+    episode = episodes[0]
+    assert episode.destination == "Osaka"
+    assert episode.dates == "2025-10"
+    assert episode.satisfaction == 4
+    assert "节奏舒适" in episode.final_plan_summary or "节奏舒适" in episode.lessons
+
+
+@pytest.mark.asyncio
 async def test_upsert_item_writes_schema_v2(tmp_path: Path):
     store = FileMemoryStore(tmp_path)
     item = MemoryItem(
@@ -120,9 +177,52 @@ async def test_update_status_marks_item(tmp_path: Path):
     )
 
     await store.upsert_item(item)
-    await store.update_status("u1", "mem1", "active")
+    changed = await store.update_status("u1", "mem1", "active")
 
+    assert changed is True
     assert (await store.list_items("u1"))[0].status == "active"
+
+
+@pytest.mark.asyncio
+async def test_update_status_returns_false_for_missing_user_without_creating_file(
+    tmp_path: Path,
+):
+    store = FileMemoryStore(tmp_path)
+
+    changed = await store.update_status("u-missing", "mem1", "active")
+
+    assert changed is False
+    assert not (tmp_path / "users" / "u-missing" / "memory.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_update_status_returns_false_for_missing_item_without_writing_file(
+    tmp_path: Path,
+):
+    store = FileMemoryStore(tmp_path)
+    item = MemoryItem(
+        id="mem1",
+        user_id="u1",
+        type="preference",
+        domain="pace",
+        key="preferred_pace",
+        value="轻松",
+        scope="global",
+        polarity="like",
+        confidence=0.9,
+        status="pending",
+        source=MemorySource(kind="message", session_id="s1"),
+        created_at="2026-04-11T00:00:00",
+        updated_at="2026-04-11T00:00:00",
+    )
+
+    await store.upsert_item(item)
+    raw_before = json.loads((tmp_path / "users" / "u1" / "memory.json").read_text())
+    changed = await store.update_status("u1", "missing", "active")
+    raw_after = json.loads((tmp_path / "users" / "u1" / "memory.json").read_text())
+
+    assert changed is False
+    assert raw_after == raw_before
 
 
 @pytest.mark.asyncio
@@ -203,3 +303,56 @@ async def test_concurrent_upserts_do_not_drop_items(tmp_path: Path):
     loaded = await store.list_items("u1")
     assert len(loaded) == 10
     assert {item.id for item in loaded} == {f"mem{i}" for i in range(10)}
+
+
+@pytest.mark.asyncio
+async def test_cross_instance_upserts_do_not_drop_items(tmp_path: Path):
+    store_a = FileMemoryStore(tmp_path)
+    store_b = FileMemoryStore(tmp_path)
+    barrier = threading.Barrier(2)
+
+    async def write_from_thread(store: FileMemoryStore, item: MemoryItem) -> None:
+        def runner() -> None:
+            barrier.wait()
+            asyncio.run(store.upsert_item(item))
+
+        await asyncio.to_thread(runner)
+
+    item_a = MemoryItem(
+        id="mem-a",
+        user_id="u1",
+        type="preference",
+        domain="general",
+        key="ka",
+        value="va",
+        scope="global",
+        polarity="neutral",
+        confidence=0.8,
+        status="active",
+        source=MemorySource(kind="message", session_id="s1"),
+        created_at="2026-04-11T00:00:00",
+        updated_at="2026-04-11T00:00:00",
+    )
+    item_b = MemoryItem(
+        id="mem-b",
+        user_id="u1",
+        type="preference",
+        domain="general",
+        key="kb",
+        value="vb",
+        scope="global",
+        polarity="neutral",
+        confidence=0.8,
+        status="active",
+        source=MemorySource(kind="message", session_id="s1"),
+        created_at="2026-04-11T00:00:00",
+        updated_at="2026-04-11T00:00:00",
+    )
+
+    await asyncio.gather(
+        write_from_thread(store_a, item_a),
+        write_from_thread(store_b, item_b),
+    )
+
+    loaded = await store_a.list_items("u1")
+    assert {item.id for item in loaded} == {"mem-a", "mem-b"}
