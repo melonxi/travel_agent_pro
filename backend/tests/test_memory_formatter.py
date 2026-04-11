@@ -144,3 +144,46 @@ def test_format_memory_context_sorts_and_sanitizes_dict_values():
 
     assert "a=＃＃ title；b=two lines" in text
     assert text.index("a=＃＃ title") < text.index("b=two lines")
+
+
+def test_format_memory_context_formats_sets_deterministically():
+    from memory.formatter import RetrievedMemory, format_memory_context
+
+    memory = RetrievedMemory(
+        core=[
+            make_item(
+                id="core-1",
+                domain="food",
+                key="cuisine_likes",
+                value={"beta", "alpha", "gamma"},
+            )
+        ]
+    )
+
+    text = format_memory_context(memory)
+
+    assert "alpha、beta、gamma" in text
+
+
+def test_format_memory_context_sanitizes_domain_and_key_markdown():
+    from memory.formatter import RetrievedMemory, format_memory_context
+
+    memory = RetrievedMemory(
+        core=[
+            make_item(
+                id="core-1",
+                domain="food\n## hacked",
+                key="prefs\n- attack",
+                value="safe",
+            )
+        ]
+    )
+
+    text = format_memory_context(memory)
+
+    assert text.count("##") == 1
+    assert text.count("\n- [") == 1
+    assert "hacked" in text
+    assert "attack" in text
+    assert "\n## hacked" not in text
+    assert "\n- attack" not in text
