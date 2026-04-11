@@ -22,6 +22,7 @@
 | 可观测性 | OpenTelemetry + Jaeger (OTLP gRPC on :4317, UI on :16686) |
 | 测试 | pytest + pytest-asyncio (后端), Playwright (E2E) |
 | 外部服务 | Tavily (Web 搜索), 小红书 CLI, FlyAI CLI, Google Maps, Amadeus, OpenWeather |
+| Agent 智能层配置 | quality_gate, parallel_tool_execution, memory_extraction, guardrails |
 
 ---
 
@@ -91,7 +92,7 @@ travel_agent_pro/
 │   │   ├── setup.py            # OpenTelemetry TracerProvider + OTLP 导出
 │   │   ├── attributes.py       # 标准化 span 属性与事件名
 │   │   └── decorators.py       # @trace_agent_loop, @trace_tool_call
-│   └── tests/                  # pytest 测试套件 (64 个测试文件)
+│   └── tests/                  # pytest 测试套件 (65 个测试文件)
 │
 ├── frontend/                   # React 前端
 │   ├── src/
@@ -120,7 +121,7 @@ travel_agent_pro/
 ├── docs/                       # 架构文档与学习笔记
 ├── scripts/                    # dev.sh (启动) + dev-stop.sh (停止)
 ├── data/sessions/              # 会话文件 (plan.json 快照)
-├── config.yaml                 # 运行时配置 (LLM/API/阈值)
+├── config.yaml                 # 运行时配置 (LLM/API/智能层开关/阈值)
 ├── docker-compose.observability.yml # Jaeger 一键启动
 ├── e2e-test.spec.ts            # Playwright E2E 测试
 ├── AGENTS.md                   # AI Agent 项目规范

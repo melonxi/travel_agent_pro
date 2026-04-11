@@ -1,8 +1,10 @@
 # backend/main.py
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -18,14 +20,22 @@ from agent.compaction import (
 )
 from agent.hooks import HookManager
 from agent.loop import AgentLoop
+from agent.reflection import ReflectionInjector
+from agent.tool_choice import ToolChoiceDecider
 from agent.types import Message, Role, ToolCall, ToolResult
 from config import load_config
 from telemetry import setup_telemetry
 from context.manager import ContextManager
+from harness.guardrail import ToolGuardrail
 from harness.judge import build_judge_prompt, parse_judge_response
 from harness.validator import validate_hard_constraints
 from llm.factory import create_llm_provider
 from llm.types import ChunkType
+from memory.extraction import (
+    MemoryMerger,
+    build_extraction_prompt,
+    parse_extraction_response,
+)
 from memory.manager import MemoryManager
 from phase.router import PhaseRouter
 from storage.archive_store import ArchiveStore
@@ -134,6 +144,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
     # Session-level caches
     sessions: dict[str, dict] = {}  # session_id → {plan, messages, agent}
+    memory_extraction_tasks: set[asyncio.Task] = set()
     db = Database(db_path=str(Path(config.data_dir) / "sessions.db"))
     session_store = SessionStore(db)
     message_store = MessageStore(db)
@@ -161,6 +172,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         await db.initialize()
         await _probe_context_window()
         yield
+        for task in list(memory_extraction_tasks):
+            task.cancel()
         await db.close()
 
     app = FastAPI(title="Travel Agent Pro", lifespan=lifespan)
@@ -174,7 +187,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
     def _build_agent(plan, user_id: str, compression_events: list[dict] | None = None):
         llm = create_llm_provider(config.llm)
-        llm_factory = lambda: create_llm_provider(config.llm)
+
+        def llm_factory(model: str | None = None):
+            llm_config = replace(config.llm, model=model) if model else config.llm
+            return create_llm_provider(llm_config)
+
         tool_engine = ToolEngine()
 
         # Create FlyAI client if enabled
@@ -373,6 +390,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         hooks.register("after_tool_call", on_validate)
         hooks.register("after_tool_call", on_soft_judge)
 
+        reflection = ReflectionInjector()
+        tool_choice_decider = ToolChoiceDecider()
+        guardrail = ToolGuardrail() if config.guardrails.enabled else None
+
         return AgentLoop(
             llm=llm,
             tool_engine=tool_engine,
@@ -385,7 +406,62 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             memory_mgr=memory_mgr,
             user_id=user_id,
             compression_events=compression_events,
+            reflection=reflection,
+            tool_choice_decider=tool_choice_decider,
+            guardrail=guardrail,
+            parallel_tool_execution=config.parallel_tool_execution,
         )
+
+    async def _extract_memory_preferences(
+        user_id: str,
+        messages_snapshot: list[Message],
+    ) -> None:
+        if not config.memory_extraction.enabled:
+            return
+        user_messages = [
+            message.content
+            for message in messages_snapshot
+            if message.role == Role.USER and message.content
+        ]
+        if not user_messages:
+            return
+
+        try:
+            memory = await memory_mgr.load(user_id)
+            prompt = build_extraction_prompt(user_messages, memory)
+            extraction_llm = create_llm_provider(
+                replace(config.llm, model=config.memory_extraction.model)
+            )
+            response_parts: list[str] = []
+            async for chunk in extraction_llm.chat(
+                [Message(role=Role.USER, content=prompt)],
+                tools=[],
+                stream=False,
+            ):
+                if chunk.content:
+                    response_parts.append(chunk.content)
+            preferences, rejections = parse_extraction_response(
+                "".join(response_parts)
+            )
+            merged = MemoryMerger().merge(memory, preferences, rejections)
+            await memory_mgr.save(merged)
+        except Exception:
+            return
+
+    def _schedule_memory_extraction(
+        *,
+        user_id: str,
+        messages_snapshot: list[Message],
+        from_phase: int,
+        to_phase: int,
+    ) -> None:
+        if from_phase != 1 or to_phase != 3:
+            return
+        task = asyncio.create_task(
+            _extract_memory_preferences(user_id, messages_snapshot)
+        )
+        memory_extraction_tasks.add(task)
+        task.add_done_callback(memory_extraction_tasks.discard)
 
     # Backtrack detection patterns
     _BACKTRACK_PATTERNS: dict[int, list[str]] = {
@@ -817,6 +893,13 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
             if plan.phase < phase_before_run:
                 await _apply_message_fallbacks(plan, req.message, phase_router)
+
+            _schedule_memory_extraction(
+                user_id=session["user_id"],
+                messages_snapshot=list(messages),
+                from_phase=phase_before_run,
+                to_phase=plan.phase,
+            )
 
             await state_mgr.save(plan)
             await _persist_messages(plan.session_id, messages)
