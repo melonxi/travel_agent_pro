@@ -1,6 +1,8 @@
 # backend/phase/router.py
 from __future__ import annotations
 
+from typing import Any
+
 from opentelemetry import trace
 
 from phase.backtrack import BacktrackService
@@ -69,30 +71,45 @@ class PhaseRouter:
     def get_control_mode(self, phase: int) -> str:
         return PHASE_CONTROL_MODE.get(phase, "conversational")
 
-    def check_and_apply_transition(self, plan: TravelPlanState) -> bool:
+    async def check_and_apply_transition(
+        self,
+        plan: TravelPlanState,
+        hooks: Any | None = None,
+    ) -> bool:
         """Check if plan_state warrants a phase change. Returns True if phase changed."""
         inferred = self.infer_phase(plan)
-        if inferred != plan.phase:
-            tracer = trace.get_tracer("travel-agent-pro")
-            with tracer.start_as_current_span("phase.transition") as span:
-                span.set_attribute(PHASE_FROM, plan.phase)
-                span.set_attribute(PHASE_TO, inferred)
-                span.add_event(
-                    EVENT_PHASE_PLAN_SNAPSHOT,
-                    {
-                        "destination": plan.destination or "",
-                        "dates": (
-                            f"{plan.dates.start} ~ {plan.dates.end}"
-                            if plan.dates
-                            else ""
-                        ),
-                        "daily_plans_count": len(plan.daily_plans),
-                    },
-                )
-                plan.phase = inferred
-                self.sync_phase_state(plan)
-            return True
-        return False
+        if inferred == plan.phase:
+            return False
+
+        if hooks is not None:
+            gate_result = await hooks.run_gate(
+                "before_phase_transition",
+                plan=plan,
+                from_phase=plan.phase,
+                to_phase=inferred,
+            )
+            if not gate_result.allowed:
+                return False
+
+        tracer = trace.get_tracer("travel-agent-pro")
+        with tracer.start_as_current_span("phase.transition") as span:
+            span.set_attribute(PHASE_FROM, plan.phase)
+            span.set_attribute(PHASE_TO, inferred)
+            span.add_event(
+                EVENT_PHASE_PLAN_SNAPSHOT,
+                {
+                    "destination": plan.destination or "",
+                    "dates": (
+                        f"{plan.dates.start} ~ {plan.dates.end}"
+                        if plan.dates
+                        else ""
+                    ),
+                    "daily_plans_count": len(plan.daily_plans),
+                },
+            )
+            plan.phase = inferred
+            self.sync_phase_state(plan)
+        return True
 
     def prepare_backtrack(
         self,

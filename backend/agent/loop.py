@@ -247,8 +247,10 @@ class AgentLoop:
                         and self.phase_router is not None
                         and self.plan is not None
                     ):
-                        phase_changed = self.phase_router.check_and_apply_transition(
-                            self.plan
+                        phase_changed = (
+                            await self.phase_router.check_and_apply_transition(
+                                self.plan, hooks=self.hooks
+                            )
                         )
                         phase_after_batch = self.plan.phase
                         if phase_changed:

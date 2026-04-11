@@ -17,7 +17,9 @@ class FakePhaseRouter:
     def get_prompt(self, phase: int) -> str:
         return f"phase-{phase}-prompt"
 
-    def check_and_apply_transition(self, plan: TravelPlanState) -> bool:
+    async def check_and_apply_transition(
+        self, plan: TravelPlanState, hooks=None
+    ) -> bool:
         if plan.phase == 3:
             return True
         return False

@@ -83,7 +83,7 @@ def _should_replace_dates_with_message_dates(
     return current_start < today <= message_start
 
 
-def _apply_message_fallbacks(
+async def _apply_message_fallbacks(
     plan: TravelPlanState,
     message: str,
     phase_router: PhaseRouter,
@@ -119,7 +119,7 @@ def _apply_message_fallbacks(
         changed = True
 
     if changed:
-        phase_router.check_and_apply_transition(plan)
+        await phase_router.check_and_apply_transition(plan)
 
 
 def create_app(config_path: str = "config.yaml") -> FastAPI:
@@ -816,7 +816,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     )
 
             if plan.phase < phase_before_run:
-                _apply_message_fallbacks(plan, req.message, phase_router)
+                await _apply_message_fallbacks(plan, req.message, phase_router)
 
             await state_mgr.save(plan)
             await _persist_messages(plan.session_id, messages)
