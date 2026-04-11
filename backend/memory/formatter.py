@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any
 
 from memory.models import MemoryItem
+
+
+_MAX_VALUE_LENGTH = 160
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 @dataclass
@@ -27,9 +32,12 @@ def format_memory_context(memory: RetrievedMemory) -> str:
 
 
 def _format_section(title: str, items: list[MemoryItem]) -> str:
-    lines = [f"## {title}"]
+    lines = [f"## {_sanitize_text(title)}"]
     for item in items:
-        lines.append(f"- [{item.domain}] {item.key}: {_format_value(item.value)}")
+        lines.append(
+            f"- [{_sanitize_text(item.domain)}] {_sanitize_text(item.key)}: "
+            f"{_format_value(item.value)}"
+        )
     return "\n".join(lines)
 
 
@@ -37,14 +45,34 @@ def _format_value(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, bool):
-        return str(value).lower()
+        return _sanitize_text(str(value).lower())
     if isinstance(value, (int, float)):
-        return str(value)
+        return _sanitize_text(str(value))
     if isinstance(value, str):
-        return value
+        return _truncate_text(_sanitize_text(value))
     if isinstance(value, dict):
-        parts = [f"{key}={_format_value(value[key])}" for key in sorted(value)]
-        return "；".join(parts)
-    if isinstance(value, (list, tuple, set)):
-        return "、".join(_format_value(item) for item in value)
-    return str(value)
+        parts = [
+            f"{_sanitize_text(str(key))}={_format_value(value[key])}"
+            for key in sorted(value, key=str)
+        ]
+        return _truncate_text(_sanitize_text("；".join(parts)))
+    if isinstance(value, (list, tuple)):
+        return _truncate_text(
+            _sanitize_text("、".join(_format_value(item) for item in value))
+        )
+    return _truncate_text(_sanitize_text(str(value)))
+
+
+def _sanitize_text(value: Any) -> str:
+    text = "" if value is None else str(value)
+    text = text.replace("\n", " ").replace("\t", " ")
+    text = _WHITESPACE_RE.sub(" ", text).strip()
+    text = text.replace("#", "＃")
+    text = re.sub(r"(^|\s)[*-]\s+", r"\1", text)
+    return text
+
+
+def _truncate_text(text: str) -> str:
+    if len(text) <= _MAX_VALUE_LENGTH:
+        return text
+    return f"{text[: _MAX_VALUE_LENGTH - 3]}..."
