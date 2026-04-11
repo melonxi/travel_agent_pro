@@ -60,6 +60,9 @@ def _format_value(value: Any) -> str:
         return _truncate_text(
             _sanitize_text("、".join(_format_value(item) for item in value))
         )
+    if isinstance(value, set):
+        parts = sorted((_format_value(item) for item in value), key=str)
+        return _truncate_text(_sanitize_text("、".join(parts)))
     return _truncate_text(_sanitize_text(str(value)))
 
 
