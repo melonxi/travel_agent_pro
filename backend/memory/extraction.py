@@ -21,6 +21,19 @@ _ALLOWED_CANDIDATE_DOMAINS = {
     "general",
 }
 
+_REQUIRED_CANDIDATE_FIELDS = {
+    "type",
+    "domain",
+    "key",
+    "value",
+    "scope",
+    "polarity",
+    "confidence",
+    "risk",
+    "evidence",
+    "reason",
+}
+
 
 def _coerce_attributes(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
@@ -127,13 +140,18 @@ def parse_candidate_extraction_response(response: str) -> list[MemoryCandidate]:
         if not isinstance(candidate_data, dict):
             continue
         candidate_dict = dict(candidate_data)
+        if any(field not in candidate_dict for field in _REQUIRED_CANDIDATE_FIELDS):
+            continue
         raw_domain = str(candidate_dict.get("domain", "general"))
         if raw_domain not in _ALLOWED_CANDIDATE_DOMAINS:
             candidate_dict["domain"] = "general"
             attributes = _coerce_attributes(candidate_dict.get("attributes", {}))
             attributes["raw_domain"] = raw_domain
             candidate_dict["attributes"] = attributes
-        candidates.append(MemoryCandidate.from_dict(candidate_dict))
+        try:
+            candidates.append(MemoryCandidate.from_dict(candidate_dict))
+        except (TypeError, ValueError, KeyError):
+            continue
     return candidates
 
 
