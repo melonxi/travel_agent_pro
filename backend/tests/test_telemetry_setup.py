@@ -47,6 +47,21 @@ def test_setup_telemetry_disabled():
     assert isinstance(provider, trace.NoOpTracerProvider)
 
 
+def test_setup_telemetry_respects_otel_sdk_disabled(monkeypatch):
+    """OTEL_SDK_DISABLED=true 时应保持 NoOp，方便测试环境禁用 exporter。"""
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    trace.set_tracer_provider(trace.NoOpTracerProvider())
+
+    from telemetry.setup import setup_telemetry
+
+    app = MagicMock()
+    config = TelemetryConfig(enabled=True)
+    setup_telemetry(app, config)
+
+    provider = trace.get_tracer_provider()
+    assert isinstance(provider, trace.NoOpTracerProvider)
+
+
 def test_setup_telemetry_sets_service_name():
     """应在 Resource 中设置 service.name。"""
     from telemetry.setup import setup_telemetry

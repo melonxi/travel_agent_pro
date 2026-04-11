@@ -256,10 +256,11 @@ def test_parse_dates_value_accepts_duration_and_time_window_aliases():
     assert parsed.end == "2026-05-06"
 
 
-def test_apply_message_fallbacks_restores_destination_after_backtrack():
+@pytest.mark.asyncio
+async def test_apply_message_fallbacks_restores_destination_after_backtrack():
     plan = TravelPlanState(session_id="sess_fallback", phase=1)
 
-    _apply_message_fallbacks(
+    await _apply_message_fallbacks(
         plan,
         "换个目的地，我不想去东京了，改成大阪",
         PhaseRouter(),
@@ -270,7 +271,8 @@ def test_apply_message_fallbacks_restores_destination_after_backtrack():
     assert plan.phase == 3
 
 
-def test_apply_message_fallbacks_replaces_stale_dates_from_message():
+@pytest.mark.asyncio
+async def test_apply_message_fallbacks_replaces_stale_dates_from_message():
     plan = TravelPlanState(
         session_id="sess_dates",
         phase=3,
@@ -278,7 +280,7 @@ def test_apply_message_fallbacks_replaces_stale_dates_from_message():
         dates=DateRange(start="2025-05-01", end="2025-05-05"),
     )
 
-    _apply_message_fallbacks(
+    await _apply_message_fallbacks(
         plan,
         "我想五一去东京玩5天，预算2万元，2个大人",
         PhaseRouter(),
@@ -291,10 +293,11 @@ def test_apply_message_fallbacks_replaces_stale_dates_from_message():
     assert plan.phase == 3
 
 
-def test_apply_message_fallbacks_restores_travelers_from_message():
+@pytest.mark.asyncio
+async def test_apply_message_fallbacks_restores_travelers_from_message():
     plan = TravelPlanState(session_id="sess_travelers", phase=1)
 
-    _apply_message_fallbacks(
+    await _apply_message_fallbacks(
         plan,
         "我想五一去东京玩5天，预算2万元，2个大人",
         PhaseRouter(),

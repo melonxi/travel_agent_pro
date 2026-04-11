@@ -91,7 +91,7 @@ travel_agent_pro/
 │   │   ├── setup.py            # OpenTelemetry TracerProvider + OTLP 导出
 │   │   ├── attributes.py       # 标准化 span 属性与事件名
 │   │   └── decorators.py       # @trace_agent_loop, @trace_tool_call
-│   └── tests/                  # pytest 测试套件 (63 个测试文件)
+│   └── tests/                  # pytest 测试套件 (64 个测试文件)
 │
 ├── frontend/                   # React 前端
 │   ├── src/
@@ -183,7 +183,7 @@ travel_agent_pro/
     │
     ├─ [ToolEngine.execute()/execute_batch()] → 顺序/并行调度工具，yield TOOL_RESULT 事件
     │
-    ├─ [PhaseRouter.check_and_apply_transition()] → 检测阶段变化
+    ├─ [PhaseRouter.check_and_apply_transition()] → 异步阶段变化检测 + before_phase_transition 质量门控
     │
     ├─ [Hook: after_tool_call]
     │   ├─ validator.validate_hard_constraints() → 时间/预算/天数
