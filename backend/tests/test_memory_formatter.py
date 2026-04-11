@@ -24,14 +24,14 @@ def make_item(**overrides):
 def test_format_memory_context_returns_empty_message_for_no_memory():
     from memory.formatter import RetrievedMemory, format_memory_context
 
-    assert format_memory_context(RetrievedMemory()) == "暂无相关用户记忆"
+    assert format_memory_context(RetrievedMemory(core=[], trip=[], phase=[])) == "暂无相关用户记忆"
 
 
 def test_format_memory_context_renders_three_sections_and_formats_values():
     from memory.formatter import RetrievedMemory, format_memory_context
 
     memory = RetrievedMemory(
-        core_profile=[
+        core=[
             make_item(
                 id="core-1",
                 domain="food",
@@ -39,7 +39,7 @@ def test_format_memory_context_renders_three_sections_and_formats_values():
                 value=["粤菜", "日料"],
             ),
         ],
-        trip_memory=[
+        trip=[
             make_item(
                 id="trip-1",
                 scope="trip",
@@ -49,7 +49,7 @@ def test_format_memory_context_renders_three_sections_and_formats_values():
                 value={"children": 1, "adults": 2},
             )
         ],
-        phase_relevant=[
+        phase=[
             make_item(
                 id="phase-1",
                 domain="budget",
@@ -66,6 +66,8 @@ def test_format_memory_context_renders_three_sections_and_formats_values():
     assert "## 当前阶段相关历史" in text
     assert "粤菜、日料" in text
     assert "adults=2；children=1" in text
+    assert "- [food] cuisine_likes: 粤菜、日料" in text
+    assert "- [family] travelers: adults=2；children=1" in text
     assert text.index("## 核心用户画像") < text.index("## 本次旅行记忆") < text.index("## 当前阶段相关历史")
 
 
@@ -73,7 +75,7 @@ def test_format_memory_context_skips_empty_sections():
     from memory.formatter import RetrievedMemory, format_memory_context
 
     memory = RetrievedMemory(
-        trip_memory=[make_item(id="trip-1", scope="trip", trip_id="trip-1")],
+        trip=[make_item(id="trip-1", scope="trip", trip_id="trip-1")],
     )
 
     text = format_memory_context(memory)

@@ -139,9 +139,25 @@ def test_retrieve_phase_relevant_filters_domains_and_trip_scope():
         make_item(id="accessibility", domain="accessibility", confidence=0.7),
         make_item(id="hotel", domain="hotel", confidence=0.99),
         make_item(id="flight", domain="flight", confidence=0.88, scope="trip", trip_id="trip-2"),
+        make_item(id="trip-no-id", domain="budget", scope="trip", trip_id=None),
         make_item(id="irrelevant", domain="planning_style", confidence=0.77),
     ]
 
     result = retriever.retrieve_phase_relevant(items, plan, phase=5, limit=8)
 
     assert [item.id for item in result] == ["family", "pace", "budget", "food", "accessibility"]
+
+
+def test_retrieve_phase_relevant_does_not_return_trip_items_without_matching_trip_id():
+    from memory.retriever import MemoryRetriever
+
+    retriever = MemoryRetriever()
+    plan = SimpleNamespace(trip_id=None)
+    items = [
+        make_item(id="global", domain="pace", scope="global"),
+        make_item(id="trip-empty", domain="budget", scope="trip", trip_id=None),
+    ]
+
+    result = retriever.retrieve_phase_relevant(items, plan, phase=5, limit=8)
+
+    assert [item.id for item in result] == ["global"]
