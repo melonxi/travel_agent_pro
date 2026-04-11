@@ -154,6 +154,76 @@ class TestParseCandidateExtractionResponse:
         assert candidates[0].domain == "general"
         assert candidates[0].attributes["raw_domain"] == "unknown_domain"
 
+    def test_malformed_confidence_candidate_returns_empty(self):
+        response = """
+        [
+          {
+            "type": "preference",
+            "domain": "food",
+            "key": "spicy",
+            "value": "no spicy food",
+            "scope": "trip",
+            "polarity": "neutral",
+            "confidence": "high",
+            "risk": "low",
+            "evidence": "我不吃辣",
+            "reason": "用户明确表达"
+          }
+        ]
+        """
+        assert parse_candidate_extraction_response(response) == []
+
+    def test_missing_required_fields_candidate_returns_empty(self):
+        response = """
+        [
+          {
+            "type": "preference",
+            "domain": "food",
+            "key": "spicy",
+            "value": "no spicy food",
+            "scope": "trip",
+            "polarity": "neutral",
+            "confidence": 0.8,
+            "risk": "low"
+          }
+        ]
+        """
+        assert parse_candidate_extraction_response(response) == []
+
+    def test_mixed_candidates_keeps_valid_ones(self):
+        response = """
+        [
+          {
+            "type": "preference",
+            "domain": "food",
+            "key": "spicy",
+            "value": "no spicy food",
+            "scope": "trip",
+            "polarity": "neutral",
+            "confidence": "high",
+            "risk": "low",
+            "evidence": "我不吃辣",
+            "reason": "用户明确表达"
+          },
+          {
+            "type": "preference",
+            "domain": "hotel",
+            "key": "room",
+            "value": "high floor",
+            "scope": "trip",
+            "polarity": "neutral",
+            "confidence": 0.7,
+            "risk": "medium",
+            "evidence": "想住高楼层",
+            "reason": "用户明确表达"
+          }
+        ]
+        """
+        candidates = parse_candidate_extraction_response(response)
+        assert len(candidates) == 1
+        assert candidates[0].domain == "hotel"
+        assert candidates[0].key == "room"
+
     def test_invalid_json_returns_empty(self):
         assert parse_candidate_extraction_response("not json") == []
 
