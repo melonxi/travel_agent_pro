@@ -178,6 +178,7 @@ def test_document_phrases_are_dropped():
     assert policy.classify(make_candidate(value="护照号 E12345678")) == "drop"
     assert policy.classify(make_candidate(value="passport number E12345678")) == "drop"
     assert policy.classify(make_candidate(value="身份证 X")) == "drop"
+    assert policy.classify(make_candidate(value="id number X")) == "drop"
 
 
 def test_merge_same_scalar_conflict_obsoletes_existing_and_marks_incoming():
