@@ -22,6 +22,7 @@
 | 可观测性 | OpenTelemetry + Jaeger (OTLP gRPC on :4317, UI on :16686) |
 | 测试 | pytest + pytest-asyncio (后端), Playwright (E2E) |
 | 外部服务 | Tavily (Web 搜索), 小红书 CLI, FlyAI CLI, Google Maps, Amadeus, OpenWeather |
+| Agent 智能层配置 | quality_gate, parallel_tool_execution, memory_extraction, guardrails |
 
 ---
 
@@ -33,9 +34,11 @@ travel_agent_pro/
 │   ├── main.py                 # FastAPI 入口 (856 行), API 端点, 会话管理, SSE 流
 │   ├── config.py               # 配置加载 (.env + config.yaml), 多 LLM 按阶段切换
 │   ├── agent/                  # Agent 循环引擎
-│   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复 (568 行)
+│   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复，集成自省/强制工具/护栏/读工具批量执行
 │   │   ├── compaction.py       # 上下文压缩: token 预算计算、渐进式压缩
 │   │   ├── hooks.py            # 钩子系统 (before_llm_call, after_tool_call)
+│   │   ├── reflection.py       # ReflectionInjector: 关键阶段自省 prompt 注入
+│   │   ├── tool_choice.py      # ToolChoiceDecider: 强制 update_plan_state 调用判定
 │   │   └── types.py            # Message, ToolCall, ToolResult 数据类
 │   ├── llm/                    # LLM 抽象层
 │   │   ├── base.py             # LLMProvider Protocol (chat, count_tokens, get_context_window)
@@ -49,7 +52,8 @@ travel_agent_pro/
 │   │   └── intake.py           # 自然语言 → 旅行事实提取 (日期/预算/人数)
 │   ├── memory/                 # 用户记忆
 │   │   ├── models.py           # UserMemory: 偏好、历史、排除项
-│   │   └── manager.py          # MemoryManager: 用户维度持久化
+│   │   ├── manager.py          # MemoryManager: 用户维度持久化
+│   │   └── extraction.py       # Memory Extraction: 从对话中提取持久偏好
 │   ├── context/                # 上下文管理
 │   │   ├── manager.py          # ContextManager: 系统提示构建、运行时注入、压缩决策 (386 行)
 │   │   └── soul.md             # Agent 人格定义 (启动时加载)
@@ -59,7 +63,7 @@ travel_agent_pro/
 │   │   └── backtrack.py        # BacktrackService: 回退至早期阶段
 │   ├── tools/                  # 领域工具 (24+ 个)
 │   │   ├── base.py             # @tool 装饰器, ToolDef, ToolError
-│   │   ├── engine.py           # ToolEngine: 注册/执行/阶段过滤
+│   │   ├── engine.py           # ToolEngine: 注册/执行/批量调度/阶段过滤
 │   │   ├── update_plan_state.py # 核心状态写入工具 (394 行)
 │   │   ├── xiaohongshu_search.py # 小红书搜索/阅读/评论
 │   │   ├── web_search.py       # Tavily 网页搜索
@@ -81,13 +85,14 @@ travel_agent_pro/
 │   │   ├── message_store.py    # 消息读写 (按 seq 排序)
 │   │   └── archive_store.py    # 快照与归档
 │   ├── harness/                # 质量守护
+│   │   ├── guardrail.py        # 输入/输出护栏 (提示注入、日期、预算、结果异常)
 │   │   ├── validator.py        # 硬约束检查 (时间冲突/预算超支/天数超限)
 │   │   └── judge.py            # 软评分 (pace/geography/coherence/personalization 各1-5)
 │   ├── telemetry/              # 可观测性
 │   │   ├── setup.py            # OpenTelemetry TracerProvider + OTLP 导出
 │   │   ├── attributes.py       # 标准化 span 属性与事件名
 │   │   └── decorators.py       # @trace_agent_loop, @trace_tool_call
-│   └── tests/                  # pytest 测试套件 (62 个测试文件)
+│   └── tests/                  # pytest 测试套件 (65 个测试文件)
 │
 ├── frontend/                   # React 前端
 │   ├── src/
@@ -116,7 +121,7 @@ travel_agent_pro/
 ├── docs/                       # 架构文档与学习笔记
 ├── scripts/                    # dev.sh (启动) + dev-stop.sh (停止)
 ├── data/sessions/              # 会话文件 (plan.json 快照)
-├── config.yaml                 # 运行时配置 (LLM/API/阈值)
+├── config.yaml                 # 运行时配置 (LLM/API/智能层开关/阈值)
 ├── docker-compose.observability.yml # Jaeger 一键启动
 ├── e2e-test.spec.ts            # Playwright E2E 测试
 ├── AGENTS.md                   # AI Agent 项目规范
@@ -159,6 +164,17 @@ travel_agent_pro/
 - 自动转换 + 遥测事件记录
 - 支持 Backtrack（回退至早期阶段，清除下游数据）
 
+### Agent 智能层（可插拔）
+
+| 模块 | 定位 | 触发时机 |
+|------|------|---------|
+| Evaluator-Optimizer | 阶段转换质量门控：硬约束阻断，Phase 3→5 / 5→7 软评分低于阈值时注入修正建议，评分器不可用时放行 | before_phase_transition hook |
+| Reflection | 被动式自省提示，会话级去重 | before_llm_call (步骤切换时) |
+| Parallel Tool Exec | 读写分离并行调度 | 工具批量执行时 |
+| Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
+| Memory Extraction | 自动偏好提取 | Phase 1→3 转换后 |
+| Tool Guardrails | 输入/输出护栏，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
+
 ---
 
 ## 5. 核心数据流
@@ -172,13 +188,15 @@ travel_agent_pro/
     │
     ├─ [Hook: before_llm_call]
     │   ├─ ContextManager.build_system_message() → 注入 soul + 阶段提示 + 状态快照
+    │   ├─ ReflectionInjector.check_and_inject() → 在 Phase 3 lock / Phase 5 complete 注入自检提示
     │   └─ compact_messages_for_prompt() → token 预算内渐进压缩
     │
+    ├─ [ToolChoiceDecider] → 关键决策点可强制 update_plan_state
     ├─ [LLMProvider.chat()] → 流式输出 text_delta + tool_calls
     │
-    ├─ [ToolEngine.execute()] → 顺序执行工具，yield TOOL_RESULT 事件
+    ├─ [ToolGuardrail + ToolEngine.execute()/execute_batch()] → 工具护栏 + 顺序/并行调度，yield TOOL_RESULT 事件
     │
-    ├─ [PhaseRouter.check_and_apply_transition()] → 检测阶段变化
+    ├─ [PhaseRouter.check_and_apply_transition()] → 异步阶段变化检测 + before_phase_transition 质量门控
     │
     ├─ [Hook: after_tool_call]
     │   ├─ validator.validate_hard_constraints() → 时间/预算/天数
@@ -240,6 +258,10 @@ llm_overrides:
 - `ToolEngine`：按阶段+子步骤过滤可用工具，传递给 LLM
 - 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM
 
+### 工具读写分类
+- `side_effect="read"`：搜索/查询类（默认），可并行执行
+- `side_effect="write"`：`update_plan_state`, `assemble_day_plan`, `generate_summary`，顺序执行
+
 ### Phase 3 工具门控
 ```
 brief     → update_plan_state, web_search, xiaohongshu_search
@@ -252,6 +274,7 @@ lock      → + search_flights, search_trains, search_accommodations
 | 类别 | 工具 | 说明 |
 |------|------|------|
 | 状态 | `update_plan_state` | 核心状态写入 (394 行), 冗余检测 |
+| 决策 | `tool_choice.py` | 根据阶段和对话内容决定是否强制 `update_plan_state` |
 | 搜索 | `xiaohongshu_search`, `web_search`, `quick_travel_search` | 信息获取 |
 | 交通 | `search_flights`, `search_trains`, `calculate_route` | 路线规划 |
 | 住宿 | `search_accommodations` | 酒店搜索 |
@@ -421,15 +444,21 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | 规则驱动阶段转换摘要 | 去掉额外 LLM 调用，降延迟降成本 |
 | 回退快照 | 每次阶段转换存档，支持历史回溯 |
 | Hook 系统 | 软评分/验证/压缩与核心循环解耦 |
+| Evaluator-Optimizer | 阶段转换前质量门控，硬约束错误阻断；软评分低于阈值时按 `max_retries` 注入修改建议，评分器异常不阻断主流程 |
+| Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
+| 并行工具执行 | 读写分离，搜索类并行，状态更新顺序 |
+| Forced Tool Choice | 关键决策点强制工具调用，渐进替代 State Repair |
+| Memory Extraction | Phase 1→3 时用低成本模型异步提取持久偏好 |
+| Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
 
 ---
 
 ## 17. 测试体系
 
-- **后端单元测试**：62 个文件，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、API
+- **后端单元测试**：65 个文件，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、API
 - **E2E 测试**：Playwright, Phase 1 目的地推荐流程 (3 分钟超时)
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---
 
-*最后更新：2026-04-10 | 当前 HEAD: 见 `git log --oneline -1`*
+*最后更新：2026-04-11 | 当前 HEAD: 见 `git log --oneline -1`*

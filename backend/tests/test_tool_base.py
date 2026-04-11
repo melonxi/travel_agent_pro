@@ -67,3 +67,19 @@ def test_tool_to_schema():
     assert schema["name"] == "search"
     assert schema["description"] == "Search things"
     assert schema["parameters"]["properties"]["q"]["type"] == "string"
+
+
+def test_tool_def_default_side_effect():
+    @tool(name="read_tool", description="test", phases=[1], parameters={})
+    async def my_tool():
+        return {}
+
+    assert my_tool.side_effect == "read"
+
+
+def test_tool_def_custom_side_effect():
+    @tool(name="write_tool", description="test", phases=[1], parameters={}, side_effect="write")
+    async def my_tool():
+        return {}
+
+    assert my_tool.side_effect == "write"

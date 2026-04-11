@@ -122,3 +122,174 @@ async def test_streaming_with_tools_falls_back_to_nonstream_create(provider):
     assert chunks[1].tool_call is not None
     assert chunks[1].tool_call.name == "update_plan_state"
     assert chunks[-1].type == ChunkType.DONE
+
+
+@pytest.mark.asyncio
+async def test_chat_converts_tool_choice_when_tools_are_present(provider):
+    mock_response = MagicMock()
+    mock_response.content = []
+
+    with patch("llm.anthropic_provider.AsyncAnthropic") as MockClient:
+        instance = MockClient.return_value
+        instance.messages.create = AsyncMock(return_value=mock_response)
+        instance.messages.stream = MagicMock()
+        test_provider = AnthropicProvider(
+            model="claude-sonnet-4-20250514",
+            temperature=0.7,
+            max_tokens=4096,
+        )
+
+        chunks = [
+            chunk
+            async for chunk in test_provider.chat(
+                [Message(role=Role.USER, content="hi")],
+                tools=[
+                    {
+                        "name": "search_flights",
+                        "description": "Search flights",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+                tool_choice="auto",
+                stream=True,
+            )
+        ]
+
+    assert chunks[-1].type == ChunkType.DONE
+    assert instance.messages.create.await_args.kwargs["tool_choice"] == {"type": "auto"}
+
+
+@pytest.mark.asyncio
+async def test_chat_converts_named_function_tool_choice(provider):
+    mock_response = MagicMock()
+    mock_response.content = []
+
+    with patch("llm.anthropic_provider.AsyncAnthropic") as MockClient:
+        instance = MockClient.return_value
+        instance.messages.create = AsyncMock(return_value=mock_response)
+        instance.messages.stream = MagicMock()
+        test_provider = AnthropicProvider(
+            model="claude-sonnet-4-20250514",
+            temperature=0.7,
+            max_tokens=4096,
+        )
+
+        chunks = [
+            chunk
+            async for chunk in test_provider.chat(
+                [Message(role=Role.USER, content="hi")],
+                tools=[
+                    {
+                        "name": "search_flights",
+                        "description": "Search flights",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+                tool_choice={"type": "function", "function": {"name": "search_flights"}},
+                stream=True,
+            )
+        ]
+
+    assert chunks[-1].type == ChunkType.DONE
+    assert instance.messages.create.await_args.kwargs["tool_choice"] == {
+        "type": "tool",
+        "name": "search_flights",
+    }
+
+
+@pytest.mark.asyncio
+async def test_chat_converts_required_tool_choice(provider):
+    mock_response = MagicMock()
+    mock_response.content = []
+
+    with patch("llm.anthropic_provider.AsyncAnthropic") as MockClient:
+        instance = MockClient.return_value
+        instance.messages.create = AsyncMock(return_value=mock_response)
+        instance.messages.stream = MagicMock()
+        test_provider = AnthropicProvider(
+            model="claude-sonnet-4-20250514",
+            temperature=0.7,
+            max_tokens=4096,
+        )
+
+        chunks = [
+            chunk
+            async for chunk in test_provider.chat(
+                [Message(role=Role.USER, content="hi")],
+                tools=[
+                    {
+                        "name": "search_flights",
+                        "description": "Search flights",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+                tool_choice="required",
+                stream=True,
+            )
+        ]
+
+    assert chunks[-1].type == ChunkType.DONE
+    assert instance.messages.create.await_args.kwargs["tool_choice"] == {"type": "any"}
+
+
+@pytest.mark.asyncio
+async def test_chat_converts_none_tool_choice(provider):
+    mock_response = MagicMock()
+    mock_response.content = []
+
+    with patch("llm.anthropic_provider.AsyncAnthropic") as MockClient:
+        instance = MockClient.return_value
+        instance.messages.create = AsyncMock(return_value=mock_response)
+        instance.messages.stream = MagicMock()
+        test_provider = AnthropicProvider(
+            model="claude-sonnet-4-20250514",
+            temperature=0.7,
+            max_tokens=4096,
+        )
+
+        chunks = [
+            chunk
+            async for chunk in test_provider.chat(
+                [Message(role=Role.USER, content="hi")],
+                tools=[
+                    {
+                        "name": "search_flights",
+                        "description": "Search flights",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+                tool_choice="none",
+                stream=True,
+            )
+        ]
+
+    assert chunks[-1].type == ChunkType.DONE
+    assert "tool_choice" not in instance.messages.create.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_chat_does_not_send_tool_choice_without_tools(provider):
+    mock_response = MagicMock()
+    mock_response.content = []
+
+    with patch("llm.anthropic_provider.AsyncAnthropic") as MockClient:
+        instance = MockClient.return_value
+        instance.messages.create = AsyncMock(return_value=mock_response)
+        instance.messages.stream = MagicMock()
+        test_provider = AnthropicProvider(
+            model="claude-sonnet-4-20250514",
+            temperature=0.7,
+            max_tokens=4096,
+        )
+
+        chunks = [
+            chunk
+            async for chunk in test_provider.chat(
+                [Message(role=Role.USER, content="hi")],
+                tool_choice="auto",
+                stream=False,
+            )
+        ]
+
+    assert chunks[-1].type == ChunkType.DONE
+    assert "tool_choice" not in instance.messages.create.await_args.kwargs

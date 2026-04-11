@@ -1,8 +1,10 @@
 # backend/main.py
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -16,16 +18,24 @@ from agent.compaction import (
     compute_prompt_budget,
     estimate_messages_tokens,
 )
-from agent.hooks import HookManager
+from agent.hooks import GateResult, HookManager
 from agent.loop import AgentLoop
+from agent.reflection import ReflectionInjector
+from agent.tool_choice import ToolChoiceDecider
 from agent.types import Message, Role, ToolCall, ToolResult
 from config import load_config
 from telemetry import setup_telemetry
 from context.manager import ContextManager
+from harness.guardrail import ToolGuardrail
 from harness.judge import build_judge_prompt, parse_judge_response
 from harness.validator import validate_hard_constraints
 from llm.factory import create_llm_provider
 from llm.types import ChunkType
+from memory.extraction import (
+    MemoryMerger,
+    build_extraction_prompt,
+    parse_extraction_response,
+)
 from memory.manager import MemoryManager
 from phase.router import PhaseRouter
 from storage.archive_store import ArchiveStore
@@ -83,7 +93,7 @@ def _should_replace_dates_with_message_dates(
     return current_start < today <= message_start
 
 
-def _apply_message_fallbacks(
+async def _apply_message_fallbacks(
     plan: TravelPlanState,
     message: str,
     phase_router: PhaseRouter,
@@ -119,7 +129,7 @@ def _apply_message_fallbacks(
         changed = True
 
     if changed:
-        phase_router.check_and_apply_transition(plan)
+        await phase_router.check_and_apply_transition(plan)
 
 
 def create_app(config_path: str = "config.yaml") -> FastAPI:
@@ -134,6 +144,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
     # Session-level caches
     sessions: dict[str, dict] = {}  # session_id → {plan, messages, agent}
+    memory_extraction_tasks: set[asyncio.Task] = set()
+    reflection_cache: dict[str, ReflectionInjector] = {}
+    quality_gate_retries: dict[tuple[str, int, int], int] = {}
     db = Database(db_path=str(Path(config.data_dir) / "sessions.db"))
     session_store = SessionStore(db)
     message_store = MessageStore(db)
@@ -161,6 +174,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         await db.initialize()
         await _probe_context_window()
         yield
+        for task in list(memory_extraction_tasks):
+            task.cancel()
         await db.close()
 
     app = FastAPI(title="Travel Agent Pro", lifespan=lifespan)
@@ -174,7 +189,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
     def _build_agent(plan, user_id: str, compression_events: list[dict] | None = None):
         llm = create_llm_provider(config.llm)
-        llm_factory = lambda: create_llm_provider(config.llm)
+
+        def llm_factory(model: str | None = None):
+            llm_config = replace(config.llm, model=model) if model else config.llm
+            return create_llm_provider(llm_config)
+
         tool_engine = ToolEngine()
 
         # Create FlyAI client if enabled
@@ -373,6 +392,80 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         hooks.register("after_tool_call", on_validate)
         hooks.register("after_tool_call", on_soft_judge)
 
+        async def on_before_phase_transition(**kwargs):
+            target_plan = kwargs.get("plan", plan)
+            from_phase = int(kwargs.get("from_phase", target_plan.phase))
+            to_phase = int(kwargs.get("to_phase", from_phase))
+            session = sessions.get(target_plan.session_id)
+
+            errors = validate_hard_constraints(target_plan)
+            if errors:
+                feedback = "[质量门控]\n硬约束冲突，必须修正：\n" + "\n".join(
+                    f"- {error}" for error in errors
+                )
+                if session:
+                    session["messages"].append(
+                        Message(role=Role.SYSTEM, content=feedback)
+                    )
+                return GateResult(allowed=False, feedback=feedback)
+
+            if (from_phase, to_phase) not in {(3, 5), (5, 7)}:
+                return GateResult(allowed=True)
+
+            try:
+                prefs = {p.key: p.value for p in target_plan.preferences}
+                prompt_text = build_judge_prompt(target_plan.to_dict(), prefs)
+                judge_llm = create_llm_provider(config.llm)
+                judge_msgs = [
+                    Message(role=Role.SYSTEM, content="你是旅行行程质量评估专家。"),
+                    Message(role=Role.USER, content=prompt_text),
+                ]
+                result_parts: list[str] = []
+                async for chunk in judge_llm.chat(judge_msgs, tools=[], stream=True):
+                    if chunk.content:
+                        result_parts.append(chunk.content)
+                score = parse_judge_response("".join(result_parts))
+            except Exception:
+                return GateResult(allowed=True)
+            if score.overall >= config.quality_gate.threshold:
+                quality_gate_retries.pop(
+                    (target_plan.session_id, from_phase, to_phase),
+                    None,
+                )
+                return GateResult(allowed=True)
+
+            retry_key = (target_plan.session_id, from_phase, to_phase)
+            retry_count = quality_gate_retries.get(retry_key, 0)
+            if retry_count >= config.quality_gate.max_retries:
+                quality_gate_retries.pop(retry_key, None)
+                return GateResult(allowed=True)
+
+            quality_gate_retries[retry_key] = retry_count + 1
+            suggestions = score.suggestions or [
+                "请根据当前旅行画像补强方案质量后再推进阶段。"
+            ]
+            suggestion_text = "\n".join(f"- {suggestion}" for suggestion in suggestions)
+            feedback = (
+                f"[质量门控]\n当前方案评分 {score.overall:.1f}/5，"
+                f"低于阈值 {config.quality_gate.threshold:.1f}。"
+                f"请修正后再进入 Phase {to_phase}：\n{suggestion_text}"
+            )
+            if session:
+                session["messages"].append(
+                    Message(role=Role.SYSTEM, content=feedback)
+                )
+            return GateResult(allowed=False, feedback=feedback)
+
+        hooks.register_gate("before_phase_transition", on_before_phase_transition)
+
+        reflection = reflection_cache.setdefault(plan.session_id, ReflectionInjector())
+        tool_choice_decider = ToolChoiceDecider()
+        guardrail = (
+            ToolGuardrail(disabled_rules=config.guardrails.disabled_rules)
+            if config.guardrails.enabled
+            else None
+        )
+
         return AgentLoop(
             llm=llm,
             tool_engine=tool_engine,
@@ -385,7 +478,62 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             memory_mgr=memory_mgr,
             user_id=user_id,
             compression_events=compression_events,
+            reflection=reflection,
+            tool_choice_decider=tool_choice_decider,
+            guardrail=guardrail,
+            parallel_tool_execution=config.parallel_tool_execution,
         )
+
+    async def _extract_memory_preferences(
+        user_id: str,
+        messages_snapshot: list[Message],
+    ) -> None:
+        if not config.memory_extraction.enabled:
+            return
+        user_messages = [
+            message.content
+            for message in messages_snapshot
+            if message.role == Role.USER and message.content
+        ]
+        if not user_messages:
+            return
+
+        try:
+            memory = await memory_mgr.load(user_id)
+            prompt = build_extraction_prompt(user_messages, memory)
+            extraction_llm = create_llm_provider(
+                replace(config.llm, model=config.memory_extraction.model)
+            )
+            response_parts: list[str] = []
+            async for chunk in extraction_llm.chat(
+                [Message(role=Role.USER, content=prompt)],
+                tools=[],
+                stream=False,
+            ):
+                if chunk.content:
+                    response_parts.append(chunk.content)
+            preferences, rejections = parse_extraction_response(
+                "".join(response_parts)
+            )
+            merged = MemoryMerger().merge(memory, preferences, rejections)
+            await memory_mgr.save(merged)
+        except Exception:
+            return
+
+    def _schedule_memory_extraction(
+        *,
+        user_id: str,
+        messages_snapshot: list[Message],
+        from_phase: int,
+        to_phase: int,
+    ) -> None:
+        if from_phase != 1 or to_phase != 3:
+            return
+        task = asyncio.create_task(
+            _extract_memory_preferences(user_id, messages_snapshot)
+        )
+        memory_extraction_tasks.add(task)
+        task.add_done_callback(memory_extraction_tasks.discard)
 
     # Backtrack detection patterns
     _BACKTRACK_PATTERNS: dict[int, list[str]] = {
@@ -593,6 +741,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found")
         await session_store.soft_delete(session_id)
         sessions.pop(session_id, None)
+        reflection_cache.pop(session_id, None)
+        for key in list(quality_gate_retries):
+            if key[0] == session_id:
+                quality_gate_retries.pop(key, None)
         return {"status": "deleted"}
 
     @app.get("/api/messages/{session_id}")
@@ -816,7 +968,14 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     )
 
             if plan.phase < phase_before_run:
-                _apply_message_fallbacks(plan, req.message, phase_router)
+                await _apply_message_fallbacks(plan, req.message, phase_router)
+
+            _schedule_memory_extraction(
+                user_id=session["user_id"],
+                messages_snapshot=list(messages),
+                from_phase=phase_before_run,
+                to_phase=plan.phase,
+            )
 
             await state_mgr.save(plan)
             await _persist_messages(plan.session_id, messages)

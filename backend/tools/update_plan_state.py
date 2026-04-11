@@ -214,6 +214,7 @@ Important:
   - 对 dates、budget、travelers 这类字段，优先传明确结构化值；如果传入不可解析的值，当前实现可能会把已有字段覆盖为空值。""",
         phases=[1, 3, 5, 7],
         parameters=_PARAMETERS,
+        side_effect="write",
     )
     async def update_plan_state(field: str, value: Any) -> dict:
         if field not in _ALLOWED_FIELDS:

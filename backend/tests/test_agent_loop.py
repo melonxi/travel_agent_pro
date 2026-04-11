@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from agent.hooks import HookManager
 from agent.loop import AgentLoop
 from agent.types import Message, Role, ToolCall, ToolResult
+from harness.guardrail import GuardrailResult
 from llm.types import ChunkType, LLMChunk
 from phase.router import PhaseRouter
 from state.models import Accommodation, BacktrackEvent, DateRange, TravelPlanState
@@ -17,7 +18,9 @@ class FakePhaseRouter:
     def get_prompt(self, phase: int) -> str:
         return f"phase-{phase}-prompt"
 
-    def check_and_apply_transition(self, plan: TravelPlanState) -> bool:
+    async def check_and_apply_transition(
+        self, plan: TravelPlanState, hooks=None
+    ) -> bool:
         if plan.phase == 3:
             return True
         return False
@@ -214,6 +217,203 @@ async def test_hooks_called(agent, mock_llm, hooks):
 
 
 @pytest.mark.asyncio
+async def test_tool_choice_decider_result_is_passed_to_llm(engine, hooks):
+    plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
+    forced_choice = {"type": "function", "function": {"name": "update_plan_state"}}
+
+    class FakeToolChoiceDecider:
+        def decide(self, plan_arg, messages_arg, phase_arg):
+            assert plan_arg is plan
+            assert phase_arg == 3
+            return forced_choice
+
+    observed: dict[str, object] = {}
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        observed["tool_choice"] = tool_choice
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="ok")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=hooks,
+        plan=plan,
+        tool_choice_decider=FakeToolChoiceDecider(),
+    )
+
+    async for _ in agent.run([Message(role=Role.USER, content="继续")], phase=3):
+        pass
+
+    assert observed["tool_choice"] == forced_choice
+
+
+@pytest.mark.asyncio
+async def test_reflection_message_is_injected_before_llm_call(engine, hooks):
+    plan = TravelPlanState(session_id="s1", phase=3, phase3_step="lock")
+
+    class FakeReflection:
+        def check_and_inject(self, messages, plan_arg, prev_step):
+            assert plan_arg is plan
+            return "[自检] 请先检查方案"
+
+    observed_messages: list[str | None] = []
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        observed_messages.extend(message.content for message in messages)
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="ok")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=hooks,
+        plan=plan,
+        reflection=FakeReflection(),
+    )
+
+    async for _ in agent.run([Message(role=Role.USER, content="继续")], phase=3):
+        pass
+
+    assert "[自检] 请先检查方案" in observed_messages
+
+
+@pytest.mark.asyncio
+async def test_guardrail_rejects_tool_input_before_execution(hooks):
+    executed: list[str] = []
+
+    @tool(
+        name="dangerous",
+        description="danger",
+        phases=[1],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def dangerous() -> dict:
+        executed.append("dangerous")
+        return {"ok": True}
+
+    class RejectingGuardrail:
+        def validate_input(self, tc):
+            return GuardrailResult(allowed=False, reason="blocked")
+
+        def validate_output(self, tool_name, data):
+            return GuardrailResult()
+
+    engine = ToolEngine()
+    engine.register(dangerous)
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(id="tc1", name="dangerous", arguments={}),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=hooks,
+        plan=TravelPlanState(session_id="s1", phase=1),
+        guardrail=RejectingGuardrail(),
+    )
+
+    chunks = [
+        chunk
+        async for chunk in agent.run([Message(role=Role.USER, content="run")], phase=1)
+    ]
+
+    tool_results = [
+        chunk.tool_result
+        for chunk in chunks
+        if chunk.type == ChunkType.TOOL_RESULT and chunk.tool_result is not None
+    ]
+    assert executed == []
+    assert tool_results[0].status == "skipped"
+    assert tool_results[0].error_code == "GUARDRAIL_REJECTED"
+
+
+@pytest.mark.asyncio
+async def test_consecutive_read_tools_use_execute_batch(hooks):
+    @tool(
+        name="read_one",
+        description="read",
+        phases=[1],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def read_one() -> dict:
+        return {"one": True}
+
+    @tool(
+        name="read_two",
+        description="read",
+        phases=[1],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def read_two() -> dict:
+        return {"two": True}
+
+    class TrackingEngine(ToolEngine):
+        def __init__(self) -> None:
+            super().__init__()
+            self.batch_sizes: list[int] = []
+
+        async def execute_batch(self, calls):
+            self.batch_sizes.append(len(calls))
+            return await super().execute_batch(calls)
+
+    engine = TrackingEngine()
+    engine.register(read_one)
+    engine.register(read_two)
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(id="tc1", name="read_one", arguments={}),
+            )
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(id="tc2", name="read_two", arguments={}),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=hooks,
+        plan=TravelPlanState(session_id="s1", phase=1),
+    )
+
+    async for _ in agent.run([Message(role=Role.USER, content="run")], phase=1):
+        pass
+
+    assert engine.batch_sizes == [2]
+
+
+@pytest.mark.asyncio
 async def test_phase_change_runs_full_batch_then_rebuilds_context():
     plan = TravelPlanState(session_id="s1", phase=1)
     context_manager = FakeContextManager()
@@ -325,6 +525,7 @@ async def test_backtrack_rebuild_uses_hard_boundary_without_compression():
         description="backtrack",
         phases=[5],
         parameters={"type": "object", "properties": {}},
+        side_effect="write",
     )
     async def trigger_backtrack() -> dict:
         plan.phase = 1
@@ -675,6 +876,7 @@ async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
         description="backtrack",
         phases=[5],
         parameters={"type": "object", "properties": {}},
+        side_effect="write",
     )
     async def trigger_backtrack() -> dict:
         executed.append("trigger_backtrack")

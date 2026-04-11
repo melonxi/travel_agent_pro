@@ -178,30 +178,69 @@ class DayPlan:
         )
 
 
-@dataclass
+@dataclass(init=False)
 class Constraint:
     type: str  # "hard" | "soft"
     description: str
+    source: str = ""
+
+    def __init__(
+        self,
+        type: str,
+        description: str,
+        *,
+        source: str = "",
+    ) -> None:
+        self.type = type
+        self.description = description
+        self.source = source
 
     def to_dict(self) -> dict:
-        return {"type": self.type, "description": self.description}
+        data = {"type": self.type, "description": self.description}
+        if self.source:
+            data["source"] = self.source
+        return data
 
     @classmethod
     def from_dict(cls, d: dict) -> Constraint:
-        return cls(type=d["type"], description=d["description"])
+        return cls(type=d["type"], description=d["description"], source=d.get("source", ""))
 
 
-@dataclass
+@dataclass(init=False)
 class Preference:
     key: str
     value: str
+    source: str = ""
+
+    def __init__(
+        self,
+        key: str | None = None,
+        value: str = "",
+        *,
+        category: str | None = None,
+        source: str = "",
+    ) -> None:
+        self.key = str(key if key is not None else category if category is not None else "")
+        self.value = value
+        self.source = source
+
+    @property
+    def category(self) -> str:
+        return self.key
 
     def to_dict(self) -> dict:
-        return {"key": self.key, "value": self.value}
+        data = {"key": self.key, "value": self.value}
+        if self.source:
+            data["source"] = self.source
+        return data
 
     @classmethod
     def from_dict(cls, d: dict) -> Preference:
-        return cls(key=d["key"], value=d["value"])
+        return cls(
+            key=d.get("key") or d.get("category"),
+            value=d.get("value", ""),
+            source=d.get("source", ""),
+        )
 
 
 @dataclass
