@@ -96,3 +96,27 @@ def test_output_price_anomaly_warned_for_non_search_tool(guardrail):
     })
     assert result.level == "warn"
     assert "异常" in result.reason
+
+
+def test_disabled_rule_skips_price_anomaly_warning():
+    guardrail = ToolGuardrail(
+        today=date(2026, 4, 10),
+        disabled_rules=["price_anomaly"],
+    )
+    result = guardrail.validate_output("search_flights", {
+        "results": [{"price": 200000}]
+    })
+    assert result.level == "error"
+    assert result.reason == ""
+
+
+def test_disabled_rule_skips_past_date_rejection():
+    guardrail = ToolGuardrail(
+        today=date(2026, 4, 10),
+        disabled_rules=["past_date"],
+    )
+    tc = ToolCall(id="1", name="search_flights", arguments={
+        "origin": "北京", "destination": "东京", "date": "2025-01-01"
+    })
+    result = guardrail.validate_input(tc)
+    assert result.allowed

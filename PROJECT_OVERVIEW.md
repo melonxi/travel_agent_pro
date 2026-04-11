@@ -168,12 +168,12 @@ travel_agent_pro/
 
 | 模块 | 定位 | 触发时机 |
 |------|------|---------|
-| Evaluator-Optimizer | 阶段转换质量门控 | before_phase_transition hook |
-| Reflection | 被动式自省提示 | before_llm_call (步骤切换时) |
+| Evaluator-Optimizer | 阶段转换质量门控：硬约束阻断，Phase 3→5 / 5→7 软评分低于阈值时注入修正建议，评分器不可用时放行 | before_phase_transition hook |
+| Reflection | 被动式自省提示，会话级去重 | before_llm_call (步骤切换时) |
 | Parallel Tool Exec | 读写分离并行调度 | 工具批量执行时 |
 | Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
 | Memory Extraction | 自动偏好提取 | Phase 1→3 转换后 |
-| Tool Guardrails | 输入/输出护栏 | 工具执行前后 |
+| Tool Guardrails | 输入/输出护栏，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
 
 ---
 
@@ -444,12 +444,12 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | 规则驱动阶段转换摘要 | 去掉额外 LLM 调用，降延迟降成本 |
 | 回退快照 | 每次阶段转换存档，支持历史回溯 |
 | Hook 系统 | 软评分/验证/压缩与核心循环解耦 |
-| Evaluator-Optimizer | 阶段转换前质量门控，不达标阻止转换+注入修改建议 |
-| Reflection 自省 | 被动 system message 注入，零额外 LLM 调用 |
+| Evaluator-Optimizer | 阶段转换前质量门控，硬约束错误阻断；软评分低于阈值时按 `max_retries` 注入修改建议，评分器异常不阻断主流程 |
+| Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
 | 并行工具执行 | 读写分离，搜索类并行，状态更新顺序 |
 | Forced Tool Choice | 关键决策点强制工具调用，渐进替代 State Repair |
 | Memory Extraction | Phase 1→3 时用低成本模型异步提取持久偏好 |
-| Tool Guardrails | 确定性规则校验，不依赖 LLM |
+| Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
 
 ---
 
