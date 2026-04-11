@@ -3,7 +3,29 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from memory.models import Rejection, UserMemory
+from memory.models import MemoryCandidate, MemoryItem, Rejection, UserMemory
+
+
+_ALLOWED_CANDIDATE_DOMAINS = {
+    "pace",
+    "food",
+    "hotel",
+    "flight",
+    "train",
+    "budget",
+    "family",
+    "accessibility",
+    "planning_style",
+    "destination",
+    "documents",
+    "general",
+}
+
+
+def _coerce_attributes(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
 
 
 def build_extraction_prompt(
@@ -32,6 +54,42 @@ def build_extraction_prompt(
 如果没有可提取的内容，输出 {{"preferences": {{}}, "rejections": []}}"""
 
 
+def build_candidate_extraction_prompt(
+    user_messages: list[str],
+    existing_items: list[MemoryItem],
+    plan_facts: dict[str, Any],
+) -> str:
+    messages_text = "\n".join(f"- {message}" for message in user_messages)
+    items_text = json.dumps(
+        [item.to_dict() for item in existing_items], ensure_ascii=False, indent=2
+    )
+    facts_text = json.dumps(plan_facts, ensure_ascii=False, indent=2)
+    allowed_domains_text = ", ".join(sorted(_ALLOWED_CANDIDATE_DOMAINS))
+    return f"""从以下信息中提取**候选 memory items**，用于后续审核与落库。
+
+用户消息：
+{messages_text}
+
+当前解析出的本次行程事实：
+{facts_text}
+
+已有 memory items：
+{items_text}
+
+允许的 domain：
+{allowed_domains_text}
+
+规则：
+- 本次目的地、日期、预算默认不是 global memory
+- 只提取用户明确表达的内容，不推测
+- 禁止提取 PII，包括身份证号、护照号、手机号、邮箱、银行卡号等
+- 如果 domain 不在允许列表中，使用 general
+- 不要重复已有 memory items
+
+严格输出 JSON 数组，每个元素是一个候选对象。
+如果没有候选，输出 []"""
+
+
 def parse_extraction_response(response: str) -> tuple[dict[str, Any], list[dict]]:
     text = response.strip()
     if text.startswith("```"):
@@ -49,6 +107,34 @@ def parse_extraction_response(response: str) -> tuple[dict[str, Any], list[dict]
     if not isinstance(rejections, list):
         rejections = []
     return preferences, rejections
+
+
+def parse_candidate_extraction_response(response: str) -> list[MemoryCandidate]:
+    text = response.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    candidates: list[MemoryCandidate] = []
+    for candidate_data in data:
+        if not isinstance(candidate_data, dict):
+            continue
+        candidate_dict = dict(candidate_data)
+        raw_domain = str(candidate_dict.get("domain", "general"))
+        if raw_domain not in _ALLOWED_CANDIDATE_DOMAINS:
+            candidate_dict["domain"] = "general"
+            attributes = _coerce_attributes(candidate_dict.get("attributes", {}))
+            attributes["raw_domain"] = raw_domain
+            candidate_dict["attributes"] = attributes
+        candidates.append(MemoryCandidate.from_dict(candidate_dict))
+    return candidates
 
 
 class MemoryMerger:
