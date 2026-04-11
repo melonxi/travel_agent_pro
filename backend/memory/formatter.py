@@ -68,10 +68,16 @@ def _format_value(value: Any) -> str:
 
 def _sanitize_text(value: Any) -> str:
     text = "" if value is None else str(value)
-    text = text.replace("\n", " ").replace("\t", " ")
+    lines = []
+    for raw_line in text.splitlines() or [text]:
+        line = raw_line.replace("\t", " ").strip()
+        line = _WHITESPACE_RE.sub(" ", line)
+        if line.startswith("- ") or line.startswith("* "):
+            line = line[2:].lstrip()
+        lines.append(line)
+    text = " ".join(line for line in lines if line)
     text = _WHITESPACE_RE.sub(" ", text).strip()
     text = text.replace("#", "＃")
-    text = re.sub(r"(^|\s)[*-]\s+", r"\1", text)
     return text
 
 

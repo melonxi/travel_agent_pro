@@ -187,3 +187,43 @@ def test_format_memory_context_sanitizes_domain_and_key_markdown():
     assert "attack" in text
     assert "\n## hacked" not in text
     assert "\n- attack" not in text
+
+
+def test_format_memory_context_preserves_inline_punctuation():
+    from memory.formatter import RetrievedMemory, format_memory_context
+
+    memory = RetrievedMemory(
+        core=[
+            make_item(
+                id="core-1",
+                domain="food",
+                key="prefs",
+                value="Paris - Nice and 2 * 3 notes",
+            )
+        ]
+    )
+
+    text = format_memory_context(memory)
+
+    assert "Paris - Nice and 2 * 3 notes" in text
+
+
+def test_format_memory_context_strips_leading_list_marker_only():
+    from memory.formatter import RetrievedMemory, format_memory_context
+
+    memory = RetrievedMemory(
+        core=[
+            make_item(
+                id="core-1",
+                domain="food",
+                key="prefs",
+                value="line1\n- injected",
+            )
+        ]
+    )
+
+    text = format_memory_context(memory)
+
+    assert text.count("\n- [") == 1
+    assert "injected" in text
+    assert "\n- injected" not in text
