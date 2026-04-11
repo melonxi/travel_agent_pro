@@ -164,6 +164,17 @@ travel_agent_pro/
 - 自动转换 + 遥测事件记录
 - 支持 Backtrack（回退至早期阶段，清除下游数据）
 
+### Agent 智能层（可插拔）
+
+| 模块 | 定位 | 触发时机 |
+|------|------|---------|
+| Evaluator-Optimizer | 阶段转换质量门控 | before_phase_transition hook |
+| Reflection | 被动式自省提示 | before_llm_call (步骤切换时) |
+| Parallel Tool Exec | 读写分离并行调度 | 工具批量执行时 |
+| Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
+| Memory Extraction | 自动偏好提取 | Phase 1→3 转换后 |
+| Tool Guardrails | 输入/输出护栏 | 工具执行前后 |
+
 ---
 
 ## 5. 核心数据流
@@ -246,6 +257,10 @@ llm_overrides:
 - `@tool` 装饰器：声明名称、描述、可用阶段、参数 schema
 - `ToolEngine`：按阶段+子步骤过滤可用工具，传递给 LLM
 - 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM
+
+### 工具读写分类
+- `side_effect="read"`：搜索/查询类（默认），可并行执行
+- `side_effect="write"`：`update_plan_state`, `assemble_day_plan`, `generate_summary`，顺序执行
 
 ### Phase 3 工具门控
 ```
@@ -429,15 +444,21 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | 规则驱动阶段转换摘要 | 去掉额外 LLM 调用，降延迟降成本 |
 | 回退快照 | 每次阶段转换存档，支持历史回溯 |
 | Hook 系统 | 软评分/验证/压缩与核心循环解耦 |
+| Evaluator-Optimizer | 阶段转换前质量门控，不达标阻止转换+注入修改建议 |
+| Reflection 自省 | 被动 system message 注入，零额外 LLM 调用 |
+| 并行工具执行 | 读写分离，搜索类并行，状态更新顺序 |
+| Forced Tool Choice | 关键决策点强制工具调用，渐进替代 State Repair |
+| Memory Extraction | Phase 1→3 时用低成本模型异步提取持久偏好 |
+| Tool Guardrails | 确定性规则校验，不依赖 LLM |
 
 ---
 
 ## 17. 测试体系
 
-- **后端单元测试**：62 个文件，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、API
+- **后端单元测试**：65 个文件，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、API
 - **E2E 测试**：Playwright, Phase 1 目的地推荐流程 (3 分钟超时)
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---
 
-*最后更新：2026-04-10 | 当前 HEAD: 见 `git log --oneline -1`*
+*最后更新：2026-04-11 | 当前 HEAD: 见 `git log --oneline -1`*

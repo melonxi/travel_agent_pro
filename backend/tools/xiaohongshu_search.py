@@ -80,6 +80,7 @@ def make_xiaohongshu_search_tool(
     @tool(
         name="xiaohongshu_search",
         description="""小红书内容搜索工具。可搜索笔记、读取笔记正文、获取评论，覆盖旅行推荐、灵感发现、目的地/景点/餐厅/住宿的真实体验、避坑、氛围、玩法口碑等内容。
+提供用户生成内容视角的经验信号；标题不足以支撑判断时应读取正文，评论观点会明显影响判断时再获取评论。
 Supported operations:
   - search_notes: 关键词搜索笔记列表（适合发现和初筛）
   - read_note: 读取笔记正文详情（适合在初筛后对候选笔记进行深入阅读，提炼正文信息）
