@@ -51,7 +51,8 @@ travel_agent_pro/
 │   │   └── intake.py           # 自然语言 → 旅行事实提取 (日期/预算/人数)
 │   ├── memory/                 # 用户记忆
 │   │   ├── models.py           # UserMemory: 偏好、历史、排除项
-│   │   └── manager.py          # MemoryManager: 用户维度持久化
+│   │   ├── manager.py          # MemoryManager: 用户维度持久化
+│   │   └── extraction.py       # Memory Extraction: 从对话中提取持久偏好
 │   ├── context/                # 上下文管理
 │   │   ├── manager.py          # ContextManager: 系统提示构建、运行时注入、压缩决策 (386 行)
 │   │   └── soul.md             # Agent 人格定义 (启动时加载)
@@ -90,7 +91,7 @@ travel_agent_pro/
 │   │   ├── setup.py            # OpenTelemetry TracerProvider + OTLP 导出
 │   │   ├── attributes.py       # 标准化 span 属性与事件名
 │   │   └── decorators.py       # @trace_agent_loop, @trace_tool_call
-│   └── tests/                  # pytest 测试套件 (62 个测试文件)
+│   └── tests/                  # pytest 测试套件 (63 个测试文件)
 │
 ├── frontend/                   # React 前端
 │   ├── src/
