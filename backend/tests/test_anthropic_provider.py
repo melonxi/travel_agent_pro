@@ -264,7 +264,7 @@ async def test_chat_converts_none_tool_choice(provider):
         ]
 
     assert chunks[-1].type == ChunkType.DONE
-    assert instance.messages.create.await_args.kwargs["tool_choice"] == {"type": "none"}
+    assert "tool_choice" not in instance.messages.create.await_args.kwargs
 
 
 @pytest.mark.asyncio

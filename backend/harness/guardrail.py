@@ -28,31 +28,44 @@ class GuardrailResult:
 
 
 class ToolGuardrail:
-    def __init__(self, today: date | None = None):
-        self._today = today or date.today()
+    def __init__(
+        self,
+        today: date | None = None,
+        disabled_rules: list[str] | None = None,
+    ):
+        self._today = today
+        self._disabled_rules = set(disabled_rules or [])
 
     def validate_input(self, tc: ToolCall) -> GuardrailResult:
-        values = self._iter_string_values(tc.arguments)
-        for value in values:
-            if any(pattern.search(value) for pattern in _INJECTION_PATTERNS):
-                return GuardrailResult(allowed=False, reason="检测到提示注入风险", level="error")
+        if not self._is_disabled("prompt_injection"):
+            values = self._iter_string_values(tc.arguments)
+            for value in values:
+                if any(pattern.search(value) for pattern in _INJECTION_PATTERNS):
+                    return GuardrailResult(allowed=False, reason="检测到提示注入风险", level="error")
 
-        for field in _DATE_FIELDS:
-            raw = tc.arguments.get(field)
-            if isinstance(raw, str) and raw.strip():
-                try:
-                    parsed = date.fromisoformat(raw)
-                except ValueError:
-                    continue
-                if parsed < self._today:
-                    return GuardrailResult(allowed=False, reason=f"{field} 不能是过去日期", level="error")
+        if not self._is_disabled("past_date"):
+            today = self._today or date.today()
+            for field in _DATE_FIELDS:
+                raw = tc.arguments.get(field)
+                if isinstance(raw, str) and raw.strip():
+                    try:
+                        parsed = date.fromisoformat(raw)
+                    except ValueError:
+                        continue
+                    if parsed < today:
+                        return GuardrailResult(allowed=False, reason=f"{field} 不能是过去日期", level="error")
 
-        for field in _LOCATION_FIELDS:
-            raw = tc.arguments.get(field)
-            if isinstance(raw, str) and not raw.strip():
-                return GuardrailResult(allowed=False, reason=f"{field} 不能为空", level="error")
+        if not self._is_disabled("empty_location"):
+            for field in _LOCATION_FIELDS:
+                raw = tc.arguments.get(field)
+                if isinstance(raw, str) and not raw.strip():
+                    return GuardrailResult(allowed=False, reason=f"{field} 不能为空", level="error")
 
-        if tc.name == "update_plan_state" and tc.arguments.get("field") == "budget":
+        if (
+            not self._is_disabled("invalid_budget")
+            and tc.name == "update_plan_state"
+            and tc.arguments.get("field") == "budget"
+        ):
             value = tc.arguments.get("value")
             if isinstance(value, dict):
                 total = value.get("total")
@@ -66,10 +79,15 @@ class ToolGuardrail:
             return GuardrailResult()
 
         results = data.get("results")
-        if tool_name in _SEARCH_OUTPUT_TOOLS and isinstance(results, list) and not results:
+        if (
+            not self._is_disabled("empty_results")
+            and tool_name in _SEARCH_OUTPUT_TOOLS
+            and isinstance(results, list)
+            and not results
+        ):
             return GuardrailResult(allowed=True, reason="未找到结果", level="warn")
 
-        if isinstance(results, list):
+        if not self._is_disabled("price_anomaly") and isinstance(results, list):
             for item in results:
                 if isinstance(item, dict):
                     price = item.get("price")
@@ -77,6 +95,9 @@ class ToolGuardrail:
                         return GuardrailResult(allowed=True, reason="结果中存在异常高价", level="warn")
 
         return GuardrailResult()
+
+    def _is_disabled(self, rule: str) -> bool:
+        return rule in self._disabled_rules
 
     def _iter_string_values(self, obj: Any) -> list[str]:
         values: list[str] = []

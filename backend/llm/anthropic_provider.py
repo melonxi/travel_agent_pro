@@ -148,7 +148,7 @@ class AnthropicProvider:
             if tool_choice == "auto":
                 return {"type": "auto"}
             if tool_choice == "none":
-                return {"type": "none"}
+                return {}
             if tool_choice == "required":
                 return {"type": "any"}
             return tool_choice
@@ -158,7 +158,9 @@ class AnthropicProvider:
                 name = fn.get("name")
                 if isinstance(name, str) and name:
                     return {"type": "tool", "name": name}
-            if tool_choice.get("type") in {"auto", "none", "any", "tool"}:
+            if tool_choice.get("type") == "none":
+                return {}
+            if tool_choice.get("type") in {"auto", "any", "tool"}:
                 return tool_choice
         return tool_choice
 
@@ -224,7 +226,9 @@ class AnthropicProvider:
             if tools:
                 kwargs["tools"] = self._convert_tools(tools)
             if tools and tool_choice is not None:
-                kwargs["tool_choice"] = self._convert_tool_choice(tool_choice)
+                converted_choice = self._convert_tool_choice(tool_choice)
+                if converted_choice:
+                    kwargs["tool_choice"] = converted_choice
 
             self._write_debug_log(
                 "request",
