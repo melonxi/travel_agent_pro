@@ -33,7 +33,7 @@ travel_agent_pro/
 │   ├── main.py                 # FastAPI 入口 (856 行), API 端点, 会话管理, SSE 流
 │   ├── config.py               # 配置加载 (.env + config.yaml), 多 LLM 按阶段切换
 │   ├── agent/                  # Agent 循环引擎
-│   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复 (568 行)
+│   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复，集成自省/强制工具/护栏/读工具批量执行
 │   │   ├── compaction.py       # 上下文压缩: token 预算计算、渐进式压缩
 │   │   ├── hooks.py            # 钩子系统 (before_llm_call, after_tool_call)
 │   │   ├── reflection.py       # ReflectionInjector: 关键阶段自省 prompt 注入
@@ -179,9 +179,10 @@ travel_agent_pro/
     │   ├─ ReflectionInjector.check_and_inject() → 在 Phase 3 lock / Phase 5 complete 注入自检提示
     │   └─ compact_messages_for_prompt() → token 预算内渐进压缩
     │
+    ├─ [ToolChoiceDecider] → 关键决策点可强制 update_plan_state
     ├─ [LLMProvider.chat()] → 流式输出 text_delta + tool_calls
     │
-    ├─ [ToolEngine.execute()/execute_batch()] → 顺序/并行调度工具，yield TOOL_RESULT 事件
+    ├─ [ToolGuardrail + ToolEngine.execute()/execute_batch()] → 工具护栏 + 顺序/并行调度，yield TOOL_RESULT 事件
     │
     ├─ [PhaseRouter.check_and_apply_transition()] → 异步阶段变化检测 + before_phase_transition 质量门控
     │

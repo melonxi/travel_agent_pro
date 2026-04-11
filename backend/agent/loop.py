@@ -28,6 +28,10 @@ class AgentLoop:
         memory_mgr: Any | None = None,
         user_id: str = "default_user",
         compression_events: list[dict] | None = None,
+        reflection: Any | None = None,
+        tool_choice_decider: Any | None = None,
+        guardrail: Any | None = None,
+        parallel_tool_execution: bool = True,
     ):
         self.llm = llm
         self.tool_engine = tool_engine
@@ -40,6 +44,11 @@ class AgentLoop:
         self.memory_mgr = memory_mgr
         self.user_id = user_id
         self.compression_events: list[dict] = compression_events if compression_events is not None else []
+        self.reflection = reflection
+        self.tool_choice_decider = tool_choice_decider
+        self.guardrail = guardrail
+        self.parallel_tool_execution = parallel_tool_execution
+        self._prev_phase3_step: str | None = None
 
     async def run(
         self,
@@ -77,12 +86,38 @@ class AgentLoop:
                             compression_info=info,
                         )
 
+                    if self.reflection is not None and self.plan is not None:
+                        reflection_msg = self.reflection.check_and_inject(
+                            messages,
+                            self.plan,
+                            self._prev_phase3_step,
+                        )
+                        if reflection_msg:
+                            messages.append(
+                                Message(role=Role.SYSTEM, content=reflection_msg)
+                            )
+                        self._prev_phase3_step = getattr(
+                            self.plan, "phase3_step", None
+                        )
+
                     tool_calls: list[ToolCall] = []
                     text_chunks: list[str] = []
+                    tool_choice = "auto"
+                    if self.tool_choice_decider is not None and self.plan is not None:
+                        tool_choice = self.tool_choice_decider.decide(
+                            self.plan,
+                            messages,
+                            current_phase,
+                        )
 
-                    async for chunk in self.llm.chat(
-                        messages, tools=tools, stream=True
-                    ):
+                    chat_kwargs = {
+                        "tools": tools,
+                        "stream": True,
+                    }
+                    if tool_choice != "auto":
+                        chat_kwargs["tool_choice"] = tool_choice
+
+                    async for chunk in self.llm.chat(messages, **chat_kwargs):
                         if chunk.type == ChunkType.TEXT_DELTA:
                             text_chunks.append(chunk.content or "")
                             yield chunk
@@ -148,16 +183,69 @@ class AgentLoop:
                     needs_rebuild = False
                     saw_state_update = False
                     rebuild_result: ToolResult | None = None
-                    for idx, tc in enumerate(tool_calls):
-                        if self._should_skip_redundant_update(tc):
-                            result = self._build_skipped_tool_result(
-                                tc.id,
-                                error="Skipped redundant state update",
-                                error_code="REDUNDANT_STATE_UPDATE",
-                                suggestion="This value is already reflected in the current plan state.",
+                    idx = 0
+                    emitted_indices: set[int] = set()
+                    while idx < len(tool_calls):
+                        tc = tool_calls[idx]
+                        result = self._pre_execution_skip_result(tc)
+                        if result is None and self._is_parallel_read_call(tc):
+                            read_batch: list[tuple[int, ToolCall]] = []
+                            scan_idx = idx
+                            while scan_idx < len(tool_calls):
+                                scan_tc = tool_calls[scan_idx]
+                                if (
+                                    self._pre_execution_skip_result(scan_tc) is not None
+                                    or not self._is_parallel_read_call(scan_tc)
+                                ):
+                                    break
+                                read_batch.append((scan_idx, scan_tc))
+                                scan_idx += 1
+
+                            batch_results = await self.tool_engine.execute_batch(
+                                [call for _, call in read_batch]
                             )
-                        else:
+                            for (batch_idx, batch_tc), batch_result in zip(
+                                read_batch,
+                                batch_results,
+                            ):
+                                result = self._validate_tool_output(
+                                    batch_tc,
+                                    batch_result,
+                                )
+                                if (
+                                    batch_tc.name == "update_plan_state"
+                                    and result.status == "success"
+                                ):
+                                    saw_state_update = True
+
+                                messages.append(
+                                    Message(
+                                        role=Role.TOOL,
+                                        tool_result=result,
+                                    )
+                                )
+                                emitted_indices.add(batch_idx)
+
+                                yield LLMChunk(type=ChunkType.KEEPALIVE)
+
+                                await self.hooks.run(
+                                    "after_tool_call",
+                                    tool_name=batch_tc.name,
+                                    tool_call=batch_tc,
+                                    result=result,
+                                )
+
+                                yield LLMChunk(
+                                    type=ChunkType.TOOL_RESULT,
+                                    tool_result=result,
+                                )
+
+                            idx = scan_idx
+                            continue
+
+                        if result is None:
                             result = await self.tool_engine.execute(tc)
+                            result = self._validate_tool_output(tc, result)
                         if tc.name == "update_plan_state" and result.status == "success":
                             saw_state_update = True
 
@@ -167,6 +255,7 @@ class AgentLoop:
                                 tool_result=result,
                             )
                         )
+                        emitted_indices.add(idx)
 
                         # Keepalive ping so the SSE connection stays alive during
                         # back-to-back tool executions that produce no text output
@@ -186,7 +275,12 @@ class AgentLoop:
 
                         if self._is_backtrack_result(result):
                             rebuild_result = result
-                            for skipped_tc in tool_calls[idx + 1:]:
+                            for skipped_idx, skipped_tc in enumerate(
+                                tool_calls[idx + 1:],
+                                start=idx + 1,
+                            ):
+                                if skipped_idx in emitted_indices:
+                                    continue
                                 yield LLMChunk(
                                     type=ChunkType.TOOL_RESULT,
                                     tool_result=self._build_skipped_tool_result(
@@ -198,6 +292,7 @@ class AgentLoop:
                                 )
                             needs_rebuild = True
                             break
+                        idx += 1
 
                     if needs_rebuild:
                         phase_after_batch = (
@@ -398,6 +493,53 @@ class AgentLoop:
             error_code=error_code,
             suggestion=suggestion,
         )
+
+    def _pre_execution_skip_result(self, tool_call: ToolCall) -> ToolResult | None:
+        if self._should_skip_redundant_update(tool_call):
+            return self._build_skipped_tool_result(
+                tool_call.id,
+                error="Skipped redundant state update",
+                error_code="REDUNDANT_STATE_UPDATE",
+                suggestion="This value is already reflected in the current plan state.",
+            )
+
+        if self.guardrail is None:
+            return None
+
+        guardrail_result = self.guardrail.validate_input(tool_call)
+        if guardrail_result.allowed:
+            return None
+        return self._build_skipped_tool_result(
+            tool_call.id,
+            error=guardrail_result.reason,
+            error_code="GUARDRAIL_REJECTED",
+            suggestion=guardrail_result.reason,
+        )
+
+    def _validate_tool_output(
+        self,
+        tool_call: ToolCall,
+        result: ToolResult,
+    ) -> ToolResult:
+        if self.guardrail is None or result.status != "success":
+            return result
+
+        output_check = self.guardrail.validate_output(tool_call.name, result.data)
+        if output_check.level != "warn" or not output_check.reason:
+            return result
+        return ToolResult(
+            tool_call_id=result.tool_call_id,
+            status=result.status,
+            data=result.data,
+            metadata=result.metadata,
+            suggestion=output_check.reason,
+        )
+
+    def _is_parallel_read_call(self, tool_call: ToolCall) -> bool:
+        if not self.parallel_tool_execution:
+            return False
+        tool_def = self.tool_engine.get_tool(tool_call.name)
+        return tool_def is None or tool_def.side_effect != "write"
 
     def _current_tool_names(self, phase: int | None = None) -> list[str]:
         target_phase = phase if phase is not None else (
