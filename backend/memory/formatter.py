@@ -8,20 +8,20 @@ from memory.models import MemoryItem
 
 @dataclass
 class RetrievedMemory:
-    core_profile: list[MemoryItem] = field(default_factory=list)
-    trip_memory: list[MemoryItem] = field(default_factory=list)
-    phase_relevant: list[MemoryItem] = field(default_factory=list)
+    core: list[MemoryItem] = field(default_factory=list)
+    trip: list[MemoryItem] = field(default_factory=list)
+    phase: list[MemoryItem] = field(default_factory=list)
 
 
 def format_memory_context(memory: RetrievedMemory) -> str:
     sections: list[str] = []
 
-    if memory.core_profile:
-        sections.append(_format_section("核心用户画像", memory.core_profile))
-    if memory.trip_memory:
-        sections.append(_format_section("本次旅行记忆", memory.trip_memory))
-    if memory.phase_relevant:
-        sections.append(_format_section("当前阶段相关历史", memory.phase_relevant))
+    if memory.core:
+        sections.append(_format_section("核心用户画像", memory.core))
+    if memory.trip:
+        sections.append(_format_section("本次旅行记忆", memory.trip))
+    if memory.phase:
+        sections.append(_format_section("当前阶段相关历史", memory.phase))
 
     return "\n\n".join(sections) if sections else "暂无相关用户记忆"
 
@@ -29,7 +29,7 @@ def format_memory_context(memory: RetrievedMemory) -> str:
 def _format_section(title: str, items: list[MemoryItem]) -> str:
     lines = [f"## {title}"]
     for item in items:
-        lines.append(f"- {item.domain}.{item.key}: {_format_value(item.value)}")
+        lines.append(f"- [{item.domain}] {item.key}: {_format_value(item.value)}")
     return "\n".join(lines)
 
 

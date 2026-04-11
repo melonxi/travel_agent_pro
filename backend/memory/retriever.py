@@ -68,6 +68,8 @@ class MemoryRetriever:
                 continue
             if item.scope == "trip" and item.trip_id != trip_id:
                 continue
+            if item.scope == "trip" and not trip_id:
+                continue
             if item.scope not in {"global", "trip"}:
                 continue
             filtered.append(item)
