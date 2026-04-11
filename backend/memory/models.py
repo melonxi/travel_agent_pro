@@ -103,7 +103,6 @@ def _normalize_memory_value(value: Any) -> str:
 
 
 def generate_memory_id(
-    *,
     user_id: str,
     type: str,
     domain: str,
