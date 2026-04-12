@@ -131,7 +131,7 @@ travel_agent_pro/
 │
 ├── docs/                       # 架构文档与学习笔记（含 docs/failure-analysis.md 失败案例报告）
 ├── scripts/                    # dev.sh/dev-stop.sh + failure-analysis/run_and_analyze.py（真实后端失败场景执行器）
-│   └── demo/                   # demo/seed-memory.json + demo/playwright.config.ts
+│   └── demo/                   # demo/seed-memory.json + demo/playwright.config.ts + demo-full-flow.spec.ts
 ├── backend/data/               # 本地运行时持久化：sessions.db、sessions/、users/
 ├── config.yaml                 # 运行时配置 (LLM/API/智能层开关/阈值)
 ├── docker-compose.observability.yml # Jaeger 一键启动
@@ -502,7 +502,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 
 - **后端单元测试**：75+ 个文件、590+ 测试，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、护栏、可行性、评估管线
 - **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner
-- **E2E 测试**：Playwright, Phase 1 目的地推荐流程 (3 分钟超时); `scripts/demo/playwright.config.ts` 为 demo 场景提供独立配置
+- **E2E 测试**：Playwright, 根目录 `e2e-test.spec.ts` 覆盖 Phase 1 主流程；`scripts/demo/demo-full-flow.spec.ts` 用单会话串联演示 Phase 1 → Phase 3 → Phase 5/backtrack；`scripts/demo/playwright.config.ts` 为 demo 场景提供独立配置
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---
