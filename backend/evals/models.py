@@ -33,6 +33,16 @@ class GoldenCase:
 
 
 @dataclass
+class EvalExecution:
+    """Execution trace collected from running one golden case."""
+
+    state: dict[str, Any]
+    tool_calls: list[str]
+    responses: list[str]
+    stats: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class CaseResult:
     case_id: str
     passed: bool
@@ -41,6 +51,8 @@ class CaseResult:
     failures: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
     error: str | None = None
+    difficulty: str = ""
+    stats: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -51,6 +63,7 @@ class SuiteResult:
     errors: int = 0
     results: list[CaseResult] = field(default_factory=list)
     duration_ms: float = 0.0
+    metrics: dict[str, Any] = field(default_factory=dict)
 
     @property
     def pass_rate(self) -> float:
