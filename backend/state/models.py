@@ -370,6 +370,7 @@ def infer_phase3_step_from_state(
 @dataclass
 class TravelPlanState:
     session_id: str
+    trip_id: str | None = None
     phase: int = 1
     destination: str | None = None
     destination_candidates: list[dict] = field(default_factory=list)
@@ -406,6 +407,7 @@ class TravelPlanState:
     def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
+            "trip_id": self.trip_id,
             "phase": self.phase,
             "destination": self.destination,
             "destination_candidates": self.destination_candidates,
@@ -452,6 +454,7 @@ class TravelPlanState:
         selected_skeleton_id = d.get("selected_skeleton_id")
         return cls(
             session_id=d["session_id"],
+            trip_id=d.get("trip_id"),
             phase=phase,
             destination=d.get("destination"),
             destination_candidates=d.get("destination_candidates", []),

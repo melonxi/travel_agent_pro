@@ -34,7 +34,7 @@ class FakeContextManager:
         self,
         plan: TravelPlanState,
         phase_prompt: str,
-        user_summary: str = "",
+        memory_context: str = "",
         available_tools: list[str] | None = None,
     ) -> Message:
         suffix = ""
@@ -42,7 +42,7 @@ class FakeContextManager:
             suffix = f" tools={','.join(available_tools)}"
         return Message(
             role=Role.SYSTEM,
-            content=f"system phase={plan.phase} prompt={phase_prompt} user={user_summary}{suffix}",
+            content=f"system phase={plan.phase} prompt={phase_prompt} user={memory_context}{suffix}",
         )
 
     async def compress_for_transition(
@@ -74,6 +74,9 @@ class FakeMemoryManager:
 
     def generate_summary(self, memory) -> str:
         return f"memory:{memory['user_id']}"
+
+    async def generate_context(self, user_id: str, plan: TravelPlanState) -> str:
+        return f"memory:{user_id}"
 
 
 @pytest.fixture

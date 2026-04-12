@@ -66,6 +66,44 @@ class MemoryExtractionConfig:
 
 
 @dataclass(frozen=True)
+class MemoryExtractionV2Config:
+    enabled: bool = True
+    model: str = "gpt-4o-mini"
+    trigger: str = "each_turn"
+    max_user_messages: int = 8
+
+
+@dataclass(frozen=True)
+class MemoryPolicyConfig:
+    auto_save_low_risk: bool = True
+    auto_save_medium_risk: bool = False
+    require_confirmation_for_high_risk: bool = True
+
+
+@dataclass(frozen=True)
+class MemoryRetrievalConfig:
+    core_limit: int = 10
+    phase_limit: int = 8
+    include_pending: bool = False
+
+
+@dataclass(frozen=True)
+class MemoryStorageConfig:
+    backend: str = "json"
+
+
+@dataclass(frozen=True)
+class MemoryConfig:
+    enabled: bool = True
+    extraction: MemoryExtractionV2Config = field(
+        default_factory=MemoryExtractionV2Config
+    )
+    policy: MemoryPolicyConfig = field(default_factory=MemoryPolicyConfig)
+    retrieval: MemoryRetrievalConfig = field(default_factory=MemoryRetrievalConfig)
+    storage: MemoryStorageConfig = field(default_factory=MemoryStorageConfig)
+
+
+@dataclass(frozen=True)
 class GuardrailsConfig:
     enabled: bool = True
     disabled_rules: list[str] = field(default_factory=list)
@@ -87,6 +125,7 @@ class AppConfig:
     memory_extraction: MemoryExtractionConfig = field(
         default_factory=MemoryExtractionConfig
     )
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
     guardrails: GuardrailsConfig = field(default_factory=GuardrailsConfig)
 
 
@@ -178,6 +217,44 @@ def _build_memory_extraction_config(raw: dict) -> MemoryExtractionConfig:
     )
 
 
+def _build_memory_config(
+    raw: dict, legacy_extraction: MemoryExtractionConfig
+) -> MemoryConfig:
+    extraction_raw = raw.get("extraction", {})
+    policy_raw = raw.get("policy", {})
+    retrieval_raw = raw.get("retrieval", {})
+    storage_raw = raw.get("storage", {})
+
+    extraction = MemoryExtractionV2Config(
+        enabled=bool(extraction_raw.get("enabled", legacy_extraction.enabled)),
+        model=str(extraction_raw.get("model", legacy_extraction.model)),
+        trigger=str(extraction_raw.get("trigger", "each_turn")),
+        max_user_messages=int(extraction_raw.get("max_user_messages", 8)),
+    )
+
+    return MemoryConfig(
+        enabled=bool(raw.get("enabled", True)),
+        extraction=extraction,
+        policy=MemoryPolicyConfig(
+            auto_save_low_risk=bool(policy_raw.get("auto_save_low_risk", True)),
+            auto_save_medium_risk=bool(
+                policy_raw.get("auto_save_medium_risk", False)
+            ),
+            require_confirmation_for_high_risk=bool(
+                policy_raw.get("require_confirmation_for_high_risk", True)
+            ),
+        ),
+        retrieval=MemoryRetrievalConfig(
+            core_limit=int(retrieval_raw.get("core_limit", 10)),
+            phase_limit=int(retrieval_raw.get("phase_limit", 8)),
+            include_pending=bool(retrieval_raw.get("include_pending", False)),
+        ),
+        storage=MemoryStorageConfig(
+            backend=str(storage_raw.get("backend", "json")),
+        ),
+    )
+
+
 def _build_guardrails_config(raw: dict) -> GuardrailsConfig:
     disabled_rules = raw.get("disabled_rules", [])
     if not isinstance(disabled_rules, list):
@@ -203,6 +280,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             xhs=_build_xhs_config({}),
             quality_gate=_build_quality_gate_config({}),
             memory_extraction=_build_memory_extraction_config({}),
+            memory=_build_memory_config({}, _build_memory_extraction_config({})),
             guardrails=_build_guardrails_config({}),
         )
 
@@ -238,6 +316,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     memory_extraction = _build_memory_extraction_config(
         raw.get("memory_extraction", {})
     )
+    memory = _build_memory_config(raw.get("memory", {}), memory_extraction)
     guardrails = _build_guardrails_config(raw.get("guardrails", {}))
 
     return AppConfig(
@@ -253,5 +332,6 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         quality_gate=quality_gate,
         parallel_tool_execution=bool(raw.get("parallel_tool_execution", True)),
         memory_extraction=memory_extraction,
+        memory=memory,
         guardrails=guardrails,
     )

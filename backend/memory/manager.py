@@ -4,12 +4,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from memory.formatter import RetrievedMemory, format_memory_context
 from memory.models import UserMemory
+from memory.retriever import MemoryRetriever
+from memory.store import FileMemoryStore
+from state.models import TravelPlanState
 
 
 class MemoryManager:
     def __init__(self, data_dir: str = "./data"):
         self.data_dir = Path(data_dir)
+        self.store = FileMemoryStore(data_dir)
+        self.retriever = MemoryRetriever()
 
     def _user_dir(self, user_id: str) -> Path:
         return self.data_dir / "users" / user_id
@@ -25,6 +31,11 @@ class MemoryManager:
         if not path.exists():
             return UserMemory(user_id=user_id)
         data = json.loads(path.read_text())
+        if data.get("schema_version") == 2:
+            legacy = data.get("legacy") or {}
+            if legacy:
+                return UserMemory.from_dict(legacy)
+            return UserMemory(user_id=user_id)
         return UserMemory.from_dict(data)
 
     def generate_summary(self, memory: UserMemory) -> str:
@@ -51,3 +62,12 @@ class MemoryManager:
             parts.append(f"永久排除：{rejects}")
 
         return "\n".join(parts) if parts else "暂无用户画像"
+
+    async def generate_context(self, user_id: str, plan: TravelPlanState) -> str:
+        items = await self.store.list_items(user_id)
+        retrieved = RetrievedMemory(
+            core=self.retriever.retrieve_core_profile(items),
+            trip=self.retriever.retrieve_trip_memory(items, plan),
+            phase=self.retriever.retrieve_phase_relevant(items, plan, plan.phase),
+        )
+        return format_memory_context(retrieved)
