@@ -1,8 +1,10 @@
-# P0 Gaps: Failure Analysis & Reproducible Demo — Design Spec
+# P0 Gaps: Failure Analysis & Reproducible Demo — Design Spec (v2)
 
 > **目的**：补齐竞品分析报告 v2 中 P0 的两个缺失项 —— 7.1 失败案例分析和 7.7 可复现 Demo。
 >
 > **背景**：P0 的 12 个实施任务（guardrail 强化、eval pipeline、cost tracking 等）已全部完成（73/73 测试通过）。但 v2 报告中标注为"面试 ROI 最高"的失败案例分析和可复现 Demo 两项未纳入实施计划。
+>
+> **v2 变更**：基于 rubber-duck 审查，修正了 8 个设计问题（memory 注入路径、demo 会话策略、eval 框架复用等）。
 
 ---
 
@@ -12,40 +14,48 @@
 
 产出 `docs/failure-analysis.md`，包含 8 个真实场景的系统性失败模式分析。面试时能回答："你的系统什么时候会失败？你怎么知道的？"
 
-### 1.2 架构
+### 1.2 架构 — 复用现有 eval 框架
+
+> **设计决策**：不新建 `scripts/failure-analysis/` 独立管道。改为扩展 `backend/evals/` 现有框架，将 8 个失败场景作为 golden cases 加入，复用已有的断言评估体系。
 
 ```
+backend/evals/
+├── golden_cases/
+│   ├── (existing 15 cases...)
+│   ├── failure-001-tight-budget.yaml      # 新增 8 个失败分析场景
+│   ├── failure-002-elderly-altitude.yaml
+│   ├── ...
+│   └── failure-008-greedy-itinerary.yaml
+├── models.py                               # 已有，无需修改
+├── runner.py                               # 已有，无需修改
+└── failure_report.py                       # 新增：从 eval 结果生成 failure-analysis.md
+
 scripts/failure-analysis/
-├── run_scenarios.py          # 主执行脚本 — 逐场景调 POST /api/chat
-├── scenarios.yaml            # 8 个场景定义（输入 + 预期行为）
-├── capture_screenshots.ts    # Playwright 对选定场景在前端截图
-└── analyze.py                # 解析 trace，生成 markdown 骨架
+├── run_and_analyze.py           # 主脚本：调用 evals runner → 截图 → 生成文档
+└── capture_screenshots.ts       # Playwright 截图（访问同 session_id 的前端页面）
 
 产出 → docs/failure-analysis.md
-     → screenshots/failure-analysis/  （场景截图）
+     → screenshots/failure-analysis/
 ```
 
 ### 1.3 执行流程
 
-1. **`run_scenarios.py`**：
-   - 读取 `scenarios.yaml`
-   - 对每个场景：创建新 session（`POST /api/sessions`）→ 发送用户消息（`POST /api/chat`，SSE 流式）→ 等待完成
-   - 收集每个场景的：最终 phase、tool call 列表、state snapshot（`GET /api/sessions/{id}/state`）、stats（`GET /api/sessions/{id}/stats`）、assistant 回复文本
-   - 输出 JSON 到 `scripts/failure-analysis/results/scenario-{n}.json`
+1. **`run_and_analyze.py`**：
+   - 加载 `failure-*.yaml` golden cases
+   - 通过 HTTP 调用后端 API 执行（`POST /api/sessions` → `POST /api/chat/{session_id}`，传 `user_id` 参数）
+   - 执行后调用 eval runner 的断言评估（复用 `evaluate_assertion()`）
+   - 记录运行元数据：model、provider、timestamp、config hash
+   - 输出结构化结果 JSON
 
 2. **`capture_screenshots.ts`**：
-   - 对选定场景（至少场景 1、3、4）在前端重放并截图
+   - 使用步骤 1 产出的 **同一 session_id**，在前端打开对应会话页面截图
+   - 不是重放，而是查看已完成的会话（避免 LLM 响应不一致）
    - 截图存入 `screenshots/failure-analysis/`
 
-3. **`analyze.py`**：
-   - 读取 results JSON + 预定义的预期行为
-   - 对比实际 vs 预期，标记 ✅/⚠️/❌
-   - 生成 `docs/failure-analysis.md` 骨架（人工补充根因分析和修复建议部分）
-
-4. **人工审阅**：
-   - 审阅 trace，填充根因分析（指向具体代码行）
-   - 填充修复建议（已修复/待修复/设计权衡）
-   - 填充面试话术
+3. **`failure_report.py`**：
+   - 读取结构化结果 + 断言通过/失败信息
+   - 自动生成 `docs/failure-analysis.md` 骨架
+   - 人工补充：根因分析（指向代码行）、修复建议、面试话术
 
 ### 1.4 场景清单
 
@@ -71,10 +81,20 @@ scripts/failure-analysis/
 - 测试环境：生产配置（GPT-4o + Claude Sonnet 4）
 - 测试方式：真实 API 调用，非 mock
 - 测试时间：2026-04-12
+- 运行元数据：model, provider, config hash 均记录在案
+
+## 失败模式分类法
+| 失败类别 | 含义 | 示例 |
+|---------|------|------|
+| LLM 推理 | 模型理解/推理能力不足 | 无法识别特殊人群需求 |
+| 工具数据 | 外部 API 返回数据不足或异常 | 无航班搜索结果 |
+| 状态机 | 阶段转换/回退逻辑缺陷 | backtrack 未清理下游 |
+| 约束传递 | 用户约束未被传递到下游决策 | 饮食约束未进入行程 |
+| 设计边界 | 系统设计本身的合理限制 | 不支持多人差异化行程 |
 
 ## 场景总览
-| # | 场景 | 结果 | 关键发现 |
-|---|------|------|---------|
+| # | 场景 | 结果 | 失败类别 | 关键发现 |
+|---|------|------|---------|---------|
 
 ## 详细分析
 
@@ -83,12 +103,14 @@ scripts/failure-analysis/
 **预期行为**: ...
 **实际行为**: ... (含截图/工具调用记录)
 **结果**: ✅ 成功 / ⚠️ 部分成功 / ❌ 失败
+**失败类别**: LLM推理 / 工具数据 / 状态机 / 约束传递 / 设计边界
+**为什么在这里失败**: 设计限制 vs 实现缺陷 vs 外部依赖
 **根因分析**: ... (指向代码位置，如 `agent/loop.py:560`)
 **修复状态**: 已修复 / 待修复 / 设计权衡
 **面试话术**: 一句话描述这个案例的工程价值
 
 ## 失败模式归类
-(按模式分类：预算约束类、特殊需求类、回退类等)
+(按类别统计分布，展示系统边界认知)
 
 ## 改进路线图
 (基于分析结果的后续优化方向)
@@ -115,9 +137,7 @@ scripts/failure-analysis/
 scripts/demo/
 ├── seed-memory.json             # 预设用户偏好和历史旅行记忆
 ├── playwright.config.ts         # Demo 专用 Playwright 配置（启用录屏）
-├── demo-phase1-explore.spec.ts  # Demo 1: 模糊意图 → 目的地收敛
-├── demo-phase3-plan.spec.ts     # Demo 2: 框架规划 + 骨架选择
-├── demo-phase5-backtrack.spec.ts # Demo 3: 日程详排 + 用户回退
+├── demo-full-flow.spec.ts       # 单脚本三步骤：Phase 1 → 3 → 5+回退
 ├── run-all-demos.sh             # 一键执行：启动服务 → 注入 seed → 运行 demo → 收集视频
 └── README.md                    # Demo 使用指南
 
@@ -126,9 +146,11 @@ scripts/demo/
 
 ### 2.3 Seed Memory
 
+> **关键设计决策**：前端 `useSSE.ts` 调用 `/api/chat/{session_id}` 时只传 `{ message }`，无 `user_id` 字段，后端 `ChatRequest.user_id` 默认为 `"default_user"`。因此 seed memory 必须注入到 `default_user`，而非自定义 user_id。
+
 ```json
 {
-  "user_id": "demo-user",
+  "user_id": "default_user",
   "preferences": {
     "travel_style": "文化体验为主，适度冒险",
     "accommodation": "偏好精品民宿和设计酒店",
@@ -150,16 +172,16 @@ scripts/demo/
 
 ### 2.4 三条 Demo 路径
 
-> **会话策略**：三个 Demo 共享同一个浏览器会话（同一个 session），是一个从 Phase 1 到 Phase 5 的完整旅行规划流程。实现为一个 `.spec.ts` 内的三个 `test()` 块，共享同一 page context（使用 `test.describe.serial`）。这样避免了重复前置消息的等待开销。
+> **会话策略**：三个 Demo 阶段在**同一个 `test()` 内使用 `test.step()`** 串联，共享同一 page/context/session。这确保了 Phase 状态连续性和录屏连贯性。不再声称"可独立运行"。
 
-#### Demo 1: Phase 1 — 模糊意图 → 目的地收敛
+#### Step 1: Phase 1 — 模糊意图 → 目的地收敛
 
 - **用户输入**: "我想找个安静的海边城市放松一下，预算1万左右，大概5天"
 - **展示重点**: 工具调用（web_search / xiaohongshu_search）→ 多目的地推荐 → 用户选择确认
 - **预期展示**: Agent 如何从模糊意图收敛到具体目的地
 - **截图时机**: 工具调用展开面板、推荐结果列表
 
-#### Demo 2: Phase 3 — 框架规划 + 骨架选择
+#### Step 2: Phase 3 — 框架规划 + 骨架选择
 
 - **前置**: 同一会话，Phase 1 完成后
 - **用户输入**: "就去这个吧"（确认目的地）
@@ -167,7 +189,7 @@ scripts/demo/
 - **预期展示**: 多工具并行调用、骨架锁定流程
 - **截图时机**: 航班搜索结果、住宿搜索结果、骨架摘要
 
-#### Demo 3: Phase 5 — 日程详排 + 用户中途回退
+#### Step 3: Phase 5 — 日程详排 + 用户中途回退
 
 - **前置**: 同一会话，Phase 3 骨架已锁定
 - **用户输入**:
@@ -230,9 +252,9 @@ export default defineConfig({
 
 ### 2.9 成功标准
 
-- 3 条 demo 脚本可独立运行
-- 每条 demo 产出 .webm 录屏视频
-- seed memory 正确注入
+- 单脚本 demo 可正常执行（含 3 个 `test.step()`）
+- 产出完整 .webm 录屏视频
+- seed memory 正确注入到 `default_user`
 - README 完整可用
 - `run-all-demos.sh` 一键执行成功
 
@@ -250,16 +272,14 @@ export default defineConfig({
 
 | 操作 | 文件 |
 |------|------|
-| 新建 | `scripts/failure-analysis/run_scenarios.py` |
-| 新建 | `scripts/failure-analysis/scenarios.yaml` |
+| 新建 | `backend/evals/golden_cases/failure-001-tight-budget.yaml` — `failure-008-greedy-itinerary.yaml` (8 files) |
+| 新建 | `backend/evals/failure_report.py` |
+| 新建 | `scripts/failure-analysis/run_and_analyze.py` |
 | 新建 | `scripts/failure-analysis/capture_screenshots.ts` |
-| 新建 | `scripts/failure-analysis/analyze.py` |
 | 新建 | `docs/failure-analysis.md` |
 | 新建 | `scripts/demo/seed-memory.json` |
 | 新建 | `scripts/demo/playwright.config.ts` |
-| 新建 | `scripts/demo/demo-phase1-explore.spec.ts` |
-| 新建 | `scripts/demo/demo-phase3-plan.spec.ts` |
-| 新建 | `scripts/demo/demo-phase5-backtrack.spec.ts` |
+| 新建 | `scripts/demo/demo-full-flow.spec.ts` |
 | 新建 | `scripts/demo/run-all-demos.sh` |
 | 新建 | `scripts/demo/README.md` |
 | 修改 | `README.md` — 添加 Demo 和失败分析入口链接 |
