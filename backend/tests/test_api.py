@@ -120,10 +120,20 @@ telemetry:
             yield LLMChunk(
                 type=ChunkType.TEXT_DELTA,
                 content=json.dumps(
-                    {
-                        "preferences": {"饮食": "不吃辣"},
-                        "rejections": [],
-                    },
+                    [
+                        {
+                            "type": "preference",
+                            "domain": "food",
+                            "key": "spicy",
+                            "value": "no spicy food",
+                            "scope": "global",
+                            "polarity": "avoid",
+                            "confidence": 0.82,
+                            "risk": "low",
+                            "evidence": "我不吃辣",
+                            "reason": "用户明确表达",
+                        }
+                    ],
                     ensure_ascii=False,
                 ),
             )
@@ -164,7 +174,13 @@ telemetry:
         await asyncio.sleep(0.01)
 
     data = json.loads(memory_path.read_text(encoding="utf-8"))
-    assert data["explicit_preferences"]["饮食"] == "不吃辣"
+    assert data["schema_version"] == 2
+    assert any(
+        item["key"] == "spicy"
+        and item["value"] == "no spicy food"
+        and item["status"] == "active"
+        for item in data["items"]
+    )
 
 
 @pytest.mark.asyncio
