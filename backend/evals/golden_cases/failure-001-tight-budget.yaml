@@ -16,3 +16,5 @@ assertions:
     target: 预算
   - type: tool_not_called
     target: search_flights
+  - type: tool_not_called
+    target: search_accommodations
