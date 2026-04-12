@@ -91,6 +91,35 @@ class TestGoldenCaseLoader:
         cases = load_golden_cases(tmp_path)
         assert cases == []
 
+    def test_golden_cases_use_registered_tool_names(self):
+        cases = load_golden_cases(Path("evals/golden_cases"))
+        known_tools = {
+            "update_plan_state",
+            "search_flights",
+            "search_trains",
+            "ai_travel_search",
+            "search_accommodations",
+            "get_poi_info",
+            "calculate_route",
+            "assemble_day_plan",
+            "check_availability",
+            "check_weather",
+            "generate_summary",
+            "quick_travel_search",
+            "search_travel_services",
+            "web_search",
+            "xiaohongshu_search",
+        }
+        bad_targets = [
+            (case.id, assertion.target)
+            for case in cases
+            for assertion in case.assertions
+            if assertion.type in {AssertionType.TOOL_CALLED, AssertionType.TOOL_NOT_CALLED}
+            and assertion.target not in known_tools
+        ]
+
+        assert bad_targets == []
+
 
 class TestRunSuiteOffline:
     def test_full_suite_run(self):

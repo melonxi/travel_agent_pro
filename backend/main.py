@@ -187,6 +187,46 @@ def _memory_pending_event(
     )
 
 
+def _days_count_from_dates(dates: Any | None) -> int | None:
+    if dates is None:
+        return None
+    start = getattr(dates, "start", None)
+    end = getattr(dates, "end", None)
+    if not start or not end:
+        return None
+    try:
+        start_date = date.fromisoformat(str(start))
+        end_date = date.fromisoformat(str(end))
+    except (TypeError, ValueError):
+        return None
+    return (end_date - start_date).days
+
+
+def _record_tool_result_stats(
+    *,
+    stats: SessionStats | None,
+    tool_call_names: dict[str, str],
+    result: ToolResult,
+    phase: int,
+) -> None:
+    if stats is None:
+        return
+    tool_name = tool_call_names.get(result.tool_call_id)
+    if not tool_name:
+        return
+    metadata = result.metadata if isinstance(result.metadata, dict) else {}
+    duration = metadata.get("duration_ms", 0.0)
+    if not isinstance(duration, (int, float)):
+        duration = 0.0
+    stats.record_tool_call(
+        tool_name=tool_name,
+        duration_ms=float(duration),
+        status=result.status,
+        error_code=result.error_code,
+        phase=phase,
+    )
+
+
 def _memory_pending_event_from_items(items: list[MemoryItem]) -> str:
     candidates: list[MemoryCandidate] = []
     item_ids: list[str] = []
@@ -486,15 +526,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             # Feasibility gate: catch impossible plans early (Phase 1→3)
             if from_phase == 1 and to_phase == 3:
                 from harness.feasibility import check_feasibility
-                days_count = None
-                if target_plan.dates and target_plan.dates.start_date and target_plan.dates.end_date:
-                    try:
-                        from datetime import date as _date
-                        d1 = _date.fromisoformat(str(target_plan.dates.start_date))
-                        d2 = _date.fromisoformat(str(target_plan.dates.end_date))
-                        days_count = (d2 - d1).days
-                    except (ValueError, TypeError):
-                        pass
+                days_count = _days_count_from_dates(target_plan.dates)
                 budget_total = None
                 if target_plan.budget and target_plan.budget.total:
                     budget_total = target_plan.budget.total
@@ -1394,6 +1426,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         "error_code": chunk.tool_result.error_code,
                         "suggestion": chunk.tool_result.suggestion,
                     }
+                    _record_tool_result_stats(
+                        stats=session.get("stats"),
+                        tool_call_names=tool_call_names,
+                        result=chunk.tool_result,
+                        phase=plan.phase,
+                    )
                 yield json.dumps(event_data, ensure_ascii=False)
                 if (
                     chunk.tool_result

@@ -146,6 +146,31 @@ async def test_text_response(agent, mock_llm):
 
 
 @pytest.mark.asyncio
+async def test_agent_loop_forwards_usage_chunks(agent, mock_llm):
+    """Provider token usage must reach the API layer for SessionStats."""
+
+    async def mock_chat(*args, **kwargs):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="你好")
+        yield LLMChunk(
+            type=ChunkType.USAGE,
+            usage_info={"input_tokens": 100, "output_tokens": 20},
+        )
+        yield LLMChunk(type=ChunkType.DONE)
+
+    mock_llm.chat = mock_chat
+
+    messages = [Message(role=Role.USER, content="你好")]
+    chunks = [chunk async for chunk in agent.run(messages, phase=1)]
+
+    assert [chunk.type for chunk in chunks] == [
+        ChunkType.TEXT_DELTA,
+        ChunkType.USAGE,
+        ChunkType.DONE,
+    ]
+    assert chunks[1].usage_info == {"input_tokens": 100, "output_tokens": 20}
+
+
+@pytest.mark.asyncio
 async def test_tool_call_then_response(agent, mock_llm):
     """LLM calls a tool, then returns text."""
     call_count = 0
