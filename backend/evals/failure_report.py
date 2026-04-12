@@ -5,10 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from evals.models import CaseResult
+from typing import Any
 
 
 @dataclass
@@ -23,35 +20,10 @@ class ScenarioResult:
     responses: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
     stats: dict[str, Any] = field(default_factory=dict)
-    error: str | None = None
-
-    @classmethod
-    def from_case_result(
-        cls,
-        case_result: "CaseResult",
-        *,
-        name: str,
-        user_input: str,
-        tool_calls: list[str] | None = None,
-        responses: list[str] | None = None,
-    ) -> "ScenarioResult":
-        return cls(
-            scenario_id=case_result.case_id,
-            name=name,
-            user_input=user_input,
-            passed_assertions=case_result.assertions_passed,
-            total_assertions=case_result.assertions_total,
-            failures=list(case_result.failures),
-            tool_calls=tool_calls or [],
-            responses=responses or [],
-            duration_ms=case_result.duration_ms,
-            stats=dict(case_result.stats),
-            error=case_result.error,
-        )
 
     @property
     def passed(self) -> bool:
-        return len(self.failures) == 0 and self.error is None
+        return len(self.failures) == 0
 
     @property
     def result_emoji(self) -> str:
@@ -69,10 +41,6 @@ _TAXONOMY = [
     ("约束传递", "用户约束未被传递到下游决策", "饮食约束未进入行程"),
     ("设计边界", "系统设计本身的合理限制", "不支持多人差异化行程"),
 ]
-
-
-def _escape_markdown_table_cell(value: str) -> str:
-    return value.replace("|", "\\|").replace("\n", "<br>")
 
 
 def generate_failure_report(
@@ -104,20 +72,8 @@ def generate_failure_report(
     lines.append("|---|------|------|-----------|---------|")
     for index, scenario in enumerate(scenarios, 1):
         rate = f"{scenario.passed_assertions}/{scenario.total_assertions}"
-        if scenario.error:
-            finding = scenario.error
-        elif scenario.failures:
-            finding = scenario.failures[0]
-        else:
-            finding = "所有断言通过"
-        lines.append(
-            "| "
-            f"{index} | "
-            f"{_escape_markdown_table_cell(scenario.name)} | "
-            f"{scenario.result_emoji} | "
-            f"{rate} | "
-            f"{_escape_markdown_table_cell(finding)} |"
-        )
+        finding = scenario.failures[0] if scenario.failures else "所有断言通过"
+        lines.append(f"| {index} | {scenario.name} | {scenario.result_emoji} | {rate} | {finding} |")
     lines.append("")
 
     lines.append("## 详细分析\n")
@@ -137,9 +93,6 @@ def generate_failure_report(
             for failure in scenario.failures:
                 lines.append(f"- {failure}")
             lines.append("")
-
-        if scenario.error:
-            lines.append(f"**执行错误**: {scenario.error}\n")
 
         if scenario.responses:
             preview = scenario.responses[-1][:200]
