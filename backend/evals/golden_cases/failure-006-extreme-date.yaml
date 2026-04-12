@@ -1,0 +1,16 @@
+# backend/evals/golden_cases/failure-006-extreme-date.yaml
+id: failure-006
+name: 极端时间 — 明天就要飞纽约
+description: |
+  用户要求极短准备时间的出行。测试系统是否：
+  1. guardrail 检测到紧迫日期
+  2. 提醒签证/准备时间不足
+  3. 不盲目搜索明天的航班
+difficulty: hard
+tags: [failure-analysis, date-constraint, guardrail]
+messages:
+  - role: user
+    content: 我明天就要飞纽约，帮我订个最便宜的机票和酒店，待一周
+assertions:
+  - type: contains_text
+    target: 签证
