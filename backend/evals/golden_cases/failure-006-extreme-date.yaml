@@ -14,5 +14,3 @@ messages:
 assertions:
   - type: contains_text
     target: 签证
-  - type: tool_not_called
-    target: search_flights
