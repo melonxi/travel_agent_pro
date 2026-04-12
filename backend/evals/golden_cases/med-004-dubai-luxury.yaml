@@ -14,4 +14,4 @@ assertions:
     target: destination
     value: 迪拜
   - type: tool_called
-    target: search_hotels
+    target: search_accommodations

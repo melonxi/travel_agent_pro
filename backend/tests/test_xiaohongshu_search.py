@@ -443,7 +443,12 @@ async def test_tool_engine_extracts_xiaohongshu_metadata():
             }
         ],
     }
-    assert result.metadata == {
+    assert result.metadata is not None
+    assert result.metadata["duration_ms"] >= 0
+    metadata_without_duration = {
+        key: value for key, value in result.metadata.items() if key != "duration_ms"
+    }
+    assert metadata_without_duration == {
         "page": 1,
         "source": "xiaohongshu_cli",
         "items": [
