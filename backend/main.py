@@ -1329,10 +1329,22 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     and tool_call_names.get(chunk.tool_result.tool_call_id)
                     == "update_plan_state"
                 ):
+                    result_data = (
+                        chunk.tool_result.data
+                        if isinstance(chunk.tool_result.data, dict)
+                        else {}
+                    )
                     updated_field = None
                     if isinstance(chunk.tool_result.data, dict):
                         updated_field = chunk.tool_result.data.get("updated_field")
-                    if updated_field == "selected_skeleton_id":
+                    if result_data.get("backtracked"):
+                        await _rotate_trip_on_reset_backtrack(
+                            user_id=session["user_id"],
+                            plan=plan,
+                            to_phase=int(result_data.get("to_phase", plan.phase)),
+                            reason_text=str(result_data.get("reason", "")),
+                        )
+                    elif updated_field == "selected_skeleton_id":
                         _schedule_memory_event(
                             user_id=session["user_id"],
                             session_id=plan.session_id,

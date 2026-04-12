@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agent.types import Message, Role
+from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from main import (
     _memory_pending_event,
@@ -491,6 +491,68 @@ async def test_non_reset_backtrack_reuses_trip_memory(app):
     assert changed is False
     assert plan.trip_id == "trip-old"
     assert items["old-trip"].status == "active"
+
+
+@pytest.mark.asyncio
+async def test_tool_backtrack_reset_rotates_trip_memory(monkeypatch, app):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+    sessions = _get_closure_value(app, "sessions")
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(
+            type=ChunkType.TOOL_CALL_START,
+            tool_call=ToolCall(
+                id="tc1",
+                name="update_plan_state",
+                arguments={
+                    "field": "backtrack",
+                    "value": {"to_phase": 1, "reason": "用户想换目的地"},
+                },
+            ),
+        )
+        self.plan.phase = 1
+        yield LLMChunk(
+            type=ChunkType.TOOL_RESULT,
+            tool_result=ToolResult(
+                tool_call_id="tc1",
+                status="success",
+                data={
+                    "backtracked": True,
+                    "from_phase": 3,
+                    "to_phase": 1,
+                    "reason": "用户想换目的地",
+                },
+            ),
+        )
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        plan = sessions[session_id]["plan"]
+        plan.phase = 3
+        plan.trip_id = "trip-old"
+        await memory_mgr.store.upsert_item(
+            _make_item(
+                id="old-trip",
+                status="active",
+                scope="trip",
+                trip_id="trip-old",
+            )
+        )
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "换个目的地", "user_id": "u1"},
+        )
+
+    items = {item.id: item for item in await memory_mgr.store.list_items("u1")}
+    assert resp.status_code == 200
+    assert plan.trip_id != "trip-old"
+    assert items["old-trip"].status == "obsolete"
 
 
 @pytest.mark.asyncio

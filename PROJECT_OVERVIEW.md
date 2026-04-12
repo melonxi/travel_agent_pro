@@ -176,7 +176,7 @@ travel_agent_pro/
 | Reflection | 被动式自省提示，会话级去重 | before_llm_call (步骤切换时) |
 | Parallel Tool Exec | 读写分离并行调度 | 工具批量执行时 |
 | Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
-| Memory System | 结构化长期/本次/episode 记忆，后台候选提取，policy 合并与 contact/证件 PII 阻断，按 trip_id 隔离本次旅行记忆，新行程回退时轮转 trip_id，受 `memory.enabled` 门控后阶段相关注入 | 每轮 chat 后后台提取；每次 system prompt 构建前检索 |
+| Memory System | 结构化长期/本次/episode 记忆，后台候选提取，policy 合并与 contact/证件 PII 阻断，按 trip_id 隔离本次旅行记忆，工具/API/fallback 新行程回退时轮转 trip_id，受 `memory.enabled` 门控后阶段相关注入 | 每轮 chat 后后台提取；每次 system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
 
 ---
@@ -463,7 +463,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
 | 并行工具执行 | 读写分离，搜索类并行，状态更新顺序 |
 | Forced Tool Choice | 关键决策点强制工具调用，渐进替代 State Repair |
-| Memory System | schema v2 结构化记忆；每轮 chat 后按 trigger 后台提取候选，policy 全字段 contact/证件 PII 阻断/脱敏/合并/确认；system prompt 前按 `memory.enabled` 和 trip_id 检索，新行程回退 obsolete 旧 trip memory 并轮转 trip_id，Phase 7 幂等归档 episode |
+| Memory System | schema v2 结构化记忆；每轮 chat 后按 trigger 后台提取候选，policy 全字段 contact/证件 PII 阻断/脱敏/合并/确认；system prompt 前按 `memory.enabled` 和 trip_id 检索，工具/API/fallback 新行程回退 obsolete 旧 trip memory 并轮转 trip_id，Phase 7 幂等归档 episode |
 | Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
 
 ---
