@@ -42,6 +42,24 @@ memory_extraction:
   # 与主模型一致；若 gateway 支持独立轻量模型可替换为 gpt-4o-mini 等
   model: "astron-code-latest"
 
+memory:
+  enabled: true
+  extraction:
+    enabled: true
+    model: "astron-code-latest"
+    trigger: "each_turn"
+    max_user_messages: 8
+  policy:
+    auto_save_low_risk: true
+    auto_save_medium_risk: false
+    require_confirmation_for_high_risk: true
+  retrieval:
+    core_limit: 10
+    phase_limit: 8
+    include_pending: false
+  storage:
+    backend: "json"
+
 guardrails:
   enabled: true
   disabled_rules: []

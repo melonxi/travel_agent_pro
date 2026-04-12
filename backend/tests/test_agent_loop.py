@@ -34,7 +34,7 @@ class FakeContextManager:
         self,
         plan: TravelPlanState,
         phase_prompt: str,
-        user_summary: str = "",
+        memory_context: str = "",
         available_tools: list[str] | None = None,
     ) -> Message:
         suffix = ""
@@ -42,7 +42,7 @@ class FakeContextManager:
             suffix = f" tools={','.join(available_tools)}"
         return Message(
             role=Role.SYSTEM,
-            content=f"system phase={plan.phase} prompt={phase_prompt} user={user_summary}{suffix}",
+            content=f"system phase={plan.phase} prompt={phase_prompt} user={memory_context}{suffix}",
         )
 
     async def compress_for_transition(
@@ -74,6 +74,9 @@ class FakeMemoryManager:
 
     def generate_summary(self, memory) -> str:
         return f"memory:{memory['user_id']}"
+
+    async def generate_context(self, user_id: str, plan: TravelPlanState) -> str:
+        return f"memory:{user_id}"
 
 
 @pytest.fixture
@@ -511,6 +514,35 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
     if observed_roles is not None:
         assert observed_roles == [Role.SYSTEM, Role.ASSISTANT, Role.USER]
     assert any(chunk.content == "phase 3 ready" for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_phase_rebuild_skips_memory_when_disabled(mock_llm, engine, hooks):
+    plan = TravelPlanState(session_id="s1", phase=3)
+    agent = AgentLoop(
+        llm=mock_llm,
+        tool_engine=engine,
+        hooks=hooks,
+        max_retries=3,
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        memory_enabled=False,
+        user_id="u1",
+    )
+
+    rebuilt = await agent._rebuild_messages_for_phase_change(
+        [Message(role=Role.USER, content="继续")],
+        from_phase=1,
+        to_phase=3,
+        original_user_message=Message(role=Role.USER, content="继续"),
+        result=ToolResult(tool_call_id="tc1", status="success", data={}),
+    )
+
+    assert "memory:u1" not in rebuilt[0].content
+    assert "暂无相关用户记忆" in rebuilt[0].content
 
 
 @pytest.mark.asyncio
