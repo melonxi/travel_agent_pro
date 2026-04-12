@@ -22,7 +22,7 @@
 | 可观测性 | OpenTelemetry + Jaeger (OTLP gRPC on :4317, UI on :16686) |
 | 测试 | pytest + pytest-asyncio (后端), Playwright (E2E) |
 | 外部服务 | Tavily (Web 搜索), 小红书 CLI, FlyAI CLI, Google Maps, Amadeus, OpenWeather |
-| Agent 智能层配置 | quality_gate, parallel_tool_execution, memory_extraction, guardrails |
+| Agent 智能层配置 | quality_gate, parallel_tool_execution, memory（含 extraction/policy/retrieval/storage 子块，运行时读 `config.memory.*`；顶层 `memory_extraction` 仅向后兼容）, guardrails |
 
 ---
 
@@ -50,7 +50,7 @@ travel_agent_pro/
 │   │   ├── models.py           # TravelPlanState 完整数据类 (350+ 行)
 │   │   ├── manager.py          # StateManager: JSON 文件持久化
 │   │   └── intake.py           # 自然语言 → 旅行事实提取 (日期/预算/人数)
-│   ├── memory/                 # 结构化长期/本次/episode 记忆
+│   ├── memory/                 # 结构化 global/trip 记忆 + episode 归档
 │   │   ├── models.py           # MemoryItem/MemoryEvent/TripEpisode + 兼容旧 UserMemory
 │   │   ├── store.py            # FileMemoryStore: schema v2 JSON/JSONL, migration locks
 │   │   ├── manager.py          # MemoryManager: 加载/保存兼容层 + 上下文组装 facade
@@ -176,7 +176,7 @@ travel_agent_pro/
 | Reflection | 被动式自省提示，会话级去重 | before_llm_call (步骤切换时) |
 | Parallel Tool Exec | 读写分离并行调度 | 工具批量执行时 |
 | Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
-| Memory System | 结构化长期/本次/episode 记忆，后台候选提取，policy 合并与 contact/证件 PII 阻断，按 trip_id 隔离本次旅行记忆，工具/API/fallback 新行程回退时轮转 trip_id，受 `memory.enabled` 门控后阶段相关注入 | 每轮 chat 后后台提取；每次 system prompt 构建前检索 |
+| Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；policy 合并与 payment/membership 域阻断 + 证件/联系方式/邮箱/长数字序列全字段 PII 检测脱敏；三路检索（core profile / trip memory / phase-domain）按 trip_id 隔离；新行程回退时轮转 trip_id；受 `memory.enabled` 门控后阶段相关注入 | 每轮 chat 后后台提取；每次 system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
 
 ---
@@ -463,7 +463,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
 | 并行工具执行 | 读写分离，搜索类并行，状态更新顺序 |
 | Forced Tool Choice | 关键决策点强制工具调用，渐进替代 State Repair |
-| Memory System | schema v2 结构化记忆；每轮 chat 后按 trigger 后台提取候选，policy 全字段 contact/证件 PII 阻断/脱敏/合并/确认；system prompt 前按 `memory.enabled` 和 trip_id 检索，工具/API/fallback 新行程回退 obsolete 旧 trip memory 并轮转 trip_id，Phase 7 幂等归档 episode |
+| Memory System | schema v2 结构化记忆（global/trip 双 scope）；每轮 chat 后按 trigger 后台提取候选；policy 全字段 PII 检测脱敏（payment/membership 域直接阻断、邮箱正则、9-18 位数字序列、证件/联系方式短语检测 + `_redact_for_storage` 递归脱敏）；合并/确认流程；system prompt 前按 `memory.enabled` 三路检索（core profile / trip memory / phase-domain，硬编码 core_limit=10, phase_limit=8）按 trip_id 隔离；新行程回退 obsolete 旧 trip memory 并轮转 trip_id；Phase 7 幂等归档 episode（JSONL 独立存储，不参与 prompt 注入检索）|
 | Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
 
 ---
