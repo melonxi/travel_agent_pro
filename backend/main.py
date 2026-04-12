@@ -224,6 +224,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     # Session-level caches
     sessions: dict[str, dict] = {}  # session_id → {plan, messages, agent}
     memory_extraction_tasks: dict[str, asyncio.Task] = {}
+    memory_extraction_pending: dict[str, tuple[str, list[Message], TravelPlanState]] = {}
+    memory_pending_seen: dict[tuple[str, str], set[str]] = {}
     reflection_cache: dict[str, ReflectionInjector] = {}
     quality_gate_retries: dict[tuple[str, int, int], int] = {}
     db = Database(db_path=str(Path(config.data_dir) / "sessions.db"))
@@ -255,6 +257,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         yield
         for task in list(memory_extraction_tasks.values()):
             task.cancel()
+        memory_extraction_pending.clear()
         await db.close()
 
     app = FastAPI(title="Travel Agent Pro", lifespan=lifespan)
@@ -685,21 +688,19 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         except Exception:
             return []
 
-    def _schedule_memory_extraction(
+    def _cancel_memory_extraction(session_id: str) -> None:
+        task = memory_extraction_tasks.pop(session_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+        memory_extraction_pending.pop(session_id, None)
+
+    def _start_memory_extraction(
         *,
         session_id: str,
         user_id: str,
         messages_snapshot: list[Message],
         plan_snapshot: TravelPlanState,
     ) -> None:
-        if not config.memory.enabled or not config.memory.extraction.enabled:
-            return
-        if config.memory.extraction.trigger != "each_turn":
-            return
-        existing = memory_extraction_tasks.get(session_id)
-        if existing is not None and not existing.done():
-            return
-
         task = asyncio.create_task(
             _extract_memory_candidates(
                 session_id=session_id,
@@ -713,8 +714,43 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         def _cleanup(done_task: asyncio.Task) -> None:
             if memory_extraction_tasks.get(session_id) is done_task:
                 memory_extraction_tasks.pop(session_id, None)
+            queued = memory_extraction_pending.pop(session_id, None)
+            if queued is not None and not done_task.cancelled():
+                next_user_id, next_messages, next_plan = queued
+                _start_memory_extraction(
+                    session_id=session_id,
+                    user_id=next_user_id,
+                    messages_snapshot=next_messages,
+                    plan_snapshot=next_plan,
+                )
 
         task.add_done_callback(_cleanup)
+
+    def _schedule_memory_extraction(
+        *,
+        session_id: str,
+        user_id: str,
+        messages_snapshot: list[Message],
+        plan_snapshot: TravelPlanState,
+    ) -> None:
+        if not config.memory.enabled or not config.memory.extraction.enabled:
+            return
+        if config.memory.extraction.trigger != "each_turn":
+            return
+        existing = memory_extraction_tasks.get(session_id)
+        if existing is not None and not existing.done():
+            memory_extraction_pending[session_id] = (
+                user_id,
+                messages_snapshot,
+                plan_snapshot,
+            )
+            return
+        _start_memory_extraction(
+            session_id=session_id,
+            user_id=user_id,
+            messages_snapshot=messages_snapshot,
+            plan_snapshot=plan_snapshot,
+        )
 
     async def _build_trip_episode(
         *,
@@ -757,7 +793,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             if item.attributes.get("reason")
         ]
         return TripEpisode(
-            id=f"{session_id}:episode:{_now_iso()}",
+            id=f"{session_id}:episode",
             user_id=user_id,
             session_id=session_id,
             trip_id=plan.trip_id,
@@ -777,6 +813,23 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             satisfaction=None,
             created_at=_now_iso(),
         )
+
+    async def _append_trip_episode_once(
+        *,
+        user_id: str,
+        session_id: str,
+        plan: TravelPlanState,
+    ) -> bool:
+        episodes = await memory_mgr.store.list_episodes(user_id)
+        if any(episode.session_id == session_id for episode in episodes):
+            return False
+        episode = await _build_trip_episode(
+            user_id=user_id,
+            session_id=session_id,
+            plan=plan,
+        )
+        await memory_mgr.store.append_episode(episode)
+        return True
 
     # Backtrack detection patterns
     _BACKTRACK_PATTERNS: dict[int, list[str]] = {
@@ -1029,20 +1082,36 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         items = await memory_mgr.store.list_items(user_id)
         return {"items": [item.to_dict() for item in items]}
 
+    async def _set_memory_item_status(
+        user_id: str,
+        item_id: str,
+        status: str,
+    ) -> None:
+        items = await memory_mgr.store.list_items(user_id)
+        current = next((item for item in items if item.id == item_id), None)
+        if current is None:
+            raise HTTPException(status_code=404, detail="Memory item not found")
+        if current.status == status:
+            return
+        changed = await memory_mgr.store.update_status(user_id, item_id, status)
+        if changed:
+            return
+        items = await memory_mgr.store.list_items(user_id)
+        current = next((item for item in items if item.id == item_id), None)
+        if current is not None and current.status == status:
+            return
+        raise HTTPException(status_code=404, detail="Memory item not found")
+
     @app.post("/api/memory/{user_id}/confirm")
     async def confirm_memory_item(user_id: str, req: MemoryItemRequest):
         await _ensure_storage_ready()
-        changed = await memory_mgr.store.update_status(user_id, req.item_id, "active")
-        if not changed:
-            raise HTTPException(status_code=404, detail="Memory item not found")
+        await _set_memory_item_status(user_id, req.item_id, "active")
         return {"item_id": req.item_id, "status": "active"}
 
     @app.post("/api/memory/{user_id}/reject")
     async def reject_memory_item(user_id: str, req: MemoryItemRequest):
         await _ensure_storage_ready()
-        changed = await memory_mgr.store.update_status(user_id, req.item_id, "rejected")
-        if not changed:
-            raise HTTPException(status_code=404, detail="Memory item not found")
+        await _set_memory_item_status(user_id, req.item_id, "rejected")
         return {"item_id": req.item_id, "status": "rejected"}
 
     @app.post("/api/memory/{user_id}/events")
@@ -1070,9 +1139,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     @app.delete("/api/memory/{user_id}/{item_id}")
     async def delete_memory_item(user_id: str, item_id: str):
         await _ensure_storage_ready()
-        changed = await memory_mgr.store.update_status(user_id, item_id, "obsolete")
-        if not changed:
-            raise HTTPException(status_code=404, detail="Memory item not found")
+        await _set_memory_item_status(user_id, item_id, "obsolete")
         return {"item_id": item_id, "status": "obsolete"}
 
     @app.post("/api/backtrack/{session_id}")
@@ -1094,6 +1161,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         phase_router.prepare_backtrack(
             plan, req.to_phase, req.reason or "用户主动回退", snapshot_path
         )
+        _cancel_memory_extraction(session_id)
         await state_mgr.save(plan)
         session["agent"] = _build_agent(plan, session.get("user_id", "default_user"), compression_events=session.get("compression_events"))
         session["needs_rebuild"] = False
@@ -1161,12 +1229,19 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         async def event_stream():
             tool_call_names: dict[str, str] = {}
             if config.memory.enabled:
+                seen_key = (session["user_id"], plan.session_id)
+                seen_item_ids = memory_pending_seen.setdefault(seen_key, set())
                 pending_items = [
                     item
                     for item in await memory_mgr.store.list_items(session["user_id"])
                     if item.status in {"pending", "pending_conflict"}
+                    and f"{item.id}:{item.status}:{item.updated_at}" not in seen_item_ids
                 ]
                 if pending_items:
+                    seen_item_ids.update(
+                        f"{item.id}:{item.status}:{item.updated_at}"
+                        for item in pending_items
+                    )
                     yield _memory_pending_event_from_items(pending_items)
             async for chunk in agent.run(messages, phase=plan.phase):
                 if chunk.type.value == "keepalive":
@@ -1309,6 +1384,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     )
 
             if plan.phase < phase_before_run:
+                _cancel_memory_extraction(plan.session_id)
                 await _apply_message_fallbacks(plan, req.message, phase_router)
 
             await state_mgr.save(plan)
@@ -1333,12 +1409,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 await session_store.update(plan.session_id, status="archived")
                 if config.memory.enabled:
                     try:
-                        episode = await _build_trip_episode(
+                        await _append_trip_episode_once(
                             user_id=session["user_id"],
                             session_id=plan.session_id,
                             plan=plan,
                         )
-                        await memory_mgr.store.append_episode(episode)
                     except Exception:
                         pass
             _schedule_memory_extraction(
