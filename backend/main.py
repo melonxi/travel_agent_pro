@@ -614,6 +614,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         )
         asyncio.create_task(_append_memory_event_nonfatal(event))
 
+    _EXTRACTION_TIMEOUT_SECONDS = 20.0
+
     async def _extract_memory_candidates(
         *,
         session_id: str,
@@ -636,59 +638,78 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         user_messages = user_messages[-config.memory.extraction.max_user_messages :]
         try:
-            existing_items = await memory_mgr.store.list_items(user_id)
-            prompt = build_candidate_extraction_prompt(
-                user_messages=user_messages,
-                existing_items=existing_items,
-                plan_facts=_memory_plan_facts(plan_snapshot),
-            )
-            extraction_llm = create_llm_provider(
-                replace(config.llm, model=config.memory.extraction.model)
-            )
-            response_parts: list[str] = []
-            async for chunk in extraction_llm.chat(
-                [Message(role=Role.USER, content=prompt)],
-                tools=[],
-                stream=True,
-            ):
-                if chunk.content:
-                    response_parts.append(chunk.content)
-
-            candidates = parse_candidate_extraction_response("".join(response_parts))
-            if not candidates:
-                return []
-
-            policy = MemoryPolicy(
-                auto_save_low_risk=config.memory.policy.auto_save_low_risk,
-                auto_save_medium_risk=config.memory.policy.auto_save_medium_risk,
-            )
-            merger = PolicyMemoryMerger()
-            now = _now_iso()
-            merged_items = existing_items
-            for candidate in candidates:
-                action = policy.classify(candidate)
-                if action == "drop":
-                    continue
-                item = policy.to_item(
-                    candidate,
-                    user_id=user_id,
+            return await asyncio.wait_for(
+                _do_extract_memory_candidates(
                     session_id=session_id,
-                    now=now,
-                    trip_id=plan_snapshot.trip_id,
-                )
-                merged_items = merger.merge(merged_items, item)
-
-            for item in merged_items:
-                await memory_mgr.store.upsert_item(item)
-
-            pending_ids = [
-                item.id
-                for item in merged_items
-                if item.status in {"pending", "pending_conflict"}
-            ]
-            return pending_ids
+                    user_id=user_id,
+                    user_messages=user_messages,
+                    plan_snapshot=plan_snapshot,
+                ),
+                timeout=_EXTRACTION_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            return []
         except Exception:
             return []
+
+    async def _do_extract_memory_candidates(
+        *,
+        session_id: str,
+        user_id: str,
+        user_messages: list[str],
+        plan_snapshot: TravelPlanState,
+    ) -> list[str]:
+        existing_items = await memory_mgr.store.list_items(user_id)
+        prompt = build_candidate_extraction_prompt(
+            user_messages=user_messages,
+            existing_items=existing_items,
+            plan_facts=_memory_plan_facts(plan_snapshot),
+        )
+        extraction_llm = create_llm_provider(
+            replace(config.llm, model=config.memory.extraction.model)
+        )
+        response_parts: list[str] = []
+        async for chunk in extraction_llm.chat(
+            [Message(role=Role.USER, content=prompt)],
+            tools=[],
+            stream=True,
+        ):
+            if chunk.content:
+                response_parts.append(chunk.content)
+
+        candidates = parse_candidate_extraction_response("".join(response_parts))
+        if not candidates:
+            return []
+
+        policy = MemoryPolicy(
+            auto_save_low_risk=config.memory.policy.auto_save_low_risk,
+            auto_save_medium_risk=config.memory.policy.auto_save_medium_risk,
+        )
+        merger = PolicyMemoryMerger()
+        now = _now_iso()
+        merged_items = existing_items
+        for candidate in candidates:
+            action = policy.classify(candidate)
+            if action == "drop":
+                continue
+            item = policy.to_item(
+                candidate,
+                user_id=user_id,
+                session_id=session_id,
+                now=now,
+                trip_id=plan_snapshot.trip_id,
+            )
+            merged_items = merger.merge(merged_items, item)
+
+        for item in merged_items:
+            await memory_mgr.store.upsert_item(item)
+
+        pending_ids = [
+            item.id
+            for item in merged_items
+            if item.status in {"pending", "pending_conflict"}
+        ]
+        return pending_ids
 
     def _cancel_memory_extraction(session_id: str) -> None:
         task = memory_extraction_tasks.pop(session_id, None)

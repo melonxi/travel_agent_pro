@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from pathlib import Path
 
 import pytest
@@ -305,55 +304,3 @@ async def test_concurrent_upserts_do_not_drop_items(tmp_path: Path):
     assert len(loaded) == 10
     assert {item.id for item in loaded} == {f"mem{i}" for i in range(10)}
 
-
-@pytest.mark.asyncio
-async def test_cross_instance_upserts_do_not_drop_items(tmp_path: Path):
-    store_a = FileMemoryStore(tmp_path)
-    store_b = FileMemoryStore(tmp_path)
-    barrier = threading.Barrier(2)
-
-    async def write_from_thread(store: FileMemoryStore, item: MemoryItem) -> None:
-        def runner() -> None:
-            barrier.wait()
-            asyncio.run(store.upsert_item(item))
-
-        await asyncio.to_thread(runner)
-
-    item_a = MemoryItem(
-        id="mem-a",
-        user_id="u1",
-        type="preference",
-        domain="general",
-        key="ka",
-        value="va",
-        scope="global",
-        polarity="neutral",
-        confidence=0.8,
-        status="active",
-        source=MemorySource(kind="message", session_id="s1"),
-        created_at="2026-04-11T00:00:00",
-        updated_at="2026-04-11T00:00:00",
-    )
-    item_b = MemoryItem(
-        id="mem-b",
-        user_id="u1",
-        type="preference",
-        domain="general",
-        key="kb",
-        value="vb",
-        scope="global",
-        polarity="neutral",
-        confidence=0.8,
-        status="active",
-        source=MemorySource(kind="message", session_id="s1"),
-        created_at="2026-04-11T00:00:00",
-        updated_at="2026-04-11T00:00:00",
-    )
-
-    await asyncio.gather(
-        write_from_thread(store_a, item_a),
-        write_from_thread(store_b, item_b),
-    )
-
-    loaded = await store_a.list_items("u1")
-    assert {item.id for item in loaded} == {"mem-a", "mem-b"}

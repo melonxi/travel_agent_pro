@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -19,23 +19,17 @@ from memory.models import (
 
 
 class FileMemoryStore:
-    _lock_registry: dict[tuple[str, str], threading.Lock] = {}
-    _registry_guard = threading.Lock()
 
     def __init__(self, data_dir: str | Path = "./data"):
         self.data_dir = Path(data_dir)
+        self._lock_registry: dict[str, asyncio.Lock] = {}
 
-    def _registry_key(self, user_id: str) -> tuple[str, str]:
-        return (str(self.data_dir.resolve()), user_id)
-
-    def _lock_for(self, user_id: str) -> threading.Lock:
-        key = self._registry_key(user_id)
-        with self._registry_guard:
-            lock = self._lock_registry.get(key)
-            if lock is None:
-                lock = threading.Lock()
-                self._lock_registry[key] = lock
-            return lock
+    def _lock_for(self, user_id: str) -> asyncio.Lock:
+        lock = self._lock_registry.get(user_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._lock_registry[user_id] = lock
+        return lock
 
     def _user_dir(self, user_id: str) -> Path:
         return self.data_dir / "users" / user_id
@@ -44,10 +38,10 @@ class FileMemoryStore:
         return self._user_dir(user_id) / "memory.json"
 
     async def load_envelope(self, user_id: str) -> dict[str, Any]:
-        with self._lock_for(user_id):
-            return self._load_envelope_unlocked(user_id)
+        async with self._lock_for(user_id):
+            return await asyncio.to_thread(self._load_envelope_sync, user_id)
 
-    def _load_envelope_unlocked(self, user_id: str) -> dict[str, Any]:
+    def _load_envelope_sync(self, user_id: str) -> dict[str, Any]:
         path = self._memory_path(user_id)
         if not path.exists():
             return {"schema_version": 2, "user_id": user_id, "items": [], "legacy": {}}
@@ -154,7 +148,7 @@ class FileMemoryStore:
 
         return items
 
-    def _write_envelope_unlocked(self, user_id: str, envelope: dict[str, Any]) -> None:
+    def _write_envelope_sync(self, user_id: str, envelope: dict[str, Any]) -> None:
         user_dir = self._user_dir(user_id)
         user_dir.mkdir(parents=True, exist_ok=True)
         path = self._memory_path(user_id)
@@ -168,16 +162,16 @@ class FileMemoryStore:
         os.replace(tmp_path, path)
 
     async def list_items(self, user_id: str, *, status: str | None = None) -> list[MemoryItem]:
-        with self._lock_for(user_id):
-            envelope = self._load_envelope_unlocked(user_id)
+        async with self._lock_for(user_id):
+            envelope = await asyncio.to_thread(self._load_envelope_sync, user_id)
             items = [MemoryItem.from_dict(row) for row in envelope.get("items", [])]
             if status is not None:
                 items = [item for item in items if item.status == status]
             return items
 
     async def upsert_item(self, item: MemoryItem) -> None:
-        with self._lock_for(item.user_id):
-            envelope = self._load_envelope_unlocked(item.user_id)
+        async with self._lock_for(item.user_id):
+            envelope = await asyncio.to_thread(self._load_envelope_sync, item.user_id)
             rows = [MemoryItem.from_dict(row) for row in envelope.get("items", [])]
             replaced = False
             for index, existing in enumerate(rows):
@@ -190,15 +184,15 @@ class FileMemoryStore:
             envelope["items"] = [row.to_dict() for row in rows]
             envelope["schema_version"] = 2
             envelope["user_id"] = item.user_id
-            self._write_envelope_unlocked(item.user_id, envelope)
+            await asyncio.to_thread(self._write_envelope_sync, item.user_id, envelope)
 
     async def update_status(self, user_id: str, item_id: str, status: str) -> bool:
-        with self._lock_for(user_id):
+        async with self._lock_for(user_id):
             path = self._memory_path(user_id)
             if not path.exists():
                 return False
 
-            envelope = self._load_envelope_unlocked(user_id)
+            envelope = await asyncio.to_thread(self._load_envelope_sync, user_id)
             rows = [MemoryItem.from_dict(row) for row in envelope.get("items", [])]
             changed = False
             for item in rows:
@@ -212,35 +206,39 @@ class FileMemoryStore:
                 return False
 
             envelope["items"] = [row.to_dict() for row in rows]
-            self._write_envelope_unlocked(user_id, envelope)
+            await asyncio.to_thread(self._write_envelope_sync, user_id, envelope)
             return True
 
     async def append_event(self, event: MemoryEvent) -> None:
-        with self._lock_for(event.user_id):
-            user_dir = self._user_dir(event.user_id)
-            user_dir.mkdir(parents=True, exist_ok=True)
-            with (user_dir / "memory_events.jsonl").open("a", encoding="utf-8") as fp:
-                fp.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
+        async with self._lock_for(event.user_id):
+            def _write() -> None:
+                user_dir = self._user_dir(event.user_id)
+                user_dir.mkdir(parents=True, exist_ok=True)
+                with (user_dir / "memory_events.jsonl").open("a", encoding="utf-8") as fp:
+                    fp.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
+            await asyncio.to_thread(_write)
 
     async def append_episode(self, episode: TripEpisode) -> None:
-        with self._lock_for(episode.user_id):
-            user_dir = self._user_dir(episode.user_id)
-            user_dir.mkdir(parents=True, exist_ok=True)
-            path = user_dir / "trip_episodes.jsonl"
-            if path.exists():
-                for line in path.read_text(encoding="utf-8").splitlines():
-                    if not line.strip():
-                        continue
-                    if json.loads(line).get("id") == episode.id:
-                        return
-            with path.open("a", encoding="utf-8") as fp:
-                fp.write(json.dumps(episode.to_dict(), ensure_ascii=False) + "\n")
+        async with self._lock_for(episode.user_id):
+            def _write() -> None:
+                user_dir = self._user_dir(episode.user_id)
+                user_dir.mkdir(parents=True, exist_ok=True)
+                path = user_dir / "trip_episodes.jsonl"
+                if path.exists():
+                    for line in path.read_text(encoding="utf-8").splitlines():
+                        if not line.strip():
+                            continue
+                        if json.loads(line).get("id") == episode.id:
+                            return
+                with path.open("a", encoding="utf-8") as fp:
+                    fp.write(json.dumps(episode.to_dict(), ensure_ascii=False) + "\n")
+            await asyncio.to_thread(_write)
 
     async def list_episodes(
         self, user_id: str, *, destination: str | None = None
     ) -> list[TripEpisode]:
-        with self._lock_for(user_id):
-            envelope = self._load_envelope_unlocked(user_id)
+        async with self._lock_for(user_id):
+            envelope = await asyncio.to_thread(self._load_envelope_sync, user_id)
             path = self._user_dir(user_id) / "trip_episodes.jsonl"
             episodes: list[TripEpisode] = []
             if path.exists():
