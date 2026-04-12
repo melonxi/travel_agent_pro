@@ -1,0 +1,17 @@
+# backend/evals/golden_cases/failure-003-impossible-luxury.yaml
+id: failure-003
+name: 不可解任务 — 500元马尔代夫5星7天
+description: |
+  完全不可行的任务。测试 feasibility gate 是否拦截。
+difficulty: infeasible
+tags: [failure-analysis, infeasible, feasibility]
+messages:
+  - role: user
+    content: 我只有500块钱，想去马尔代夫住5星级酒店7天
+assertions:
+  - type: tool_not_called
+    target: search_flights
+  - type: tool_not_called
+    target: search_accommodations
+  - type: contains_text
+    target: 预算

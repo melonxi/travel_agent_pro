@@ -1,0 +1,18 @@
+# backend/evals/golden_cases/failure-004-midway-change.yaml
+id: failure-004
+name: 多轮变更 — 京都改成大阪
+description: |
+  用户在规划中途改变目的地。测试 backtrack 机制是否：
+  1. 正确清理下游状态
+  2. 更新目的地
+  3. 不保留旧目的地的搜索结果
+difficulty: hard
+tags: [failure-analysis, backtrack, state-machine]
+messages:
+  - role: user
+    content: 我想去东京和京都玩5天，预算15000
+  - role: user
+    content: 等等，我改主意了，京都改成大阪吧
+assertions:
+  - type: state_field_set
+    target: destination
