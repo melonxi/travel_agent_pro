@@ -129,8 +129,8 @@ travel_agent_pro/
 │   ├── vite.config.ts          # Vite 6: /api → localhost:8000 代理
 │   └── package.json            # React 19, Leaflet, react-markdown
 │
-├── docs/                       # 架构文档与学习笔记
-├── scripts/                    # dev.sh (启动) + dev-stop.sh (停止)
+├── docs/                       # 架构文档与学习笔记（含 docs/failure-analysis.md 失败案例报告）
+├── scripts/                    # dev.sh/dev-stop.sh + failure-analysis/run_and_analyze.py（真实后端失败场景执行器）
 ├── backend/data/               # 本地运行时持久化：sessions.db、sessions/、users/
 ├── config.yaml                 # 运行时配置 (LLM/API/智能层开关/阈值)
 ├── docker-compose.observability.yml # Jaeger 一键启动
@@ -185,7 +185,7 @@ travel_agent_pro/
 | Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
 | Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；policy 合并与 payment/membership 域阻断 + 证件/联系方式/邮箱/长数字序列全字段 PII 检测脱敏；三路检索（core profile / trip memory / phase-domain）按 trip_id 隔离；新行程回退时轮转 trip_id；受 `memory.enabled` 门控后阶段相关注入 | 每轮 chat 后后台提取；每次 system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
-| Eval Runner | YAML golden cases + 可注入执行器；收集 state/tool/responses/stats 后做断言评估，并可生成失败案例 Markdown 分析报告 | 离线/批量评估 |
+| Eval Runner | YAML golden cases + 可注入执行器；`scripts/failure-analysis/run_and_analyze.py` 可对 live backend 逐条执行 failure-* 场景，采集 SSE 回复 / plan state / tool calls / stats，输出 JSON 与 Markdown 分析报告 | 离线/批量评估 |
 
 ---
 
