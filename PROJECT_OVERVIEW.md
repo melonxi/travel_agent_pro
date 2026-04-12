@@ -50,10 +50,14 @@ travel_agent_pro/
 │   │   ├── models.py           # TravelPlanState 完整数据类 (350+ 行)
 │   │   ├── manager.py          # StateManager: JSON 文件持久化
 │   │   └── intake.py           # 自然语言 → 旅行事实提取 (日期/预算/人数)
-│   ├── memory/                 # 用户记忆
-│   │   ├── models.py           # UserMemory: 偏好、历史、排除项
-│   │   ├── manager.py          # MemoryManager: 用户维度持久化
-│   │   └── extraction.py       # Memory Extraction: 从对话中提取持久偏好
+│   ├── memory/                 # 结构化长期/本次/episode 记忆
+│   │   ├── models.py           # MemoryItem/MemoryEvent/TripEpisode + 兼容旧 UserMemory
+│   │   ├── store.py            # FileMemoryStore: schema v2 JSON/JSONL, migration locks
+│   │   ├── manager.py          # MemoryManager: 加载/保存兼容层 + 上下文组装 facade
+│   │   ├── extraction.py       # Candidate extraction prompt/parser
+│   │   ├── policy.py           # 风险分类、脱敏、合并与写入策略
+│   │   ├── retriever.py        # 阶段相关规则检索
+│   │   └── formatter.py        # 紧凑记忆提示格式化
 │   ├── context/                # 上下文管理
 │   │   ├── manager.py          # ContextManager: 系统提示构建、运行时注入、压缩决策 (386 行)
 │   │   └── soul.md             # Agent 人格定义 (启动时加载)
@@ -120,7 +124,7 @@ travel_agent_pro/
 │
 ├── docs/                       # 架构文档与学习笔记
 ├── scripts/                    # dev.sh (启动) + dev-stop.sh (停止)
-├── data/sessions/              # 会话文件 (plan.json 快照)
+├── backend/data/               # 本地运行时持久化：sessions.db、sessions/、users/
 ├── config.yaml                 # 运行时配置 (LLM/API/智能层开关/阈值)
 ├── docker-compose.observability.yml # Jaeger 一键启动
 ├── e2e-test.spec.ts            # Playwright E2E 测试
@@ -172,7 +176,7 @@ travel_agent_pro/
 | Reflection | 被动式自省提示，会话级去重 | before_llm_call (步骤切换时) |
 | Parallel Tool Exec | 读写分离并行调度 | 工具批量执行时 |
 | Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
-| Memory Extraction | 自动偏好提取 | Phase 1→3 转换后 |
+| Memory System | 结构化长期/本次/episode 记忆，后台候选提取，policy 合并，阶段相关注入 | 每轮 chat 后后台提取；每次 system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
 
 ---
@@ -335,11 +339,16 @@ archives     → id, session_id, plan_json, summary, created_at
 ```
 backend/data/
 ├── sessions.db                    # SQLite 主库
-└── sessions/
-    └── sess_{12-hex}/
-        ├── plan.json              # TravelPlanState 快照
-        ├── snapshots/             # 回退快照
-        └── tool_results/          # 工具结果缓存
+├── sessions/
+│   └── sess_{12-hex}/
+│       ├── plan.json              # TravelPlanState 快照
+│       ├── snapshots/             # 回退快照
+│       └── tool_results/          # 工具结果缓存
+└── users/
+    └── {user_id}/
+        ├── memory.json            # schema v2 结构化 MemoryItem + legacy 兼容数据
+        ├── memory_events.jsonl    # accept/reject 等行为事件
+        └── trip_episodes.jsonl    # Phase 7 归档后的 TripEpisode
 ```
 
 ---
@@ -352,10 +361,16 @@ POST /api/sessions                        → 创建新会话
 GET  /api/sessions                        → 列出所有会话
 GET  /api/sessions/{id}                   → 会话元数据
 DELETE /api/sessions/{id}                 → 软删除会话
-POST /api/sessions/{id}/chat              → 发送消息 (SSE 流式响应)
+POST /api/chat/{id}                       → 发送消息 (SSE 流式响应)
 GET  /api/sessions/{id}/plan (或 /api/plan/{id}) → 获取旅行方案
 GET  /api/messages/{id}                   → 获取会话消息历史
-POST /api/sessions/{id}/backtrack         → 回退到指定阶段
+POST /api/backtrack/{id}                  → 回退到指定阶段
+GET  /api/memory/{user_id}                → 获取结构化记忆项
+POST /api/memory/{user_id}/confirm        → 确认 pending 记忆
+POST /api/memory/{user_id}/reject         → 拒绝 pending 记忆
+POST /api/memory/{user_id}/events         → 追加记忆事件
+GET  /api/memory/{user_id}/episodes       → 获取旅行 episode
+DELETE /api/memory/{user_id}/{item_id}    → 标记记忆为 obsolete
 ```
 
 ---
@@ -448,7 +463,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
 | 并行工具执行 | 读写分离，搜索类并行，状态更新顺序 |
 | Forced Tool Choice | 关键决策点强制工具调用，渐进替代 State Repair |
-| Memory Extraction | Phase 1→3 时用低成本模型异步提取持久偏好 |
+| Memory System | schema v2 结构化记忆；每轮 chat 后按 trigger 后台提取候选，policy 脱敏/合并/确认；system prompt 前阶段相关检索，Phase 7 幂等归档 episode |
 | Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
 
 ---
