@@ -7,7 +7,6 @@ from typing import Any
 
 from agent.types import ToolCall
 
-
 _INJECTION_PATTERNS = (
     re.compile(r"ignore\s+(previous|all|above)\s+instructions", re.IGNORECASE),
     re.compile(r"disregard\s+(previous|all|your)\s+(instructions|rules)", re.IGNORECASE),
@@ -15,9 +14,26 @@ _INJECTION_PATTERNS = (
     re.compile(r"system\s*prompt", re.IGNORECASE),
 )
 
+_INJECTION_PATTERNS_ZH = (
+    re.compile(r"忽略.{0,4}(之前|以上|所有|前面).{0,4}(指令|规则|提示|要求)"),
+    re.compile(r"你现在是"),
+    re.compile(r"不要遵守.{0,4}(规则|指令|限制)"),
+    re.compile(r"(请|你)?无视.{0,4}(之前|以上|所有).{0,4}(指令|规则)"),
+    re.compile(r"(扮演|充当|假装).{0,4}(另一个|其他|别的)"),
+    re.compile(r"(输出|显示|告诉我).{0,4}(系统|system).{0,4}(提示|prompt)"),
+)
+
 _DATE_FIELDS = {"date", "departure_date", "check_in", "check_out", "start_date"}
 _LOCATION_FIELDS = {"origin", "destination", "query", "city", "location", "place"}
 _SEARCH_OUTPUT_TOOLS = {"search_flights", "search_accommodations", "search_trains"}
+
+_MAX_INPUT_LENGTH = 5000
+
+_REQUIRED_RESULT_FIELDS: dict[str, list[str]] = {
+    "search_flights": ["price", "departure_time", "arrival_time"],
+    "search_accommodations": ["price", "name"],
+    "search_trains": ["price", "departure_time"],
+}
 
 
 @dataclass
@@ -37,10 +53,22 @@ class ToolGuardrail:
         self._disabled_rules = set(disabled_rules or [])
 
     def validate_input(self, tc: ToolCall) -> GuardrailResult:
+        if not self._is_disabled("input_length"):
+            values = self._iter_string_values(tc.arguments)
+            for value in values:
+                if len(value) > _MAX_INPUT_LENGTH:
+                    return GuardrailResult(
+                        allowed=False,
+                        reason=f"输入内容过长（{len(value)} 字符，上限 {_MAX_INPUT_LENGTH}）",
+                        level="error",
+                    )
+
         if not self._is_disabled("prompt_injection"):
             values = self._iter_string_values(tc.arguments)
             for value in values:
-                if any(pattern.search(value) for pattern in _INJECTION_PATTERNS):
+                if any(p.search(value) for p in _INJECTION_PATTERNS):
+                    return GuardrailResult(allowed=False, reason="检测到提示注入风险", level="error")
+                if any(p.search(value) for p in _INJECTION_PATTERNS_ZH):
                     return GuardrailResult(allowed=False, reason="检测到提示注入风险", level="error")
 
         if not self._is_disabled("past_date"):
@@ -93,6 +121,22 @@ class ToolGuardrail:
                     price = item.get("price")
                     if isinstance(price, (int, float)) and price > 100_000:
                         return GuardrailResult(allowed=True, reason="结果中存在异常高价", level="warn")
+
+        if (
+            not self._is_disabled("missing_fields")
+            and tool_name in _REQUIRED_RESULT_FIELDS
+            and isinstance(results, list)
+        ):
+            required = _REQUIRED_RESULT_FIELDS[tool_name]
+            for item in results:
+                if isinstance(item, dict):
+                    missing = [f for f in required if f not in item]
+                    if missing:
+                        return GuardrailResult(
+                            allowed=True,
+                            reason=f"搜索结果缺少必要字段: {', '.join(missing)}",
+                            level="warn",
+                        )
 
         return GuardrailResult()
 
