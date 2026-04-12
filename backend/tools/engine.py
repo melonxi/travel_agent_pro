@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from opentelemetry import trace
@@ -131,6 +132,7 @@ class ToolEngine:
                 )
 
             try:
+                start_time = time.monotonic()
                 data = await tool_def(**call.arguments)
                 metadata = None
                 if isinstance(data, dict) and "_metadata" in data:
@@ -142,6 +144,10 @@ class ToolEngine:
                 span.add_event(EVENT_TOOL_OUTPUT, {
                     "data": truncate(json.dumps(data, ensure_ascii=False)),
                 })
+                duration_ms = (time.monotonic() - start_time) * 1000
+                if metadata is None:
+                    metadata = {}
+                metadata["duration_ms"] = round(duration_ms, 1)
                 return ToolResult(
                     tool_call_id=call.id,
                     status="success",
@@ -149,6 +155,7 @@ class ToolEngine:
                     metadata=metadata,
                 )
             except ToolError as e:
+                duration_ms = (time.monotonic() - start_time) * 1000
                 span.set_attribute(TOOL_NAME, call.name)
                 span.set_attribute(TOOL_STATUS, "error")
                 span.set_attribute(TOOL_ERROR_CODE, e.error_code)
@@ -162,8 +169,10 @@ class ToolEngine:
                     error=str(e),
                     error_code=e.error_code,
                     suggestion=e.suggestion,
+                    metadata={"duration_ms": round(duration_ms, 1)},
                 )
             except Exception as e:
+                duration_ms = (time.monotonic() - start_time) * 1000
                 span.set_attribute(TOOL_NAME, call.name)
                 span.set_attribute(TOOL_STATUS, "error")
                 span.set_attribute(TOOL_ERROR_CODE, "INTERNAL_ERROR")
@@ -172,7 +181,11 @@ class ToolEngine:
                     "error": truncate(str(e)),
                     "error_code": "INTERNAL_ERROR",
                 })
-                return self._internal_error_result(call, e)
+                result = self._internal_error_result(call, e)
+                if result.metadata is None:
+                    result.metadata = {}
+                result.metadata["duration_ms"] = round(duration_ms, 1)
+                return result
 
     async def execute_batch(self, calls: list[ToolCall]) -> list[ToolResult]:
         if not calls:
