@@ -1,0 +1,15 @@
+id: easy-003
+name: 新加坡短途
+description: 新加坡3日短途游
+difficulty: easy
+tags: [short-trip, singapore]
+messages:
+  - role: user
+    content: 想去新加坡玩三天，一个人，预算8000
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination
+    value: 新加坡

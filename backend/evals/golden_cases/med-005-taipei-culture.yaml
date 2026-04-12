@@ -1,0 +1,15 @@
+id: med-005
+name: 台北文化深度游
+description: 文化主题的台北旅行
+difficulty: medium
+tags: [culture, taipei]
+messages:
+  - role: user
+    content: 想去台北感受文化气息，参观故宫博物院、诚品书店这些，6天，一个人，预算8000
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination
+    value: 台北

@@ -1,0 +1,14 @@
+id: med-003
+name: 欧洲穷游
+description: 低预算欧洲旅行
+difficulty: medium
+tags: [budget, europe]
+messages:
+  - role: user
+    content: 想穷游欧洲，去巴黎和伦敦，10天，预算2万，越省越好
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination

@@ -1,0 +1,15 @@
+id: hard-003
+name: 团队复杂约束
+description: 多人旅行，有各种限制条件
+difficulty: hard
+tags: [group, constraints]
+messages:
+  - role: user
+    content: 6个人去清迈团建，有两个人吃素，一个人恐高不能坐飞机，预算人均5000，5天
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination
+    value: 清迈

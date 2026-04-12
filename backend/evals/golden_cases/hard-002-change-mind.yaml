@@ -1,0 +1,14 @@
+id: hard-002
+name: 中途改主意
+description: 用户在规划过程中改变目的地
+difficulty: hard
+tags: [backtrack, change-plan]
+messages:
+  - role: user
+    content: 我想去东京玩，5天，预算15000
+  - role: user
+    content: 等等，我改主意了，还是去大阪吧
+assertions:
+  - type: state_field_set
+    target: destination
+    value: 大阪

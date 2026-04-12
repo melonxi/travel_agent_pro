@@ -1,0 +1,15 @@
+id: easy-005
+name: 首尔购物游
+description: 首尔购物主题旅行
+difficulty: easy
+tags: [shopping, seoul]
+messages:
+  - role: user
+    content: 去首尔逛街买东西，5天，两个人，预算15000
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination
+    value: 首尔

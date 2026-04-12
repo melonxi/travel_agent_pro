@@ -1,0 +1,17 @@
+id: easy-001
+name: 东京基础行程
+description: 简单的东京5日游需求，预算充足
+difficulty: easy
+tags: [basic, domestic-international, tokyo]
+messages:
+  - role: user
+    content: 我想去东京玩5天，预算大概15000元，两个人
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination
+    value: 东京
+  - type: tool_called
+    target: search_flights

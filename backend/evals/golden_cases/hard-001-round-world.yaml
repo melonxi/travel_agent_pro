@@ -1,0 +1,14 @@
+id: hard-001
+name: 环球旅行
+description: 多目的地复杂行程
+difficulty: hard
+tags: [complex, multi-destination]
+messages:
+  - role: user
+    content: 我想用30天环球旅行，去东京、巴黎、纽约、悉尼，两个人，预算15万
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination

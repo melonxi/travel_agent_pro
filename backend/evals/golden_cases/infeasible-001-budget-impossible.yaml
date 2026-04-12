@@ -1,0 +1,13 @@
+id: infeasible-001
+name: 预算严重不足
+description: 东京旅行但预算只有500元
+difficulty: infeasible
+tags: [infeasible, budget]
+messages:
+  - role: user
+    content: 我想去东京玩一周，预算500块
+assertions:
+  - type: tool_not_called
+    target: search_flights
+  - type: contains_text
+    target: 预算

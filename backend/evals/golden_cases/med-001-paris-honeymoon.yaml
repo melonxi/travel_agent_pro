@@ -1,0 +1,21 @@
+id: med-001
+name: 巴黎蜜月行
+description: 蜜月旅行，需要浪漫行程安排
+difficulty: medium
+tags: [honeymoon, paris, luxury]
+messages:
+  - role: user
+    content: 我们下个月蜜月想去巴黎，7天6晚，预算4万，希望住好一点的酒店
+  - role: user
+    content: 最好能安排一次米其林餐厅
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination
+    value: 巴黎
+  - type: tool_called
+    target: search_hotels
+  - type: tool_called
+    target: search_flights
