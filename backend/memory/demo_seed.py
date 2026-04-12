@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -30,11 +31,21 @@ def _episode_id(user_id: str, destination: str, dates: str) -> str:
     return f"demo-episode-{digest}"
 
 
-async def seed_demo_memory(*, seed_file: Path, data_dir: Path) -> SeedSummary:
+async def seed_demo_memory(
+    *,
+    seed_file: Path,
+    data_dir: Path,
+    reset_user: bool = False,
+) -> SeedSummary:
     payload = json.loads(seed_file.read_text(encoding="utf-8"))
     user_id = str(payload["user_id"])
     events = payload.get("events", [])
     store = FileMemoryStore(data_dir)
+
+    if reset_user:
+        user_dir = data_dir / "users" / user_id
+        if user_dir.exists():
+            shutil.rmtree(user_dir)
 
     existing_items = {item.id for item in await store.list_items(user_id)}
     existing_episodes = {episode.id for episode in await store.list_episodes(user_id)}
@@ -115,11 +126,13 @@ async def _main() -> int:
     parser = argparse.ArgumentParser(description="Seed demo memory into backend data files.")
     parser.add_argument("--seed-file", required=True)
     parser.add_argument("--data-dir", required=True)
+    parser.add_argument("--reset-user", action="store_true")
     args = parser.parse_args()
 
     summary = await seed_demo_memory(
         seed_file=Path(args.seed_file),
         data_dir=Path(args.data_dir),
+        reset_user=args.reset_user,
     )
     print(
         json.dumps(
