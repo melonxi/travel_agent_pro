@@ -1,8 +1,8 @@
 # Travel Agent Pro
 
-A full-stack AI travel planning system powered by a hand-crafted Agent Loop with 7-phase cognitive decision flow and a **5-layer harness architecture** ensuring safety, correctness, and quality at every step. Built from scratch without LangChain or other agent frameworks.
+A full-stack AI travel planning system powered by a hand-crafted Agent Loop with a production Phase 1/3/5/7 planning path and a **5-layer harness architecture** ensuring safety, correctness, and quality at every step. Built from scratch without LangChain or other agent frameworks.
 
-**Quality at Scale:** 590+ tests, 15 golden eval cases, cost/latency tracking per session.
+**Quality at Scale:** 590+ tests, 15 executable golden eval cases, JSON eval reports, cost/latency tracking per session.
 
 ## Architecture
 
@@ -17,19 +17,16 @@ User <-> React Frontend <-> FastAPI Gateway <-> Agent Loop <-> LLM (OpenAI / Ant
                       Destinations    Hotels      Routes
 ```
 
-### 7-Phase Cognitive Decision Flow
+### Production Planning Path
 
 | Phase | Name | Purpose | Tools |
 |-------|------|---------|-------|
-| 1 | Requirements Gathering | Understand travel preferences | - |
-| 2 | Destination Research | Search and evaluate destinations | - |
-| 3 | Option Evaluation | Compare flights, hotels, activities | `search_flights`, `search_accommodations`, `get_poi_info` |
-| 4 | Itinerary Planning | Build day-by-day schedule | `calculate_route`, `assemble_day_plan`, `check_availability` |
-| 5 | Validation & Refinement | Verify constraints and quality | `check_weather`, `generate_summary` |
-| 6 | ~~Booking~~ | *(skipped — no real transactions)* | - |
-| 7 | Presentation | Deliver the final plan | - |
+| 1 | Inspiration & Destination Lock | Narrow vague intent into a destination | `xiaohongshu_search`, `web_search`, `quick_travel_search` |
+| 3 | Framework Planning | Build trip brief, candidate pool, skeletons, transport and lodging locks | `search_flights`, `search_trains`, `search_accommodations`, `get_poi_info`, `calculate_route` |
+| 5 | Daily Itinerary Assembly | Expand the selected skeleton into day-by-day plans and validate constraints | `assemble_day_plan`, `check_availability`, `check_weather`, `generate_summary` |
+| 7 | Pre-Departure Checklist | Final checklist and handoff | `generate_summary` |
 
-The `PhaseRouter` manages transitions automatically based on plan state completeness. Each phase has its own system prompt, allowed tools, and control mode (auto / confirm).
+The `PhaseRouter` manages transitions automatically based on plan state completeness. Phase 3 has four substeps (`brief`, `candidate`, `skeleton`, `lock`) with progressively opened tools.
 
 ### Core Components
 
@@ -65,6 +62,7 @@ Each layer operates independently:
 - **Judge** — LLM-based quality scoring [1-5] with score clamping and parse failure logging
 - **Feasibility Gate** — Rule-based infeasibility detection before expensive planning (30+ destination cost/duration tables)
 - **Cost Tracker** — Per-session token usage extraction (OpenAI + Anthropic), model pricing estimation, tool call duration monitoring
+- **Eval Runner** — YAML golden cases execute through an injectable case executor, then produce state/tool/text assertion results and JSON reports
 
 ## Tech Stack
 
@@ -209,13 +207,13 @@ travel_agent_pro/
 │   ├── agent/               # Agent loop, message types, hook system
 │   ├── llm/                 # LLM providers (OpenAI, Anthropic) + factory
 │   ├── state/               # TravelPlanState model + state manager
-│   ├── tools/               # 12 domain tools with @tool decorator
+│   ├── tools/               # 24+ domain tools with @tool decorator
 │   ├── phase/               # Phase prompts + PhaseRouter
 │   ├── context/             # 4-layer system message assembly + soul.md
 │   ├── memory/              # User preference & trip history persistence
 │   ├── harness/             # 5-layer harness: guardrail, validator, judge, feasibility
 │   ├── telemetry/           # OTel tracing + SessionStats cost/latency tracking
-│   ├── evals/               # Evaluation pipeline (15 golden cases, YAML-driven)
+│   ├── evals/               # Executable eval pipeline (15 golden cases, JSON reports)
 │   └── tests/               # 590+ tests (pytest-asyncio)
 ├── frontend/
 │   ├── src/

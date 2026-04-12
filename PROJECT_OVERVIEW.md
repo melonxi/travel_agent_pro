@@ -7,7 +7,7 @@
 
 ## 1. 一句话定位
 
-**Travel Agent Pro** 是一个基于 LLM 的智能旅行规划 Agent 系统，采用 7 阶段认知决策流程（模糊意图 → 出发前清单），通过 FastAPI + React 全栈实现，支持 SSE 流式交互、多 LLM 供应商切换、上下文压缩和可观测性追踪。
+**Travel Agent Pro** 是一个基于 LLM 的智能旅行规划 Agent 系统，生产主路径采用 Phase 1/3/5/7 认知决策流（模糊意图 → 方案设计 → 日程组装 → 出发前清单），通过 FastAPI + React 全栈实现，支持 SSE 流式交互、多 LLM 供应商切换、上下文压缩、评估报告和可观测性追踪。
 
 ---
 
@@ -94,8 +94,8 @@ travel_agent_pro/
 │   │   ├── judge.py            # 软评分 [1-5] (score clamping + 解析失败日志)
 │   │   └── feasibility.py      # 可行性门控 (30+目的地成本/天数查表)
 │   ├── evals/                  # 评估管线
-│   │   ├── models.py           # GoldenCase, CaseResult, SuiteResult
-│   │   ├── runner.py           # YAML加载 + 离线断言评估 + 套件执行
+│   │   ├── models.py           # GoldenCase, EvalExecution, CaseResult, SuiteResult
+│   │   ├── runner.py           # YAML加载 + 可注入执行器 + 断言评估 + JSON报告
 │   │   └── golden_cases/       # 15个黄金测试用例 (easy/medium/hard/infeasible)
 │   ├── telemetry/              # 可观测性 + 成本追踪
 │   │   ├── setup.py            # OpenTelemetry TracerProvider + OTLP 导出
@@ -141,7 +141,7 @@ travel_agent_pro/
 
 ---
 
-## 4. 核心架构：7 阶段认知决策流
+## 4. 核心架构：Phase 1/3/5/7 认知决策流
 
 ```
 用户消息 → Phase 1 → Phase 3 → Phase 5 → Phase 7
@@ -184,6 +184,7 @@ travel_agent_pro/
 | Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
 | Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；policy 合并与 payment/membership 域阻断 + 证件/联系方式/邮箱/长数字序列全字段 PII 检测脱敏；三路检索（core profile / trip memory / phase-domain）按 trip_id 隔离；新行程回退时轮转 trip_id；受 `memory.enabled` 门控后阶段相关注入 | 每轮 chat 后后台提取；每次 system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
+| Eval Runner | YAML golden cases + 可注入执行器；收集 state/tool/responses/stats 后做断言评估并输出 JSON report | 离线/批量评估 |
 
 ---
 

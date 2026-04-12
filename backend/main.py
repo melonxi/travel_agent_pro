@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -224,6 +225,32 @@ def _record_tool_result_stats(
         status=result.status,
         error_code=result.error_code,
         phase=phase,
+    )
+
+
+def _record_llm_usage_stats(
+    *,
+    stats: SessionStats | None,
+    provider: str,
+    model: str,
+    usage_info: dict[str, Any],
+    started_at: float,
+    now: float | None = None,
+    phase: int,
+    iteration: int,
+) -> None:
+    if stats is None:
+        return
+    current = time.monotonic() if now is None else now
+    duration_ms = max(0.0, (current - started_at) * 1000)
+    stats.record_llm_call(
+        provider=provider,
+        model=model,
+        input_tokens=int(usage_info.get("input_tokens", 0) or 0),
+        output_tokens=int(usage_info.get("output_tokens", 0) or 0),
+        duration_ms=duration_ms,
+        phase=phase,
+        iteration=iteration,
     )
 
 
@@ -1377,22 +1404,24 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         for item in pending_items
                     )
                     yield _memory_pending_event_from_items(pending_items)
+            llm_started_at = time.monotonic()
+            usage_iteration = 0
             async for chunk in agent.run(messages, phase=plan.phase):
                 if chunk.type.value == "keepalive":
                     yield {"comment": "ping"}
                     continue
                 if chunk.type == ChunkType.USAGE and chunk.usage_info:
-                    stats = session.get("stats")
-                    if stats:
-                        stats.record_llm_call(
-                            provider=config.llm.provider,
-                            model=config.llm.model,
-                            input_tokens=chunk.usage_info.get("input_tokens", 0),
-                            output_tokens=chunk.usage_info.get("output_tokens", 0),
-                            duration_ms=0,
-                            phase=plan.phase,
-                            iteration=0,
-                        )
+                    _record_llm_usage_stats(
+                        stats=session.get("stats"),
+                        provider=config.llm.provider,
+                        model=config.llm.model,
+                        usage_info=chunk.usage_info,
+                        started_at=llm_started_at,
+                        phase=plan.phase,
+                        iteration=usage_iteration,
+                    )
+                    usage_iteration += 1
+                    llm_started_at = time.monotonic()
                     continue
                 if chunk.type == ChunkType.CONTEXT_COMPRESSION:
                     yield json.dumps({

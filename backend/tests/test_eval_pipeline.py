@@ -1,17 +1,20 @@
 """Tests for eval pipeline models and runner."""
 from __future__ import annotations
-import tempfile
+import json
 from pathlib import Path
 
 import pytest
 import yaml
 
-from evals.models import Assertion, AssertionType, GoldenCase, SuiteResult
+from evals.models import Assertion, AssertionType, EvalExecution, GoldenCase, SuiteResult
 from evals.runner import (
     evaluate_assertion,
     load_golden_cases,
+    run_case,
+    run_suite,
     run_case_offline,
     run_suite_offline,
+    save_report,
 )
 
 
@@ -153,9 +156,121 @@ class TestRunSuiteOffline:
         )
         suite = run_suite_offline([case], {})
         assert suite.errors == 1
+        assert suite.results[0].difficulty == "easy"
+        assert suite.metrics["by_difficulty"]["easy"]["errors"] == 1
 
     def test_suite_summary(self):
         s = SuiteResult(total=10, passed=8, failed=1, errors=1, duration_ms=1234)
         summary = s.summary()
         assert "8/10" in summary
         assert "80%" in summary
+
+
+class TestExecutableRunner:
+    def test_run_case_calls_executor_and_evaluates_assertions(self):
+        case = GoldenCase(
+            id="exec-001",
+            name="Executable",
+            description="",
+            difficulty="easy",
+            messages=[
+                {"role": "user", "content": "我想去东京"},
+                {"role": "user", "content": "预算15000"},
+            ],
+            assertions=[
+                Assertion(type=AssertionType.STATE_FIELD_SET, target="destination", value="东京"),
+                Assertion(type=AssertionType.TOOL_CALLED, target="search_flights"),
+            ],
+        )
+        seen: list[str] = []
+
+        def executor(received: GoldenCase) -> EvalExecution:
+            seen.extend(message["content"] for message in received.messages)
+            return EvalExecution(
+                state={"phase": 3, "destination": "东京"},
+                tool_calls=["search_flights"],
+                responses=["已为你查询东京航班"],
+                stats={"total_input_tokens": 100, "estimated_cost_usd": 0.001},
+            )
+
+        result = run_case(case, executor)
+
+        assert result.passed is True
+        assert result.assertions_passed == 2
+        assert result.stats["estimated_cost_usd"] == 0.001
+        assert seen == ["我想去东京", "预算15000"]
+
+    def test_run_suite_aggregates_metrics_by_difficulty_and_infeasible(self):
+        cases = [
+            GoldenCase(
+                id="easy-pass",
+                name="Easy",
+                description="",
+                difficulty="easy",
+                messages=[],
+                assertions=[Assertion(type=AssertionType.STATE_FIELD_SET, target="destination")],
+            ),
+            GoldenCase(
+                id="infeasible-fail",
+                name="Impossible",
+                description="",
+                difficulty="infeasible",
+                messages=[],
+                assertions=[Assertion(type=AssertionType.CONTAINS_TEXT, target="预算")],
+            ),
+        ]
+
+        def executor(case: GoldenCase) -> EvalExecution:
+            if case.id == "easy-pass":
+                return EvalExecution(
+                    state={"destination": "东京"},
+                    tool_calls=[],
+                    responses=["东京行程"],
+                    stats={"total_input_tokens": 10, "estimated_cost_usd": 0.01},
+                )
+            return EvalExecution(
+                state={},
+                tool_calls=[],
+                responses=["请补充信息"],
+                stats={"total_input_tokens": 20, "estimated_cost_usd": 0.02},
+            )
+
+        suite = run_suite(cases, executor)
+
+        assert suite.total == 2
+        assert suite.passed == 1
+        assert suite.metrics["by_difficulty"]["easy"]["passed"] == 1
+        assert suite.metrics["by_difficulty"]["infeasible"]["failed"] == 1
+        assert suite.metrics["infeasible"]["total"] == 1
+        assert suite.metrics["infeasible"]["passed"] == 0
+        assert suite.metrics["stats"]["total_input_tokens"] == 30
+        assert suite.metrics["stats"]["estimated_cost_usd"] == 0.03
+
+    def test_save_report_writes_json_with_metrics_and_results(self, tmp_path):
+        case = GoldenCase(
+            id="report-001",
+            name="Report",
+            description="",
+            difficulty="easy",
+            messages=[],
+            assertions=[],
+        )
+
+        suite = run_suite(
+            [case],
+            lambda _: EvalExecution(
+                state={},
+                tool_calls=[],
+                responses=[],
+                stats={"total_input_tokens": 7, "estimated_cost_usd": 0.004},
+            ),
+        )
+
+        report_path = save_report(suite, output_dir=tmp_path, timestamp="20260412-120000")
+
+        assert report_path == tmp_path / "eval-20260412-120000.json"
+        data = json.loads(report_path.read_text(encoding="utf-8"))
+        assert data["summary"]["total"] == 1
+        assert data["summary"]["passed"] == 1
+        assert data["metrics"]["stats"]["total_input_tokens"] == 7
+        assert data["results"][0]["case_id"] == "report-001"
