@@ -1,0 +1,14 @@
+id: med-002
+name: 日本多城市
+description: 东京+大阪多城市行程
+difficulty: medium
+tags: [multi-city, japan]
+messages:
+  - role: user
+    content: 想去日本玩10天，东京和大阪都想去，两个人预算3万
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination

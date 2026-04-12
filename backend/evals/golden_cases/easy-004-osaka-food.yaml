@@ -1,0 +1,15 @@
+id: easy-004
+name: 大阪美食之旅
+description: 以美食为主题的大阪旅行
+difficulty: easy
+tags: [food, osaka, theme]
+messages:
+  - role: user
+    content: 我和女朋友想去大阪吃吃吃，4天3晚，预算12000
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination
+    value: 大阪

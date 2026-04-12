@@ -1,0 +1,17 @@
+id: easy-002
+name: 曼谷家庭游
+description: 曼谷家庭旅行，带小孩
+difficulty: easy
+tags: [family, bangkok, budget]
+messages:
+  - role: user
+    content: 带孩子去曼谷玩一周，预算一万块，三个人
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination
+    value: 曼谷
+  - type: state_field_set
+    target: travelers

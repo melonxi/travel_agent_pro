@@ -1,0 +1,11 @@
+id: infeasible-002
+name: 时间严重不足
+description: 东京旅行但只有1天
+difficulty: infeasible
+tags: [infeasible, time]
+messages:
+  - role: user
+    content: 明天去东京后天就回来，预算2万
+assertions:
+  - type: contains_text
+    target: 天

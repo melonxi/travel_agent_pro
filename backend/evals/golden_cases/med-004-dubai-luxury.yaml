@@ -1,0 +1,17 @@
+id: med-004
+name: 迪拜豪华游
+description: 高端迪拜旅行
+difficulty: medium
+tags: [luxury, dubai]
+messages:
+  - role: user
+    content: 去迪拜玩5天，两个人，预算不限，想体验帆船酒店
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination
+    value: 迪拜
+  - type: tool_called
+    target: search_hotels
