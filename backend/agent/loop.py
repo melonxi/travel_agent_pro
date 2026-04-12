@@ -417,13 +417,12 @@ class AgentLoop:
             raise RuntimeError("Phase-aware rebuild requires router/context/plan/memory")
 
         phase_prompt = self.phase_router.get_prompt(to_phase)
-        memory = await self.memory_mgr.load(self.user_id)
-        user_summary = self.memory_mgr.generate_summary(memory)
+        memory_context = await self.memory_mgr.generate_context(self.user_id, self.plan)
         rebuilt = [
             self.context_manager.build_system_message(
                 self.plan,
                 phase_prompt,
-                user_summary,
+                memory_context,
                 available_tools=self._current_tool_names(to_phase),
             )
         ]

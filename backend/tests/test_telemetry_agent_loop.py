@@ -21,7 +21,7 @@ class _PhaseRouter:
 
 
 class _ContextManager:
-    def build_system_message(self, plan, phase_prompt, user_summary="", available_tools=None):
+    def build_system_message(self, plan, phase_prompt, memory_context="", available_tools=None):
         return Message(role=Role.SYSTEM, content=phase_prompt)
 
     async def compress_for_transition(self, messages, from_phase, to_phase, llm_factory):
@@ -33,6 +33,9 @@ class _MemoryManager:
         return {}
 
     def generate_summary(self, memory) -> str:
+        return ""
+
+    async def generate_context(self, user_id: str, plan) -> str:
         return ""
 
 
