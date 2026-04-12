@@ -2,10 +2,8 @@
 id: failure-004
 name: 多轮变更 — 京都改成大阪
 description: |
-  用户在规划中途改变目的地。测试 backtrack 机制是否：
-  1. 正确清理下游状态
-  2. 更新目的地
-  3. 不保留旧目的地的搜索结果
+  用户在规划中途改变目的地。测试 backtrack 机制是否能正确反映
+  中途的多城市目的地变更，并将 destination 更新为新的目的地。
 difficulty: hard
 tags: [failure-analysis, backtrack, state-machine]
 messages:

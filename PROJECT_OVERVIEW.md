@@ -96,7 +96,7 @@ travel_agent_pro/
 │   ├── evals/                  # 评估管线
 │   │   ├── models.py           # GoldenCase, EvalExecution, CaseResult, SuiteResult
 │   │   ├── runner.py           # YAML加载 + 可注入执行器 + 断言评估 + JSON报告
-│   │   └── golden_cases/       # 15个黄金测试用例 (easy/medium/hard/infeasible)
+│   │   └── golden_cases/       # 19个黄金测试用例 (easy/medium/hard/infeasible)
 │   ├── telemetry/              # 可观测性 + 成本追踪
 │   │   ├── setup.py            # OpenTelemetry TracerProvider + OTLP 导出
 │   │   ├── attributes.py       # 标准化 span 属性与事件名
