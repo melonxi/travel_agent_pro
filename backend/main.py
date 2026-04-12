@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -28,6 +29,7 @@ from agent.tool_choice import ToolChoiceDecider
 from agent.types import Message, Role, ToolCall, ToolResult
 from config import load_config
 from telemetry import setup_telemetry
+from telemetry.stats import SessionStats
 from context.manager import ContextManager
 from harness.guardrail import ToolGuardrail
 from harness.judge import build_judge_prompt, parse_judge_response
@@ -1026,6 +1028,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "needs_rebuild": False,
             "user_id": meta["user_id"],
             "compression_events": compression_events,
+            "stats": SessionStats(),
         }
 
     @app.get("/health")
@@ -1045,6 +1048,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "needs_rebuild": False,
             "user_id": "default_user",
             "compression_events": compression_events,
+            "stats": SessionStats(),
         }
         await session_store.create(plan.session_id, "default_user")
         return {"session_id": plan.session_id, "phase": plan.phase}
@@ -1082,6 +1086,14 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     raise HTTPException(status_code=404, detail="Session not found")
         phase_router.sync_phase_state(session["plan"])
         return session["plan"].to_dict()
+
+    @app.get("/api/sessions/{session_id}/stats")
+    async def get_session_stats(session_id: str):
+        session = sessions.get(session_id)
+        if not session:
+            return JSONResponse({"error": "Session not found"}, status_code=404)
+        stats: SessionStats = session.get("stats", SessionStats())
+        return stats.to_dict()
 
     @app.delete("/api/sessions/{session_id}")
     async def delete_session(session_id: str):
@@ -1310,6 +1322,19 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             async for chunk in agent.run(messages, phase=plan.phase):
                 if chunk.type.value == "keepalive":
                     yield {"comment": "ping"}
+                    continue
+                if chunk.type == ChunkType.USAGE and chunk.usage_info:
+                    stats = session.get("stats")
+                    if stats:
+                        stats.record_llm_call(
+                            provider=config.llm.provider,
+                            model=config.llm.model,
+                            input_tokens=chunk.usage_info.get("input_tokens", 0),
+                            output_tokens=chunk.usage_info.get("output_tokens", 0),
+                            duration_ms=0,
+                            phase=plan.phase,
+                            iteration=0,
+                        )
                     continue
                 if chunk.type == ChunkType.CONTEXT_COMPRESSION:
                     yield json.dumps({
