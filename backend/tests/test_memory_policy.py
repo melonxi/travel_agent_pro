@@ -181,6 +181,47 @@ def test_document_phrases_are_dropped():
     assert policy.classify(make_candidate(value="id number X")) == "drop"
 
 
+def test_pii_in_evidence_reason_or_attributes_is_dropped():
+    policy = MemoryPolicy()
+
+    assert (
+        policy.classify(
+            make_candidate(
+                value="需要检查签证",
+                evidence="我的护照号是 123456789",
+            )
+        )
+        == "drop"
+    )
+    assert (
+        policy.classify(
+            make_candidate(
+                value="需要检查签证",
+                reason="用户提到 passport number E12345678",
+            )
+        )
+        == "drop"
+    )
+    assert (
+        policy.classify(
+            make_candidate(
+                value="需要检查签证",
+                attributes={"document": {"number": "123456789"}},
+            )
+        )
+        == "drop"
+    )
+
+
+def test_redact_for_storage_masks_pii_defensively():
+    policy = MemoryPolicy()
+
+    assert policy._redact_for_storage("证件 123456789") == "证件 [REDACTED]"
+    assert policy._redact_for_storage({"document": {"number": "123456789"}}) == {
+        "document": {"number": "[REDACTED]"}
+    }
+
+
 def test_merge_same_scalar_conflict_obsoletes_existing_and_marks_incoming():
     existing = make_item(value="relaxed", updated_at="2026-04-11T00:00:00")
     incoming = make_item(value="slow", updated_at="2026-04-11T00:01:00")

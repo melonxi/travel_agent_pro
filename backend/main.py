@@ -558,6 +558,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             plan=plan,
             llm_factory=llm_factory,
             memory_mgr=memory_mgr,
+            memory_enabled=config.memory.enabled,
             user_id=user_id,
             compression_events=compression_events,
             reflection=reflection,
@@ -761,11 +762,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         items: list[MemoryItem] = []
         if config.memory.enabled:
             items = await memory_mgr.store.list_items(user_id)
-        session_items = [
-            item
-            for item in items
-            if item.session_id == session_id or item.trip_id == plan.trip_id
-        ]
+        session_items = []
+        for item in items:
+            same_session = item.session_id == session_id
+            same_trip = bool(plan.trip_id) and item.trip_id == plan.trip_id
+            if same_session or same_trip:
+                session_items.append(item)
         accepted_items = [
             item.to_dict()
             for item in session_items
@@ -1207,7 +1209,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool["name"]
             for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)
         ]
-        memory_context = await memory_mgr.generate_context(req.user_id, plan)
+        memory_context = (
+            await memory_mgr.generate_context(req.user_id, plan)
+            if config.memory.enabled
+            else "暂无相关用户记忆"
+        )
         sys_msg = context_mgr.build_system_message(
             plan,
             phase_prompt,

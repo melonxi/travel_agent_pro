@@ -25,7 +25,7 @@ class MemoryPolicy:
     def classify(self, candidate: MemoryCandidate) -> str:
         if candidate.domain in _DENIED_DOMAINS:
             return "drop"
-        if self._contains_forbidden_pii(candidate.value):
+        if self._candidate_contains_forbidden_pii(candidate):
             return "drop"
         if candidate.risk == "high":
             return "pending"
@@ -52,6 +52,9 @@ class MemoryPolicy:
             raise ValueError("drop candidates cannot be converted to MemoryItem")
         persistent_status = "active" if status == "auto_save" else status
         item_trip_id = trip_id if candidate.scope == "trip" else None
+        safe_value = self._redact_for_storage(candidate.value)
+        safe_attributes = self._redact_for_storage(candidate.attributes)
+        safe_evidence = self._redact_text(candidate.evidence)[:120]
         return MemoryItem(
             id=generate_memory_id(
                 user_id=user_id,
@@ -60,13 +63,13 @@ class MemoryPolicy:
                 key=candidate.key,
                 scope=candidate.scope,
                 trip_id=item_trip_id,
-                value=candidate.value,
+                value=safe_value,
             ),
             user_id=user_id,
             type=candidate.type,
             domain=candidate.domain,
             key=candidate.key,
-            value=copy.deepcopy(candidate.value),
+            value=safe_value,
             scope=candidate.scope,
             polarity=candidate.polarity,
             confidence=candidate.confidence,
@@ -74,12 +77,25 @@ class MemoryPolicy:
             source=MemorySource(
                 kind="message",
                 session_id=session_id,
-                quote=candidate.evidence[:120],
+                quote=safe_evidence,
             ),
             created_at=now,
             updated_at=now,
             trip_id=item_trip_id,
-            attributes=copy.deepcopy(candidate.attributes),
+            attributes=safe_attributes,
+        )
+
+    def _candidate_contains_forbidden_pii(self, candidate: MemoryCandidate) -> bool:
+        return any(
+            self._contains_forbidden_pii(value)
+            for value in (
+                candidate.domain,
+                candidate.key,
+                candidate.value,
+                candidate.evidence,
+                candidate.reason,
+                candidate.attributes,
+            )
         )
 
     def _contains_forbidden_pii(self, value: Any) -> bool:
@@ -106,6 +122,35 @@ class MemoryPolicy:
         if isinstance(value, (list, tuple, set)):
             return any(self._contains_forbidden_pii(item) for item in value)
         return False
+
+    def _redact_for_storage(self, value: Any) -> Any:
+        if value is None or isinstance(value, (bool, float)):
+            return copy.deepcopy(value)
+        if isinstance(value, int):
+            return "[REDACTED]" if 9 <= len(str(abs(value))) <= 18 else value
+        if isinstance(value, str):
+            return self._redact_text(value)
+        if isinstance(value, dict):
+            redacted: dict[Any, Any] = {}
+            for key, nested in value.items():
+                if str(key).lower() == "number":
+                    redacted[key] = "[REDACTED]"
+                else:
+                    redacted[key] = self._redact_for_storage(nested)
+            return redacted
+        if isinstance(value, list):
+            return [self._redact_for_storage(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._redact_for_storage(item) for item in value)
+        if isinstance(value, set):
+            return {self._redact_for_storage(item) for item in value}
+        return copy.deepcopy(value)
+
+    def _redact_text(self, value: str) -> str:
+        text = str(value)
+        for phrase in _PII_PHRASES:
+            text = re.sub(re.escape(phrase), "[REDACTED]", text, flags=re.IGNORECASE)
+        return _PII_SEQUENCE_RE.sub("[REDACTED]", text)
 
 
 class MemoryMerger:

@@ -13,6 +13,10 @@ from state.models import TravelPlanState
 _SESSION_ID_RE = re.compile(r"^sess_[a-f0-9]{12}$")
 
 
+def _default_trip_id(session_id: str) -> str:
+    return f"trip_{session_id.removeprefix('sess_')}"
+
+
 class StateManager:
     def __init__(self, data_dir: str = "./data"):
         self.data_dir = Path(data_dir)
@@ -28,7 +32,11 @@ class StateManager:
     async def create_session(self) -> TravelPlanState:
         session_id = f"sess_{uuid.uuid4().hex[:12]}"
         # version=0 so that the internal save() call below increments it to 1
-        plan = TravelPlanState(session_id=session_id, version=0)
+        plan = TravelPlanState(
+            session_id=session_id,
+            trip_id=_default_trip_id(session_id),
+            version=0,
+        )
         session_dir = self._session_dir(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
         (session_dir / "snapshots").mkdir(exist_ok=True)
@@ -38,6 +46,8 @@ class StateManager:
 
     async def save(self, plan: TravelPlanState) -> None:
         """Persist plan to disk. Mutates plan in-place: increments version and updates last_updated."""
+        if not plan.trip_id:
+            plan.trip_id = _default_trip_id(plan.session_id)
         plan.last_updated = datetime.now().isoformat()
         plan.version += 1
         path = self._session_dir(plan.session_id) / "plan.json"
