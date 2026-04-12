@@ -109,3 +109,37 @@ def test_no_errors_on_empty_plan():
     plan = TravelPlanState(session_id="s1")
     errors = validate_hard_constraints(plan)
     assert errors == []
+
+
+def test_validate_no_crash_when_budget_is_none():
+    plan = TravelPlanState(session_id="test")
+    plan.budget = None
+    plan.daily_plans = []
+    errors = validate_hard_constraints(plan)
+    assert isinstance(errors, list)
+
+
+def test_validate_no_crash_when_dates_is_none():
+    plan = TravelPlanState(session_id="test")
+    plan.dates = None
+    plan.daily_plans = []
+    errors = validate_hard_constraints(plan)
+    assert isinstance(errors, list)
+
+
+def test_time_to_minutes_valid():
+    from harness.validator import _time_to_minutes
+    assert _time_to_minutes("09:30") == 570
+    assert _time_to_minutes("14:00") == 840
+
+
+def test_time_to_minutes_malformed_returns_none():
+    from harness.validator import _time_to_minutes
+    result = _time_to_minutes("invalid")
+    assert result is None
+
+
+def test_time_to_minutes_empty_returns_none():
+    from harness.validator import _time_to_minutes
+    result = _time_to_minutes("")
+    assert result is None
