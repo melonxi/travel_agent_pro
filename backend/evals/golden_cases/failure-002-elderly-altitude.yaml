@@ -16,3 +16,7 @@ assertions:
     target: 海拔
   - type: contains_text
     target: 健康
+  - type: contains_text
+    target: 替代
+  - type: contains_text
+    target: 医疗
