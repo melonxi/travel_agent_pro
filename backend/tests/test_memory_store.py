@@ -268,6 +268,7 @@ async def test_append_episode_and_list_episodes(tmp_path: Path):
     )
 
     await store.append_episode(episode)
+    await store.append_episode(episode)
 
     all_episodes = await store.list_episodes("u1")
     tokyo_episodes = await store.list_episodes("u1", destination="Tokyo")

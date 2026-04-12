@@ -226,7 +226,14 @@ class FileMemoryStore:
         with self._lock_for(episode.user_id):
             user_dir = self._user_dir(episode.user_id)
             user_dir.mkdir(parents=True, exist_ok=True)
-            with (user_dir / "trip_episodes.jsonl").open("a", encoding="utf-8") as fp:
+            path = user_dir / "trip_episodes.jsonl"
+            if path.exists():
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    if json.loads(line).get("id") == episode.id:
+                        return
+            with path.open("a", encoding="utf-8") as fp:
                 fp.write(json.dumps(episode.to_dict(), ensure_ascii=False) + "\n")
 
     async def list_episodes(
