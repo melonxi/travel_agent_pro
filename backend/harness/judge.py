@@ -2,8 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _clamp(value: int, lo: int = 1, hi: int = 5) -> int:
+    return max(lo, min(hi, value))
 
 
 @dataclass
@@ -40,17 +47,19 @@ def build_judge_prompt(plan_data: dict[str, Any], user_prefs: dict[str, Any]) ->
 
 def parse_judge_response(response: str) -> SoftScore:
     try:
-        # Handle cases where LLM wraps JSON in markdown code blocks
         text = response.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         data = json.loads(text)
         return SoftScore(
-            pace=int(data.get("pace", 3)),
-            geography=int(data.get("geography", 3)),
-            coherence=int(data.get("coherence", 3)),
-            personalization=int(data.get("personalization", 3)),
+            pace=_clamp(int(data.get("pace", 3))),
+            geography=_clamp(int(data.get("geography", 3))),
+            coherence=_clamp(int(data.get("coherence", 3))),
+            personalization=_clamp(int(data.get("personalization", 3))),
             suggestions=data.get("suggestions", []),
         )
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        logger.warning(
+            "评估解析失败 (%s): %s", type(exc).__name__, response[:500],
+        )
         return SoftScore(suggestions=["评估解析失败，使用默认评分"])
