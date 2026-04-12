@@ -130,7 +130,7 @@ travel_agent_pro/
 │   └── package.json            # React 19, Leaflet, react-markdown
 │
 ├── docs/                       # 架构文档与学习笔记（含 docs/failure-analysis.md 失败案例报告）
-├── scripts/                    # dev.sh/dev-stop.sh + failure-analysis/run_and_analyze.py（真实后端失败场景执行器）
+├── scripts/                    # dev.sh/dev-stop.sh + failure-analysis/run_and_analyze.py / capture_screenshots.ts（失败场景执行与截图采集）
 │   └── demo/                   # demo/seed-memory.json + demo/playwright.config.ts + demo-full-flow.spec.ts
 ├── backend/data/               # 本地运行时持久化：sessions.db、sessions/、users/
 ├── config.yaml                 # 运行时配置 (LLM/API/智能层开关/阈值)
