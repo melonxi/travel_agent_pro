@@ -8,7 +8,9 @@ const SEND_BUTTON_SELECTOR = '.send-btn';
 const ASSISTANT_BUBBLE_SELECTOR = '.message.assistant .bubble';
 const TOOL_CARD_SELECTOR = '.tool-card';
 
-mkdirSync('screenshots/demos', { recursive: true });
+test.beforeAll(() => {
+  mkdirSync('screenshots/demos', { recursive: true });
+});
 
 async function sendMessage(page: Page, message: string) {
   const input = page.locator(INPUT_SELECTOR);
@@ -56,6 +58,8 @@ async function waitForAssistantResponse(page: Page, previousAssistantCount = 0) 
 test('demo full flow covers recommendation, planning, and backtrack', async ({
   page,
 }) => {
+  // This intentionally overrides the 5-minute demo config timeout because the
+  // spec chains three long LLM interactions in one shared browser session.
   test.setTimeout(LONG_TIMEOUT * 3);
 
   await page.goto('/');
