@@ -1,6 +1,8 @@
 # Travel Agent Pro
 
-A full-stack AI travel planning system powered by a hand-crafted Agent Loop with 7-phase cognitive decision flow. Built from scratch without LangChain or other agent frameworks.
+A full-stack AI travel planning system powered by a hand-crafted Agent Loop with 7-phase cognitive decision flow and a **5-layer harness architecture** ensuring safety, correctness, and quality at every step. Built from scratch without LangChain or other agent frameworks.
+
+**Quality at Scale:** 590+ tests, 15 golden eval cases, cost/latency tracking per session.
 
 ## Architecture
 
@@ -38,6 +40,32 @@ The `PhaseRouter` manages transitions automatically based on plan state complete
 - **Memory Manager** (`memory/manager.py`) — Persists user preferences and trip history across sessions as JSON.
 - **Harness** (`harness/`) — Hard constraint validator + soft quality scoring via LLM judge prompt.
 
+### 5-Layer Harness Architecture
+
+```
+Input → Guardrail → Agent Loop → Validator → Judge → Output
+  │         │                         │         │
+  │    Chinese injection           Hard        Soft quality
+  │    detection, length          constraint    scoring
+  │    limits, struct             checks        (LLM-based)
+  │    validation
+  │
+  ├── Feasibility Gate (Phase 1→3)
+  │     Rule-based budget/duration checks
+  │     30+ destination lookup tables
+  │
+  └── Cost & Latency Tracking
+        Per-session token usage, model pricing
+        Tool call duration monitoring
+```
+
+Each layer operates independently:
+- **Guardrail** — Input sanitization: Chinese prompt injection detection (6 patterns), message length limits (5000 chars), required field validation
+- **Validator** — Hard constraint enforcement: budget overruns, date conflicts, null safety guards
+- **Judge** — LLM-based quality scoring [1-5] with score clamping and parse failure logging
+- **Feasibility Gate** — Rule-based infeasibility detection before expensive planning (30+ destination cost/duration tables)
+- **Cost Tracker** — Per-session token usage extraction (OpenAI + Anthropic), model pricing estimation, tool call duration monitoring
+
 ## Tech Stack
 
 **Backend** — Python 3.12+
@@ -45,7 +73,7 @@ The `PhaseRouter` manages transitions automatically based on plan state complete
 - OpenAI SDK / Anthropic SDK (dual provider support)
 - Pydantic v2 for all data models
 - OpenTelemetry + Jaeger (local tracing and span event inspection)
-- pytest + pytest-asyncio (164 tests)
+- pytest + pytest-asyncio (590+ tests)
 
 **Frontend** — TypeScript + React 19
 - Vite 6 dev server with API proxy
@@ -102,7 +130,7 @@ npm run dev
 
 ```bash
 cd backend
-pytest                # 164 tests
+pytest                # 590+ tests
 pytest --cov          # with coverage
 ```
 
@@ -185,9 +213,10 @@ travel_agent_pro/
 │   ├── phase/               # Phase prompts + PhaseRouter
 │   ├── context/             # 4-layer system message assembly + soul.md
 │   ├── memory/              # User preference & trip history persistence
-│   ├── harness/             # Constraint validator + quality judge
-│   ├── telemetry/           # OTel attributes, decorators, setup
-│   └── tests/               # 164 tests (pytest-asyncio)
+│   ├── harness/             # 5-layer harness: guardrail, validator, judge, feasibility
+│   ├── telemetry/           # OTel tracing + SessionStats cost/latency tracking
+│   ├── evals/               # Evaluation pipeline (15 golden cases, YAML-driven)
+│   └── tests/               # 590+ tests (pytest-asyncio)
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx          # Main layout (chat + info panel)
@@ -205,6 +234,7 @@ travel_agent_pro/
 | GET | `/health` | Health check |
 | POST | `/api/sessions` | Create a new session |
 | GET | `/api/sessions/{id}/plan` | Get current travel plan state |
+| GET | `/api/sessions/{id}/stats` | Session cost/token/latency statistics |
 | POST | `/api/sessions/{id}/chat` | SSE streaming chat |
 
 ## License
