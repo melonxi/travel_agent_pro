@@ -109,6 +109,8 @@ class OpenAIProvider:
                 kwargs["tools"] = self._convert_tools(tools)
             if tools and tool_choice is not None:
                 kwargs["tool_choice"] = tool_choice
+            if stream:
+                kwargs["stream_options"] = {"include_usage": True}
 
             if not stream:
                 response = await self.client.chat.completions.create(**kwargs)
@@ -135,6 +137,14 @@ class OpenAIProvider:
                     "text_preview": text_preview,
                     "tool_calls": json.dumps(tool_names),
                 })
+                if hasattr(response, 'usage') and response.usage:
+                    yield LLMChunk(
+                        type=ChunkType.USAGE,
+                        usage_info={
+                            "input_tokens": response.usage.prompt_tokens,
+                            "output_tokens": response.usage.completion_tokens,
+                        },
+                    )
                 yield LLMChunk(type=ChunkType.DONE)
                 return
 
@@ -143,6 +153,16 @@ class OpenAIProvider:
             collected_text = ""
 
             async for chunk in response:
+                # Check for usage data (final chunk in stream)
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    yield LLMChunk(
+                        type=ChunkType.USAGE,
+                        usage_info={
+                            "input_tokens": chunk.usage.prompt_tokens,
+                            "output_tokens": chunk.usage.completion_tokens,
+                        },
+                    )
+
                 choice = chunk.choices[0] if chunk.choices else None
                 if not choice:
                     continue
