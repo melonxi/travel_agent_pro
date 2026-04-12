@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,11 +35,12 @@ from harness.validator import validate_hard_constraints
 from llm.factory import create_llm_provider
 from llm.types import ChunkType
 from memory.extraction import (
-    MemoryMerger,
-    build_extraction_prompt,
-    parse_extraction_response,
+    build_candidate_extraction_prompt,
+    parse_candidate_extraction_response,
 )
 from memory.manager import MemoryManager
+from memory.models import MemoryCandidate, MemoryEvent, MemoryItem, TripEpisode
+from memory.policy import MemoryMerger as PolicyMemoryMerger, MemoryPolicy
 from phase.router import PhaseRouter
 from storage.archive_store import ArchiveStore
 from storage.database import Database
@@ -71,6 +75,17 @@ class ChatRequest(BaseModel):
 class BacktrackRequest(BaseModel):
     to_phase: int
     reason: str = ""
+
+
+class MemoryItemRequest(BaseModel):
+    item_id: str
+
+
+class MemoryEventRequest(BaseModel):
+    event_type: str
+    object_type: str
+    object_payload: dict[str, Any]
+    reason_text: str | None = None
 
 
 def _should_replace_dates_with_message_dates(
@@ -132,6 +147,71 @@ async def _apply_message_fallbacks(
         await phase_router.check_and_apply_transition(plan)
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _memory_summary(candidate: MemoryCandidate) -> str:
+    value = candidate.value
+    if isinstance(value, (dict, list)):
+        value_text = json.dumps(value, ensure_ascii=False)
+    else:
+        value_text = "" if value is None else str(value)
+    return f"[{candidate.domain}] {candidate.key}: {value_text}"
+
+
+def _memory_pending_event(
+    candidates: list[MemoryCandidate],
+    item_ids: list[str],
+) -> str:
+    items: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates):
+        item_id = item_ids[index] if index < len(item_ids) else None
+        items.append(
+            {
+                "id": item_id,
+                "status": "pending",
+                "summary": _memory_summary(candidate),
+                "candidate": candidate.to_dict(),
+            }
+        )
+    return json.dumps(
+        {
+            "type": "memory_pending",
+            "item_ids": item_ids,
+            "items": items,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _memory_pending_event_from_items(items: list[MemoryItem]) -> str:
+    candidates: list[MemoryCandidate] = []
+    item_ids: list[str] = []
+    for item in items:
+        item_ids.append(item.id)
+        candidates.append(
+            MemoryCandidate(
+                type=item.type,
+                domain=item.domain,
+                key=item.key,
+                value=item.value,
+                scope=item.scope,
+                polarity=item.polarity,
+                confidence=item.confidence,
+                risk=item.status,
+                evidence=item.source.quote or "",
+                reason=str(item.attributes.get("reason", "")),
+                attributes=dict(item.attributes),
+            )
+        )
+    payload = json.loads(_memory_pending_event(candidates, item_ids))
+    for item_payload, item in zip(payload["items"], items, strict=False):
+        item_payload["status"] = item.status
+        item_payload["item"] = item.to_dict()
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def create_app(config_path: str = "config.yaml") -> FastAPI:
     config = load_config(config_path)
     state_mgr = StateManager(data_dir=config.data_dir)
@@ -144,7 +224,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
     # Session-level caches
     sessions: dict[str, dict] = {}  # session_id → {plan, messages, agent}
-    memory_extraction_tasks: set[asyncio.Task] = set()
+    memory_extraction_tasks: dict[str, asyncio.Task] = {}
+    memory_extraction_pending: dict[str, tuple[str, list[Message], TravelPlanState]] = {}
+    memory_pending_seen: dict[tuple[str, str], set[str]] = {}
     reflection_cache: dict[str, ReflectionInjector] = {}
     quality_gate_retries: dict[tuple[str, int, int], int] = {}
     db = Database(db_path=str(Path(config.data_dir) / "sessions.db"))
@@ -174,8 +256,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         await db.initialize()
         await _probe_context_window()
         yield
-        for task in list(memory_extraction_tasks):
+        for task in list(memory_extraction_tasks.values()):
             task.cancel()
+        memory_extraction_pending.clear()
         await db.close()
 
     app = FastAPI(title="Travel Agent Pro", lifespan=lifespan)
@@ -476,6 +559,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             plan=plan,
             llm_factory=llm_factory,
             memory_mgr=memory_mgr,
+            memory_enabled=config.memory.enabled,
             user_id=user_id,
             compression_events=compression_events,
             reflection=reflection,
@@ -484,56 +568,292 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             parallel_tool_execution=config.parallel_tool_execution,
         )
 
-    async def _extract_memory_preferences(
+    def _memory_plan_facts(plan: TravelPlanState) -> dict[str, Any]:
+        return {
+            "session_id": plan.session_id,
+            "trip_id": plan.trip_id,
+            "phase": plan.phase,
+            "destination": plan.destination,
+            "dates": plan.dates.to_dict() if plan.dates else None,
+            "travelers": plan.travelers.to_dict() if plan.travelers else None,
+            "budget": plan.budget.to_dict() if plan.budget else None,
+            "selected_skeleton_id": plan.selected_skeleton_id,
+            "selected_transport": plan.selected_transport,
+            "accommodation": plan.accommodation.to_dict() if plan.accommodation else None,
+            "phase3_step": plan.phase3_step,
+        }
+
+    async def _append_memory_event_nonfatal(event: MemoryEvent) -> None:
+        if not config.memory.enabled:
+            return
+        try:
+            await memory_mgr.store.append_event(event)
+        except Exception:
+            return
+
+    def _schedule_memory_event(
+        *,
+        user_id: str,
+        session_id: str,
+        event_type: str,
+        object_type: str,
+        object_payload: dict[str, Any],
+        reason_text: str | None = None,
+    ) -> None:
+        if not config.memory.enabled:
+            return
+        event = MemoryEvent(
+            id=f"{session_id}:{event_type}:{_now_iso()}",
+            user_id=user_id,
+            session_id=session_id,
+            event_type=event_type,
+            object_type=object_type,
+            object_payload=object_payload,
+            reason_text=reason_text,
+            created_at=_now_iso(),
+        )
+        asyncio.create_task(_append_memory_event_nonfatal(event))
+
+    _EXTRACTION_TIMEOUT_SECONDS = 20.0
+
+    async def _extract_memory_candidates(
+        *,
+        session_id: str,
         user_id: str,
         messages_snapshot: list[Message],
-    ) -> None:
-        if not config.memory_extraction.enabled:
-            return
+        plan_snapshot: TravelPlanState,
+    ) -> list[str]:
+        if not config.memory.enabled or not config.memory.extraction.enabled:
+            return []
+        if config.memory.extraction.trigger != "each_turn":
+            return []
+
         user_messages = [
             message.content
             for message in messages_snapshot
             if message.role == Role.USER and message.content
         ]
         if not user_messages:
-            return
+            return []
 
+        user_messages = user_messages[-config.memory.extraction.max_user_messages :]
         try:
-            memory = await memory_mgr.load(user_id)
-            prompt = build_extraction_prompt(user_messages, memory)
-            extraction_llm = create_llm_provider(
-                replace(config.llm, model=config.memory_extraction.model)
+            return await asyncio.wait_for(
+                _do_extract_memory_candidates(
+                    session_id=session_id,
+                    user_id=user_id,
+                    user_messages=user_messages,
+                    plan_snapshot=plan_snapshot,
+                ),
+                timeout=_EXTRACTION_TIMEOUT_SECONDS,
             )
-            response_parts: list[str] = []
-            async for chunk in extraction_llm.chat(
-                [Message(role=Role.USER, content=prompt)],
-                tools=[],
-                stream=False,
-            ):
-                if chunk.content:
-                    response_parts.append(chunk.content)
-            preferences, rejections = parse_extraction_response(
-                "".join(response_parts)
-            )
-            merged = MemoryMerger().merge(memory, preferences, rejections)
-            await memory_mgr.save(merged)
+        except asyncio.TimeoutError:
+            return []
         except Exception:
-            return
+            return []
+
+    async def _do_extract_memory_candidates(
+        *,
+        session_id: str,
+        user_id: str,
+        user_messages: list[str],
+        plan_snapshot: TravelPlanState,
+    ) -> list[str]:
+        existing_items = await memory_mgr.store.list_items(user_id)
+        prompt = build_candidate_extraction_prompt(
+            user_messages=user_messages,
+            existing_items=existing_items,
+            plan_facts=_memory_plan_facts(plan_snapshot),
+        )
+        extraction_llm = create_llm_provider(
+            replace(config.llm, model=config.memory.extraction.model)
+        )
+        response_parts: list[str] = []
+        async for chunk in extraction_llm.chat(
+            [Message(role=Role.USER, content=prompt)],
+            tools=[],
+            stream=True,
+        ):
+            if chunk.content:
+                response_parts.append(chunk.content)
+
+        candidates = parse_candidate_extraction_response("".join(response_parts))
+        if not candidates:
+            return []
+
+        policy = MemoryPolicy(
+            auto_save_low_risk=config.memory.policy.auto_save_low_risk,
+            auto_save_medium_risk=config.memory.policy.auto_save_medium_risk,
+        )
+        merger = PolicyMemoryMerger()
+        now = _now_iso()
+        merged_items = existing_items
+        for candidate in candidates:
+            action = policy.classify(candidate)
+            if action == "drop":
+                continue
+            item = policy.to_item(
+                candidate,
+                user_id=user_id,
+                session_id=session_id,
+                now=now,
+                trip_id=plan_snapshot.trip_id,
+            )
+            merged_items = merger.merge(merged_items, item)
+
+        for item in merged_items:
+            await memory_mgr.store.upsert_item(item)
+
+        pending_ids = [
+            item.id
+            for item in merged_items
+            if item.status in {"pending", "pending_conflict"}
+        ]
+        return pending_ids
+
+    def _cancel_memory_extraction(session_id: str) -> None:
+        task = memory_extraction_tasks.pop(session_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+        memory_extraction_pending.pop(session_id, None)
+
+    def _start_memory_extraction(
+        *,
+        session_id: str,
+        user_id: str,
+        messages_snapshot: list[Message],
+        plan_snapshot: TravelPlanState,
+    ) -> None:
+        task = asyncio.create_task(
+            _extract_memory_candidates(
+                session_id=session_id,
+                user_id=user_id,
+                messages_snapshot=messages_snapshot,
+                plan_snapshot=plan_snapshot,
+            )
+        )
+        memory_extraction_tasks[session_id] = task
+
+        def _cleanup(done_task: asyncio.Task) -> None:
+            if memory_extraction_tasks.get(session_id) is done_task:
+                memory_extraction_tasks.pop(session_id, None)
+            queued = memory_extraction_pending.pop(session_id, None)
+            if queued is not None and not done_task.cancelled():
+                next_user_id, next_messages, next_plan = queued
+                _start_memory_extraction(
+                    session_id=session_id,
+                    user_id=next_user_id,
+                    messages_snapshot=next_messages,
+                    plan_snapshot=next_plan,
+                )
+
+        task.add_done_callback(_cleanup)
 
     def _schedule_memory_extraction(
         *,
+        session_id: str,
         user_id: str,
         messages_snapshot: list[Message],
-        from_phase: int,
-        to_phase: int,
+        plan_snapshot: TravelPlanState,
     ) -> None:
-        if from_phase != 1 or to_phase != 3:
+        if not config.memory.enabled or not config.memory.extraction.enabled:
             return
-        task = asyncio.create_task(
-            _extract_memory_preferences(user_id, messages_snapshot)
+        if config.memory.extraction.trigger != "each_turn":
+            return
+        existing = memory_extraction_tasks.get(session_id)
+        if existing is not None and not existing.done():
+            memory_extraction_pending[session_id] = (
+                user_id,
+                messages_snapshot,
+                plan_snapshot,
+            )
+            return
+        _start_memory_extraction(
+            session_id=session_id,
+            user_id=user_id,
+            messages_snapshot=messages_snapshot,
+            plan_snapshot=plan_snapshot,
         )
-        memory_extraction_tasks.add(task)
-        task.add_done_callback(memory_extraction_tasks.discard)
+
+    async def _build_trip_episode(
+        *,
+        user_id: str,
+        session_id: str,
+        plan: TravelPlanState,
+    ) -> TripEpisode:
+        items: list[MemoryItem] = []
+        if config.memory.enabled:
+            items = await memory_mgr.store.list_items(user_id)
+        session_items = []
+        for item in items:
+            same_session = item.session_id == session_id
+            same_trip = bool(plan.trip_id) and item.trip_id == plan.trip_id
+            if same_session or same_trip:
+                session_items.append(item)
+        accepted_items = [
+            item.to_dict()
+            for item in session_items
+            if item.status == "active"
+        ]
+        rejected_items = [
+            item.to_dict()
+            for item in session_items
+            if item.status in {"rejected", "obsolete"}
+        ]
+        selected_skeleton = None
+        if plan.selected_skeleton_id:
+            for skeleton in plan.skeleton_plans:
+                if not isinstance(skeleton, dict):
+                    continue
+                if skeleton.get("id") == plan.selected_skeleton_id:
+                    selected_skeleton = skeleton
+                    break
+            if selected_skeleton is None:
+                selected_skeleton = {"id": plan.selected_skeleton_id}
+
+        lessons = [
+            item.attributes.get("reason", "")
+            for item in session_items
+            if item.attributes.get("reason")
+        ]
+        return TripEpisode(
+            id=f"{session_id}:episode",
+            user_id=user_id,
+            session_id=session_id,
+            trip_id=plan.trip_id,
+            destination=plan.destination,
+            dates=(
+                f"{plan.dates.start} - {plan.dates.end}"
+                if plan.dates
+                else None
+            ),
+            travelers=plan.travelers.to_dict() if plan.travelers else None,
+            budget=plan.budget.to_dict() if plan.budget else None,
+            selected_skeleton=selected_skeleton,
+            final_plan_summary=_generate_title(plan),
+            accepted_items=accepted_items,
+            rejected_items=rejected_items,
+            lessons=lessons,
+            satisfaction=None,
+            created_at=_now_iso(),
+        )
+
+    async def _append_trip_episode_once(
+        *,
+        user_id: str,
+        session_id: str,
+        plan: TravelPlanState,
+    ) -> bool:
+        episodes = await memory_mgr.store.list_episodes(user_id)
+        if any(episode.session_id == session_id for episode in episodes):
+            return False
+        episode = await _build_trip_episode(
+            user_id=user_id,
+            session_id=session_id,
+            plan=plan,
+        )
+        await memory_mgr.store.append_episode(episode)
+        return True
 
     # Backtrack detection patterns
     _BACKTRACK_PATTERNS: dict[int, list[str]] = {
@@ -556,6 +876,36 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             if any(p in message for p in patterns):
                 return target_phase
         return None
+
+    _TRIP_RESET_PATTERNS = tuple(_BACKTRACK_PATTERNS[1]) + (
+        "换目的地",
+        "改目的地",
+        "新行程",
+        "重新规划",
+    )
+
+    def _is_new_trip_backtrack(to_phase: int, reason_text: str) -> bool:
+        return to_phase == 1 and any(
+            pattern in reason_text for pattern in _TRIP_RESET_PATTERNS
+        )
+
+    async def _rotate_trip_on_reset_backtrack(
+        *,
+        user_id: str,
+        plan: TravelPlanState,
+        to_phase: int,
+        reason_text: str,
+    ) -> bool:
+        if not _is_new_trip_backtrack(to_phase, reason_text):
+            return False
+        old_trip_id = plan.trip_id
+        plan.trip_id = f"trip_{uuid.uuid4().hex[:12]}"
+        if not config.memory.enabled or not old_trip_id:
+            return True
+        for item in await memory_mgr.store.list_items(user_id):
+            if item.scope == "trip" and item.trip_id == old_trip_id:
+                await memory_mgr.store.update_status(user_id, item.id, "obsolete")
+        return True
 
     def _generate_title(plan: TravelPlanState) -> str:
         destination = plan.destination or "未定"
@@ -780,6 +1130,72 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "created_at": result["created_at"],
         }
 
+    @app.get("/api/memory/{user_id}")
+    async def get_memory(user_id: str):
+        await _ensure_storage_ready()
+        items = await memory_mgr.store.list_items(user_id)
+        return {"items": [item.to_dict() for item in items]}
+
+    async def _set_memory_item_status(
+        user_id: str,
+        item_id: str,
+        status: str,
+    ) -> None:
+        items = await memory_mgr.store.list_items(user_id)
+        current = next((item for item in items if item.id == item_id), None)
+        if current is None:
+            raise HTTPException(status_code=404, detail="Memory item not found")
+        if current.status == status:
+            return
+        changed = await memory_mgr.store.update_status(user_id, item_id, status)
+        if changed:
+            return
+        items = await memory_mgr.store.list_items(user_id)
+        current = next((item for item in items if item.id == item_id), None)
+        if current is not None and current.status == status:
+            return
+        raise HTTPException(status_code=404, detail="Memory item not found")
+
+    @app.post("/api/memory/{user_id}/confirm")
+    async def confirm_memory_item(user_id: str, req: MemoryItemRequest):
+        await _ensure_storage_ready()
+        await _set_memory_item_status(user_id, req.item_id, "active")
+        return {"item_id": req.item_id, "status": "active"}
+
+    @app.post("/api/memory/{user_id}/reject")
+    async def reject_memory_item(user_id: str, req: MemoryItemRequest):
+        await _ensure_storage_ready()
+        await _set_memory_item_status(user_id, req.item_id, "rejected")
+        return {"item_id": req.item_id, "status": "rejected"}
+
+    @app.post("/api/memory/{user_id}/events")
+    async def append_memory_event(user_id: str, req: MemoryEventRequest):
+        await _ensure_storage_ready()
+        event = MemoryEvent(
+            id=f"{user_id}:{req.event_type}:{_now_iso()}",
+            user_id=user_id,
+            session_id="",
+            event_type=req.event_type,
+            object_type=req.object_type,
+            object_payload=req.object_payload,
+            reason_text=req.reason_text,
+            created_at=_now_iso(),
+        )
+        await memory_mgr.store.append_event(event)
+        return {"ok": True}
+
+    @app.get("/api/memory/{user_id}/episodes")
+    async def list_memory_episodes(user_id: str):
+        await _ensure_storage_ready()
+        episodes = await memory_mgr.store.list_episodes(user_id)
+        return {"episodes": [episode.to_dict() for episode in episodes]}
+
+    @app.delete("/api/memory/{user_id}/{item_id}")
+    async def delete_memory_item(user_id: str, item_id: str):
+        await _ensure_storage_ready()
+        await _set_memory_item_status(user_id, item_id, "obsolete")
+        return {"item_id": item_id, "status": "obsolete"}
+
     @app.post("/api/backtrack/{session_id}")
     async def backtrack(session_id: str, req: BacktrackRequest):
         await _ensure_storage_ready()
@@ -799,6 +1215,13 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         phase_router.prepare_backtrack(
             plan, req.to_phase, req.reason or "用户主动回退", snapshot_path
         )
+        await _rotate_trip_on_reset_backtrack(
+            user_id=session.get("user_id", "default_user"),
+            plan=plan,
+            to_phase=req.to_phase,
+            reason_text=req.reason,
+        )
+        _cancel_memory_extraction(session_id)
         await state_mgr.save(plan)
         session["agent"] = _build_agent(plan, session.get("user_id", "default_user"), compression_events=session.get("compression_events"))
         session["needs_rebuild"] = False
@@ -844,12 +1267,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool["name"]
             for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)
         ]
-        memory = await memory_mgr.load(req.user_id)
-        user_summary = memory_mgr.generate_summary(memory)
+        memory_context = (
+            await memory_mgr.generate_context(req.user_id, plan)
+            if config.memory.enabled
+            else "暂无相关用户记忆"
+        )
         sys_msg = context_mgr.build_system_message(
             plan,
             phase_prompt,
-            user_summary,
+            memory_context,
             available_tools=available_tools,
         )
 
@@ -866,6 +1292,21 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         async def event_stream():
             tool_call_names: dict[str, str] = {}
+            if config.memory.enabled:
+                seen_key = (session["user_id"], plan.session_id)
+                seen_item_ids = memory_pending_seen.setdefault(seen_key, set())
+                pending_items = [
+                    item
+                    for item in await memory_mgr.store.list_items(session["user_id"])
+                    if item.status in {"pending", "pending_conflict"}
+                    and f"{item.id}:{item.status}:{item.updated_at}" not in seen_item_ids
+                ]
+                if pending_items:
+                    seen_item_ids.update(
+                        f"{item.id}:{item.status}:{item.updated_at}"
+                        for item in pending_items
+                    )
+                    yield _memory_pending_event_from_items(pending_items)
             async for chunk in agent.run(messages, phase=plan.phase):
                 if chunk.type.value == "keepalive":
                     yield {"comment": "ping"}
@@ -909,6 +1350,45 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     and tool_call_names.get(chunk.tool_result.tool_call_id)
                     == "update_plan_state"
                 ):
+                    result_data = (
+                        chunk.tool_result.data
+                        if isinstance(chunk.tool_result.data, dict)
+                        else {}
+                    )
+                    updated_field = None
+                    if isinstance(chunk.tool_result.data, dict):
+                        updated_field = chunk.tool_result.data.get("updated_field")
+                    if result_data.get("backtracked"):
+                        await _rotate_trip_on_reset_backtrack(
+                            user_id=session["user_id"],
+                            plan=plan,
+                            to_phase=int(result_data.get("to_phase", plan.phase)),
+                            reason_text=str(result_data.get("reason", "")),
+                        )
+                    elif updated_field == "selected_skeleton_id":
+                        _schedule_memory_event(
+                            user_id=session["user_id"],
+                            session_id=plan.session_id,
+                            event_type="accept",
+                            object_type="skeleton",
+                            object_payload=chunk.tool_result.data or {},
+                        )
+                    elif updated_field == "selected_transport":
+                        _schedule_memory_event(
+                            user_id=session["user_id"],
+                            session_id=plan.session_id,
+                            event_type="accept",
+                            object_type="transport",
+                            object_payload=chunk.tool_result.data or {},
+                        )
+                    elif updated_field == "accommodation":
+                        _schedule_memory_event(
+                            user_id=session["user_id"],
+                            session_id=plan.session_id,
+                            event_type="accept",
+                            object_type="hotel",
+                            object_payload=chunk.tool_result.data or {},
+                        )
                     yield json.dumps(
                         {"type": "state_update", "plan": plan.to_dict()},
                         ensure_ascii=False,
@@ -945,6 +1425,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         reason,
                         snapshot_path,
                     )
+                    await _rotate_trip_on_reset_backtrack(
+                        user_id=session["user_id"],
+                        plan=plan,
+                        to_phase=backtrack_target,
+                        reason_text=req.message,
+                    )
                     session["needs_rebuild"] = True
                     yield json.dumps(
                         {
@@ -966,16 +1452,22 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         },
                         ensure_ascii=False,
                     )
+                    _schedule_memory_event(
+                        user_id=session["user_id"],
+                        session_id=plan.session_id,
+                        event_type="reject",
+                        object_type="phase_output",
+                        object_payload={
+                            "from_phase": from_phase,
+                            "to_phase": backtrack_target,
+                            "reason": reason,
+                        },
+                        reason_text=reason,
+                    )
 
             if plan.phase < phase_before_run:
+                _cancel_memory_extraction(plan.session_id)
                 await _apply_message_fallbacks(plan, req.message, phase_router)
-
-            _schedule_memory_extraction(
-                user_id=session["user_id"],
-                messages_snapshot=list(messages),
-                from_phase=phase_before_run,
-                to_phase=plan.phase,
-            )
 
             await state_mgr.save(plan)
             await _persist_messages(plan.session_id, messages)
@@ -997,6 +1489,21 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     summary=_generate_title(plan),
                 )
                 await session_store.update(plan.session_id, status="archived")
+                if config.memory.enabled:
+                    try:
+                        await _append_trip_episode_once(
+                            user_id=session["user_id"],
+                            session_id=plan.session_id,
+                            plan=plan,
+                        )
+                    except Exception:
+                        pass
+            _schedule_memory_extraction(
+                session_id=plan.session_id,
+                user_id=session["user_id"],
+                messages_snapshot=list(messages),
+                plan_snapshot=plan,
+            )
             yield json.dumps(
                 {"type": "state_update", "plan": plan.to_dict()},
                 ensure_ascii=False,

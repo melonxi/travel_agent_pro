@@ -22,17 +22,20 @@ def manager(data_dir):
 async def test_create_session(manager):
     plan = await manager.create_session()
     assert plan.session_id
+    assert plan.trip_id == f"trip_{plan.session_id.removeprefix('sess_')}"
     assert plan.phase == 1
 
 
 @pytest.mark.asyncio
 async def test_save_and_load(manager):
     plan = await manager.create_session()
+    plan.trip_id = None
     plan.destination = "Kyoto"
     await manager.save(plan)
 
     loaded = await manager.load(plan.session_id)
     assert loaded.destination == "Kyoto"
+    assert loaded.trip_id == f"trip_{plan.session_id.removeprefix('sess_')}"
 
 
 @pytest.mark.asyncio
