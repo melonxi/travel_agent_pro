@@ -517,6 +517,35 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
 
 
 @pytest.mark.asyncio
+async def test_phase_rebuild_skips_memory_when_disabled(mock_llm, engine, hooks):
+    plan = TravelPlanState(session_id="s1", phase=3)
+    agent = AgentLoop(
+        llm=mock_llm,
+        tool_engine=engine,
+        hooks=hooks,
+        max_retries=3,
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        memory_enabled=False,
+        user_id="u1",
+    )
+
+    rebuilt = await agent._rebuild_messages_for_phase_change(
+        [Message(role=Role.USER, content="继续")],
+        from_phase=1,
+        to_phase=3,
+        original_user_message=Message(role=Role.USER, content="继续"),
+        result=ToolResult(tool_call_id="tc1", status="success", data={}),
+    )
+
+    assert "memory:u1" not in rebuilt[0].content
+    assert "暂无相关用户记忆" in rebuilt[0].content
+
+
+@pytest.mark.asyncio
 async def test_backtrack_rebuild_uses_hard_boundary_without_compression():
     plan = TravelPlanState(session_id="s1", phase=5, destination="东京",
                            dates=DateRange(start="2026-05-01", end="2026-05-05"),

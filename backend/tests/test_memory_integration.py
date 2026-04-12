@@ -108,6 +108,44 @@ parallel_tool_execution: false
     return create_app(str(config_file))
 
 
+@pytest.fixture
+def app_memory_disabled(monkeypatch, tmp_path: Path):
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path / "data"
+    config_file.write_text(
+        f"""
+llm:
+  provider: openai
+  model: gpt-4o
+data_dir: "{data_dir}"
+flyai:
+  enabled: false
+memory:
+  enabled: false
+telemetry:
+  enabled: false
+guardrails:
+  enabled: false
+parallel_tool_execution: false
+""",
+        encoding="utf-8",
+    )
+
+    class FakeProvider:
+        async def chat(self, *args, **kwargs):
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: FakeProvider())
+    return create_app(str(config_file))
+
+
 @pytest.mark.asyncio
 async def test_get_memory_returns_empty_items(app):
     async with AsyncClient(
@@ -267,6 +305,39 @@ async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
 
 
 @pytest.mark.asyncio
+async def test_chat_system_prompt_skips_memory_when_disabled(
+    monkeypatch,
+    app_memory_disabled,
+):
+    memory_mgr = _get_closure_value(app_memory_disabled, "memory_mgr")
+    await memory_mgr.store.upsert_item(_make_item(status="active", value="secret-memory"))
+
+    async def fake_generate_context(self, user_id: str, plan: TravelPlanState) -> str:
+        raise AssertionError("generate_context should not be called when memory is disabled")
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        assert "secret-memory" not in messages[0].content
+        assert "## 相关用户记忆" in messages[0].content
+        assert "暂无相关用户记忆" in messages[0].content
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app_memory_disabled), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "继续规划", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_emits_pending_memory_before_agent_run(monkeypatch, app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
     await memory_mgr.store.upsert_item(_make_item(status="pending_conflict"))
@@ -323,9 +394,26 @@ async def test_chat_stream_dedupes_pending_memory_per_session(monkeypatch, app):
 async def test_append_trip_episode_once_is_idempotent(app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
     append_once = _get_closure_value(app, "_append_trip_episode_once")
+    await memory_mgr.store.upsert_item(
+        _make_item(
+            id="same-session",
+            status="active",
+            session_id="s1",
+            trip_id=None,
+        )
+    )
+    await memory_mgr.store.upsert_item(
+        _make_item(
+            id="unrelated-global",
+            status="active",
+            session_id="other-session",
+            trip_id=None,
+            value="should-not-enter-episode",
+        )
+    )
     plan = TravelPlanState(
         session_id="s1",
-        trip_id="trip1",
+        trip_id=None,
         phase=7,
         destination="Tokyo",
     )
@@ -338,6 +426,8 @@ async def test_append_trip_episode_once_is_idempotent(app):
     assert second is False
     assert len(episodes) == 1
     assert episodes[0].session_id == "s1"
+    accepted_ids = {item["id"] for item in episodes[0].accepted_items}
+    assert accepted_ids == {"same-session"}
 
 
 @pytest.mark.asyncio

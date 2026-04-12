@@ -26,6 +26,7 @@ class AgentLoop:
         plan: Any | None = None,
         llm_factory: Any | None = None,
         memory_mgr: Any | None = None,
+        memory_enabled: bool = True,
         user_id: str = "default_user",
         compression_events: list[dict] | None = None,
         reflection: Any | None = None,
@@ -42,6 +43,7 @@ class AgentLoop:
         self.plan = plan
         self.llm_factory = llm_factory
         self.memory_mgr = memory_mgr
+        self.memory_enabled = memory_enabled
         self.user_id = user_id
         self.compression_events: list[dict] = compression_events if compression_events is not None else []
         self.reflection = reflection
@@ -417,7 +419,11 @@ class AgentLoop:
             raise RuntimeError("Phase-aware rebuild requires router/context/plan/memory")
 
         phase_prompt = self.phase_router.get_prompt(to_phase)
-        memory_context = await self.memory_mgr.generate_context(self.user_id, self.plan)
+        memory_context = (
+            await self.memory_mgr.generate_context(self.user_id, self.plan)
+            if self.memory_enabled
+            else "暂无相关用户记忆"
+        )
         rebuilt = [
             self.context_manager.build_system_message(
                 self.plan,
