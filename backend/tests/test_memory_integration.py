@@ -431,6 +431,69 @@ async def test_append_trip_episode_once_is_idempotent(app):
 
 
 @pytest.mark.asyncio
+async def test_reset_backtrack_rotates_trip_and_obsoletes_old_trip_memory(app):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+    rotate_trip = _get_closure_value(app, "_rotate_trip_on_reset_backtrack")
+    plan = TravelPlanState(session_id="s1", trip_id="trip-old", phase=1)
+    await memory_mgr.store.upsert_item(
+        _make_item(
+            id="old-trip",
+            status="active",
+            scope="trip",
+            trip_id="trip-old",
+        )
+    )
+    await memory_mgr.store.upsert_item(
+        _make_item(
+            id="global",
+            status="active",
+            scope="global",
+            trip_id=None,
+        )
+    )
+
+    changed = await rotate_trip(
+        user_id="u1",
+        plan=plan,
+        to_phase=1,
+        reason_text="重新开始，换个目的地",
+    )
+
+    items = {item.id: item for item in await memory_mgr.store.list_items("u1")}
+    assert changed is True
+    assert plan.trip_id != "trip-old"
+    assert items["old-trip"].status == "obsolete"
+    assert items["global"].status == "active"
+
+
+@pytest.mark.asyncio
+async def test_non_reset_backtrack_reuses_trip_memory(app):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+    rotate_trip = _get_closure_value(app, "_rotate_trip_on_reset_backtrack")
+    plan = TravelPlanState(session_id="s1", trip_id="trip-old", phase=3)
+    await memory_mgr.store.upsert_item(
+        _make_item(
+            id="old-trip",
+            status="active",
+            scope="trip",
+            trip_id="trip-old",
+        )
+    )
+
+    changed = await rotate_trip(
+        user_id="u1",
+        plan=plan,
+        to_phase=3,
+        reason_text="改日期",
+    )
+
+    items = {item.id: item for item in await memory_mgr.store.list_items("u1")}
+    assert changed is False
+    assert plan.trip_id == "trip-old"
+    assert items["old-trip"].status == "active"
+
+
+@pytest.mark.asyncio
 async def test_memory_extraction_queues_latest_turn_when_task_running(app):
     schedule = _get_closure_value(app, "_schedule_memory_extraction")
     tasks = _get_function_closure_value(schedule, "memory_extraction_tasks")

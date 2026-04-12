@@ -211,12 +211,32 @@ def test_pii_in_evidence_reason_or_attributes_is_dropped():
         )
         == "drop"
     )
+    assert (
+        policy.classify(
+            make_candidate(
+                value="需要联系我",
+                evidence="我的邮箱 user@example.com",
+            )
+        )
+        == "drop"
+    )
+    assert (
+        policy.classify(
+            make_candidate(
+                value="需要联系我",
+                reason="用户电话 138-0000-0000",
+            )
+        )
+        == "drop"
+    )
 
 
 def test_redact_for_storage_masks_pii_defensively():
     policy = MemoryPolicy()
 
     assert policy._redact_for_storage("证件 123456789") == "证件 [REDACTED]"
+    assert policy._redact_for_storage("邮箱 user@example.com") == "邮箱 [REDACTED]"
+    assert policy._redact_for_storage("电话 138-0000-0000") == "电话 [REDACTED]"
     assert policy._redact_for_storage({"document": {"number": "123456789"}}) == {
         "document": {"number": "[REDACTED]"}
     }

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import date
@@ -855,6 +856,36 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 return target_phase
         return None
 
+    _TRIP_RESET_PATTERNS = tuple(_BACKTRACK_PATTERNS[1]) + (
+        "换目的地",
+        "改目的地",
+        "新行程",
+        "重新规划",
+    )
+
+    def _is_new_trip_backtrack(to_phase: int, reason_text: str) -> bool:
+        return to_phase == 1 and any(
+            pattern in reason_text for pattern in _TRIP_RESET_PATTERNS
+        )
+
+    async def _rotate_trip_on_reset_backtrack(
+        *,
+        user_id: str,
+        plan: TravelPlanState,
+        to_phase: int,
+        reason_text: str,
+    ) -> bool:
+        if not _is_new_trip_backtrack(to_phase, reason_text):
+            return False
+        old_trip_id = plan.trip_id
+        plan.trip_id = f"trip_{uuid.uuid4().hex[:12]}"
+        if not config.memory.enabled or not old_trip_id:
+            return True
+        for item in await memory_mgr.store.list_items(user_id):
+            if item.scope == "trip" and item.trip_id == old_trip_id:
+                await memory_mgr.store.update_status(user_id, item.id, "obsolete")
+        return True
+
     def _generate_title(plan: TravelPlanState) -> str:
         destination = plan.destination or "未定"
         if plan.dates:
@@ -1163,6 +1194,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         phase_router.prepare_backtrack(
             plan, req.to_phase, req.reason or "用户主动回退", snapshot_path
         )
+        await _rotate_trip_on_reset_backtrack(
+            user_id=session.get("user_id", "default_user"),
+            plan=plan,
+            to_phase=req.to_phase,
+            reason_text=req.reason,
+        )
         _cancel_memory_extraction(session_id)
         await state_mgr.save(plan)
         session["agent"] = _build_agent(plan, session.get("user_id", "default_user"), compression_events=session.get("compression_events"))
@@ -1354,6 +1391,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         backtrack_target,
                         reason,
                         snapshot_path,
+                    )
+                    await _rotate_trip_on_reset_backtrack(
+                        user_id=session["user_id"],
+                        plan=plan,
+                        to_phase=backtrack_target,
+                        reason_text=req.message,
                     )
                     session["needs_rebuild"] = True
                     yield json.dumps(

@@ -9,6 +9,8 @@ from memory.models import MemoryCandidate, MemoryItem, MemorySource, generate_me
 
 _DENIED_DOMAINS = {"payment", "membership"}
 _PII_SEQUENCE_RE = re.compile(r"\d{9,18}")
+_PII_SEPARATED_DIGITS_RE = re.compile(r"(?<!\d)(?:\+?\d[\d\s-]{7,}\d)(?!\d)")
+_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _PII_PHRASES = ("护照号", "身份证", "passport number", "id number")
 
 
@@ -111,7 +113,14 @@ class MemoryPolicy:
             lowered = value.lower()
             if any(phrase in lowered for phrase in _PII_PHRASES):
                 return True
-            return bool(_PII_SEQUENCE_RE.search(value))
+            if _EMAIL_RE.search(value):
+                return True
+            if _PII_SEQUENCE_RE.search(value):
+                return True
+            return any(
+                9 <= len(re.sub(r"\D", "", match.group(0))) <= 18
+                for match in _PII_SEPARATED_DIGITS_RE.finditer(value)
+            )
         if isinstance(value, dict):
             for key, nested in value.items():
                 if str(key) == "number":
@@ -150,7 +159,16 @@ class MemoryPolicy:
         text = str(value)
         for phrase in _PII_PHRASES:
             text = re.sub(re.escape(phrase), "[REDACTED]", text, flags=re.IGNORECASE)
-        return _PII_SEQUENCE_RE.sub("[REDACTED]", text)
+        text = _EMAIL_RE.sub("[REDACTED]", text)
+        text = _PII_SEQUENCE_RE.sub("[REDACTED]", text)
+
+        def redact_separated_digits(match: re.Match[str]) -> str:
+            digits = re.sub(r"\D", "", match.group(0))
+            if 9 <= len(digits) <= 18:
+                return "[REDACTED]"
+            return match.group(0)
+
+        return _PII_SEPARATED_DIGITS_RE.sub(redact_separated_digits, text)
 
 
 class MemoryMerger:
