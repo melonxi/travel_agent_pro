@@ -96,6 +96,7 @@ travel_agent_pro/
 │   ├── evals/                  # 评估管线
 │   │   ├── models.py           # GoldenCase, EvalExecution, CaseResult, SuiteResult
 │   │   ├── runner.py           # YAML加载 + 可注入执行器 + 断言评估 + JSON报告
+│   │   ├── failure_report.py   # 失败案例 Markdown 报告生成与保存（taxonomy / overview / 场景详情）
 │   │   └── golden_cases/       # 23个黄金测试用例 (easy/medium/hard/infeasible)
 │   ├── telemetry/              # 可观测性 + 成本追踪
 │   │   ├── setup.py            # OpenTelemetry TracerProvider + OTLP 导出
@@ -184,7 +185,7 @@ travel_agent_pro/
 | Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
 | Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；policy 合并与 payment/membership 域阻断 + 证件/联系方式/邮箱/长数字序列全字段 PII 检测脱敏；三路检索（core profile / trip memory / phase-domain）按 trip_id 隔离；新行程回退时轮转 trip_id；受 `memory.enabled` 门控后阶段相关注入 | 每轮 chat 后后台提取；每次 system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
-| Eval Runner | YAML golden cases + 可注入执行器；收集 state/tool/responses/stats 后做断言评估并输出 JSON report | 离线/批量评估 |
+| Eval Runner | YAML golden cases + 可注入执行器；收集 state/tool/responses/stats 后做断言评估，并可生成失败案例 Markdown 分析报告 | 离线/批量评估 |
 
 ---
 
