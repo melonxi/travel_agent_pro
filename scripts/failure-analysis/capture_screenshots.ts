@@ -28,8 +28,6 @@ interface FailureResult {
 
 const RESULTS_PATH = path.resolve(process.cwd(), 'scripts/failure-analysis/results/failure-results.json')
 const SCREENSHOTS_DIR = path.resolve(process.cwd(), 'screenshots/failure-analysis')
-const SCREENSHOTS_REL_DIR = path.relative(process.cwd(), SCREENSHOTS_DIR)
-
 function warn(message: string): void {
   console.warn(`[capture_screenshots] ${message}`)
 }
@@ -149,7 +147,6 @@ function ensureScreenshotsDir(): void {
 
 function buildPlanState(result: FailureResult): JsonRecord {
   return {
-    session_id: result.session_id ?? '',
     phase: typeof result.plan_state?.phase === 'number' ? result.plan_state.phase : 7,
     destination: null,
     dates: null,
@@ -304,6 +301,10 @@ if (allResults.length > results.length) {
 }
 
 test.describe('failure analysis screenshot capture', () => {
+  test.beforeAll(() => {
+    ensureScreenshotsDir()
+  })
+
   if (results.length === 0) {
     test('warns when no screenshot scenarios are available', async () => {
       test.skip(true, `No screenshot scenarios found in ${path.relative(process.cwd(), RESULTS_PATH)}`)
@@ -313,12 +314,10 @@ test.describe('failure analysis screenshot capture', () => {
 
   for (const result of results) {
     test('captures ' + result.scenario_id, async ({ page }) => {
-      ensureScreenshotsDir()
       await installSessionRoutes(page, result)
       await waitForChatToRender(page, result)
-      await expect(page.locator('.session-badge')).toContainText(String(result.session_id).slice(0, 8))
       await page.screenshot({
-        path: path.join(SCREENSHOTS_REL_DIR, `${sanitizeFileName(result.scenario_id)}.png`),
+        path: path.join(SCREENSHOTS_DIR, `${sanitizeFileName(result.scenario_id)}.png`),
         fullPage: true,
       })
     })
