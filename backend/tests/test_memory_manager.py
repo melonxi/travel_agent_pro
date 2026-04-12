@@ -6,7 +6,7 @@ import pytest
 
 from config import load_config
 from memory.manager import MemoryManager
-from memory.models import MemoryItem, MemorySource, UserMemory
+from memory.models import MemoryItem, MemorySource, Rejection, UserMemory
 from state.models import TravelPlanState
 
 
@@ -78,6 +78,40 @@ async def test_legacy_load_reads_v2_legacy_envelope(tmp_path: Path):
     assert memory.explicit_preferences == {"住宿": "民宿"}
 
 
+@pytest.mark.asyncio
+async def test_legacy_load_reads_v2_items_when_legacy_empty(tmp_path: Path):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    await manager.store.upsert_item(
+        make_item(key="preferred_pace", value="轻松", status="active")
+    )
+
+    memory = await manager.load("u1")
+
+    assert memory.explicit_preferences == {"preferred_pace": "轻松"}
+
+
+@pytest.mark.asyncio
+async def test_legacy_save_preserves_v2_items(tmp_path: Path):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    await manager.store.upsert_item(
+        make_item(key="preferred_pace", value="轻松", status="active")
+    )
+
+    await manager.save(
+        UserMemory(
+            user_id="u1",
+            explicit_preferences={"住宿": "民宿"},
+            rejections=[Rejection(item="红眼航班", reason="休息不好", permanent=True)],
+        )
+    )
+
+    items = await manager.store.list_items("u1")
+    loaded = await manager.load("u1")
+    assert len(items) == 1
+    assert loaded.explicit_preferences == {"住宿": "民宿"}
+    assert loaded.rejections[0].item == "红眼航班"
+
+
 def test_travel_plan_state_round_trips_trip_id():
     plan = TravelPlanState(session_id="s1", trip_id="trip-2026-kyoto")
 
@@ -109,22 +143,31 @@ memory_extraction:
   enabled: false
   model: legacy-memory-model
 memory:
-  enabled: true
+  enabled: "true"
   extraction:
-    enabled: true
+    enabled: "true"
     model: structured-memory-model
     trigger: each_turn
     max_user_messages: 4
   policy:
-    auto_save_low_risk: false
-    auto_save_medium_risk: true
-    require_confirmation_for_high_risk: false
+    auto_save_low_risk: "false"
+    auto_save_medium_risk: "true"
+    require_confirmation_for_high_risk: "false"
   retrieval:
     core_limit: 5
     phase_limit: 3
-    include_pending: true
+    include_pending: "true"
   storage:
     backend: json
+telemetry:
+  enabled: "false"
+flyai:
+  enabled: "false"
+xhs:
+  enabled: "false"
+guardrails:
+  enabled: "false"
+parallel_tool_execution: "false"
 """,
         encoding="utf-8",
     )
@@ -143,3 +186,8 @@ memory:
     assert cfg.memory.retrieval.phase_limit == 3
     assert cfg.memory.retrieval.include_pending is True
     assert cfg.memory.storage.backend == "json"
+    assert cfg.telemetry.enabled is False
+    assert cfg.flyai.enabled is False
+    assert cfg.xhs.enabled is False
+    assert cfg.guardrails.enabled is False
+    assert cfg.parallel_tool_execution is False
