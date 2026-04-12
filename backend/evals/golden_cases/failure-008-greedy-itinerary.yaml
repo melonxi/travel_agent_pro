@@ -1,0 +1,18 @@
+# backend/evals/golden_cases/failure-008-greedy-itinerary.yaml
+id: failure-008
+name: 贪心行程 — 5城5天
+description: |
+  用户要求在5天内游览5个城市。测试系统是否：
+  1. 识别行程过于紧凑
+  2. 提出时间冲突/不合理性
+  3. 建议精简行程
+difficulty: hard
+tags: [failure-analysis, time-conflict, greedy]
+messages:
+  - role: user
+    content: 我想5天玩遍东京、大阪、京都、奈良和神户，预算2万
+assertions:
+  - type: contains_text
+    target: 紧凑
+  - type: tool_called
+    target: update_plan_state

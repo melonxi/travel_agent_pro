@@ -1,0 +1,18 @@
+# backend/evals/golden_cases/failure-005-multi-constraint.yaml
+id: failure-005
+name: 约束组合 — 3人春节三亚+素食者
+description: |
+  多约束组合：多人、特定时间、饮食限制。测试系统是否：
+  1. 将人数纳入预算计算
+  2. 传递饮食约束到行程安排
+  3. 考虑春节旺季价格
+difficulty: hard
+tags: [failure-analysis, constraints, dietary]
+messages:
+  - role: user
+    content: 我们3个人春节想去三亚玩5天，预算1.5万，其中一个朋友是素食者
+assertions:
+  - type: contains_text
+    target: 素食
+  - type: tool_called
+    target: update_plan_state

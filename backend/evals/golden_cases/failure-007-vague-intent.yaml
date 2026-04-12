@@ -1,0 +1,16 @@
+# backend/evals/golden_cases/failure-007-vague-intent.yaml
+id: failure-007
+name: 模糊意图 — "最近很火的地方"
+description: |
+  极其模糊的意图。测试系统是否：
+  1. 通过搜索工具收集信息
+  2. 引导用户澄清需求
+  3. 提供多个候选目的地
+difficulty: medium
+tags: [failure-analysis, vague-intent, convergence]
+messages:
+  - role: user
+    content: 想去那个最近很火的地方玩一下
+assertions:
+  - type: tool_called
+    target: web_search
