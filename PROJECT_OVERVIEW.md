@@ -407,12 +407,13 @@ DELETE /api/memory/{user_id}/{item_id}    → 标记记忆为 obsolete
 - Phase 1→3 转换时触发
 - 30+ 目的地最低日消费查表 (`_MIN_DAILY_COST`)
 - 目的地最少天数查表 (`_MIN_DAYS`)
+- 基于 `DateRange.start/end` 计算旅行天数，避免阶段转换时日期字段别名不一致导致崩溃
 - 规则式判断，不消耗 LLM 调用
 
 ### Layer 5: 成本与延迟追踪 (Cost Tracker)
 - `SessionStats`: 每会话 token 用量、模型定价估算
-- OpenAI / Anthropic 流式 USAGE chunk 提取
-- 工具调用 `duration_ms` 监控 (`time.monotonic`)
+- OpenAI / Anthropic 流式 USAGE chunk 提取，并由 `AgentLoop` 透传到 API 层记录
+- 工具调用 `duration_ms` 监控 (`time.monotonic`)，随 TOOL_RESULT 写入会话级统计
 - API 端点: `GET /api/sessions/{id}/stats`
 
 ---

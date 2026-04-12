@@ -16,6 +16,6 @@ assertions:
     target: destination
     value: 巴黎
   - type: tool_called
-    target: search_hotels
+    target: search_accommodations
   - type: tool_called
     target: search_flights

@@ -123,6 +123,8 @@ class AgentLoop:
                         if chunk.type == ChunkType.TEXT_DELTA:
                             text_chunks.append(chunk.content or "")
                             yield chunk
+                        elif chunk.type == ChunkType.USAGE:
+                            yield chunk
                         elif (
                             chunk.type == ChunkType.TOOL_CALL_START and chunk.tool_call
                         ):
