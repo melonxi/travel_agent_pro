@@ -1,12 +1,19 @@
 # backend/harness/validator.py
 from __future__ import annotations
 
+import logging
 from state.models import TravelPlanState
 
+logger = logging.getLogger(__name__)
 
-def _time_to_minutes(t: str) -> int:
-    h, m = map(int, t.split(":"))
-    return h * 60 + m
+
+def _time_to_minutes(t: str) -> int | None:
+    """Convert 'HH:MM' to minutes since midnight. Returns None on bad format."""
+    try:
+        h, m = map(int, t.split(":"))
+        return h * 60 + m
+    except (ValueError, AttributeError):
+        return None
 
 
 def validate_hard_constraints(plan: TravelPlanState) -> list[str]:
@@ -20,6 +27,12 @@ def validate_hard_constraints(plan: TravelPlanState) -> list[str]:
             curr = acts[i]
             prev_end = _time_to_minutes(prev.end_time)
             curr_start = _time_to_minutes(curr.start_time)
+            if prev_end is None or curr_start is None:
+                logger.warning(
+                    "Day %s: skipping time check for %s→%s (bad time format)",
+                    day.day, prev.name, curr.name,
+                )
+                continue
             travel = curr.transport_duration_min
 
             if prev_end + travel > curr_start:
@@ -32,7 +45,7 @@ def validate_hard_constraints(plan: TravelPlanState) -> list[str]:
                 )
 
     # Budget check
-    if plan.budget:
+    if plan.budget and plan.daily_plans:
         total_cost = sum(act.cost for day in plan.daily_plans for act in day.activities)
         if total_cost > plan.budget.total:
             errors.append(f"总费用 ¥{total_cost:.0f} 超出预算 ¥{plan.budget.total:.0f}")
