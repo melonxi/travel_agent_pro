@@ -16,6 +16,7 @@ class ChunkType(str, Enum):
     KEEPALIVE = (
         "keepalive"  # SSE ping to prevent proxy/client timeout during tool execution
     )
+    USAGE = "usage"
     DONE = "done"
 
 
@@ -26,3 +27,4 @@ class LLMChunk:
     tool_call: ToolCall | None = None
     tool_result: ToolResult | None = None
     compression_info: dict | None = None
+    usage_info: dict | None = None  # {"input_tokens": N, "output_tokens": N}

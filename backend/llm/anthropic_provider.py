@@ -193,6 +193,14 @@ class AnthropicProvider:
                 "tool_calls": json.dumps(tool_names),
             },
         )
+        if hasattr(response, 'usage') and response.usage:
+            yield LLMChunk(
+                type=ChunkType.USAGE,
+                usage_info={
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                },
+            )
         yield LLMChunk(type=ChunkType.DONE)
 
     async def chat(
@@ -297,6 +305,18 @@ class AnthropicProvider:
                                 current_tool_id = None
                                 current_tool_name = None
                         elif event.type == "message_stop":
+                            try:
+                                final_msg = await stream_resp.get_final_message()
+                                if hasattr(final_msg, 'usage') and final_msg.usage:
+                                    yield LLMChunk(
+                                        type=ChunkType.USAGE,
+                                        usage_info={
+                                            "input_tokens": final_msg.usage.input_tokens,
+                                            "output_tokens": final_msg.usage.output_tokens,
+                                        },
+                                    )
+                            except Exception:
+                                pass
                             span.add_event(
                                 EVENT_LLM_RESPONSE,
                                 {
