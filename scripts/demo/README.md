@@ -23,9 +23,11 @@ scripts/demo/run-all-demos.sh
 ## 脚本会做什么
 
 1. 检查 backend `/health` 和 frontend 首页是否可访问
-2. 调用 `python -m memory.demo_seed`，把 `seed-memory.json` 转成 `backend/data/users/default_user/` 下的 active memory items 和历史 episode
-3. 执行 `scripts/demo/demo-full-flow.spec.ts`
-4. 把 Playwright 产出的 `.webm` 复制到 `screenshots/demos/`
+2. 备份当前 demo 用户目录，并用 `python -m memory.demo_seed --reset-user` 注入一份干净的 demo 记忆
+3. 清空本次 demo 的 `screenshots/demos/` 和 `scripts/demo/test-results/`
+4. 执行 `scripts/demo/demo-full-flow.spec.ts`
+5. 只收集这一次 run 产出的 `.webm` 到 `screenshots/demos/`
+6. 脚本退出时恢复原来的 demo 用户数据，避免污染日常本地环境
 
 ## Demo 内容
 
@@ -52,7 +54,7 @@ scripts/demo/run-all-demos.sh
 - 3 条全局偏好：文化体验、精品民宿、不赶路
 - 1 条历史旅行 episode：京都 2025-03
 
-前端聊天请求默认不传 `user_id`，后端会落到 `default_user`，所以 demo seed 也固定注入这个用户。
+前端聊天请求默认不传 `user_id`，后端会落到 `default_user`，所以 demo seed 也固定注入这个用户。`run-all-demos.sh` 会在执行前备份该用户已有数据，录制结束后再恢复。
 
 ## 可选环境变量
 
@@ -72,4 +74,4 @@ scripts/demo/run-all-demos.sh
 确认 backend 是从仓库里的 `backend/` 目录启动的，并且使用的 `data_dir` 与 `BACKEND_DATA_DIR` 一致。
 
 **没找到录屏文件？**  
-脚本会从仓库内所有 `test-results/**/*.webm` 收集到 `screenshots/demos/`；如果 Playwright 运行失败，脚本仍会尝试复制已有视频，然后以失败码退出。
+脚本只会从 `scripts/demo/test-results/` 收集本次 run 生成的 `.webm`；如果 Playwright 运行失败，脚本仍会尝试复制已有视频，然后以失败码退出。

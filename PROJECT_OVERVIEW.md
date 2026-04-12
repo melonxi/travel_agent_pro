@@ -502,7 +502,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 
 - **后端单元测试**：75+ 个文件、590+ 测试，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、护栏、可行性、评估管线
 - **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner
-- **E2E 测试**：Playwright, 根目录 `e2e-test.spec.ts` 覆盖 Phase 1 主流程；`scripts/demo/demo-full-flow.spec.ts` 用单会话串联演示 Phase 1 → Phase 3 → Phase 5/backtrack；`scripts/demo/playwright.config.ts` 为 demo 场景提供独立配置；`scripts/demo/run-all-demos.sh` 会先调用 `memory.demo_seed` 将 seed-memory.json 写入 `backend/data/users/default_user/`
+- **E2E 测试**：Playwright, 根目录 `e2e-test.spec.ts` 覆盖 Phase 1 主流程；`scripts/demo/demo-full-flow.spec.ts` 用单会话串联演示 Phase 1 → Phase 3 → Phase 5/backtrack；`scripts/demo/playwright.config.ts` 为 demo 场景提供独立配置；`scripts/demo/run-all-demos.sh` 会先备份并 reset `default_user` 的 demo 数据、调用 `memory.demo_seed` 注入 `seed-memory.json`，录制完成后再恢复原用户目录
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---
