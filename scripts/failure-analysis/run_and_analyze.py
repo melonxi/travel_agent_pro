@@ -133,8 +133,17 @@ def run_scenario(client: httpx.Client, case: GoldenCase) -> ScenarioResult:
                 all_responses.append(f"ERROR: {exc}")
 
     plan_state = get_plan_state(client, session_id)
-    stats = get_session_stats(client, session_id)
-    messages = get_messages(client, session_id)
+    try:
+        stats = get_session_stats(client, session_id)
+    except Exception as exc:
+        print(f"  WARN stats fetch failed: {exc}")
+        stats = {}
+
+    try:
+        messages = get_messages(client, session_id)
+    except Exception as exc:
+        print(f"  WARN messages fetch failed: {exc}")
+        messages = []
     tool_calls = extract_tool_calls_from_messages(messages)
 
     print(f"  Phase: {plan_state.get('phase', '?')}")
@@ -170,10 +179,10 @@ def run_scenario(client: httpx.Client, case: GoldenCase) -> ScenarioResult:
         responses=all_responses,
         duration_ms=elapsed,
         stats={
+            **stats,
             "session_id": session_id,
             "plan_state": plan_state,
             "messages": messages,
-            **stats,
         },
     )
 
