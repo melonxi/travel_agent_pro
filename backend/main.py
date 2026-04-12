@@ -483,6 +483,32 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             to_phase = int(kwargs.get("to_phase", from_phase))
             session = sessions.get(target_plan.session_id)
 
+            # Feasibility gate: catch impossible plans early (Phase 1→3)
+            if from_phase == 1 and to_phase == 3:
+                from harness.feasibility import check_feasibility
+                days_count = None
+                if target_plan.dates and target_plan.dates.start_date and target_plan.dates.end_date:
+                    try:
+                        from datetime import date as _date
+                        d1 = _date.fromisoformat(str(target_plan.dates.start_date))
+                        d2 = _date.fromisoformat(str(target_plan.dates.end_date))
+                        days_count = (d2 - d1).days
+                    except (ValueError, TypeError):
+                        pass
+                budget_total = None
+                if target_plan.budget and target_plan.budget.total:
+                    budget_total = target_plan.budget.total
+                feas = check_feasibility(target_plan.destination, budget_total, days_count)
+                if not feas.feasible:
+                    feedback = "[可行性检查]\n当前旅行计划存在以下问题：\n" + "\n".join(
+                        f"- {r}" for r in feas.reasons
+                    ) + "\n请调整后再继续。"
+                    if session:
+                        session["messages"].append(
+                            Message(role=Role.SYSTEM, content=feedback)
+                        )
+                    return GateResult(allowed=False, feedback=feedback)
+
             errors = validate_hard_constraints(target_plan)
             if errors:
                 feedback = "[质量门控]\n硬约束冲突，必须修正：\n" + "\n".join(
