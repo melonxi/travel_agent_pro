@@ -16,3 +16,4 @@ messages:
 assertions:
   - type: state_field_set
     target: destination
+    value: 大阪
