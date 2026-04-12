@@ -88,15 +88,21 @@ travel_agent_pro/
 │   │   ├── session_store.py    # 会话 CRUD
 │   │   ├── message_store.py    # 消息读写 (按 seq 排序)
 │   │   └── archive_store.py    # 快照与归档
-│   ├── harness/                # 质量守护
-│   │   ├── guardrail.py        # 输入/输出护栏 (提示注入、日期、预算、结果异常)
-│   │   ├── validator.py        # 硬约束检查 (时间冲突/预算超支/天数超限)
-│   │   └── judge.py            # 软评分 (pace/geography/coherence/personalization 各1-5)
-│   ├── telemetry/              # 可观测性
+│   ├── harness/                # 5 层质量守护
+│   │   ├── guardrail.py        # 输入护栏 (中文注入检测6模式、长度5000、结构校验)
+│   │   ├── validator.py        # 硬约束检查 (时间冲突/预算超支/null安全)
+│   │   ├── judge.py            # 软评分 [1-5] (score clamping + 解析失败日志)
+│   │   └── feasibility.py      # 可行性门控 (30+目的地成本/天数查表)
+│   ├── evals/                  # 评估管线
+│   │   ├── models.py           # GoldenCase, CaseResult, SuiteResult
+│   │   ├── runner.py           # YAML加载 + 离线断言评估 + 套件执行
+│   │   └── golden_cases/       # 15个黄金测试用例 (easy/medium/hard/infeasible)
+│   ├── telemetry/              # 可观测性 + 成本追踪
 │   │   ├── setup.py            # OpenTelemetry TracerProvider + OTLP 导出
 │   │   ├── attributes.py       # 标准化 span 属性与事件名
-│   │   └── decorators.py       # @trace_agent_loop, @trace_tool_call
-│   └── tests/                  # pytest 测试套件 (65 个测试文件)
+│   │   ├── decorators.py       # @trace_agent_loop, @trace_tool_call
+│   │   └── stats.py            # SessionStats: token用量/模型定价/工具耗时
+│   └── tests/                  # pytest 测试套件 (75+ 个测试文件, 590+ 测试)
 │
 ├── frontend/                   # React 前端
 │   ├── src/
@@ -375,19 +381,39 @@ DELETE /api/memory/{user_id}/{item_id}    → 标记记忆为 obsolete
 
 ---
 
-## 12. 质量守护 (Harness)
+## 12. 质量守护 (Harness) — 5 层架构
 
-### 硬约束验证器 (自动)
+### Layer 1: 输入护栏 (Guardrail)
+- 中文提示注入检测 (6 种正则模式)
+- 消息长度限制 (5000 字符)
+- 必填字段结构校验
+- 工具结果异常检测
+
+### Layer 2: 硬约束验证器 (Validator)
 - 时间冲突：活动结束 + 交通时间 > 下一活动开始
 - 预算超支：活动总花费 > 总预算
 - 天数超限：计划天数 > 可用天数
+- Null 安全守卫：`_time_to_minutes` 返回 `int | None`
 
-### 软评分 (LLM 判断)
+### Layer 3: 软评分 (Judge)
 - `pace` (1-5): 节奏合理性
 - `geography` (1-5): 地理连贯性
 - `coherence` (1-5): 逻辑一致性
 - `personalization` (1-5): 个性化程度
+- Score clamping [1,5] + 解析失败 logger.warning
 - 在 `assemble_day_plan`, `generate_summary` 工具之后触发
+
+### Layer 4: 可行性门控 (Feasibility Gate)
+- Phase 1→3 转换时触发
+- 30+ 目的地最低日消费查表 (`_MIN_DAILY_COST`)
+- 目的地最少天数查表 (`_MIN_DAYS`)
+- 规则式判断，不消耗 LLM 调用
+
+### Layer 5: 成本与延迟追踪 (Cost Tracker)
+- `SessionStats`: 每会话 token 用量、模型定价估算
+- OpenAI / Anthropic 流式 USAGE chunk 提取
+- 工具调用 `duration_ms` 监控 (`time.monotonic`)
+- API 端点: `GET /api/sessions/{id}/stats`
 
 ---
 
@@ -464,13 +490,14 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | 并行工具执行 | 读写分离，搜索类并行，状态更新顺序 |
 | Forced Tool Choice | 关键决策点强制工具调用，渐进替代 State Repair |
 | Memory System | schema v2 结构化记忆（global/trip 双 scope）；每轮 chat 后按 trigger 后台提取候选；policy 全字段 PII 检测脱敏（payment/membership 域直接阻断、邮箱正则、9-18 位数字序列、证件/联系方式短语检测 + `_redact_for_storage` 递归脱敏）；合并/确认流程；system prompt 前按 `memory.enabled` 三路检索（core profile / trip memory / phase-domain，硬编码 core_limit=10, phase_limit=8）按 trip_id 隔离；新行程回退 obsolete 旧 trip memory 并轮转 trip_id；Phase 7 幂等归档 episode（JSONL 独立存储，不参与 prompt 注入检索）|
-| Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
+| Tool Guardrails | 确定性规则校验 + 中文注入检测，不依赖 LLM，可按规则名禁用 |
 
 ---
 
 ## 17. 测试体系
 
-- **后端单元测试**：65 个文件，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、API
+- **后端单元测试**：75+ 个文件、590+ 测试，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、护栏、可行性、评估管线
+- **评估管线**：15 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner
 - **E2E 测试**：Playwright, Phase 1 目的地推荐流程 (3 分钟超时)
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
