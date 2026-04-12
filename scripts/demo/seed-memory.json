@@ -1,0 +1,50 @@
+{
+  "user_id": "default_user",
+  "events": [
+    {
+      "event_type": "preference_learned",
+      "object_type": "travel_preference",
+      "object_payload": {
+        "type": "preference",
+        "domain": "travel",
+        "key": "travel_style",
+        "value": "文化体验为主，适度冒险"
+      },
+      "reason_text": "用户历史偏好"
+    },
+    {
+      "event_type": "preference_learned",
+      "object_type": "travel_preference",
+      "object_payload": {
+        "type": "preference",
+        "domain": "accommodation",
+        "key": "accommodation_preference",
+        "value": "偏好精品民宿和设计酒店"
+      },
+      "reason_text": "用户历史偏好"
+    },
+    {
+      "event_type": "preference_learned",
+      "object_type": "travel_preference",
+      "object_payload": {
+        "type": "preference",
+        "domain": "travel",
+        "key": "pace_preference",
+        "value": "不赶路，每天2-3个景点"
+      },
+      "reason_text": "用户历史偏好"
+    },
+    {
+      "event_type": "trip_completed",
+      "object_type": "trip_episode",
+      "object_payload": {
+        "destination": "京都",
+        "date": "2025-03",
+        "rating": 5,
+        "highlight": "岚山竹林和抹茶体验",
+        "lesson": "樱花季酒店需提前3个月预订"
+      },
+      "reason_text": "历史旅行记录"
+    }
+  ]
+}
