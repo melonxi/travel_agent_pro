@@ -1641,6 +1641,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         return EventSourceResponse(event_stream())
 
+    from api.trace import build_trace
+
+    @app.get("/api/sessions/{session_id}/trace")
+    async def get_session_trace(session_id: str):
+        session = sessions.get(session_id)
+        if not session:
+            return JSONResponse({"error": "Session not found"}, status_code=404)
+        return build_trace(session_id, session)
+
     return app
 
 
