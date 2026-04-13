@@ -58,7 +58,7 @@ def generate_failure_report(
     lines.append(f"- 测试环境：生产配置（{model_info}）")
     lines.append("- 测试方式：真实 API 调用，非 mock")
     lines.append(f"- 测试时间：{ts}")
-    lines.append("- 运行元数据：model, provider, config hash 均记录在案\n")
+    lines.append("- 运行元数据：model、token、cost、latency stats 已记录\n")
 
     lines.append("## 失败模式分类法\n")
     lines.append("| 失败类别 | 含义 | 示例 |")

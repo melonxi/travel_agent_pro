@@ -141,15 +141,15 @@ python scripts/failure-analysis/run_and_analyze.py
 npx playwright test scripts/failure-analysis/capture_screenshots.ts --config=playwright.config.ts
 ```
 
-Artifacts land in:
+Committed analysis lives in `docs/failure-analysis.md`. Local run artifacts land in:
 
 - `docs/failure-analysis.md` — scenario-by-scenario taxonomy, root cause analysis, and remediation status
-- `scripts/failure-analysis/results/failure-results.json` — raw execution results
+- `scripts/failure-analysis/results/failure-results.json` — raw execution results, generated locally and ignored by git
 - `screenshots/failure-analysis/` — one screenshot per failure scenario
 
 ## Demo Recording
 
-The demo workflow is now **deterministic scripted playback**, not a live LLM-dependent run. It still checks local services and seeds demo memory, but the visible Phase 1 → Phase 3 → Phase 5 → backtrack story is replayed from a fixed fixture so recording output stays stable.
+The demo workflow is **deterministic scripted playback**, not a live LLM-dependent run. It needs the frontend dev server, then replays the visible Phase 1 → Phase 3 → Phase 5 → backtrack story from a fixed fixture so recording output stays stable.
 
 ```bash
 scripts/demo/run-all-demos.sh

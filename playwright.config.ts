@@ -9,12 +9,15 @@ const includeCaptureScript =
 const includeDemoScript =
   normalizedArgs.has(demoScript) ||
   normalizedArgs.has(`./${demoScript}`);
+const explicitMatches = [
+  ...(includeCaptureScript ? [captureScript] : []),
+  ...(includeDemoScript ? [demoScript] : []),
+];
 
 export default defineConfig({
   testDir: '.',
-  testMatch: includeCaptureScript || includeDemoScript
-    ? ['e2e-test.spec.ts', captureScript, demoScript]
-    : 'e2e-test.spec.ts',
+  testMatch: explicitMatches.length > 0 ? explicitMatches : 'e2e-test.spec.ts',
+  testIgnore: ['.worktrees/**'],
   timeout: 180000,
   use: {
     baseURL: 'http://127.0.0.1:5173',

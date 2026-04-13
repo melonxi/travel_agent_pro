@@ -502,7 +502,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 
 - **后端单元测试**：75+ 个文件、590+ 测试，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、护栏、可行性、评估管线
 - **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner
-- **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 覆盖 live Phase 1 主流程；根目录 `playwright.config.ts` 在显式指定脚本时允许运行 `scripts/failure-analysis/capture_screenshots.ts` 与 `scripts/demo/demo-full-flow.spec.ts`；其中 demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，并把截图/视频写入 `screenshots/demos/`；`scripts/demo/run-all-demos.sh` 仍会先备份并 reset `default_user` 的 demo 数据、调用 `memory.demo_seed` 注入 `seed-memory.json`，录制完成后再恢复原用户目录
+- **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 覆盖 live Phase 1 主流程；根目录 `playwright.config.ts` 在显式指定脚本时只运行对应的 `scripts/failure-analysis/capture_screenshots.ts` 或 `scripts/demo/demo-full-flow.spec.ts`，并忽略 `.worktrees/`；其中 demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，只需要 frontend dev server，并把截图/视频写入 `screenshots/demos/`；failure-analysis raw results 写入 `scripts/failure-analysis/results/`，该目录为本地生成产物，不提交到 git
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---

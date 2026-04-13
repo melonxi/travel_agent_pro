@@ -1,19 +1,18 @@
 # Travel Agent Pro — Demo Recording
 
-一键录制 Travel Agent Pro 的核心规划流程。当前录制采用 **deterministic scripted playback**：服务检查和 demo memory seed 仍会执行，但前端可见的 Phase 1 → Phase 3 → Phase 5 → backtrack 流程由固定 fixture 回放，不依赖实时 LLM 输出稳定性。
+一键录制 Travel Agent Pro 的核心规划流程。当前录制采用 **deterministic scripted playback**：前端可见的 Phase 1 → Phase 3 → Phase 5 → backtrack 流程由固定 fixture 回放，不依赖后端或实时 LLM 输出稳定性。
 
 ## 前置要求
 
 - Node.js 18+
-- 可用的 Python 环境（优先使用 `backend/.venv/bin/python`，否则回退到 `python`）
-- backend 和 frontend 已启动（默认 `http://127.0.0.1:8000` / `http://127.0.0.1:5173`）
+- frontend 已启动（默认 `http://127.0.0.1:5173`）
 - 已安装 Playwright Chromium：`npx playwright install chromium`
 
 ## 快速开始
 
 ```bash
-# 1. 在另一个终端启动服务
-scripts/dev.sh
+# 1. 在另一个终端启动前端
+cd frontend && npm run dev
 
 # 2. 运行 demo 录制
 scripts/demo/run-all-demos.sh
@@ -21,12 +20,10 @@ scripts/demo/run-all-demos.sh
 
 ## 脚本会做什么
 
-1. 检查 backend `/health` 和 frontend 首页是否可访问
-2. 备份当前 demo 用户目录，并用 `python -m memory.demo_seed --reset-user` 注入一份干净的 demo 记忆
-3. 清空本次 demo 的 `screenshots/demos/`
-4. 执行 `scripts/demo/demo-full-flow.spec.ts`，mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放脚本化对话
-5. 将录屏 `.webm` 与 3 张截图写入 `screenshots/demos/`
-6. 脚本退出时恢复原来的 demo 用户数据，避免污染日常本地环境
+1. 检查 frontend 首页是否可访问
+2. 清空本次 demo 的 `screenshots/demos/`
+3. 执行 `scripts/demo/demo-full-flow.spec.ts`，mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放脚本化对话
+4. 将录屏 `.webm` 与 3 张截图写入 `screenshots/demos/`
 
 ## Demo 内容
 
@@ -60,27 +57,21 @@ scripts/demo/run-all-demos.sh
 - 3 条全局偏好：文化体验、精品民宿、不赶路
 - 1 条历史旅行 episode：京都 2025-03
 
-前端聊天请求默认不传 `user_id`，后端会落到 `default_user`，所以 demo seed 也固定注入这个用户。`run-all-demos.sh` 会在执行前备份该用户已有数据，录制结束后再恢复。
+这份 seed 数据保留给手动 live demo 使用。当前 scripted recording 会 mock API，不读取后端 memory，也不会修改 `backend/data/`。
 
 ## 可选环境变量
 
 | 变量 | 默认值 | 作用 |
 |---|---|---|
-| `BACKEND_URL` | `http://127.0.0.1:8000` | 健康检查地址 |
 | `FRONTEND_URL` | `http://127.0.0.1:5173` | 前端首页检查地址 |
-| `BACKEND_DATA_DIR` | `backend/data` | demo seed 写入的数据目录 |
-| `BACKEND_PYTHON` | 自动探测（`.venv` → `python`） | 用于执行 seed helper 的 Python |
 
 ## 常见问题
 
 **服务没启动？**  
-先在另一个终端运行 `scripts/dev.sh`。
+先在另一个终端运行 `cd frontend && npm run dev`。
 
 **seed 运行了但 demo 没体现偏好？**  
-确认 backend 是从仓库里的 `backend/` 目录启动的，并且使用的 `data_dir` 与 `BACKEND_DATA_DIR` 一致。
-
-**为什么还保留 seed memory？**  
-录制画面已经不依赖 live LLM，但脚本仍保留 seed/reset/restore 流程，确保 demo 用户数据与手动 live 演示保持一致，也不会污染本地 `default_user`。
+当前 scripted recording 不使用后端 seed。要验证 memory 行为，请运行 live 后端并手动使用 `backend/memory/demo_seed.py`。
 
 **没找到录屏文件？**  
 成功 run 会直接把 `demo-full-flow.webm` 写到 `screenshots/demos/`；如果 Playwright 失败，脚本仍会保留已生成的截图/视频并以失败码退出。

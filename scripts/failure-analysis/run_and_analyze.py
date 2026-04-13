@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -28,6 +30,7 @@ from evals.runner import evaluate_assertion, load_golden_cases
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 GOLDEN_CASES_DIR = BACKEND_DIR / "evals" / "golden_cases"
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
+_SENSITIVE_QUERY_RE = re.compile(r"([?&]xsec_token=)[^&#\"'\\\s]+")
 
 
 def create_session(client: httpx.Client) -> str:
@@ -104,6 +107,48 @@ def ensure_backend_ready(client: httpx.Client, base_url: str) -> None:
         print(f"Reason: {exc}")
         print("Start with: scripts/dev.sh")
         sys.exit(1)
+
+
+def scrub_sensitive_tokens(value: Any) -> Any:
+    """Redact transient third-party URL tokens before writing artifacts."""
+    if isinstance(value, str):
+        return _SENSITIVE_QUERY_RE.sub(r"\1<redacted>", value)
+    if isinstance(value, list):
+        return [scrub_sensitive_tokens(item) for item in value]
+    if isinstance(value, dict):
+        return {key: scrub_sensitive_tokens(item) for key, item in value.items()}
+    return value
+
+
+def result_to_json(result: ScenarioResult) -> dict[str, Any]:
+    payload = {
+        "scenario_id": result.scenario_id,
+        "name": result.name,
+        "user_input": result.user_input,
+        "passed": result.passed,
+        "passed_assertions": result.passed_assertions,
+        "total_assertions": result.total_assertions,
+        "failures": result.failures,
+        "tool_calls": result.tool_calls,
+        "responses": result.responses,
+        "duration_ms": result.duration_ms,
+        "session_id": result.stats.get("session_id", ""),
+        "plan_state": result.stats.get("plan_state", {}),
+        "messages": result.stats.get("messages", []),
+        "stats": {
+            key: value
+            for key, value in result.stats.items()
+            if key not in {"session_id", "plan_state", "messages"}
+        },
+    }
+    return scrub_sensitive_tokens(payload)
+
+
+def exit_code_for_results(results: list[ScenarioResult]) -> int:
+    for result in results:
+        if any(failure.startswith("FATAL:") for failure in result.failures):
+            return 1
+    return 0
 
 
 def run_scenario(client: httpx.Client, case: GoldenCase) -> ScenarioResult:
@@ -193,7 +238,7 @@ def run_scenario(client: httpx.Client, case: GoldenCase) -> ScenarioResult:
     return result
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Run failure analysis scenarios")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument(
@@ -235,29 +280,7 @@ def main() -> None:
     results_json = RESULTS_DIR / "failure-results.json"
     results_json.write_text(
         json.dumps(
-            [
-                {
-                    "scenario_id": result.scenario_id,
-                    "name": result.name,
-                    "user_input": result.user_input,
-                    "passed": result.passed,
-                    "passed_assertions": result.passed_assertions,
-                    "total_assertions": result.total_assertions,
-                    "failures": result.failures,
-                    "tool_calls": result.tool_calls,
-                    "responses": result.responses,
-                    "duration_ms": result.duration_ms,
-                    "session_id": result.stats.get("session_id", ""),
-                    "plan_state": result.stats.get("plan_state", {}),
-                    "messages": result.stats.get("messages", []),
-                    "stats": {
-                        key: value
-                        for key, value in result.stats.items()
-                        if key not in {"session_id", "plan_state", "messages"}
-                    },
-                }
-                for result in results
-            ],
+            [result_to_json(result) for result in results],
             ensure_ascii=False,
             indent=2,
         ),
@@ -280,6 +303,8 @@ def main() -> None:
             f"({result.passed_assertions}/{result.total_assertions})"
         )
 
+    return exit_code_for_results(results)
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

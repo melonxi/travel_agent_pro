@@ -5,7 +5,7 @@
 - 测试环境：生产配置（GPT-4o + Claude Sonnet 4）
 - 测试方式：真实 API 调用，非 mock
 - 测试时间：2026-04-12
-- 运行元数据：model, provider, config hash 均记录在案
+- 运行元数据：model、token、cost、latency stats 已记录
 
 ## 失败模式分类法
 
