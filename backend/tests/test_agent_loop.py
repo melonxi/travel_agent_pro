@@ -77,8 +77,8 @@ class FakeMemoryManager:
 
     async def generate_context(
         self, user_id: str, plan: TravelPlanState
-    ) -> tuple[str, list[str]]:
-        return f"memory:{user_id}", []
+    ) -> tuple[str, list[str], int, int, int]:
+        return f"memory:{user_id}", [], 0, 0, 0
 
 
 @pytest.fixture

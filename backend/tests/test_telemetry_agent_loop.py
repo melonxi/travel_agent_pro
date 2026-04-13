@@ -39,8 +39,8 @@ class _MemoryManager:
     def generate_summary(self, memory) -> str:
         return ""
 
-    async def generate_context(self, user_id: str, plan) -> tuple[str, list[str]]:
-        return "", []
+    async def generate_context(self, user_id: str, plan) -> tuple[str, list[str], int, int, int]:
+        return "", [], 0, 0, 0
 
 
 def _make_loop(llm, engine, hooks):
