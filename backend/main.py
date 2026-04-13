@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -72,6 +73,8 @@ from tools.quick_travel_search import make_quick_travel_search_tool
 from tools.search_travel_services import make_search_travel_services_tool
 from tools.web_search import make_web_search_tool
 from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -1509,128 +1512,140 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     yield _memory_pending_event_from_items(pending_items)
             llm_started_at = time.monotonic()
             usage_iteration = 0
-            async for chunk in agent.run(messages, phase=plan.phase):
-                if chunk.type.value == "keepalive":
-                    yield {"comment": "ping"}
-                    continue
-                if chunk.type == ChunkType.USAGE and chunk.usage_info:
-                    _record_llm_usage_stats(
-                        stats=session.get("stats"),
-                        provider=config.llm.provider,
-                        model=config.llm.model,
-                        usage_info=chunk.usage_info,
-                        started_at=llm_started_at,
-                        phase=plan.phase,
-                        iteration=usage_iteration,
+            try:
+                async for chunk in agent.run(messages, phase=plan.phase):
+                    if chunk.type.value == "keepalive":
+                        yield {"comment": "ping"}
+                        continue
+                    if chunk.type == ChunkType.USAGE and chunk.usage_info:
+                        _record_llm_usage_stats(
+                            stats=session.get("stats"),
+                            provider=config.llm.provider,
+                            model=config.llm.model,
+                            usage_info=chunk.usage_info,
+                            started_at=llm_started_at,
+                            phase=plan.phase,
+                            iteration=usage_iteration,
+                        )
+                        usage_iteration += 1
+                        llm_started_at = time.monotonic()
+                        continue
+                    if chunk.type == ChunkType.CONTEXT_COMPRESSION:
+                        yield json.dumps(
+                            {
+                                "type": "context_compression",
+                                "compression_info": chunk.compression_info,
+                            },
+                            ensure_ascii=False,
+                        )
+                        continue
+                    event_type = (
+                        "tool_call"
+                        if chunk.tool_call and chunk.type.value == "tool_call_start"
+                        else "tool_result"
+                        if chunk.tool_result and chunk.type.value == "tool_result"
+                        else chunk.type.value
                     )
-                    usage_iteration += 1
-                    llm_started_at = time.monotonic()
-                    continue
-                if chunk.type == ChunkType.CONTEXT_COMPRESSION:
-                    yield json.dumps(
-                        {
-                            "type": "context_compression",
-                            "compression_info": chunk.compression_info,
-                        },
-                        ensure_ascii=False,
-                    )
-                    continue
-                event_type = (
-                    "tool_call"
-                    if chunk.tool_call and chunk.type.value == "tool_call_start"
-                    else "tool_result"
-                    if chunk.tool_result and chunk.type.value == "tool_result"
-                    else chunk.type.value
+                    event_data = {"type": event_type}
+                    if chunk.content:
+                        event_data["content"] = chunk.content
+                    if chunk.tool_call:
+                        tool_call_names[chunk.tool_call.id] = chunk.tool_call.name
+                        tool_call_args[chunk.tool_call.id] = chunk.tool_call.arguments or {}
+                        event_data["tool_call"] = {
+                            "id": chunk.tool_call.id,
+                            "name": chunk.tool_call.name,
+                            "arguments": chunk.tool_call.arguments,
+                        }
+                    if chunk.tool_result:
+                        event_data["tool_result"] = {
+                            "tool_call_id": chunk.tool_result.tool_call_id,
+                            "status": chunk.tool_result.status,
+                            "data": chunk.tool_result.data,
+                            "error": chunk.tool_result.error,
+                            "error_code": chunk.tool_result.error_code,
+                            "suggestion": chunk.tool_result.suggestion,
+                        }
+                        _record_tool_result_stats(
+                            stats=session.get("stats"),
+                            tool_call_names=tool_call_names,
+                            tool_call_args=tool_call_args,
+                            result=chunk.tool_result,
+                            phase=plan.phase,
+                        )
+                        # Apply pending state_changes / validation_errors from on_validate hook
+                        _stats = session.get("stats")
+                        if _stats and _stats.tool_calls:
+                            _pending_sc = session.pop("_pending_state_changes", None)
+                            if _pending_sc is not None:
+                                _stats.tool_calls[-1].state_changes = _pending_sc
+                            _pending_ve = session.pop("_pending_validation_errors", None)
+                            if _pending_ve is not None:
+                                _stats.tool_calls[-1].validation_errors = _pending_ve
+                            _pending_js = session.pop("_pending_judge_scores", None)
+                            if _pending_js is not None:
+                                _stats.tool_calls[-1].judge_scores = _pending_js
+                    yield json.dumps(event_data, ensure_ascii=False)
+                    if (
+                        chunk.tool_result
+                        and chunk.tool_result.status == "success"
+                        and tool_call_names.get(chunk.tool_result.tool_call_id)
+                        == "update_plan_state"
+                    ):
+                        result_data = (
+                            chunk.tool_result.data
+                            if isinstance(chunk.tool_result.data, dict)
+                            else {}
+                        )
+                        updated_field = None
+                        if isinstance(chunk.tool_result.data, dict):
+                            updated_field = chunk.tool_result.data.get("updated_field")
+                        if result_data.get("backtracked"):
+                            await _rotate_trip_on_reset_backtrack(
+                                user_id=session["user_id"],
+                                plan=plan,
+                                to_phase=int(result_data.get("to_phase", plan.phase)),
+                                reason_text=str(result_data.get("reason", "")),
+                            )
+                        elif updated_field == "selected_skeleton_id":
+                            _schedule_memory_event(
+                                user_id=session["user_id"],
+                                session_id=plan.session_id,
+                                event_type="accept",
+                                object_type="skeleton",
+                                object_payload=chunk.tool_result.data or {},
+                            )
+                        elif updated_field == "selected_transport":
+                            _schedule_memory_event(
+                                user_id=session["user_id"],
+                                session_id=plan.session_id,
+                                event_type="accept",
+                                object_type="transport",
+                                object_payload=chunk.tool_result.data or {},
+                            )
+                        elif updated_field == "accommodation":
+                            _schedule_memory_event(
+                                user_id=session["user_id"],
+                                session_id=plan.session_id,
+                                event_type="accept",
+                                object_type="hotel",
+                                object_payload=chunk.tool_result.data or {},
+                            )
+                        yield json.dumps(
+                            {"type": "state_update", "plan": plan.to_dict()},
+                            ensure_ascii=False,
+                        )
+            except Exception as exc:
+                logger.exception("Agent stream failed for session %s", plan.session_id)
+                yield json.dumps(
+                    {
+                        "type": "error",
+                        "error_code": "AGENT_STREAM_ERROR",
+                        "error": str(exc),
+                        "message": "模型服务暂时繁忙，本轮回复已中断。请稍后重试。",
+                    },
+                    ensure_ascii=False,
                 )
-                event_data = {"type": event_type}
-                if chunk.content:
-                    event_data["content"] = chunk.content
-                if chunk.tool_call:
-                    tool_call_names[chunk.tool_call.id] = chunk.tool_call.name
-                    tool_call_args[chunk.tool_call.id] = chunk.tool_call.arguments or {}
-                    event_data["tool_call"] = {
-                        "id": chunk.tool_call.id,
-                        "name": chunk.tool_call.name,
-                        "arguments": chunk.tool_call.arguments,
-                    }
-                if chunk.tool_result:
-                    event_data["tool_result"] = {
-                        "tool_call_id": chunk.tool_result.tool_call_id,
-                        "status": chunk.tool_result.status,
-                        "data": chunk.tool_result.data,
-                        "error": chunk.tool_result.error,
-                        "error_code": chunk.tool_result.error_code,
-                        "suggestion": chunk.tool_result.suggestion,
-                    }
-                    _record_tool_result_stats(
-                        stats=session.get("stats"),
-                        tool_call_names=tool_call_names,
-                        tool_call_args=tool_call_args,
-                        result=chunk.tool_result,
-                        phase=plan.phase,
-                    )
-                    # Apply pending state_changes / validation_errors from on_validate hook
-                    _stats = session.get("stats")
-                    if _stats and _stats.tool_calls:
-                        _pending_sc = session.pop("_pending_state_changes", None)
-                        if _pending_sc is not None:
-                            _stats.tool_calls[-1].state_changes = _pending_sc
-                        _pending_ve = session.pop("_pending_validation_errors", None)
-                        if _pending_ve is not None:
-                            _stats.tool_calls[-1].validation_errors = _pending_ve
-                        _pending_js = session.pop("_pending_judge_scores", None)
-                        if _pending_js is not None:
-                            _stats.tool_calls[-1].judge_scores = _pending_js
-                yield json.dumps(event_data, ensure_ascii=False)
-                if (
-                    chunk.tool_result
-                    and chunk.tool_result.status == "success"
-                    and tool_call_names.get(chunk.tool_result.tool_call_id)
-                    == "update_plan_state"
-                ):
-                    result_data = (
-                        chunk.tool_result.data
-                        if isinstance(chunk.tool_result.data, dict)
-                        else {}
-                    )
-                    updated_field = None
-                    if isinstance(chunk.tool_result.data, dict):
-                        updated_field = chunk.tool_result.data.get("updated_field")
-                    if result_data.get("backtracked"):
-                        await _rotate_trip_on_reset_backtrack(
-                            user_id=session["user_id"],
-                            plan=plan,
-                            to_phase=int(result_data.get("to_phase", plan.phase)),
-                            reason_text=str(result_data.get("reason", "")),
-                        )
-                    elif updated_field == "selected_skeleton_id":
-                        _schedule_memory_event(
-                            user_id=session["user_id"],
-                            session_id=plan.session_id,
-                            event_type="accept",
-                            object_type="skeleton",
-                            object_payload=chunk.tool_result.data or {},
-                        )
-                    elif updated_field == "selected_transport":
-                        _schedule_memory_event(
-                            user_id=session["user_id"],
-                            session_id=plan.session_id,
-                            event_type="accept",
-                            object_type="transport",
-                            object_payload=chunk.tool_result.data or {},
-                        )
-                    elif updated_field == "accommodation":
-                        _schedule_memory_event(
-                            user_id=session["user_id"],
-                            session_id=plan.session_id,
-                            event_type="accept",
-                            object_type="hotel",
-                            object_payload=chunk.tool_result.data or {},
-                        )
-                    yield json.dumps(
-                        {"type": "state_update", "plan": plan.to_dict()},
-                        ensure_ascii=False,
-                    )
 
             # Fallback：如果本轮 agent 没触发 backtrack，检查关键词 fallback
             if plan.phase == phase_before_run:

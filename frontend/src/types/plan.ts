@@ -145,11 +145,14 @@ export interface CompressionInfo {
 }
 
 export interface SSEEvent {
-  type: 'text_delta' | 'tool_call' | 'tool_result' | 'state_update' | 'context_compression' | 'memory_recall' | 'done'
+  type: 'text_delta' | 'tool_call' | 'tool_result' | 'state_update' | 'context_compression' | 'memory_recall' | 'error' | 'done'
   content?: string
   tool_call?: ToolCallEvent
   tool_result?: ToolResultEvent
   plan?: TravelPlanState
   compression_info?: CompressionInfo
   item_ids?: string[]
+  error?: string
+  error_code?: string
+  message?: string
 }
