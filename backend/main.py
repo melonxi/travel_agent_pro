@@ -1647,8 +1647,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     async def get_session_trace(session_id: str):
         session = sessions.get(session_id)
         if not session:
-            return JSONResponse({"error": "Session not found"}, status_code=404)
-        return build_trace(session_id, session)
+            raise HTTPException(status_code=404, detail="Session not found")
+        agent = session.get("agent")
+        engine = getattr(agent, "tool_engine", None) if agent else None
+        return build_trace(session_id, session, tool_engine=engine)
 
     return app
 
