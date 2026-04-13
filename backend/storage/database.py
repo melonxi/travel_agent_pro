@@ -15,7 +15,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     phase        INTEGER NOT NULL DEFAULT 1,
     status       TEXT NOT NULL DEFAULT 'active',
     created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
+    updated_at   TEXT NOT NULL,
+    last_run_id     TEXT,
+    last_run_status TEXT,
+    last_run_error  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (
