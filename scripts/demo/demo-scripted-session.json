@@ -1,0 +1,901 @@
+{
+  "session": {
+    "session_id": "demo-scripted-session",
+    "title": "京都 · 4天3晚",
+    "phase": 1,
+    "status": "active",
+    "updated_at": "2026-04-13T02:25:31Z"
+  },
+  "initial_plan": {
+    "session_id": "demo-scripted-session",
+    "phase": 1,
+    "destination": null,
+    "dates": null,
+    "phase3_step": "brief",
+    "trip_brief": {},
+    "candidate_pool": [],
+    "shortlist": [],
+    "skeleton_plans": [],
+    "selected_skeleton_id": null,
+    "transport_options": [],
+    "selected_transport": null,
+    "accommodation_options": [],
+    "budget": null,
+    "travelers": null,
+    "accommodation": null,
+    "constraints": [],
+    "preferences": [],
+    "risks": [],
+    "alternatives": [],
+    "daily_plans": [],
+    "backtrack_history": []
+  },
+  "initial_messages": [],
+  "steps": [
+    {
+      "user_message": "我想找个适合四月去、可以慢慢逛、吃得好一点的亚洲城市，先帮我收敛几个方向。",
+      "assistant_text": "我先帮你把方向收窄成 3 个：京都、福冈、釜山。就“4 月、慢慢逛、吃得好一点”这组条件，京都最稳，福冈更轻松，釜山更偏海边城市感。如果你想先走文化体验 + 好吃 + 步行友好，我建议先按京都继续。",
+      "tool_calls": [
+        {
+          "id": "tc_phase1_search",
+          "name": "xiaohongshu_search",
+          "arguments": {
+            "query": "四月 亚洲 慢逛 美食 城市 推荐"
+          }
+        },
+        {
+          "id": "tc_phase1_verify",
+          "name": "web_search",
+          "arguments": {
+            "query": "京都 四月 美食 慢游"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_call_id": "tc_phase1_search",
+          "status": "success",
+          "data": {
+            "notes": 3
+          }
+        },
+        {
+          "tool_call_id": "tc_phase1_verify",
+          "status": "success",
+          "data": {
+            "results": 2
+          }
+        }
+      ],
+      "plan": {
+        "session_id": "demo-scripted-session",
+        "phase": 1,
+        "destination": null,
+        "dates": null,
+        "phase3_step": "brief",
+        "trip_brief": {},
+        "candidate_pool": [],
+        "shortlist": [],
+        "skeleton_plans": [],
+        "selected_skeleton_id": null,
+        "transport_options": [],
+        "selected_transport": null,
+        "accommodation_options": [],
+        "budget": null,
+        "travelers": null,
+        "accommodation": null,
+        "constraints": [],
+        "preferences": [],
+        "risks": [],
+        "alternatives": [],
+        "daily_plans": [],
+        "backtrack_history": []
+      }
+    },
+    {
+      "user_message": "京都方向最打动我。那就按京都做 4 月 15 日到 4 月 18 日、两位成人、预算 12000 元来规划，并给我 2 套骨架方案。",
+      "assistant_text": "好，我就按京都 4 天 3 晚、两位成人、预算 12000 元来推。下面给你两套骨架：方案 A 是经典文化深度版，主打东山—岚山—伏见；方案 B 是美食漫游版，节奏更松、把更多时间给河原町和咖啡馆。你如果想先看“第一次去京都也不累”的路线，我建议先选方案 A。",
+      "tool_calls": [
+        {
+          "id": "tc_phase3_destination",
+          "name": "update_plan_state",
+          "arguments": {
+            "field": "destination",
+            "value": "京都"
+          }
+        },
+        {
+          "id": "tc_phase3_dates",
+          "name": "update_plan_state",
+          "arguments": {
+            "field": "dates",
+            "value": {
+              "start": "2026-04-15",
+              "end": "2026-04-18"
+            }
+          }
+        },
+        {
+          "id": "tc_phase3_travelers",
+          "name": "update_plan_state",
+          "arguments": {
+            "field": "travelers",
+            "value": {
+              "adults": 2,
+              "children": 0
+            }
+          }
+        },
+        {
+          "id": "tc_phase3_budget",
+          "name": "update_plan_state",
+          "arguments": {
+            "field": "budget",
+            "value": {
+              "total": 12000,
+              "currency": "CNY"
+            }
+          }
+        },
+        {
+          "id": "tc_phase3_skeletons",
+          "name": "update_plan_state",
+          "arguments": {
+            "field": "skeleton_plans",
+            "value": "2 plans"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_call_id": "tc_phase3_destination",
+          "status": "success",
+          "data": {
+            "ok": true
+          }
+        },
+        {
+          "tool_call_id": "tc_phase3_dates",
+          "status": "success",
+          "data": {
+            "ok": true
+          }
+        },
+        {
+          "tool_call_id": "tc_phase3_travelers",
+          "status": "success",
+          "data": {
+            "ok": true
+          }
+        },
+        {
+          "tool_call_id": "tc_phase3_budget",
+          "status": "success",
+          "data": {
+            "ok": true
+          }
+        },
+        {
+          "tool_call_id": "tc_phase3_skeletons",
+          "status": "success",
+          "data": {
+            "count": 2
+          }
+        }
+      ],
+      "plan": {
+        "session_id": "demo-scripted-session",
+        "phase": 3,
+        "destination": "京都",
+        "dates": {
+          "start": "2026-04-15",
+          "end": "2026-04-18"
+        },
+        "phase3_step": "skeleton",
+        "trip_brief": {
+          "destination": "京都",
+          "dates": {
+            "start": "2026-04-15",
+            "end": "2026-04-18"
+          },
+          "total_days": 4,
+          "travelers": {
+            "adults": 2,
+            "children": 0
+          },
+          "budget": {
+            "total": 12000,
+            "currency": "CNY"
+          },
+          "preferences": [
+            {
+              "key": "pace",
+              "value": "慢慢逛"
+            },
+            {
+              "key": "food",
+              "value": "吃得好一点"
+            }
+          ]
+        },
+        "candidate_pool": [],
+        "shortlist": [
+          {
+            "id": "must-kiyomizu",
+            "name": "清水寺及周边",
+            "bucket": "必去",
+            "why": "第一次来京都最稳的文化起点",
+            "area": "东山",
+            "theme": "文化"
+          },
+          {
+            "id": "must-arashiyama",
+            "name": "岚山",
+            "bucket": "高潜力",
+            "why": "适合慢逛，也能把景观和美食串起来",
+            "area": "岚山",
+            "theme": "自然"
+          }
+        ],
+        "skeleton_plans": [
+          {
+            "id": "plan_A",
+            "title": "经典文化深度版",
+            "style": "平衡版",
+            "summary": "东山、岚山、伏见三段式推进，第一次去京都最稳。",
+            "fatigue": "中等",
+            "budget_level": "中等",
+            "tradeoffs": [
+              "经典景点覆盖高",
+              "第二天略早出发",
+              "夜间仍保留河原町慢逛"
+            ],
+            "days": [
+              {
+                "day": 1,
+                "theme": "东山文化区"
+              },
+              {
+                "day": 2,
+                "theme": "岚山与金阁寺"
+              }
+            ]
+          },
+          {
+            "id": "plan_B",
+            "title": "美食漫游版",
+            "style": "轻松版",
+            "summary": "景点更少，把河原町和咖啡馆时间拉满。",
+            "fatigue": "低",
+            "budget_level": "中等",
+            "tradeoffs": [
+              "舒适度最高",
+              "经典景点覆盖略少",
+              "购物与美食占比更高"
+            ],
+            "days": [
+              {
+                "day": 1,
+                "theme": "河原町与鸭川"
+              },
+              {
+                "day": 2,
+                "theme": "祇园与哲学之道"
+              }
+            ]
+          }
+        ],
+        "selected_skeleton_id": null,
+        "transport_options": [],
+        "selected_transport": null,
+        "accommodation_options": [],
+        "budget": {
+          "total": 12000,
+          "currency": "CNY"
+        },
+        "travelers": {
+          "adults": 2,
+          "children": 0
+        },
+        "accommodation": null,
+        "constraints": [],
+        "preferences": [
+          {
+            "key": "pace",
+            "value": "慢慢逛"
+          },
+          {
+            "key": "food",
+            "value": "吃得好一点"
+          }
+        ],
+        "risks": [
+          {
+            "title": "热门景点拥挤",
+            "level": "medium",
+            "description": "东山区域建议错峰进场"
+          }
+        ],
+        "alternatives": [],
+        "daily_plans": [],
+        "backtrack_history": []
+      }
+    },
+    {
+      "user_message": "我选第一套方案（经典文化深度版），就按这个方向继续。",
+      "assistant_text": "收到，我把方案 A 锁成当前骨架。接下来给你 3 个明确住宿候选：A 东山之宿 缘侧（更偏文化交流）、B 智積院会館（寺庙住宿体验）、C Nohga Hotel Kiyomizu Kyoto（设计酒店、舒适度最好）。如果你要更稳的拍摄效果和住得舒服，我建议你选 C。",
+      "tool_calls": [
+        {
+          "id": "tc_lock_skeleton",
+          "name": "update_plan_state",
+          "arguments": {
+            "field": "selected_skeleton_id",
+            "value": "plan_A"
+          }
+        },
+        {
+          "id": "tc_lock_accommodation_options",
+          "name": "update_plan_state",
+          "arguments": {
+            "field": "accommodation_options",
+            "value": "3 options"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_call_id": "tc_lock_skeleton",
+          "status": "success",
+          "data": {
+            "ok": true
+          }
+        },
+        {
+          "tool_call_id": "tc_lock_accommodation_options",
+          "status": "success",
+          "data": {
+            "count": 3
+          }
+        }
+      ],
+      "plan": {
+        "session_id": "demo-scripted-session",
+        "phase": 3,
+        "destination": "京都",
+        "dates": {
+          "start": "2026-04-15",
+          "end": "2026-04-18"
+        },
+        "phase3_step": "lock",
+        "trip_brief": {
+          "destination": "京都",
+          "dates": {
+            "start": "2026-04-15",
+            "end": "2026-04-18"
+          },
+          "total_days": 4,
+          "travelers": {
+            "adults": 2,
+            "children": 0
+          },
+          "budget": {
+            "total": 12000,
+            "currency": "CNY"
+          }
+        },
+        "candidate_pool": [],
+        "shortlist": [
+          {
+            "id": "must-kiyomizu",
+            "name": "清水寺及周边",
+            "bucket": "必去",
+            "why": "第一次来京都最稳的文化起点",
+            "area": "东山",
+            "theme": "文化"
+          }
+        ],
+        "skeleton_plans": [
+          {
+            "id": "plan_A",
+            "title": "经典文化深度版",
+            "style": "平衡版",
+            "summary": "东山、岚山、伏见三段式推进，第一次去京都最稳。",
+            "fatigue": "中等",
+            "budget_level": "中等",
+            "tradeoffs": [
+              "经典景点覆盖高",
+              "第二天略早出发",
+              "夜间仍保留河原町慢逛"
+            ],
+            "days": [
+              {
+                "day": 1,
+                "theme": "东山文化区"
+              },
+              {
+                "day": 2,
+                "theme": "岚山与金阁寺"
+              }
+            ]
+          },
+          {
+            "id": "plan_B",
+            "title": "美食漫游版",
+            "style": "轻松版",
+            "summary": "景点更少，把河原町和咖啡馆时间拉满。",
+            "fatigue": "低",
+            "budget_level": "中等",
+            "tradeoffs": [
+              "舒适度最高",
+              "经典景点覆盖略少",
+              "购物与美食占比更高"
+            ],
+            "days": [
+              {
+                "day": 1,
+                "theme": "河原町与鸭川"
+              },
+              {
+                "day": 2,
+                "theme": "祇园与哲学之道"
+              }
+            ]
+          }
+        ],
+        "selected_skeleton_id": "plan_A",
+        "transport_options": [
+          {
+            "summary": "上海往返大阪 + Haruka 到京都",
+            "price_hint": "约 3200 元/人"
+          }
+        ],
+        "selected_transport": null,
+        "accommodation_options": [
+          {
+            "id": "hotel_A",
+            "hotel": "东山之宿 缘侧",
+            "area": "东山清水寺附近",
+            "style": "精品民宿"
+          },
+          {
+            "id": "hotel_B",
+            "hotel": "智積院会館",
+            "area": "东山三十三间堂附近",
+            "style": "寺庙住宿"
+          },
+          {
+            "id": "hotel_C",
+            "hotel": "Nohga Hotel Kiyomizu Kyoto",
+            "area": "东山五条附近",
+            "style": "设计酒店"
+          }
+        ],
+        "budget": {
+          "total": 12000,
+          "currency": "CNY"
+        },
+        "travelers": {
+          "adults": 2,
+          "children": 0
+        },
+        "accommodation": null,
+        "constraints": [],
+        "preferences": [
+          {
+            "key": "pace",
+            "value": "慢慢逛"
+          },
+          {
+            "key": "food",
+            "value": "吃得好一点"
+          }
+        ],
+        "risks": [
+          {
+            "title": "热门景点拥挤",
+            "level": "medium",
+            "description": "东山区域建议错峰进场"
+          }
+        ],
+        "alternatives": [],
+        "daily_plans": [],
+        "backtrack_history": []
+      }
+    },
+    {
+      "user_message": "住宿我选选项C：Nohga Hotel Kiyomizu Kyoto。我就从上海出发，请按这个住宿候选锁定并继续。",
+      "assistant_text": "好，我已经把住宿锁定到 Nohga Hotel Kiyomizu Kyoto，并按上海往返大阪 + Haruka 到京都作为交通基线。接下来进入逐日行程组装，我先帮你把前两天细化出来。",
+      "tool_calls": [
+        {
+          "id": "tc_lock_hotel",
+          "name": "update_plan_state",
+          "arguments": {
+            "field": "accommodation",
+            "value": {
+              "area": "东山五条附近",
+              "hotel": "Nohga Hotel Kiyomizu Kyoto"
+            }
+          }
+        },
+        {
+          "id": "tc_lock_transport",
+          "name": "update_plan_state",
+          "arguments": {
+            "field": "selected_transport",
+            "value": {
+              "summary": "上海往返大阪 + Haruka 到京都"
+            }
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_call_id": "tc_lock_hotel",
+          "status": "success",
+          "data": {
+            "ok": true
+          }
+        },
+        {
+          "tool_call_id": "tc_lock_transport",
+          "status": "success",
+          "data": {
+            "ok": true
+          }
+        }
+      ],
+      "plan": {
+        "session_id": "demo-scripted-session",
+        "phase": 5,
+        "destination": "京都",
+        "dates": {
+          "start": "2026-04-15",
+          "end": "2026-04-18"
+        },
+        "phase3_step": "lock",
+        "trip_brief": {
+          "destination": "京都",
+          "dates": {
+            "start": "2026-04-15",
+            "end": "2026-04-18"
+          },
+          "total_days": 4,
+          "travelers": {
+            "adults": 2,
+            "children": 0
+          },
+          "budget": {
+            "total": 12000,
+            "currency": "CNY"
+          }
+        },
+        "candidate_pool": [],
+        "shortlist": [
+          {
+            "id": "must-kiyomizu",
+            "name": "清水寺及周边",
+            "bucket": "必去",
+            "why": "第一次来京都最稳的文化起点",
+            "area": "东山",
+            "theme": "文化"
+          }
+        ],
+        "skeleton_plans": [
+          {
+            "id": "plan_A",
+            "title": "经典文化深度版",
+            "style": "平衡版",
+            "summary": "东山、岚山、伏见三段式推进，第一次去京都最稳。",
+            "fatigue": "中等",
+            "budget_level": "中等",
+            "tradeoffs": [
+              "经典景点覆盖高",
+              "第二天略早出发",
+              "夜间仍保留河原町慢逛"
+            ],
+            "days": [
+              {
+                "day": 1,
+                "theme": "东山文化区"
+              },
+              {
+                "day": 2,
+                "theme": "岚山与金阁寺"
+              }
+            ]
+          }
+        ],
+        "selected_skeleton_id": "plan_A",
+        "transport_options": [
+          {
+            "summary": "上海往返大阪 + Haruka 到京都",
+            "price_hint": "约 3200 元/人"
+          }
+        ],
+        "selected_transport": {
+          "summary": "上海往返大阪 + Haruka 到京都"
+        },
+        "accommodation_options": [
+          {
+            "id": "hotel_C",
+            "hotel": "Nohga Hotel Kiyomizu Kyoto",
+            "area": "东山五条附近",
+            "style": "设计酒店"
+          }
+        ],
+        "budget": {
+          "total": 12000,
+          "currency": "CNY"
+        },
+        "travelers": {
+          "adults": 2,
+          "children": 0
+        },
+        "accommodation": {
+          "area": "东山五条附近",
+          "hotel": "Nohga Hotel Kiyomizu Kyoto"
+        },
+        "constraints": [],
+        "preferences": [
+          {
+            "key": "pace",
+            "value": "慢慢逛"
+          },
+          {
+            "key": "food",
+            "value": "吃得好一点"
+          }
+        ],
+        "risks": [
+          {
+            "title": "热门景点拥挤",
+            "level": "medium",
+            "description": "东山区域建议错峰进场"
+          }
+        ],
+        "alternatives": [],
+        "daily_plans": [],
+        "backtrack_history": []
+      }
+    },
+    {
+      "user_message": "很好，请先细化前两天的行程，我想看看节奏。",
+      "assistant_text": "可以，我先把前两天按慢节奏细化出来：Day 1 以清水寺、二年坂、祇园和鸭川傍晚散步为主；Day 2 先去岚山，再回到金阁寺，晚上保留河原町自由活动。整体节奏是上午一个核心片区、下午一个延展片区，不做特种兵式暴走。",
+      "tool_calls": [
+        {
+          "id": "tc_dayplan",
+          "name": "assemble_day_plan",
+          "arguments": {
+            "days": 2
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_call_id": "tc_dayplan",
+          "status": "success",
+          "data": {
+            "days": 2
+          }
+        }
+      ],
+      "plan": {
+        "session_id": "demo-scripted-session",
+        "phase": 5,
+        "destination": "京都",
+        "dates": {
+          "start": "2026-04-15",
+          "end": "2026-04-18"
+        },
+        "phase3_step": "lock",
+        "trip_brief": {
+          "destination": "京都",
+          "dates": {
+            "start": "2026-04-15",
+            "end": "2026-04-18"
+          },
+          "total_days": 4
+        },
+        "candidate_pool": [],
+        "shortlist": [],
+        "skeleton_plans": [
+          {
+            "id": "plan_A",
+            "title": "经典文化深度版",
+            "style": "平衡版",
+            "summary": "东山、岚山、伏见三段式推进，第一次去京都最稳。"
+          }
+        ],
+        "selected_skeleton_id": "plan_A",
+        "transport_options": [
+          {
+            "summary": "上海往返大阪 + Haruka 到京都",
+            "price_hint": "约 3200 元/人"
+          }
+        ],
+        "selected_transport": {
+          "summary": "上海往返大阪 + Haruka 到京都"
+        },
+        "accommodation_options": [
+          {
+            "id": "hotel_C",
+            "hotel": "Nohga Hotel Kiyomizu Kyoto",
+            "area": "东山五条附近",
+            "style": "设计酒店"
+          }
+        ],
+        "budget": {
+          "total": 12000,
+          "currency": "CNY"
+        },
+        "travelers": {
+          "adults": 2,
+          "children": 0
+        },
+        "accommodation": {
+          "area": "东山五条附近",
+          "hotel": "Nohga Hotel Kiyomizu Kyoto"
+        },
+        "constraints": [],
+        "preferences": [
+          {
+            "key": "pace",
+            "value": "慢慢逛"
+          }
+        ],
+        "risks": [
+          {
+            "title": "热门景点拥挤",
+            "level": "medium",
+            "description": "东山区域建议错峰进场"
+          }
+        ],
+        "alternatives": [],
+        "daily_plans": [
+          {
+            "day": 1,
+            "date": "2026-04-15",
+            "activities": [
+              {
+                "name": "清水寺",
+                "location": {
+                  "lat": 34.9949,
+                  "lng": 135.785,
+                  "name": "清水寺"
+                },
+                "start_time": "09:00",
+                "end_time": "11:00",
+                "category": "景点",
+                "cost": 400,
+                "transport_from_prev": null,
+                "transport_duration_min": 0
+              },
+              {
+                "name": "祇园与鸭川散步",
+                "location": {
+                  "lat": 35.0037,
+                  "lng": 135.7788,
+                  "name": "祇园"
+                },
+                "start_time": "15:00",
+                "end_time": "18:00",
+                "category": "散步",
+                "cost": 0,
+                "transport_from_prev": "步行",
+                "transport_duration_min": 20
+              }
+            ],
+            "notes": "第一天以东山文化区为主，傍晚回到鸭川和河原町收尾。"
+          },
+          {
+            "day": 2,
+            "date": "2026-04-16",
+            "activities": [
+              {
+                "name": "岚山竹林",
+                "location": {
+                  "lat": 35.017,
+                  "lng": 135.6713,
+                  "name": "岚山竹林"
+                },
+                "start_time": "08:30",
+                "end_time": "11:00",
+                "category": "自然",
+                "cost": 0,
+                "transport_from_prev": "JR",
+                "transport_duration_min": 35
+              },
+              {
+                "name": "金阁寺",
+                "location": {
+                  "lat": 35.0394,
+                  "lng": 135.7292,
+                  "name": "金阁寺"
+                },
+                "start_time": "14:00",
+                "end_time": "16:00",
+                "category": "景点",
+                "cost": 500,
+                "transport_from_prev": "公交",
+                "transport_duration_min": 40
+              }
+            ],
+            "notes": "第二天先远后近，晚上回河原町自由晚餐。"
+          }
+        ],
+        "backtrack_history": []
+      }
+    },
+    {
+      "user_message": "我改主意了，不想去京都了。请回到目的地选择阶段，换成更安静、适合海边散步和吃海鲜的方向，重新帮我收敛候选地。",
+      "assistant_text": "好，我把这轮规划回退到目的地选择阶段。按你现在的海边散步 + 吃海鲜 + 更安静，我给你 3 个新候选：函馆、釜山、福冈。函馆最安静，釜山海边氛围最强，福冈吃得最稳。我们可以从这 3 个里继续收敛。",
+      "tool_calls": [
+        {
+          "id": "tc_backtrack",
+          "name": "update_plan_state",
+          "arguments": {
+            "field": "backtrack",
+            "value": {
+              "to_phase": 1,
+              "reason": "用户改主意，切回海边候选"
+            }
+          }
+        },
+        {
+          "id": "tc_new_search",
+          "name": "xiaohongshu_search",
+          "arguments": {
+            "query": "海边散步 海鲜 安静 城市 推荐"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_call_id": "tc_backtrack",
+          "status": "success",
+          "data": {
+            "ok": true
+          }
+        },
+        {
+          "tool_call_id": "tc_new_search",
+          "status": "success",
+          "data": {
+            "notes": 3
+          }
+        }
+      ],
+      "plan": {
+        "session_id": "demo-scripted-session",
+        "phase": 1,
+        "destination": null,
+        "dates": null,
+        "phase3_step": "brief",
+        "trip_brief": {},
+        "candidate_pool": [],
+        "shortlist": [],
+        "skeleton_plans": [],
+        "selected_skeleton_id": null,
+        "transport_options": [],
+        "selected_transport": null,
+        "accommodation_options": [],
+        "budget": null,
+        "travelers": null,
+        "accommodation": null,
+        "constraints": [],
+        "preferences": [],
+        "risks": [],
+        "alternatives": [],
+        "daily_plans": [],
+        "backtrack_history": [
+          {
+            "from_phase": 5,
+            "to_phase": 1,
+            "reason": "用户改主意，切回海边候选",
+            "timestamp": "2026-04-13T02:31:00Z"
+          }
+        ]
+      }
+    }
+  ]
+}

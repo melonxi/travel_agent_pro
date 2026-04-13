@@ -132,6 +132,36 @@ pytest                # 590+ tests
 pytest --cov          # with coverage
 ```
 
+## Failure Analysis
+
+The repo includes a reproducible failure-analysis workflow for the P0 gap scenarios:
+
+```bash
+python scripts/failure-analysis/run_and_analyze.py
+npx playwright test scripts/failure-analysis/capture_screenshots.ts --config=playwright.config.ts
+```
+
+Artifacts land in:
+
+- `docs/failure-analysis.md` — scenario-by-scenario taxonomy, root cause analysis, and remediation status
+- `scripts/failure-analysis/results/failure-results.json` — raw execution results
+- `screenshots/failure-analysis/` — one screenshot per failure scenario
+
+## Demo Recording
+
+The demo workflow is now **deterministic scripted playback**, not a live LLM-dependent run. It still checks local services and seeds demo memory, but the visible Phase 1 → Phase 3 → Phase 5 → backtrack story is replayed from a fixed fixture so recording output stays stable.
+
+```bash
+scripts/demo/run-all-demos.sh
+```
+
+Artifacts land in `screenshots/demos/`:
+
+- `phase1-recommendations.png`
+- `phase3-planning.png`
+- `phase5-backtrack-change-preference.png`
+- `demo-full-flow.webm`
+
 ## Observability
 
 The backend ships with OpenTelemetry tracing enabled by default. Local traces can
@@ -221,6 +251,14 @@ travel_agent_pro/
 │   │   ├── hooks/useSSE.ts  # SSE streaming hook
 │   │   └── components/      # ChatPanel, MapView, Timeline, BudgetChart, etc.
 │   └── vite.config.ts       # Dev proxy to backend
+├── docs/
+│   └── failure-analysis.md  # Failure taxonomy and root-cause report for P0 gap scenarios
+├── scripts/
+│   ├── failure-analysis/    # Live scenario runner + screenshot capture harness
+│   └── demo/                # Demo seed helper, scripted fixture, Playwright recording spec
+├── screenshots/
+│   ├── failure-analysis/    # Failure scenario screenshots
+│   └── demos/               # Demo PNGs + final .webm recording
 ├── docker-compose.observability.yml # Local Jaeger all-in-one
 └── config.yaml              # Optional YAML config (env vars take precedence)
 ```

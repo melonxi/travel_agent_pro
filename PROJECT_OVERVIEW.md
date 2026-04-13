@@ -130,8 +130,8 @@ travel_agent_pro/
 │   └── package.json            # React 19, Leaflet, react-markdown
 │
 ├── docs/                       # 架构文档与学习笔记（含 docs/failure-analysis.md 失败案例报告）
-├── scripts/                    # dev.sh/dev-stop.sh + failure-analysis/run_and_analyze.py / capture_screenshots.ts（失败场景执行与截图采集）
-│   └── demo/                   # demo/seed-memory.json + run-all-demos.sh + README + playwright.config.ts + demo-full-flow.spec.ts
+├── scripts/                    # dev.sh/dev-stop.sh + failure-analysis/（live 场景执行与截图采集）+ demo/（deterministic 录屏）
+│   └── demo/                   # demo/seed-memory.json + demo-scripted-session.json + run-all-demos.sh + README + demo-full-flow.spec.ts
 ├── backend/data/               # 本地运行时持久化：sessions.db、sessions/、users/
 ├── config.yaml                 # 运行时配置 (LLM/API/智能层开关/阈值)
 ├── docker-compose.observability.yml # Jaeger 一键启动
@@ -502,9 +502,9 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 
 - **后端单元测试**：75+ 个文件、590+ 测试，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、护栏、可行性、评估管线
 - **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner
-- **E2E 测试**：Playwright, 根目录 `e2e-test.spec.ts` 覆盖 Phase 1 主流程；`scripts/demo/demo-full-flow.spec.ts` 用单会话串联演示 Phase 1 → Phase 3 → Phase 5/backtrack；`scripts/demo/playwright.config.ts` 为 demo 场景提供独立配置；`scripts/demo/run-all-demos.sh` 会先备份并 reset `default_user` 的 demo 数据、调用 `memory.demo_seed` 注入 `seed-memory.json`，录制完成后再恢复原用户目录
+- **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 覆盖 live Phase 1 主流程；根目录 `playwright.config.ts` 在显式指定脚本时允许运行 `scripts/failure-analysis/capture_screenshots.ts` 与 `scripts/demo/demo-full-flow.spec.ts`；其中 demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，并把截图/视频写入 `screenshots/demos/`；`scripts/demo/run-all-demos.sh` 仍会先备份并 reset `default_user` 的 demo 数据、调用 `memory.demo_seed` 注入 `seed-memory.json`，录制完成后再恢复原用户目录
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---
 
-*最后更新：2026-04-12 | 当前 HEAD: 见 `git log --oneline -1`*
+*最后更新：2026-04-13 | 当前 HEAD: 见 `git log --oneline -1`*
