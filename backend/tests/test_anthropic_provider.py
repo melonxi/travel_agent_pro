@@ -185,7 +185,10 @@ async def test_chat_converts_named_function_tool_choice(provider):
                         "parameters": {"type": "object", "properties": {}},
                     }
                 ],
-                tool_choice={"type": "function", "function": {"name": "search_flights"}},
+                tool_choice={
+                    "type": "function",
+                    "function": {"name": "search_flights"},
+                },
                 stream=True,
             )
         ]
@@ -293,3 +296,97 @@ async def test_chat_does_not_send_tool_choice_without_tools(provider):
 
     assert chunks[-1].type == ChunkType.DONE
     assert "tool_choice" not in instance.messages.create.await_args.kwargs
+
+
+from llm.errors import LLMError, LLMErrorCode
+
+
+def test_classify_error_api_status_503(provider):
+    import anthropic
+
+    exc = anthropic.APIStatusError(
+        message="overloaded",
+        response=MagicMock(status_code=503),
+        body=None,
+    )
+    result = provider._classify_error(exc)
+    assert isinstance(result, LLMError)
+    assert result.code == LLMErrorCode.TRANSIENT
+    assert result.retryable is True
+    assert result.failure_phase == "connection"
+
+
+def test_classify_error_api_status_429(provider):
+    import anthropic
+
+    exc = anthropic.APIStatusError(
+        message="rate limited",
+        response=MagicMock(status_code=429),
+        body=None,
+    )
+    result = provider._classify_error(exc)
+    assert result.code == LLMErrorCode.RATE_LIMITED
+    assert result.retryable is True
+
+
+def test_classify_error_api_status_400(provider):
+    import anthropic
+
+    exc = anthropic.APIStatusError(
+        message="bad request",
+        response=MagicMock(status_code=400),
+        body=None,
+    )
+    result = provider._classify_error(exc)
+    assert result.code == LLMErrorCode.BAD_REQUEST
+    assert result.retryable is False
+
+
+def test_classify_error_connection_error(provider):
+    import anthropic
+
+    exc = anthropic.APIConnectionError(request=MagicMock())
+    result = provider._classify_error(exc)
+    assert result.code == LLMErrorCode.TRANSIENT
+    assert result.retryable is True
+    assert result.failure_phase == "connection"
+
+
+def test_classify_error_unknown_exception(provider):
+    exc = RuntimeError("something weird")
+    result = provider._classify_error(exc)
+    assert result.code == LLMErrorCode.PROTOCOL_ERROR
+    assert result.retryable is False
+
+
+def test_provider_name(provider):
+    assert provider.provider_name == "anthropic"
+
+
+@pytest.mark.asyncio
+async def test_chat_raises_llm_error_on_api_failure():
+    import anthropic
+
+    with (
+        patch("llm.anthropic_provider.AsyncAnthropic") as MockClient,
+        patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
+        instance = MockClient.return_value
+        instance.messages.create = AsyncMock(
+            side_effect=anthropic.APIStatusError(
+                message="overloaded",
+                response=MagicMock(status_code=503),
+                body=None,
+            )
+        )
+        test_provider = AnthropicProvider(model="claude-sonnet-4-20250514")
+        with pytest.raises(LLMError) as exc_info:
+            async for _ in test_provider.chat(
+                [Message(role=Role.USER, content="hi")],
+                tools=[{"name": "t", "description": "d", "parameters": {}}],
+            ):
+                pass
+        assert exc_info.value.code == LLMErrorCode.TRANSIENT
+        # 503 is retryable, so should have retried 2 times (3 total calls)
+        assert instance.messages.create.await_count == 3
+        assert mock_sleep.await_count == 2
