@@ -53,19 +53,36 @@ def run_stability(
     if k < 1:
         raise ValueError(f"k must be >= 1, got {k}")
     executions: list[EvalExecution] = []
+    execution_failed: list[bool] = []
     case_results: list[CaseResult] = []
 
     for _ in range(k):
         start = time.monotonic()
-        execution = executor(case)
+        try:
+            execution = executor(case)
+        except Exception as exc:
+            execution_failed.append(True)
+            execution = EvalExecution(state={}, tool_calls=[], responses=[], stats={})
+            result = CaseResult(
+                case_id=case.id,
+                passed=False,
+                assertions_passed=0,
+                assertions_total=len(case.assertions),
+                failures=[],
+                error=f"{type(exc).__name__}: {exc}",
+                difficulty=case.difficulty,
+            )
+        else:
+            execution_failed.append(False)
+            result = run_case_offline(
+                case,
+                execution.state,
+                execution.tool_calls,
+                execution.responses,
+                stats=execution.stats,
+            )
+
         executions.append(execution)
-        result = run_case_offline(
-            case,
-            execution.state,
-            execution.tool_calls,
-            execution.responses,
-            stats=execution.stats,
-        )
         result.duration_ms = (time.monotonic() - start) * 1000
         case_results.append(result)
 
@@ -78,7 +95,9 @@ def run_stability(
     for assertion in case.assertions:
         key = f"{assertion.type.value}:{assertion.target}"
         passes = 0
-        for exc in executions:
+        for failed, exc in zip(execution_failed, executions, strict=True):
+            if failed:
+                continue
             ok, _ = evaluate_assertion(
                 assertion, exc.state, exc.tool_calls, exc.responses
             )

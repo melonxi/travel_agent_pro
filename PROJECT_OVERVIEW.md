@@ -96,7 +96,7 @@ travel_agent_pro/
 │   ├── evals/                  # 评估管线
 │   │   ├── models.py           # GoldenCase, EvalExecution, CaseResult, SuiteResult, StabilityMetrics, StabilitySuiteResult
 │   │   ├── runner.py           # YAML加载 + 可注入执行器 + 断言评估 + JSON报告
-│   │   ├── stability.py        # pass@k 稳定性评估: run_stability / run_stability_suite / save_stability_report（k次重复执行 + 一致性指标 + JSON/Markdown报告）
+│   │   ├── stability.py        # pass@k 稳定性评估: run_stability / run_stability_suite / save_stability_report（k次重复执行 + 一致性指标 + JSON/Markdown报告；单次 executor 失败记为失败样本而不中断整轮）
 │   │   ├── failure_report.py   # 失败案例 Markdown 报告生成与保存（taxonomy / overview / 场景详情）
 │   │   └── golden_cases/       # 23个黄金测试用例 (easy/medium/hard/infeasible)
 │   ├── telemetry/              # 可观测性 + 成本追踪

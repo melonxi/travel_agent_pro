@@ -141,6 +141,81 @@ class TestRunStabilityPartialPass:
         assert result.assertion_consistency["state_field_set:destination"] == pytest.approx(0.6)
         assert result.assertion_consistency["tool_called:search_flights"] == 1.0
 
+    def test_executor_error_counts_as_failed_run(self):
+        case = _make_case()
+        outcomes = iter(
+            [
+                RuntimeError("backend timeout"),
+                EvalExecution(
+                    state={"destination": "東京"},
+                    tool_calls=["search_flights"],
+                    responses=["ok"],
+                    stats={"estimated_cost_usd": 0.10},
+                ),
+            ]
+        )
+
+        def executor(_: GoldenCase) -> EvalExecution:
+            outcome = next(outcomes)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        result = run_stability(case, executor, k=2)
+
+        assert result.pass_rate == pytest.approx(0.5)
+        assert result.assertion_consistency["state_field_set:destination"] == pytest.approx(0.5)
+        assert result.assertion_consistency["tool_called:search_flights"] == pytest.approx(0.5)
+        assert result.tool_overlap_ratio == 0.0
+        assert result.runs[0].error == "RuntimeError: backend timeout"
+        assert result.runs[0].passed is False
+
+    def test_offline_evaluation_error_is_not_swallowed(self, monkeypatch):
+        case = _make_case()
+        execution = EvalExecution(
+            state={"destination": "東京"},
+            tool_calls=["search_flights"],
+            responses=["ok"],
+            stats={"estimated_cost_usd": 0.10},
+        )
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("offline eval broke")
+
+        monkeypatch.setattr("evals.stability.run_case_offline", boom)
+
+        with pytest.raises(RuntimeError, match="offline eval broke"):
+            run_stability(case, _make_executor([execution]), k=1)
+
+    def test_executor_error_counts_as_failed_for_tool_not_called_assertions(self):
+        case = _make_case(
+            assertions=[
+                Assertion(type=AssertionType.TOOL_NOT_CALLED, target="search_flights"),
+            ]
+        )
+        outcomes = iter(
+            [
+                RuntimeError("backend timeout"),
+                EvalExecution(
+                    state={},
+                    tool_calls=[],
+                    responses=["ok"],
+                    stats={"estimated_cost_usd": 0.10},
+                ),
+            ]
+        )
+
+        def executor(_: GoldenCase) -> EvalExecution:
+            outcome = next(outcomes)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        result = run_stability(case, executor, k=2)
+
+        assert result.pass_rate == pytest.approx(0.5)
+        assert result.assertion_consistency["tool_not_called:search_flights"] == pytest.approx(0.5)
+
 
 class TestRunStabilitySingleRun:
     """k=1 edge case."""
