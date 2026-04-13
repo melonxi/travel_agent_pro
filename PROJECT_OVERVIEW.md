@@ -103,15 +103,18 @@ travel_agent_pro/
 │   │   ├── setup.py            # OpenTelemetry TracerProvider + OTLP 导出
 │   │   ├── attributes.py       # 标准化 span 属性与事件名
 │   │   ├── decorators.py       # @trace_agent_loop, @trace_tool_call
-│   │   └── stats.py            # SessionStats: token用量/模型定价/工具耗时
+│   │   └── stats.py            # SessionStats: token用量/模型定价/工具耗时 + lookup_pricing()
+│   ├── api/                    # API 模块
+│   │   └── trace.py            # build_trace(): 构建会话 trace 视图 (迭代/工具/状态变化/成本)
 │   └── tests/                  # pytest 测试套件 (76+ 个测试文件, 590+ 测试)
 │
 ├── frontend/                   # React 前端
 │   ├── src/
 │   │   ├── main.tsx            # React 19 入口
-│   │   ├── App.tsx             # 应用壳: 会话管理, 主题, 三栏布局
+│   │   ├── App.tsx             # 应用壳: 会话管理, 主题, 三栏布局, Plan/Trace 标签切换
 │   │   ├── components/
 │   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示
+│   │   │   ├── TraceViewer.tsx # Trace 视图: SummaryBar/IterationRow/ToolCallRow/StateDiffPanel
 │   │   │   ├── MessageBubble.tsx # 消息渲染: Markdown, 工具卡, 压缩提示
 │   │   │   ├── SessionSidebar.tsx # 会话侧边栏: 列表/新建/删除 + 记忆管理入口
 │   │   │   ├── SessionItem.tsx # 单条会话: 标题/阶段/时间
@@ -123,14 +126,17 @@ travel_agent_pro/
 │   │   │   └── MemoryCenter.tsx # 记忆管理抽屉: 3 Tab(活跃/待确认/归档), 乐观更新
 │   │   ├── hooks/
 │   │   │   ├── useSSE.ts       # SSE 流式连接 Hook
-│   │   │   └── useMemory.ts    # 记忆 CRUD Hook: fetch/confirm/reject/delete + 乐观更新
+│   │   │   ├── useMemory.ts    # 记忆 CRUD Hook: fetch/confirm/reject/delete + 乐观更新
+│   │   │   └── useTrace.ts     # Trace 数据获取 Hook (fetch + auto-refresh)
 │   │   ├── types/
 │   │   │   ├── plan.ts         # TravelPlanState 前端类型
 │   │   │   ├── session.ts      # SessionMeta, SessionMessage
-│   │   │   └── memory.ts       # MemoryItem, MemorySource, TripEpisode, UseMemoryReturn
+│   │   │   ├── memory.ts       # MemoryItem, MemorySource, TripEpisode, UseMemoryReturn
+│   │   │   └── trace.ts        # SessionTrace, TraceSummary, TraceIteration 等类型
 │   │   └── styles/
 │   │       ├── index.css       # "Solstice" 暗色玻璃设计系统 (1900+ 行)
-│   │       └── memory-center.css # 记忆管理抽屉样式 (500+ 行, Solstice 主题)
+│   │       ├── memory-center.css # 记忆管理抽屉样式 (500+ 行, Solstice 主题)
+│   │       └── trace-viewer.css # Trace 视图样式 + 右面板标签样式
 │   ├── vite.config.ts          # Vite 6: /api → localhost:8000 代理
 │   └── package.json            # React 19, Leaflet, react-markdown
 │
@@ -388,6 +394,7 @@ POST /api/memory/{user_id}/reject         → 拒绝 pending 记忆
 POST /api/memory/{user_id}/events         → 追加记忆事件
 GET  /api/memory/{user_id}/episodes       → 获取旅行 episode
 DELETE /api/memory/{user_id}/{item_id}    → 标记记忆为 obsolete
+GET  /api/sessions/{id}/trace            → 获取会话 Trace 视图 (迭代/工具/状态/成本)
 ```
 
 ---
