@@ -566,6 +566,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 if chunk.content:
                     result_parts.append(chunk.content)
             score = parse_judge_response("".join(result_parts))
+            # Stage judge scores for the TOOL_RESULT handler to attach to ToolCallRecord
+            session["_pending_judge_scores"] = {
+                "overall": score.overall,
+                "pace": score.pace,
+                "geography": score.geography,
+                "coherence": score.coherence,
+                "personalization": score.personalization,
+                "suggestions_count": len(score.suggestions),
+            }
             if score.suggestions:
                 suggestion_text = "\n".join(f"- {s}" for s in score.suggestions)
                 session["messages"].append(
@@ -1518,6 +1527,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         _pending_ve = session.pop("_pending_validation_errors", None)
                         if _pending_ve is not None:
                             _stats.tool_calls[-1].validation_errors = _pending_ve
+                        _pending_js = session.pop("_pending_judge_scores", None)
+                        if _pending_js is not None:
+                            _stats.tool_calls[-1].judge_scores = _pending_js
                 yield json.dumps(event_data, ensure_ascii=False)
                 if (
                     chunk.tool_result
