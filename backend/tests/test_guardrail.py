@@ -78,7 +78,14 @@ def test_output_empty_results_warned(guardrail):
 
 
 def test_output_normal_results_pass(guardrail):
-    result = guardrail.validate_output("search_flights", {"results": [{"price": 3000}]})
+    result = guardrail.validate_output("search_flights", {
+        "results": [{
+            "price": 3000,
+            "departure_time": "10:00",
+            "arrival_time": "14:00",
+            "airline": "ANA",
+        }]
+    })
     assert result.allowed
 
 
@@ -104,7 +111,12 @@ def test_disabled_rule_skips_price_anomaly_warning():
         disabled_rules=["price_anomaly"],
     )
     result = guardrail.validate_output("search_flights", {
-        "results": [{"price": 200000, "departure_time": "10:00", "arrival_time": "14:00"}]
+        "results": [{
+            "price": 200000,
+            "departure_time": "10:00",
+            "arrival_time": "14:00",
+            "airline": "ANA",
+        }]
     })
     assert result.level == "error"
     assert result.reason == ""
@@ -192,13 +204,50 @@ def test_output_missing_flight_fields_warned(guardrail):
     result = guardrail.validate_output("search_flights", {
         "results": [{"airline": "ANA"}]
     })
-    assert result.level == "warn"
+    assert result.level == "error"
     assert "price" in result.reason or "字段" in result.reason
 
 
 def test_output_complete_flight_fields_pass(guardrail):
     result = guardrail.validate_output("search_flights", {
-        "results": [{"price": 3000, "departure_time": "10:00", "arrival_time": "14:00"}]
+        "results": [{
+            "price": 3000,
+            "departure_time": "10:00",
+            "arrival_time": "14:00",
+            "airline": "ANA",
+        }]
     })
     assert result.allowed
     assert result.reason == ""
+
+
+def test_output_missing_flight_price_is_error(guardrail):
+    result = guardrail.validate_output("search_flights", {
+        "results": [{
+            "departure_time": "10:00",
+            "arrival_time": "14:00",
+            "airline": "ANA",
+        }]
+    })
+    assert result.level == "error"
+    assert "price" in result.reason
+
+
+def test_output_missing_flight_airline_is_warn(guardrail):
+    result = guardrail.validate_output("search_flights", {
+        "results": [{
+            "price": 3000,
+            "departure_time": "10:00",
+            "arrival_time": "14:00",
+        }]
+    })
+    assert result.level == "warn"
+    assert "airline" in result.reason
+
+
+def test_output_missing_accommodation_location_is_warn(guardrail):
+    result = guardrail.validate_output("search_accommodations", {
+        "results": [{"price": 500, "name": "Hotel A"}]
+    })
+    assert result.level == "warn"
+    assert "location" in result.reason

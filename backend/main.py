@@ -34,7 +34,11 @@ from telemetry.stats import SessionStats
 from context.manager import ContextManager
 from harness.guardrail import ToolGuardrail
 from harness.judge import build_judge_prompt, parse_judge_response
-from harness.validator import validate_hard_constraints
+from harness.validator import (
+    validate_hard_constraints,
+    validate_incremental,
+    validate_lock_budget,
+)
 from llm.factory import create_llm_provider
 from llm.types import ChunkType
 from memory.extraction import (
@@ -389,15 +393,23 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         async def on_validate(**kwargs):
             if kwargs.get("tool_name") == "update_plan_state":
-                errors = validate_hard_constraints(plan)
+                tc = kwargs.get("tool_call")
+                arguments = tc.arguments if tc and tc.arguments else {}
+                field = arguments.get("field", "")
+                value = arguments.get("value")
+
+                errors = validate_incremental(plan, field, value)
+                if field in ("selected_transport", "accommodation"):
+                    errors.extend(validate_lock_budget(plan))
+
                 if errors:
                     session = sessions.get(plan.session_id)
                     if session:
                         session["messages"].append(
                             Message(
                                 role=Role.SYSTEM,
-                                content=f"⚠️ 硬约束冲突，必须修正：\n"
-                                + "\n".join(f"- {e}" for e in errors),
+                                content="[实时约束检查]\n"
+                                + "\n".join(f"- {error}" for error in errors),
                             )
                         )
 

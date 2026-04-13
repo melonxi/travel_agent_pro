@@ -89,8 +89,8 @@ travel_agent_pro/
 │   │   ├── message_store.py    # 消息读写 (按 seq 排序)
 │   │   └── archive_store.py    # 快照与归档
 │   ├── harness/                # 5 层质量守护
-│   │   ├── guardrail.py        # 输入护栏 (中文注入检测6模式、长度5000、结构校验)
-│   │   ├── validator.py        # 硬约束检查 (时间冲突/预算超支/null安全)
+│   │   ├── guardrail.py        # 输入/输出护栏 (中文注入检测6模式、长度5000、搜索结果字段分级校验)
+│   │   ├── validator.py        # 硬约束检查 + 增量验证 + Phase 3 lock预算门控
 │   │   ├── judge.py            # 软评分 [1-5] (score clamping + 解析失败日志)
 │   │   └── feasibility.py      # 可行性门控 (30+目的地成本/天数查表)
 │   ├── evals/                  # 评估管线
@@ -185,7 +185,7 @@ travel_agent_pro/
 | Parallel Tool Exec | 读写分离并行调度 | 工具批量执行时 |
 | Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
 | Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；policy 合并与 payment/membership 域阻断 + 证件/联系方式/邮箱/长数字序列全字段 PII 检测脱敏；三路检索（core profile / trip memory / phase-domain）按 trip_id 隔离；新行程回退时轮转 trip_id；受 `memory.enabled` 门控后阶段相关注入 | 每轮 chat 后后台提取；每次 system prompt 构建前检索 |
-| Tool Guardrails | 输入/输出护栏，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
+| Tool Guardrails | 输入/输出护栏，搜索结果缺 `price` 升级为 error，非关键字段缺失保持 warn，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
 | Eval Runner | YAML golden cases + 可注入执行器；`scripts/failure-analysis/run_and_analyze.py` 可对 live backend 逐条执行 failure-* 场景，采集 SSE 回复 / plan state / tool calls / stats，输出 JSON 与 Markdown 分析报告 | 离线/批量评估 |
 
 ---
@@ -212,7 +212,8 @@ travel_agent_pro/
     ├─ [PhaseRouter.check_and_apply_transition()] → 异步阶段变化检测 + before_phase_transition 质量门控
     │
     ├─ [Hook: after_tool_call]
-    │   ├─ validator.validate_hard_constraints() → 时间/预算/天数
+    │   ├─ validator.validate_incremental() → update_plan_state 后实时检查当前写入字段
+    │   ├─ validator.validate_lock_budget() → selected_transport/accommodation 写入后检查交通+住宿预算占比
     │   └─ SoftJudge → pace/geography/coherence/personalization 评分
     │
     └─ yield LLMChunk → SSE 事件流 → 前端实时渲染
@@ -389,7 +390,7 @@ DELETE /api/memory/{user_id}/{item_id}    → 标记记忆为 obsolete
 ### Layer 1: 输入护栏 (Guardrail)
 - 中文提示注入检测 (6 种正则模式)
 - 消息长度限制 (5000 字符)
-- 必填字段结构校验
+- 必填字段结构校验；搜索结果缺 `price` 为 error，缺 `airline`/`location`/到达时间等非关键字段为 warn
 - 工具结果异常检测
 
 ### Layer 2: 硬约束验证器 (Validator)
@@ -397,6 +398,8 @@ DELETE /api/memory/{user_id}/{item_id}    → 标记记忆为 obsolete
 - 预算超支：活动总花费 > 总预算
 - 天数超限：计划天数 > 可用天数
 - Null 安全守卫：`_time_to_minutes` 返回 `int | None`
+- `update_plan_state` 后实时运行 `validate_incremental(plan, field, value)`，只检查当前写入字段相关约束并注入 `[实时约束检查]` system message，不阻断工具执行
+- Phase 3 lock 写入 `selected_transport` / `accommodation` 后运行 `validate_lock_budget`：交通+住宿达到预算 80% 时提示剩余活动餐饮空间，超过 100% 时注入错误反馈
 
 ### Layer 3: 软评分 (Judge)
 - `pace` (1-5): 节奏合理性
@@ -494,13 +497,13 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | 并行工具执行 | 读写分离，搜索类并行，状态更新顺序 |
 | Forced Tool Choice | 关键决策点强制工具调用，渐进替代 State Repair |
 | Memory System | schema v2 结构化记忆（global/trip 双 scope）；每轮 chat 后按 trigger 后台提取候选；policy 全字段 PII 检测脱敏（payment/membership 域直接阻断、邮箱正则、9-18 位数字序列、证件/联系方式短语检测 + `_redact_for_storage` 递归脱敏）；合并/确认流程；system prompt 前按 `memory.enabled` 三路检索（core profile / trip memory / phase-domain，硬编码 core_limit=10, phase_limit=8）按 trip_id 隔离；新行程回退 obsolete 旧 trip memory 并轮转 trip_id；Phase 7 幂等归档 episode（JSONL 独立存储，不参与 prompt 注入检索）|
-| Tool Guardrails | 确定性规则校验 + 中文注入检测，不依赖 LLM，可按规则名禁用 |
+| Tool Guardrails | 确定性规则校验 + 中文注入检测 + 工具结果字段分级校验，不依赖 LLM，可按规则名禁用 |
 
 ---
 
 ## 17. 测试体系
 
-- **后端单元测试**：75+ 个文件、590+ 测试，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、护栏、可行性、评估管线
+- **后端单元测试**：78+ 个文件、610+ 测试，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、护栏、可行性、评估管线
 - **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner
 - **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 覆盖 live Phase 1 主流程；根目录 `playwright.config.ts` 在显式指定脚本时只运行对应的 `scripts/failure-analysis/capture_screenshots.ts` 或 `scripts/demo/demo-full-flow.spec.ts`，并忽略 `.worktrees/`；其中 demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，只需要 frontend dev server，并把截图/视频写入 `screenshots/demos/`；failure-analysis raw results 写入 `scripts/failure-analysis/results/`，该目录为本地生成产物，不提交到 git
 - **运行**：`cd backend && pytest` / `npx playwright test`
