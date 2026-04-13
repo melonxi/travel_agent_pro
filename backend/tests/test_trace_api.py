@@ -31,7 +31,7 @@ async def test_trace_not_found(app):
     ) as client:
         resp = await client.get("/api/sessions/nonexistent/trace")
     assert resp.status_code == 404
-    assert "error" in resp.json()
+    assert "detail" in resp.json()
 
 
 @pytest.mark.asyncio
@@ -98,6 +98,10 @@ async def test_trace_with_stats(app):
     assert tool_data["calls"] == 1
     assert tool_data["total_duration_ms"] == 150.0
     assert tool_data["avg_duration_ms"] == 150.0
+    for td in summary["by_tool"].values():
+        assert "total_duration_ms" in td
+        assert "avg_duration_ms" in td
+        assert "duration_ms" not in td
 
 
 @pytest.mark.asyncio
@@ -164,3 +168,30 @@ async def test_trace_tool_side_effects(app):
     assert tools[0]["side_effect"] == "read"
     assert tools[1]["name"] == "update_plan_state"
     assert tools[1]["side_effect"] == "write"
+
+
+@pytest.mark.asyncio
+async def test_trace_orphan_tool_calls(app):
+    """Tool calls without a parent LLM call should still appear in iterations."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        create_resp = await client.post("/api/sessions")
+        session_id = create_resp.json()["session_id"]
+
+    sessions = _get_sessions(app)
+    stats: SessionStats = sessions[session_id]["stats"]
+    stats.record_tool_call(
+        tool_name="web_search", duration_ms=500.0,
+        status="success", error_code=None, phase=1,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/api/sessions/{session_id}/trace")
+    data = resp.json()
+    assert data["total_iterations"] == 1
+    assert data["iterations"][0]["llm_call"] is None
+    assert len(data["iterations"][0]["tool_calls"]) == 1
+    assert data["iterations"][0]["tool_calls"][0]["name"] == "web_search"
