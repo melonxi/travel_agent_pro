@@ -155,4 +155,9 @@ export interface SSEEvent {
   error?: string
   error_code?: string
   message?: string
+  retryable?: boolean
+  can_continue?: boolean
+  failure_phase?: string
+  run_id?: string
+  run_status?: string
 }
