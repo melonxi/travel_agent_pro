@@ -5,12 +5,22 @@ export interface TraceToolCall {
   side_effect: 'read' | 'write'
   arguments_preview: string
   result_preview: string
+  parallel_group: number | null
+  validation_errors: string[] | null
+  judge_scores: Record<string, number> | null
 }
 
 export interface StateChange {
   field: string
   before: unknown
   after: unknown
+}
+
+export interface MemoryHit {
+  item_ids: string[]
+  core: number
+  trip: number
+  phase: number
 }
 
 export interface TraceIteration {
@@ -27,6 +37,7 @@ export interface TraceIteration {
   tool_calls: TraceToolCall[]
   state_changes: StateChange[]
   compression_event: string | null
+  memory_hits: MemoryHit | null
 }
 
 export interface TraceSummary {
