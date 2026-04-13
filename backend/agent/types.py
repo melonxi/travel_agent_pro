@@ -38,6 +38,7 @@ class Message:
     tool_calls: list[ToolCall] | None = None
     tool_result: ToolResult | None = None
     name: str | None = None
+    incomplete: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"role": self.role.value}
@@ -67,4 +68,6 @@ class Message:
             if tr.suggestion is not None:
                 tr_dict["suggestion"] = tr.suggestion
             d["tool_result"] = tr_dict
+        if self.incomplete:
+            d["incomplete"] = True
         return d
