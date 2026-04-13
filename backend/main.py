@@ -40,6 +40,7 @@ from harness.validator import (
     validate_incremental,
     validate_lock_budget,
 )
+from llm.errors import LLMError, LLMErrorCode
 from llm.factory import create_llm_provider
 from llm.types import ChunkType
 from memory.extraction import (
@@ -1411,6 +1412,17 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         )
         return {"phase": plan.phase, "plan": plan.to_dict()}
 
+    _LLM_ERROR_MESSAGES: dict[LLMErrorCode, str] = {
+        LLMErrorCode.TRANSIENT: "模型服务暂时繁忙，本轮回复已中断。请稍后重试。",
+        LLMErrorCode.RATE_LIMITED: "请求过于频繁，请稍后再试。",
+        LLMErrorCode.BAD_REQUEST: "请求参数异常，请缩短对话长度后重试。",
+        LLMErrorCode.STREAM_INTERRUPTED: "模型回复过程中连接中断。请重试。",
+        LLMErrorCode.PROTOCOL_ERROR: "模型返回格式异常，请重试或切换模型。",
+    }
+
+    def _user_friendly_message(exc: LLMError) -> str:
+        return _LLM_ERROR_MESSAGES.get(exc.code, "系统内部错误，请稍后重试。")
+
     @app.post("/api/chat/{session_id}")
     async def chat(session_id: str, req: ChatRequest):
         await _ensure_storage_ready()
@@ -1551,7 +1563,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         event_data["content"] = chunk.content
                     if chunk.tool_call:
                         tool_call_names[chunk.tool_call.id] = chunk.tool_call.name
-                        tool_call_args[chunk.tool_call.id] = chunk.tool_call.arguments or {}
+                        tool_call_args[chunk.tool_call.id] = (
+                            chunk.tool_call.arguments or {}
+                        )
                         event_data["tool_call"] = {
                             "id": chunk.tool_call.id,
                             "name": chunk.tool_call.name,
@@ -1579,7 +1593,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             _pending_sc = session.pop("_pending_state_changes", None)
                             if _pending_sc is not None:
                                 _stats.tool_calls[-1].state_changes = _pending_sc
-                            _pending_ve = session.pop("_pending_validation_errors", None)
+                            _pending_ve = session.pop(
+                                "_pending_validation_errors", None
+                            )
                             if _pending_ve is not None:
                                 _stats.tool_calls[-1].validation_errors = _pending_ve
                             _pending_js = session.pop("_pending_judge_scores", None)
@@ -1635,14 +1651,34 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             {"type": "state_update", "plan": plan.to_dict()},
                             ensure_ascii=False,
                         )
+            except LLMError as exc:
+                logger.exception(
+                    "LLM error for session %s: %s", plan.session_id, exc.code.value
+                )
+                yield json.dumps(
+                    {
+                        "type": "error",
+                        "error_code": exc.code.value,
+                        "retryable": exc.retryable,
+                        "can_continue": False,
+                        "provider": exc.provider,
+                        "model": exc.model,
+                        "failure_phase": exc.failure_phase,
+                        "message": _user_friendly_message(exc),
+                        "error": exc.raw_error,
+                    },
+                    ensure_ascii=False,
+                )
             except Exception as exc:
                 logger.exception("Agent stream failed for session %s", plan.session_id)
                 yield json.dumps(
                     {
                         "type": "error",
                         "error_code": "AGENT_STREAM_ERROR",
+                        "retryable": False,
+                        "can_continue": False,
+                        "message": "系统内部错误，请稍后重试。",
                         "error": str(exc),
-                        "message": "模型服务暂时繁忙，本轮回复已中断。请稍后重试。",
                     },
                     ensure_ascii=False,
                 )
