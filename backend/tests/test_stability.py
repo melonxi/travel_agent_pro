@@ -1,7 +1,10 @@
 """Tests for pass@k stability evaluation."""
 from __future__ import annotations
 
-import math
+import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +17,7 @@ from evals.models import (
     StabilityMetrics,
     StabilitySuiteResult,
 )
-from evals.stability import run_stability, run_stability_suite
+from evals.stability import run_stability, run_stability_suite, save_stability_report
 
 
 def _make_case(
@@ -137,6 +140,81 @@ class TestRunStabilityPartialPass:
 
         assert result.assertion_consistency["state_field_set:destination"] == pytest.approx(0.6)
         assert result.assertion_consistency["tool_called:search_flights"] == 1.0
+
+    def test_executor_error_counts_as_failed_run(self):
+        case = _make_case()
+        outcomes = iter(
+            [
+                RuntimeError("backend timeout"),
+                EvalExecution(
+                    state={"destination": "東京"},
+                    tool_calls=["search_flights"],
+                    responses=["ok"],
+                    stats={"estimated_cost_usd": 0.10},
+                ),
+            ]
+        )
+
+        def executor(_: GoldenCase) -> EvalExecution:
+            outcome = next(outcomes)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        result = run_stability(case, executor, k=2)
+
+        assert result.pass_rate == pytest.approx(0.5)
+        assert result.assertion_consistency["state_field_set:destination"] == pytest.approx(0.5)
+        assert result.assertion_consistency["tool_called:search_flights"] == pytest.approx(0.5)
+        assert result.tool_overlap_ratio == 0.0
+        assert result.runs[0].error == "RuntimeError: backend timeout"
+        assert result.runs[0].passed is False
+
+    def test_offline_evaluation_error_is_not_swallowed(self, monkeypatch):
+        case = _make_case()
+        execution = EvalExecution(
+            state={"destination": "東京"},
+            tool_calls=["search_flights"],
+            responses=["ok"],
+            stats={"estimated_cost_usd": 0.10},
+        )
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("offline eval broke")
+
+        monkeypatch.setattr("evals.stability.run_case_offline", boom)
+
+        with pytest.raises(RuntimeError, match="offline eval broke"):
+            run_stability(case, _make_executor([execution]), k=1)
+
+    def test_executor_error_counts_as_failed_for_tool_not_called_assertions(self):
+        case = _make_case(
+            assertions=[
+                Assertion(type=AssertionType.TOOL_NOT_CALLED, target="search_flights"),
+            ]
+        )
+        outcomes = iter(
+            [
+                RuntimeError("backend timeout"),
+                EvalExecution(
+                    state={},
+                    tool_calls=[],
+                    responses=["ok"],
+                    stats={"estimated_cost_usd": 0.10},
+                ),
+            ]
+        )
+
+        def executor(_: GoldenCase) -> EvalExecution:
+            outcome = next(outcomes)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        result = run_stability(case, executor, k=2)
+
+        assert result.pass_rate == pytest.approx(0.5)
+        assert result.assertion_consistency["tool_not_called:search_flights"] == pytest.approx(0.5)
 
 
 class TestRunStabilitySingleRun:
@@ -302,3 +380,126 @@ class TestRunStabilitySuite:
         suite = run_stability_suite([], _make_executor([]), k=3)
         assert suite.total_cases == 0
         assert suite.overall_pass_rate == 0.0
+
+
+class TestSaveStabilityReport:
+    def _make_suite(self) -> StabilitySuiteResult:
+        """Build a minimal suite result for report testing."""
+        metrics = StabilityMetrics(
+            case_id="easy-001",
+            k=3,
+            pass_rate=1.0,
+            assertion_consistency={
+                "state_field_set:destination": 1.0,
+                "tool_called:search_flights": 1.0,
+            },
+            tool_overlap_ratio=1.0,
+            cost_stats={"min": 0.08, "max": 0.12, "mean": 0.10, "stddev": 0.02},
+            duration_stats={"min": 100.0, "max": 300.0, "mean": 200.0, "stddev": 100.0},
+            runs=[],
+        )
+        unstable_metrics = StabilityMetrics(
+            case_id="hard-001",
+            k=3,
+            pass_rate=0.33,
+            assertion_consistency={"tool_called:search_flights": 0.33},
+            tool_overlap_ratio=0.5,
+            cost_stats={"min": 0.20, "max": 0.30, "mean": 0.25, "stddev": 0.05},
+            duration_stats={"min": 500.0, "max": 900.0, "mean": 700.0, "stddev": 200.0},
+            runs=[],
+        )
+        return StabilitySuiteResult(
+            total_cases=2,
+            k=3,
+            results=[metrics, unstable_metrics],
+            overall_pass_rate=0.665,
+            unstable_cases=["hard-001"],
+            highly_unstable_cases=["hard-001"],
+        )
+
+    def test_json_report_written(self, tmp_path):
+        suite = self._make_suite()
+        json_path, md_path = save_stability_report(suite, tmp_path / "report")
+
+        assert json_path.exists()
+        assert md_path.exists()
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        assert data["k"] == 3
+        assert data["total_cases"] == 2
+        assert data["overall_pass_rate"] == pytest.approx(0.665)
+        assert len(data["results"]) == 2
+        assert data["results"][0]["case_id"] == "easy-001"
+
+    def test_markdown_report_written(self, tmp_path):
+        suite = self._make_suite()
+        _, md_path = save_stability_report(suite, tmp_path / "report")
+
+        assert md_path.exists()
+        content = md_path.read_text(encoding="utf-8")
+        assert "pass@k 稳定性评估报告" in content
+        assert "easy-001" in content
+        assert "hard-001" in content
+        assert "0.33" in content
+
+    def test_markdown_contains_high_variance_section(self, tmp_path):
+        suite = self._make_suite()
+        _, md_path = save_stability_report(suite, tmp_path / "report")
+
+        content = md_path.read_text(encoding="utf-8")
+        assert "高方差断言" in content
+        assert "tool_called:search_flights" in content
+
+    def test_creates_parent_directories(self, tmp_path):
+        suite = self._make_suite()
+        nested = tmp_path / "a" / "b" / "report"
+        json_path, md_path = save_stability_report(suite, nested)
+
+        assert json_path.exists()
+        assert md_path.exists()
+
+
+class TestEvalStabilityCli:
+    def _script_path(self) -> Path:
+        return Path(__file__).resolve().parents[2] / "scripts" / "eval-stability.py"
+
+    def test_help_outputs_usage(self):
+        result = subprocess.run(
+            [sys.executable, str(self._script_path()), "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0
+        assert "--k" in result.stdout
+        assert "--base-url" in result.stdout
+        assert "--cases" in result.stdout
+        assert "--difficulty" in result.stdout
+        assert "--output" in result.stdout
+
+    def test_mock_mode_generates_reports(self, tmp_path):
+        output = tmp_path / "stability-report"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(self._script_path()),
+                "--mock",
+                "--cases",
+                "easy-001",
+                "--k",
+                "2",
+                "--output",
+                str(output),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0
+        assert output.with_suffix(".json").exists()
+        assert output.with_suffix(".md").exists()
+        data = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+        assert data["k"] == 2
+        assert data["total_cases"] == 1
+        assert data["results"][0]["case_id"] == "easy-001"

@@ -96,7 +96,7 @@ travel_agent_pro/
 │   ├── evals/                  # 评估管线
 │   │   ├── models.py           # GoldenCase, EvalExecution, CaseResult, SuiteResult, StabilityMetrics, StabilitySuiteResult
 │   │   ├── runner.py           # YAML加载 + 可注入执行器 + 断言评估 + JSON报告
-│   │   ├── stability.py        # pass@k 稳定性评估: run_stability / run_stability_suite（k次重复执行 + 一致性指标）
+│   │   ├── stability.py        # pass@k 稳定性评估: run_stability / run_stability_suite / save_stability_report（k次重复执行 + 一致性指标 + JSON/Markdown报告；单次 executor 失败记为失败样本而不中断整轮）
 │   │   ├── failure_report.py   # 失败案例 Markdown 报告生成与保存（taxonomy / overview / 场景详情）
 │   │   └── golden_cases/       # 23个黄金测试用例 (easy/medium/hard/infeasible)
 │   ├── telemetry/              # 可观测性 + 成本追踪
@@ -141,7 +141,7 @@ travel_agent_pro/
 │   └── package.json            # React 19, Leaflet, react-markdown
 │
 ├── docs/                       # 架构文档与学习笔记（含 docs/failure-analysis.md 失败案例报告）
-├── scripts/                    # dev.sh/dev-stop.sh + failure-analysis/（live 场景执行与截图采集）+ demo/（deterministic 录屏）
+├── scripts/                    # dev.sh/dev-stop.sh + eval-stability.py（pass@k live/mock稳定性评估）+ failure-analysis/（live 场景执行与截图采集）+ demo/（deterministic 录屏）
 │   └── demo/                   # demo/seed-memory.json + demo-scripted-session.json + run-all-demos.sh + README + demo-full-flow.spec.ts
 ├── backend/data/               # 本地运行时持久化：sessions.db、sessions/、users/
 ├── config.yaml                 # 运行时配置 (LLM/API/智能层开关/阈值)
@@ -197,7 +197,7 @@ travel_agent_pro/
 | Forced Tool Choice | 强制结构化输出 | LLM 调用前 |
 | Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；policy 合并与 payment/membership 域阻断 + 证件/联系方式/邮箱/长数字序列全字段 PII 检测脱敏；三路检索（core profile / trip memory / phase-domain）按 trip_id 隔离；新行程回退时轮转 trip_id；受 `memory.enabled` 门控后阶段相关注入 | 每轮 chat 后后台提取；每次 system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，搜索结果缺 `price` 升级为 error，非关键字段缺失保持 warn，支持 `guardrails.disabled_rules` 关闭单条规则 | 工具执行前后 |
-| Eval Runner | YAML golden cases + 可注入执行器；`scripts/failure-analysis/run_and_analyze.py` 可对 live backend 逐条执行 failure-* 场景，采集 SSE 回复 / plan state / tool calls / stats，输出 JSON 与 Markdown 分析报告 | 离线/批量评估 |
+| Eval Runner | YAML golden cases + 可注入执行器；`backend/evals/stability.py` 对同一 case 重复运行 k 次，计算 pass_rate、断言一致性、工具重叠率、成本/延迟统计并输出 JSON/Markdown；`scripts/eval-stability.py` 支持 live backend 与 `--mock` 报告生成；`scripts/failure-analysis/run_and_analyze.py` 可对 live backend 逐条执行 failure-* 场景，采集 SSE 回复 / plan state / tool calls / stats，输出 JSON 与 Markdown 分析报告 | 离线/批量评估 |
 
 ---
 
@@ -518,7 +518,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 ## 17. 测试体系
 
 - **后端单元测试**：78+ 个文件、610+ 测试，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、护栏、可行性、评估管线
-- **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner
+- **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner；pass@k 稳定性评估支持同一 golden case 多次执行，统计 pass_rate、断言一致性、工具重叠率、成本/延迟分布，并通过 `scripts/eval-stability.py` 生成 JSON + Markdown 报告
 - **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 覆盖 live Phase 1 主流程；根目录 `playwright.config.ts` 在显式指定脚本时只运行对应的 `scripts/failure-analysis/capture_screenshots.ts` 或 `scripts/demo/demo-full-flow.spec.ts`，并忽略 `.worktrees/`；其中 demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，只需要 frontend dev server，并把截图/视频写入 `screenshots/demos/`；failure-analysis raw results 写入 `scripts/failure-analysis/results/`，该目录为本地生成产物，不提交到 git
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
