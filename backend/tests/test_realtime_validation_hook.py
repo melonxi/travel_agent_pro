@@ -107,3 +107,60 @@ async def test_update_plan_state_injects_realtime_incremental_feedback(app, sess
     ]
     assert any("[实时约束检查]" in content for content in realtime_messages)
     assert any("时间冲突" in content for content in realtime_messages)
+
+
+@pytest.mark.asyncio
+async def test_on_validate_records_state_changes_to_stats(app, sessions):
+    """update_plan_state should write state_changes to the latest ToolCallRecord."""
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        create_resp = await client.post("/api/sessions")
+        session_id = create_resp.json()["session_id"]
+
+        session = sessions[session_id]
+        plan: TravelPlanState = session["plan"]
+        plan.phase = 1
+        plan.destination = "北京"
+
+        agent = session["agent"]
+
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, stream=True, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_dest",
+                        name="update_plan_state",
+                        arguments={"field": "destination", "value": "东京"},
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+            else:
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content="好的")
+                yield LLMChunk(type=ChunkType.DONE)
+
+        agent.llm.chat = fake_chat
+
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "去东京"},
+        )
+
+    assert resp.status_code == 200
+    stats = session["stats"]
+    ups_records = [
+        r
+        for r in stats.tool_calls
+        if r.tool_name == "update_plan_state" and r.status == "success"
+    ]
+    assert len(ups_records) >= 1
+    rec = ups_records[-1]
+    assert rec.state_changes is not None
+    assert len(rec.state_changes) == 1
+    assert rec.state_changes[0]["field"] == "destination"
+    assert rec.state_changes[0]["before"] == "北京"
+    assert rec.state_changes[0]["after"] == "东京"

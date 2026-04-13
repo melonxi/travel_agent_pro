@@ -110,6 +110,7 @@ class SessionStats:
         status: str,
         error_code: str | None,
         phase: int,
+        parallel_group: int | None = None,
     ) -> None:
         self.tool_calls.append(
             ToolCallRecord(
@@ -118,6 +119,7 @@ class SessionStats:
                 status=status,
                 error_code=error_code,
                 phase=phase,
+                parallel_group=parallel_group,
             )
         )
 
