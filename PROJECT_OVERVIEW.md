@@ -113,7 +113,7 @@ travel_agent_pro/
 │   │   ├── main.tsx            # React 19 入口
 │   │   ├── App.tsx             # 应用壳: 会话管理, 主题, 三栏布局, Plan/Trace 标签切换
 │   │   ├── components/
-│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示
+│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 停止按钮, 连接超时检测
 │   │   │   ├── TraceViewer.tsx # Trace 视图: SummaryBar/IterationRow/ToolCallRow/StateDiffPanel, 渲染 parallel_group badge/validation_errors/judge_scores/compression_event/memory_hits
 │   │   │   ├── MessageBubble.tsx # 消息渲染: Markdown, 工具卡, 压缩提示
 │   │   │   ├── SessionSidebar.tsx # 会话侧边栏: 列表/新建/删除 + 记忆管理入口
@@ -125,7 +125,7 @@ travel_agent_pro/
 │   │   │   ├── BudgetChart.tsx # 预算可视化
 │   │   │   └── MemoryCenter.tsx # 记忆管理抽屉: 3 Tab(活跃/待确认/归档), 乐观更新, 本轮命中记忆高亮(is-recalled)
 │   │   ├── hooks/
-│   │   │   ├── useSSE.ts       # SSE 流式连接 Hook
+│   │   │   ├── useSSE.ts       # SSE 流式连接 Hook (AbortController + cancel 取消支持)
 │   │   │   ├── useMemory.ts    # 记忆 CRUD Hook: fetch/confirm/reject/delete + 乐观更新
 │   │   │   └── useTrace.ts     # Trace 数据获取 Hook (fetch + auto-refresh)
 │   │   ├── types/
@@ -335,13 +335,13 @@ POST /api/chat/{sessionId}  →  ReadableStream (NDJSON)
 ```
 
 ### 关键组件
-- **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理
+- **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理 + 停止按钮(streaming 时替代发送按钮) + 连接超时警告(30s 无事件)
 - **Phase3Workbench**: 旅行画像 / 候选池 / 骨架方案 / 锁定区 / 风险 (5 卡片)
 - **MemoryCenter**: 右滑抽屉, 3 Tab (活跃/待确认/归档), 卡片式记忆管理, 确认/拒绝/删除 + 乐观更新, 本轮命中记忆高亮（通过 App → SessionSidebar 透传 recalledIds + is-recalled CSS class + "本轮命中" badge）
 - **MapView**: Leaflet 地图, 活动标记 + 路线连线, 明暗主题
 - **Timeline**: 逐日活动时间线
 - **BudgetChart**: 预算进度条 + 按日分布
-- **useSSE**: 自定义 Hook, ReadableStream 解析 NDJSON
+- **useSSE**: 自定义 Hook, ReadableStream 解析 NDJSON, AbortController 取消请求 + cancel() 调用后端取消端点
 - **useMemory**: 记忆 CRUD Hook, ref-based 乐观更新, pendingCount 统计
 
 ### 设计系统 "Solstice"
