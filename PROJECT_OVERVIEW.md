@@ -113,20 +113,24 @@ travel_agent_pro/
 │   │   ├── components/
 │   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示
 │   │   │   ├── MessageBubble.tsx # 消息渲染: Markdown, 工具卡, 压缩提示
-│   │   │   ├── SessionSidebar.tsx # 会话侧边栏: 列表/新建/删除
+│   │   │   ├── SessionSidebar.tsx # 会话侧边栏: 列表/新建/删除 + 记忆管理入口
 │   │   │   ├── SessionItem.tsx # 单条会话: 标题/阶段/时间
 │   │   │   ├── PhaseIndicator.tsx # 阶段进度条: 4 步可视化
 │   │   │   ├── Phase3Workbench.tsx # Phase3 规划工作台 (旅行画像/候选/骨架/锁定/风险)
 │   │   │   ├── MapView.tsx     # Leaflet 地图: 标记点+路线
 │   │   │   ├── Timeline.tsx    # 日程时间线
-│   │   │   └── BudgetChart.tsx # 预算可视化
+│   │   │   ├── BudgetChart.tsx # 预算可视化
+│   │   │   └── MemoryCenter.tsx # 记忆管理抽屉: 3 Tab(活跃/待确认/归档), 乐观更新
 │   │   ├── hooks/
-│   │   │   └── useSSE.ts       # SSE 流式连接 Hook
+│   │   │   ├── useSSE.ts       # SSE 流式连接 Hook
+│   │   │   └── useMemory.ts    # 记忆 CRUD Hook: fetch/confirm/reject/delete + 乐观更新
 │   │   ├── types/
 │   │   │   ├── plan.ts         # TravelPlanState 前端类型
-│   │   │   └── session.ts      # SessionMeta, SessionMessage
+│   │   │   ├── session.ts      # SessionMeta, SessionMessage
+│   │   │   └── memory.ts       # MemoryItem, MemorySource, TripEpisode, UseMemoryReturn
 │   │   └── styles/
-│   │       └── index.css       # "Solstice" 暗色玻璃设计系统 (1900+ 行)
+│   │       ├── index.css       # "Solstice" 暗色玻璃设计系统 (1900+ 行)
+│   │       └── memory-center.css # 记忆管理抽屉样式 (500+ 行, Solstice 主题)
 │   ├── vite.config.ts          # Vite 6: /api → localhost:8000 代理
 │   └── package.json            # React 19, Leaflet, react-markdown
 │
@@ -326,10 +330,12 @@ POST /api/chat/{sessionId}  →  ReadableStream (NDJSON)
 ### 关键组件
 - **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动
 - **Phase3Workbench**: 旅行画像 / 候选池 / 骨架方案 / 锁定区 / 风险 (5 卡片)
+- **MemoryCenter**: 右滑抽屉, 3 Tab (活跃/待确认/归档), 卡片式记忆管理, 确认/拒绝/删除 + 乐观更新
 - **MapView**: Leaflet 地图, 活动标记 + 路线连线, 明暗主题
 - **Timeline**: 逐日活动时间线
 - **BudgetChart**: 预算进度条 + 按日分布
 - **useSSE**: 自定义 Hook, ReadableStream 解析 NDJSON
+- **useMemory**: 记忆 CRUD Hook, ref-based 乐观更新, pendingCount 统计
 
 ### 设计系统 "Solstice"
 暗色玻璃质感 + 琥珀色暖光点缀, 1900+ 行 CSS
