@@ -332,3 +332,182 @@ async def test_update_plan_state_previous_value_none_for_new_field():
     result = await tool_fn(field="destination", value="东京")
     assert result["previous_value"] is None
     assert result["updated_field"] == "destination"
+
+
+@pytest.mark.asyncio
+async def test_trace_state_changes_from_stats(app):
+    """state_changes populated from ToolCallRecord.state_changes."""
+    sessions = _get_sessions(app)
+    session_id = "test-state-changes"
+    stats = SessionStats()
+    stats.record_llm_call(
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        duration_ms=200.0,
+        phase=1,
+        iteration=1,
+    )
+    stats.record_tool_call(
+        tool_name="update_plan_state",
+        duration_ms=50.0,
+        status="ok",
+        error_code=None,
+        phase=1,
+    )
+    stats.tool_calls[-1].state_changes = [
+        {"field": "destination", "before": None, "after": "东京"}
+    ]
+    sessions[session_id] = {
+        "stats": stats,
+        "messages": [],
+        "plan": None,
+        "compression_events": [],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/api/sessions/{session_id}/trace")
+    data = resp.json()
+
+    assert data["iterations"][0]["state_changes"] == [
+        {"field": "destination", "before": None, "after": "东京"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_trace_compression_event(app):
+    """compression_event populated from session compression_events."""
+    sessions = _get_sessions(app)
+    session_id = "test-compression"
+    stats = SessionStats()
+    ts = 1000.0
+    stats.record_llm_call(
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        duration_ms=200.0,
+        phase=1,
+        iteration=1,
+    )
+    stats.llm_calls[-1].timestamp = ts
+    sessions[session_id] = {
+        "stats": stats,
+        "messages": [],
+        "plan": None,
+        "compression_events": [
+            {
+                "timestamp": ts - 1,
+                "mode": "tool_compaction",
+                "reason": "test compression",
+                "message_count_before": 20,
+                "message_count_after": 10,
+            }
+        ],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/api/sessions/{session_id}/trace")
+    data = resp.json()
+
+    assert data["iterations"][0]["compression_event"] is not None
+    assert "tool_compaction" in data["iterations"][0]["compression_event"]
+
+
+@pytest.mark.asyncio
+async def test_trace_parallel_group(app):
+    """parallel_group populated from ToolCallRecord."""
+    sessions = _get_sessions(app)
+    session_id = "test-parallel"
+    stats = SessionStats()
+    stats.record_llm_call(
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        duration_ms=200.0,
+        phase=1,
+        iteration=1,
+    )
+    stats.record_tool_call(
+        tool_name="web_search",
+        duration_ms=100.0,
+        status="ok",
+        error_code=None,
+        phase=1,
+        parallel_group=1,
+    )
+    stats.record_tool_call(
+        tool_name="search_flights",
+        duration_ms=150.0,
+        status="ok",
+        error_code=None,
+        phase=1,
+        parallel_group=1,
+    )
+    sessions[session_id] = {
+        "stats": stats,
+        "messages": [],
+        "plan": None,
+        "compression_events": [],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/api/sessions/{session_id}/trace")
+    data = resp.json()
+
+    tools = data["iterations"][0]["tool_calls"]
+    assert tools[0]["parallel_group"] == 1
+    assert tools[1]["parallel_group"] == 1
+
+
+@pytest.mark.asyncio
+async def test_trace_memory_hits(app):
+    """memory_hits populated from SessionStats.memory_hits."""
+    from telemetry.stats import MemoryHitRecord
+
+    sessions = _get_sessions(app)
+    session_id = "test-memory-hits"
+    stats = SessionStats()
+    stats.record_llm_call(
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        duration_ms=200.0,
+        phase=1,
+        iteration=1,
+    )
+    stats.memory_hits.append(
+        MemoryHitRecord(
+            item_ids=["m1", "m2"],
+            core_count=1,
+            trip_count=1,
+            phase_count=0,
+            timestamp=stats.llm_calls[-1].timestamp,
+        )
+    )
+    sessions[session_id] = {
+        "stats": stats,
+        "messages": [],
+        "plan": None,
+        "compression_events": [],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/api/sessions/{session_id}/trace")
+    data = resp.json()
+
+    hits = data["iterations"][0]["memory_hits"]
+    assert hits is not None
+    assert hits["item_ids"] == ["m1", "m2"]
+    assert hits["core"] == 1
