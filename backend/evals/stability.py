@@ -50,6 +50,8 @@ def run_stability(
     k: int = 3,
 ) -> StabilityMetrics:
     """Run a single case k times and compute stability metrics."""
+    if k < 1:
+        raise ValueError(f"k must be >= 1, got {k}")
     executions: list[EvalExecution] = []
     case_results: list[CaseResult] = []
 
