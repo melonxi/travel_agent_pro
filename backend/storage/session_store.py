@@ -45,6 +45,9 @@ class SessionStore:
         phase: int | None = None,
         title: str | None = None,
         status: str | None = None,
+        last_run_id: str | None = None,
+        last_run_status: str | None = None,
+        last_run_error: str | None = None,
     ) -> None:
         updates: list[str] = []
         params: list[Any] = []
@@ -58,6 +61,15 @@ class SessionStore:
         if status is not None:
             updates.append("status = ?")
             params.append(status)
+        if last_run_id is not None:
+            updates.append("last_run_id = ?")
+            params.append(last_run_id)
+        if last_run_status is not None:
+            updates.append("last_run_status = ?")
+            params.append(last_run_status)
+        if last_run_error is not None:
+            updates.append("last_run_error = ?")
+            params.append(last_run_error)
         if not updates:
             return
 
