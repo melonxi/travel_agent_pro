@@ -76,3 +76,29 @@ class SuiteResult:
             f"{self.failed} failed, {self.errors} errors, "
             f"{self.duration_ms:.0f}ms"
         )
+
+
+@dataclass
+class StabilityMetrics:
+    """Aggregated stability metrics for a single case over k runs."""
+
+    case_id: str
+    k: int
+    pass_rate: float
+    assertion_consistency: dict[str, float]
+    tool_overlap_ratio: float
+    cost_stats: dict[str, float]
+    duration_stats: dict[str, float]
+    runs: list[CaseResult] = field(default_factory=list)
+
+
+@dataclass
+class StabilitySuiteResult:
+    """Stability results for all cases."""
+
+    total_cases: int = 0
+    k: int = 3
+    results: list[StabilityMetrics] = field(default_factory=list)
+    overall_pass_rate: float = 0.0
+    unstable_cases: list[str] = field(default_factory=list)
+    highly_unstable_cases: list[str] = field(default_factory=list)
