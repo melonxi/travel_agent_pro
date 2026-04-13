@@ -94,6 +94,12 @@ interface Props {
   onMemoryRecall?: (itemIds: string[]) => void
 }
 
+interface EventHandlerState {
+  currentAssistantId: string
+  assistantContent: string
+  toolMessageIds: Map<string, string>
+}
+
 export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -106,7 +112,8 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
   const prevPlanRef = useRef<TravelPlanState | null>(null)
   const lastEventTimeRef = useRef<number>(Date.now())
   const [connectionWarning, setConnectionWarning] = useState(false)
-  const { sendMessage, cancel } = useSSE()
+  const { sendMessage, cancel, continueGeneration } = useSSE()
+  const [canContinue, setCanContinue] = useState(false)
 
   const createMessageId = () =>
     `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -242,144 +249,148 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     }
   }
 
+  const createEventHandler = (state: EventHandlerState) => (event: SSEEvent) => {
+    lastEventTimeRef.current = Date.now()
+    setConnectionWarning(false)
+
+    if (event.type === 'text_delta' && event.content) {
+      state.assistantContent += event.content
+      const targetId = state.currentAssistantId
+      setMessages((prev) => {
+        const exists = prev.some((m) => m.id === targetId)
+        if (!exists) {
+          return [...prev, { id: targetId, role: 'assistant' as const, content: state.assistantContent }]
+        }
+        return prev.map((message) =>
+          message.id === targetId
+            ? { ...message, content: state.assistantContent }
+            : message,
+        )
+      })
+    } else if (event.type === 'tool_call' && event.tool_call) {
+      const toolCall = event.tool_call
+      const toolMessageId = createMessageId()
+      state.toolMessageIds.set(toolCall.id, toolMessageId)
+      const toolMsg: ChatMessage = {
+        id: toolMessageId,
+        role: 'tool',
+        content: '',
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        toolStatus: 'pending',
+        toolArguments: toolCall.arguments,
+      }
+
+      if (state.assistantContent.trim()) {
+        const newAssistantId = createMessageId()
+        state.currentAssistantId = newAssistantId
+        state.assistantContent = ''
+        setMessages((prev) => [...prev, toolMsg])
+      } else {
+        setMessages((prev) =>
+          insertBeforeAssistant(prev, state.currentAssistantId, toolMsg),
+        )
+      }
+    } else if (event.type === 'tool_result' && event.tool_result) {
+      const toolResult = event.tool_result
+      const toolMessageId = state.toolMessageIds.get(toolResult.tool_call_id)
+      setMessages((prev) => {
+        if (!toolMessageId) {
+          return insertBeforeAssistant(prev, state.currentAssistantId, {
+            id: createMessageId(),
+            role: 'tool',
+            content: '',
+            toolCallId: toolResult.tool_call_id,
+            toolName: toolResult.tool_call_id,
+            toolStatus: toolResult.status,
+            toolResult: toolResult.data,
+            toolError: toolResult.error ?? undefined,
+            toolSuggestion: toolResult.suggestion ?? undefined,
+          })
+        }
+
+        return prev.map((message) =>
+          message.id === toolMessageId
+            ? {
+                ...message,
+                toolStatus: toolResult.status,
+                toolResult: toolResult.data,
+                toolError: toolResult.error ?? undefined,
+                toolSuggestion: toolResult.suggestion ?? undefined,
+              }
+            : message,
+        )
+      })
+    } else if (event.type === 'context_compression' && event.compression_info) {
+      const info = event.compression_info
+      setMessages((prev) =>
+        insertBeforeAssistant(prev, state.currentAssistantId, {
+          id: createMessageId(),
+          role: 'system',
+          content: `${info.message_count_before} 条 → ${info.message_count_after} 条`,
+          compressionInfo: info,
+        }),
+      )
+    } else if (event.type === 'state_update' && event.plan) {
+      const changes = computeStateChanges(prevPlanRef.current, event.plan)
+      prevPlanRef.current = event.plan
+      onPlanUpdate(event.plan)
+      if (changes.length > 0) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: createMessageId(),
+            role: 'system',
+            content: '',
+            stateChanges: changes,
+          },
+        ])
+      }
+    } else if (event.type === 'memory_recall' && event.item_ids) {
+      onMemoryRecall?.(event.item_ids)
+    } else if (event.type === 'error') {
+      const message = event.message ?? '模型服务暂时不可用，请稍后重试。'
+      const detail = event.error ? `\n\n${event.error}` : ''
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === state.currentAssistantId
+            ? { ...item, content: `${message}${detail}` }
+            : item,
+        ),
+      )
+      if (event.can_continue) {
+        setCanContinue(true)
+      }
+    }
+  }
+
   const handleSend = async () => {
     if (!input.trim() || sendingRef.current) return
 
     lastEventTimeRef.current = Date.now()
     setConnectionWarning(false)
+    setCanContinue(false)
     sendingRef.current = true
     const userMsg = input.trim()
-    let currentAssistantId = createMessageId()
-    const toolMessageIds = new Map<string, string>()
+    const state: EventHandlerState = {
+      currentAssistantId: createMessageId(),
+      assistantContent: '',
+      toolMessageIds: new Map<string, string>(),
+    }
     setInput('')
     setMessages((prev) => [
       ...prev,
       { id: createMessageId(), role: 'user', content: userMsg },
-      { id: currentAssistantId, role: 'assistant', content: '' },
+      { id: state.currentAssistantId, role: 'assistant', content: '' },
     ])
     setStreaming(true)
 
-    let assistantContent = ''
-
     try {
-      await sendMessage(sessionId, userMsg, (event: SSEEvent) => {
-        lastEventTimeRef.current = Date.now()
-        setConnectionWarning(false)
-        if (event.type === 'text_delta' && event.content) {
-          assistantContent += event.content
-          const targetId = currentAssistantId
-          setMessages((prev) => {
-            const exists = prev.some((m) => m.id === targetId)
-            if (!exists) {
-              return [...prev, { id: targetId, role: 'assistant' as const, content: assistantContent }]
-            }
-            return prev.map((message) =>
-              message.id === targetId
-                ? { ...message, content: assistantContent }
-                : message,
-            )
-          })
-        } else if (event.type === 'tool_call' && event.tool_call) {
-          const toolCall = event.tool_call
-          const toolMessageId = createMessageId()
-          toolMessageIds.set(toolCall.id, toolMessageId)
-          const toolMsg: ChatMessage = {
-            id: toolMessageId,
-            role: 'tool',
-            content: '',
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            toolStatus: 'pending',
-            toolArguments: toolCall.arguments,
-          }
-
-          if (assistantContent.trim()) {
-            // Freeze current assistant text, append tool card
-            // New assistant bubble will be created lazily on next text_delta
-            const newAssistantId = createMessageId()
-            currentAssistantId = newAssistantId
-            assistantContent = ''
-            setMessages((prev) => [...prev, toolMsg])
-          } else {
-            // No text yet — insert tool before the current assistant placeholder
-            setMessages((prev) =>
-              insertBeforeAssistant(prev, currentAssistantId, toolMsg),
-            )
-          }
-        } else if (event.type === 'tool_result' && event.tool_result) {
-          const toolResult = event.tool_result
-          const toolMessageId = toolMessageIds.get(toolResult.tool_call_id)
-          setMessages((prev) => {
-            if (!toolMessageId) {
-              return insertBeforeAssistant(prev, currentAssistantId, {
-                id: createMessageId(),
-                role: 'tool',
-                content: '',
-                toolCallId: toolResult.tool_call_id,
-                toolName: toolResult.tool_call_id,
-                toolStatus: toolResult.status,
-                toolResult: toolResult.data,
-                toolError: toolResult.error ?? undefined,
-                toolSuggestion: toolResult.suggestion ?? undefined,
-              })
-            }
-
-            return prev.map((message) =>
-              message.id === toolMessageId
-                ? {
-                    ...message,
-                    toolStatus: toolResult.status,
-                    toolResult: toolResult.data,
-                    toolError: toolResult.error ?? undefined,
-                    toolSuggestion: toolResult.suggestion ?? undefined,
-                  }
-                : message,
-            )
-          })
-        } else if (event.type === 'context_compression' && event.compression_info) {
-          const info = event.compression_info
-          setMessages((prev) =>
-            insertBeforeAssistant(prev, currentAssistantId, {
-              id: createMessageId(),
-              role: 'system',
-              content: `${info.message_count_before} 条 → ${info.message_count_after} 条`,
-              compressionInfo: info,
-            }),
-          )
-        } else if (event.type === 'state_update' && event.plan) {
-          const changes = computeStateChanges(prevPlanRef.current, event.plan)
-          prevPlanRef.current = event.plan
-          onPlanUpdate(event.plan)
-          if (changes.length > 0) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: createMessageId(),
-                role: 'system',
-                content: '',
-                stateChanges: changes,
-              },
-            ])
-          }
-        } else if (event.type === 'memory_recall' && event.item_ids) {
-          onMemoryRecall?.(event.item_ids)
-        } else if (event.type === 'error') {
-          const message = event.message ?? '模型服务暂时不可用，请稍后重试。'
-          const detail = event.error ? `\n\n${event.error}` : ''
-          setMessages((prev) =>
-            prev.map((item) =>
-              item.id === currentAssistantId
-                ? { ...item, content: `${message}${detail}` }
-                : item,
-            ),
-          )
-        }
-      })
+      await sendMessage(sessionId, userMsg, createEventHandler(state))
     } finally {
       sendingRef.current = false
       setStreaming(false)
-      // Remove the last assistant placeholder if it ended up empty
-      const lastId = currentAssistantId
+      const lastId = state.currentAssistantId
       setMessages((prev) => prev.filter((message) =>
         !(message.id === lastId && message.role === 'assistant' && !message.content.trim())
       ))
@@ -387,6 +398,36 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
   }
 
   const lastMsg = messages[messages.length - 1]
+
+  const handleContinue = async () => {
+    if (sendingRef.current) return
+    setCanContinue(false)
+    sendingRef.current = true
+    setStreaming(true)
+    lastEventTimeRef.current = Date.now()
+    setConnectionWarning(false)
+
+    const state: EventHandlerState = {
+      currentAssistantId: createMessageId(),
+      assistantContent: '',
+      toolMessageIds: new Map<string, string>(),
+    }
+    setMessages((prev) => [
+      ...prev,
+      { id: state.currentAssistantId, role: 'assistant' as const, content: '' },
+    ])
+
+    try {
+      await continueGeneration(sessionId, createEventHandler(state))
+    } finally {
+      sendingRef.current = false
+      setStreaming(false)
+      const lastId = state.currentAssistantId
+      setMessages((prev) => prev.filter((message) =>
+        !(message.id === lastId && message.role === 'assistant' && !message.content.trim())
+      ))
+    }
+  }
 
   return (
     <div className="chat-panel">
@@ -413,6 +454,11 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
           <div className="connection-warning">
             连接可能已断开，可尝试停止后重新发送
           </div>
+        )}
+        {canContinue && !streaming && (
+          <button className="continue-btn" onClick={() => void handleContinue()}>
+            继续生成
+          </button>
         )}
         <div ref={bottomRef} />
       </div>
