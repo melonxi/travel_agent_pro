@@ -21,6 +21,8 @@ from telemetry.attributes import (
 
 
 class AnthropicProvider:
+    _RETRY_DELAYS = (1.0, 3.0)
+
     def __init__(
         self,
         model: str = "claude-sonnet-4-20250514",
@@ -31,6 +33,75 @@ class AnthropicProvider:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.client = AsyncAnthropic()
+
+    @property
+    def provider_name(self) -> str:
+        return "anthropic"
+
+    def _classify_error(
+        self, exc: Exception, *, failure_phase: str = "connection"
+    ) -> "LLMError":
+        import anthropic
+        from llm.errors import LLMError, LLMErrorCode, classify_by_http_status
+
+        if isinstance(exc, LLMError):
+            return exc
+        if isinstance(exc, anthropic.APIConnectionError):
+            return LLMError(
+                code=LLMErrorCode.TRANSIENT,
+                message=str(exc),
+                retryable=True,
+                provider="anthropic",
+                model=self.model,
+                failure_phase="connection",
+                raw_error=repr(exc),
+            )
+        if isinstance(exc, anthropic.APIStatusError):
+            err = classify_by_http_status(
+                exc.status_code,
+                provider="anthropic",
+                model=self.model,
+                raw_error=str(exc),
+            )
+            if exc.status_code == 429:
+                retry_after_header = getattr(exc.response, "headers", {}).get(
+                    "retry-after"
+                )
+                if retry_after_header:
+                    try:
+                        err.retry_after = float(retry_after_header)
+                    except (ValueError, TypeError):
+                        pass
+            return err
+        if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+            return LLMError(
+                code=LLMErrorCode.TRANSIENT,
+                message=str(exc),
+                retryable=True,
+                provider="anthropic",
+                model=self.model,
+                failure_phase="connection",
+                raw_error=repr(exc),
+            )
+        if isinstance(exc, json.JSONDecodeError):
+            return LLMError(
+                code=LLMErrorCode.PROTOCOL_ERROR,
+                message="Failed to parse LLM response JSON",
+                retryable=False,
+                provider="anthropic",
+                model=self.model,
+                failure_phase="parsing",
+                raw_error=repr(exc),
+            )
+        return LLMError(
+            code=LLMErrorCode.PROTOCOL_ERROR,
+            message=str(exc),
+            retryable=False,
+            provider="anthropic",
+            model=self.model,
+            failure_phase=failure_phase,
+            raw_error=repr(exc),
+        )
 
     def _summarize_converted_message(self, message: dict[str, Any]) -> dict[str, Any]:
         content = message.get("content")
@@ -52,7 +123,9 @@ class AnthropicProvider:
                 elif block.get("type") == "tool_use":
                     block_summary["id"] = block.get("id")
                     block_summary["name"] = block.get("name")
-                    block_summary["input_keys"] = sorted((block.get("input") or {}).keys())
+                    block_summary["input_keys"] = sorted(
+                        (block.get("input") or {}).keys()
+                    )
                 elif block.get("type") == "tool_result":
                     tool_content = block.get("content", "")
                     block_summary["tool_use_id"] = block.get("tool_use_id")
@@ -193,7 +266,7 @@ class AnthropicProvider:
                 "tool_calls": json.dumps(tool_names),
             },
         )
-        if hasattr(response, 'usage') and response.usage:
+        if hasattr(response, "usage") and response.usage:
             yield LLMChunk(
                 type=ChunkType.USAGE,
                 usage_info={
@@ -257,87 +330,110 @@ class AnthropicProvider:
             # Anthropic streaming tool-use currently hits an SDK event accumulation
             # bug in our runtime. When tools are available, fall back to a
             # non-streaming completion and re-emit chunks in our internal format.
-            try:
-                if not stream or tools:
-                    response = await self.client.messages.create(**kwargs)
-                    async for chunk in self._emit_nonstream_response(
-                        response,
-                        span=span,
-                    ):
-                        yield chunk
-                    return
+            import asyncio as _asyncio
+            from llm.errors import LLMError
 
-                async with self.client.messages.stream(**kwargs) as stream_resp:
-                    current_tool_id: str | None = None
-                    current_tool_name: str | None = None
-                    current_tool_json: str = ""
-                    collected_text = ""
-                    tool_call_names: list[str] = []
+            _has_yielded = False
+            max_conn_retries = 2
+            for _attempt in range(max_conn_retries + 1):
+                try:
+                    if not stream or tools:
+                        response = await self.client.messages.create(**kwargs)
+                        async for chunk in self._emit_nonstream_response(
+                            response,
+                            span=span,
+                        ):
+                            yield chunk
+                        return
 
-                    async for event in stream_resp:
-                        if event.type == "content_block_start":
-                            if hasattr(event.content_block, "type"):
-                                if event.content_block.type == "tool_use":
-                                    current_tool_id = event.content_block.id
-                                    current_tool_name = event.content_block.name
-                                    current_tool_json = ""
-                        elif event.type == "content_block_delta":
-                            if hasattr(event.delta, "text"):
-                                collected_text += event.delta.text
-                                yield LLMChunk(
-                                    type=ChunkType.TEXT_DELTA, content=event.delta.text
-                                )
-                            elif hasattr(event.delta, "partial_json"):
-                                current_tool_json += event.delta.partial_json
-                        elif event.type == "content_block_stop":
-                            if current_tool_id and current_tool_name:
-                                tool_call_names.append(current_tool_name)
-                                yield LLMChunk(
-                                    type=ChunkType.TOOL_CALL_START,
-                                    tool_call=ToolCall(
-                                        id=current_tool_id,
-                                        name=current_tool_name,
-                                        arguments=json.loads(current_tool_json)
-                                        if current_tool_json
-                                        else {},
-                                    ),
-                                )
-                                current_tool_id = None
-                                current_tool_name = None
-                        elif event.type == "message_stop":
-                            try:
-                                final_msg = await stream_resp.get_final_message()
-                                if hasattr(final_msg, 'usage') and final_msg.usage:
+                    async with self.client.messages.stream(**kwargs) as stream_resp:
+                        current_tool_id: str | None = None
+                        current_tool_name: str | None = None
+                        current_tool_json: str = ""
+                        collected_text = ""
+                        tool_call_names: list[str] = []
+
+                        async for event in stream_resp:
+                            if event.type == "content_block_start":
+                                if hasattr(event.content_block, "type"):
+                                    if event.content_block.type == "tool_use":
+                                        current_tool_id = event.content_block.id
+                                        current_tool_name = event.content_block.name
+                                        current_tool_json = ""
+                            elif event.type == "content_block_delta":
+                                if hasattr(event.delta, "text"):
+                                    collected_text += event.delta.text
+                                    _has_yielded = True
                                     yield LLMChunk(
-                                        type=ChunkType.USAGE,
-                                        usage_info={
-                                            "input_tokens": final_msg.usage.input_tokens,
-                                            "output_tokens": final_msg.usage.output_tokens,
-                                        },
+                                        type=ChunkType.TEXT_DELTA,
+                                        content=event.delta.text,
                                     )
-                            except Exception:
-                                pass
-                            span.add_event(
-                                EVENT_LLM_RESPONSE,
-                                {
-                                    "text_preview": truncate(collected_text, max_len=200),
-                                    "tool_calls": json.dumps(tool_call_names),
-                                },
-                            )
-                            yield LLMChunk(type=ChunkType.DONE)
-            except Exception as exc:
-                self._write_debug_log(
-                    "error",
-                    {
-                        "stream": stream,
-                        "used_nonstream_fallback": (not stream) or bool(tools),
-                        "message_count": len(converted),
-                        "tool_count": len(kwargs.get("tools", [])),
-                        "error_type": type(exc).__name__,
-                        "error": str(exc),
-                    },
-                )
-                raise
+                                elif hasattr(event.delta, "partial_json"):
+                                    current_tool_json += event.delta.partial_json
+                            elif event.type == "content_block_stop":
+                                if current_tool_id and current_tool_name:
+                                    tool_call_names.append(current_tool_name)
+                                    yield LLMChunk(
+                                        type=ChunkType.TOOL_CALL_START,
+                                        tool_call=ToolCall(
+                                            id=current_tool_id,
+                                            name=current_tool_name,
+                                            arguments=json.loads(current_tool_json)
+                                            if current_tool_json
+                                            else {},
+                                        ),
+                                    )
+                                    current_tool_id = None
+                                    current_tool_name = None
+                            elif event.type == "message_stop":
+                                try:
+                                    final_msg = await stream_resp.get_final_message()
+                                    if hasattr(final_msg, "usage") and final_msg.usage:
+                                        yield LLMChunk(
+                                            type=ChunkType.USAGE,
+                                            usage_info={
+                                                "input_tokens": final_msg.usage.input_tokens,
+                                                "output_tokens": final_msg.usage.output_tokens,
+                                            },
+                                        )
+                                except Exception:
+                                    pass
+                                span.add_event(
+                                    EVENT_LLM_RESPONSE,
+                                    {
+                                        "text_preview": truncate(
+                                            collected_text, max_len=200
+                                        ),
+                                        "tool_calls": json.dumps(tool_call_names),
+                                    },
+                                )
+                                yield LLMChunk(type=ChunkType.DONE)
+                    return  # stream completed normally
+                except LLMError:
+                    raise  # already classified, re-raise
+                except Exception as exc:
+                    self._write_debug_log(
+                        "error",
+                        {
+                            "stream": stream,
+                            "used_nonstream_fallback": (not stream) or bool(tools),
+                            "message_count": len(converted),
+                            "tool_count": len(kwargs.get("tools", [])),
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                        },
+                    )
+                    llm_err = self._classify_error(exc)
+                    if (
+                        llm_err.failure_phase == "connection"
+                        and llm_err.retryable
+                        and _attempt < max_conn_retries
+                        and not _has_yielded
+                    ):
+                        delay = self._RETRY_DELAYS[_attempt]
+                        await _asyncio.sleep(delay)
+                        continue
+                    raise llm_err
 
     async def count_tokens(self, messages: list[Message]) -> int:
         total = 0
