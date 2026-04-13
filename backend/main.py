@@ -1523,7 +1523,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     )
                     yield _memory_pending_event_from_items(pending_items)
 
-            from run import RunRecord
+            from run import IterationProgress, RunRecord
 
             run = RunRecord(
                 run_id=str(uuid.uuid4()), session_id=plan.session_id, status="running"
@@ -1545,7 +1545,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
             keepalive_task = asyncio.create_task(_keepalive_loop())
             try:
-
+                accum_text = ""  # 追踪本轮 LLM 输出的文本，供中断恢复使用
                 llm_started_at = time.monotonic()
                 usage_iteration = 0
                 try:
@@ -1584,6 +1584,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         )
                         event_data = {"type": event_type}
                         if chunk.content:
+                            accum_text += chunk.content
                             event_data["content"] = chunk.content
                         if chunk.tool_call:
                             tool_call_names[chunk.tool_call.id] = chunk.tool_call.name
@@ -1614,14 +1615,18 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             # Apply pending state_changes / validation_errors from on_validate hook
                             _stats = session.get("stats")
                             if _stats and _stats.tool_calls:
-                                _pending_sc = session.pop("_pending_state_changes", None)
+                                _pending_sc = session.pop(
+                                    "_pending_state_changes", None
+                                )
                                 if _pending_sc is not None:
                                     _stats.tool_calls[-1].state_changes = _pending_sc
                                 _pending_ve = session.pop(
                                     "_pending_validation_errors", None
                                 )
                                 if _pending_ve is not None:
-                                    _stats.tool_calls[-1].validation_errors = _pending_ve
+                                    _stats.tool_calls[
+                                        -1
+                                    ].validation_errors = _pending_ve
                                 _pending_js = session.pop("_pending_judge_scores", None)
                                 if _pending_js is not None:
                                     _stats.tool_calls[-1].judge_scores = _pending_js
@@ -1641,12 +1646,16 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             )
                             updated_field = None
                             if isinstance(chunk.tool_result.data, dict):
-                                updated_field = chunk.tool_result.data.get("updated_field")
+                                updated_field = chunk.tool_result.data.get(
+                                    "updated_field"
+                                )
                             if result_data.get("backtracked"):
                                 await _rotate_trip_on_reset_backtrack(
                                     user_id=session["user_id"],
                                     plan=plan,
-                                    to_phase=int(result_data.get("to_phase", plan.phase)),
+                                    to_phase=int(
+                                        result_data.get("to_phase", plan.phase)
+                                    ),
                                     reason_text=str(result_data.get("reason", "")),
                                 )
                             elif updated_field == "selected_skeleton_id":
@@ -1694,14 +1703,43 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         run.error_code = exc.code.value
                         run.finished_at = time.time()
                         logger.exception(
-                            "LLM error for session %s: %s", plan.session_id, exc.code.value
+                            "LLM error for session %s: %s",
+                            plan.session_id,
+                            exc.code.value,
                         )
+
+                        progress = agent.progress
+                        can_continue = progress in (
+                            IterationProgress.PARTIAL_TEXT,
+                            IterationProgress.TOOLS_READ_ONLY,
+                        )
+
+                        if can_continue and accum_text.strip():
+                            # 把不完整的 assistant 消息追加到历史
+                            messages.append(
+                                Message(
+                                    role=Role.ASSISTANT,
+                                    content=accum_text,
+                                    incomplete=True,
+                                )
+                            )
+                            run.continuation_context = {
+                                "type": progress.value,
+                                "partial_assistant_text": accum_text,
+                            }
+                            if progress == IterationProgress.TOOLS_READ_ONLY:
+                                run.continuation_context["completed_tool_count"] = sum(
+                                    1 for m in messages if m.role == Role.TOOL
+                                )
+
+                        run.can_continue = can_continue
+
                         yield json.dumps(
                             {
                                 "type": "error",
                                 "error_code": exc.code.value,
                                 "retryable": exc.retryable,
-                                "can_continue": False,
+                                "can_continue": can_continue,
                                 "provider": exc.provider,
                                 "model": exc.model,
                                 "failure_phase": exc.failure_phase,
@@ -1714,7 +1752,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     run.status = "failed"
                     run.error_code = "AGENT_STREAM_ERROR"
                     run.finished_at = time.time()
-                    logger.exception("Agent stream failed for session %s", plan.session_id)
+                    logger.exception(
+                        "Agent stream failed for session %s", plan.session_id
+                    )
                     yield json.dumps(
                         {
                             "type": "error",
