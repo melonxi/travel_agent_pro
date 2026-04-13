@@ -333,3 +333,75 @@
   color: var(--text-primary);
   border-bottom-color: var(--accent-amber, #f59e0b);
 }
+
+/* Parallel group badge */
+.tool-parallel-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  font-weight: 600;
+}
+
+/* Validation errors */
+.tool-validation-errors {
+  width: 100%;
+  margin-top: 4px;
+  padding-left: 106px;
+}
+
+.validation-error-item {
+  font-size: 11px;
+  color: var(--red, #ef4444);
+  padding: 2px 6px;
+  background: rgba(239, 68, 68, 0.08);
+  border-radius: 3px;
+  margin-bottom: 2px;
+}
+
+/* Judge scores */
+.tool-judge-scores {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  padding-left: 106px;
+  flex-wrap: wrap;
+}
+
+.judge-score-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+}
+
+/* Compression indicator */
+.iter-compression {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.trace-compression-info {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 4px 6px;
+  background: rgba(245, 158, 11, 0.06);
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+/* Memory hits */
+.trace-memory-hits {
+  font-size: 11px;
+  color: var(--accent-amber, #f59e0b);
+  padding: 4px 6px;
+  background: rgba(245, 158, 11, 0.06);
+  border-radius: 4px;
+  margin-top: 8px;
+}
