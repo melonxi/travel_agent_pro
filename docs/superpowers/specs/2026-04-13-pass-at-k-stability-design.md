@@ -62,11 +62,11 @@ def run_stability(
 ```
 
 流程：
-1. 调用 `runner.run_case(case, executor)` 共 k 次，收集 `list[CaseResult]`
+1. 调用 `executor(case)` 共 k 次，收集 `list[EvalExecution]`。对每次 `EvalExecution` 再调用 `runner.run_case_offline(case, exec.state, exec.tool_calls, exec.responses, exec.stats)` 得到 `CaseResult`。**注意**：不使用 `runner.run_case`，因为它不暴露 `EvalExecution` 中的 `tool_calls` 和逐条断言结果，而这些是计算 `tool_overlap_ratio` 和 `assertion_consistency` 所必需的。
 2. 计算 `pass_rate` = 通过次数 / k
-3. 计算 `assertion_consistency`：遍历每条断言，统计其在 k 次中的通过率。断言标识用 `f"{assertion.type.value}:{assertion.target}"` 作为 key
-4. 计算 `tool_overlap_ratio`：将每次运行的 tool_calls 转为集合，计算 k 次的交集 / 并集比率。如果 k 次工具调用完全一致，ratio = 1.0
-5. 计算 `cost_stats` 和 `duration_stats`：从每次 CaseResult.stats 中提取 `estimated_cost_usd` 和 `duration_ms`，计算 min/max/mean/stddev（使用 `statistics.mean` 和 `statistics.stdev`，k < 2 时 stddev = 0）
+3. 计算 `assertion_consistency`：对每次 `EvalExecution`，逐条调用 `runner.evaluate_assertion(assertion, exec.state, exec.tool_calls, exec.responses)` 获取逐条断言通过/失败结果。断言标识用 `f"{assertion.type.value}:{assertion.target}"` 作为 key，值为该断言在 k 次中的通过率
+4. 计算 `tool_overlap_ratio`：将每次 `EvalExecution.tool_calls` 转为集合，计算 k 次的交集 / 并集比率。如果 k 次工具调用完全一致，ratio = 1.0
+5. 计算 `cost_stats` 和 `duration_stats`：`estimated_cost_usd` 从 `CaseResult.stats` 中提取，`duration_ms` 从 `CaseResult.duration_ms`（顶层字段）提取。计算 min/max/mean/stddev（使用 `statistics.mean` 和 `statistics.stdev`，k < 2 时 stddev = 0）
 
 **Suite 函数**：
 
