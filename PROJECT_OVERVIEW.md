@@ -94,8 +94,9 @@ travel_agent_pro/
 │   │   ├── judge.py            # 软评分 [1-5] (score clamping + 解析失败日志)
 │   │   └── feasibility.py      # 可行性门控 (30+目的地成本/天数查表)
 │   ├── evals/                  # 评估管线
-│   │   ├── models.py           # GoldenCase, EvalExecution, CaseResult, SuiteResult
+│   │   ├── models.py           # GoldenCase, EvalExecution, CaseResult, SuiteResult, StabilityMetrics, StabilitySuiteResult
 │   │   ├── runner.py           # YAML加载 + 可注入执行器 + 断言评估 + JSON报告
+│   │   ├── stability.py        # pass@k 稳定性评估: run_stability / run_stability_suite（k次重复执行 + 一致性指标）
 │   │   ├── failure_report.py   # 失败案例 Markdown 报告生成与保存（taxonomy / overview / 场景详情）
 │   │   └── golden_cases/       # 23个黄金测试用例 (easy/medium/hard/infeasible)
 │   ├── telemetry/              # 可观测性 + 成本追踪
