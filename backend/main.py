@@ -1522,283 +1522,349 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         for item in pending_items
                     )
                     yield _memory_pending_event_from_items(pending_items)
-            llm_started_at = time.monotonic()
-            usage_iteration = 0
+
+            from run import RunRecord
+
+            run = RunRecord(
+                run_id=str(uuid.uuid4()), session_id=plan.session_id, status="running"
+            )
+            session["_current_run"] = run
+            cancel_event = asyncio.Event()
+            session["_cancel_event"] = cancel_event
+            agent.cancel_event = cancel_event
+
+            keepalive_queue: asyncio.Queue[str] = asyncio.Queue()
+
+            async def _keepalive_loop():
+                try:
+                    while True:
+                        await asyncio.sleep(15)
+                        await keepalive_queue.put(json.dumps({"type": "keepalive"}))
+                except asyncio.CancelledError:
+                    pass
+
+            keepalive_task = asyncio.create_task(_keepalive_loop())
             try:
-                async for chunk in agent.run(messages, phase=plan.phase):
-                    if chunk.type.value == "keepalive":
-                        yield {"comment": "ping"}
-                        continue
-                    if chunk.type == ChunkType.USAGE and chunk.usage_info:
-                        _record_llm_usage_stats(
-                            stats=session.get("stats"),
-                            provider=config.llm.provider,
-                            model=config.llm.model,
-                            usage_info=chunk.usage_info,
-                            started_at=llm_started_at,
-                            phase=plan.phase,
-                            iteration=usage_iteration,
+
+                llm_started_at = time.monotonic()
+                usage_iteration = 0
+                try:
+                    async for chunk in agent.run(messages, phase=plan.phase):
+                        if chunk.type.value == "keepalive":
+                            yield {"comment": "ping"}
+                            continue
+                        if chunk.type == ChunkType.USAGE and chunk.usage_info:
+                            _record_llm_usage_stats(
+                                stats=session.get("stats"),
+                                provider=config.llm.provider,
+                                model=config.llm.model,
+                                usage_info=chunk.usage_info,
+                                started_at=llm_started_at,
+                                phase=plan.phase,
+                                iteration=usage_iteration,
+                            )
+                            usage_iteration += 1
+                            llm_started_at = time.monotonic()
+                            continue
+                        if chunk.type == ChunkType.CONTEXT_COMPRESSION:
+                            yield json.dumps(
+                                {
+                                    "type": "context_compression",
+                                    "compression_info": chunk.compression_info,
+                                },
+                                ensure_ascii=False,
+                            )
+                            continue
+                        event_type = (
+                            "tool_call"
+                            if chunk.tool_call and chunk.type.value == "tool_call_start"
+                            else "tool_result"
+                            if chunk.tool_result and chunk.type.value == "tool_result"
+                            else chunk.type.value
                         )
-                        usage_iteration += 1
-                        llm_started_at = time.monotonic()
-                        continue
-                    if chunk.type == ChunkType.CONTEXT_COMPRESSION:
+                        event_data = {"type": event_type}
+                        if chunk.content:
+                            event_data["content"] = chunk.content
+                        if chunk.tool_call:
+                            tool_call_names[chunk.tool_call.id] = chunk.tool_call.name
+                            tool_call_args[chunk.tool_call.id] = (
+                                chunk.tool_call.arguments or {}
+                            )
+                            event_data["tool_call"] = {
+                                "id": chunk.tool_call.id,
+                                "name": chunk.tool_call.name,
+                                "arguments": chunk.tool_call.arguments,
+                            }
+                        if chunk.tool_result:
+                            event_data["tool_result"] = {
+                                "tool_call_id": chunk.tool_result.tool_call_id,
+                                "status": chunk.tool_result.status,
+                                "data": chunk.tool_result.data,
+                                "error": chunk.tool_result.error,
+                                "error_code": chunk.tool_result.error_code,
+                                "suggestion": chunk.tool_result.suggestion,
+                            }
+                            _record_tool_result_stats(
+                                stats=session.get("stats"),
+                                tool_call_names=tool_call_names,
+                                tool_call_args=tool_call_args,
+                                result=chunk.tool_result,
+                                phase=plan.phase,
+                            )
+                            # Apply pending state_changes / validation_errors from on_validate hook
+                            _stats = session.get("stats")
+                            if _stats and _stats.tool_calls:
+                                _pending_sc = session.pop("_pending_state_changes", None)
+                                if _pending_sc is not None:
+                                    _stats.tool_calls[-1].state_changes = _pending_sc
+                                _pending_ve = session.pop(
+                                    "_pending_validation_errors", None
+                                )
+                                if _pending_ve is not None:
+                                    _stats.tool_calls[-1].validation_errors = _pending_ve
+                                _pending_js = session.pop("_pending_judge_scores", None)
+                                if _pending_js is not None:
+                                    _stats.tool_calls[-1].judge_scores = _pending_js
+                        while not keepalive_queue.empty():
+                            yield keepalive_queue.get_nowait()
+                        yield json.dumps(event_data, ensure_ascii=False)
+                        if (
+                            chunk.tool_result
+                            and chunk.tool_result.status == "success"
+                            and tool_call_names.get(chunk.tool_result.tool_call_id)
+                            == "update_plan_state"
+                        ):
+                            result_data = (
+                                chunk.tool_result.data
+                                if isinstance(chunk.tool_result.data, dict)
+                                else {}
+                            )
+                            updated_field = None
+                            if isinstance(chunk.tool_result.data, dict):
+                                updated_field = chunk.tool_result.data.get("updated_field")
+                            if result_data.get("backtracked"):
+                                await _rotate_trip_on_reset_backtrack(
+                                    user_id=session["user_id"],
+                                    plan=plan,
+                                    to_phase=int(result_data.get("to_phase", plan.phase)),
+                                    reason_text=str(result_data.get("reason", "")),
+                                )
+                            elif updated_field == "selected_skeleton_id":
+                                _schedule_memory_event(
+                                    user_id=session["user_id"],
+                                    session_id=plan.session_id,
+                                    event_type="accept",
+                                    object_type="skeleton",
+                                    object_payload=chunk.tool_result.data or {},
+                                )
+                            elif updated_field == "selected_transport":
+                                _schedule_memory_event(
+                                    user_id=session["user_id"],
+                                    session_id=plan.session_id,
+                                    event_type="accept",
+                                    object_type="transport",
+                                    object_payload=chunk.tool_result.data or {},
+                                )
+                            elif updated_field == "accommodation":
+                                _schedule_memory_event(
+                                    user_id=session["user_id"],
+                                    session_id=plan.session_id,
+                                    event_type="accept",
+                                    object_type="hotel",
+                                    object_payload=chunk.tool_result.data or {},
+                                )
+                            yield json.dumps(
+                                {"type": "state_update", "plan": plan.to_dict()},
+                                ensure_ascii=False,
+                            )
+                except LLMError as exc:
+                    if exc.failure_phase == "cancelled":
+                        run.status = "cancelled"
+                        run.finished_at = time.time()
                         yield json.dumps(
                             {
-                                "type": "context_compression",
-                                "compression_info": chunk.compression_info,
+                                "type": "done",
+                                "run_id": run.run_id,
+                                "run_status": "cancelled",
                             },
                             ensure_ascii=False,
                         )
-                        continue
-                    event_type = (
-                        "tool_call"
-                        if chunk.tool_call and chunk.type.value == "tool_call_start"
-                        else "tool_result"
-                        if chunk.tool_result and chunk.type.value == "tool_result"
-                        else chunk.type.value
-                    )
-                    event_data = {"type": event_type}
-                    if chunk.content:
-                        event_data["content"] = chunk.content
-                    if chunk.tool_call:
-                        tool_call_names[chunk.tool_call.id] = chunk.tool_call.name
-                        tool_call_args[chunk.tool_call.id] = (
-                            chunk.tool_call.arguments or {}
+                    else:
+                        run.status = "failed"
+                        run.error_code = exc.code.value
+                        run.finished_at = time.time()
+                        logger.exception(
+                            "LLM error for session %s: %s", plan.session_id, exc.code.value
                         )
-                        event_data["tool_call"] = {
-                            "id": chunk.tool_call.id,
-                            "name": chunk.tool_call.name,
-                            "arguments": chunk.tool_call.arguments,
-                        }
-                    if chunk.tool_result:
-                        event_data["tool_result"] = {
-                            "tool_call_id": chunk.tool_result.tool_call_id,
-                            "status": chunk.tool_result.status,
-                            "data": chunk.tool_result.data,
-                            "error": chunk.tool_result.error,
-                            "error_code": chunk.tool_result.error_code,
-                            "suggestion": chunk.tool_result.suggestion,
-                        }
-                        _record_tool_result_stats(
-                            stats=session.get("stats"),
-                            tool_call_names=tool_call_names,
-                            tool_call_args=tool_call_args,
-                            result=chunk.tool_result,
-                            phase=plan.phase,
-                        )
-                        # Apply pending state_changes / validation_errors from on_validate hook
-                        _stats = session.get("stats")
-                        if _stats and _stats.tool_calls:
-                            _pending_sc = session.pop("_pending_state_changes", None)
-                            if _pending_sc is not None:
-                                _stats.tool_calls[-1].state_changes = _pending_sc
-                            _pending_ve = session.pop(
-                                "_pending_validation_errors", None
-                            )
-                            if _pending_ve is not None:
-                                _stats.tool_calls[-1].validation_errors = _pending_ve
-                            _pending_js = session.pop("_pending_judge_scores", None)
-                            if _pending_js is not None:
-                                _stats.tool_calls[-1].judge_scores = _pending_js
-                    yield json.dumps(event_data, ensure_ascii=False)
-                    if (
-                        chunk.tool_result
-                        and chunk.tool_result.status == "success"
-                        and tool_call_names.get(chunk.tool_result.tool_call_id)
-                        == "update_plan_state"
-                    ):
-                        result_data = (
-                            chunk.tool_result.data
-                            if isinstance(chunk.tool_result.data, dict)
-                            else {}
-                        )
-                        updated_field = None
-                        if isinstance(chunk.tool_result.data, dict):
-                            updated_field = chunk.tool_result.data.get("updated_field")
-                        if result_data.get("backtracked"):
-                            await _rotate_trip_on_reset_backtrack(
-                                user_id=session["user_id"],
-                                plan=plan,
-                                to_phase=int(result_data.get("to_phase", plan.phase)),
-                                reason_text=str(result_data.get("reason", "")),
-                            )
-                        elif updated_field == "selected_skeleton_id":
-                            _schedule_memory_event(
-                                user_id=session["user_id"],
-                                session_id=plan.session_id,
-                                event_type="accept",
-                                object_type="skeleton",
-                                object_payload=chunk.tool_result.data or {},
-                            )
-                        elif updated_field == "selected_transport":
-                            _schedule_memory_event(
-                                user_id=session["user_id"],
-                                session_id=plan.session_id,
-                                event_type="accept",
-                                object_type="transport",
-                                object_payload=chunk.tool_result.data or {},
-                            )
-                        elif updated_field == "accommodation":
-                            _schedule_memory_event(
-                                user_id=session["user_id"],
-                                session_id=plan.session_id,
-                                event_type="accept",
-                                object_type="hotel",
-                                object_payload=chunk.tool_result.data or {},
-                            )
                         yield json.dumps(
-                            {"type": "state_update", "plan": plan.to_dict()},
+                            {
+                                "type": "error",
+                                "error_code": exc.code.value,
+                                "retryable": exc.retryable,
+                                "can_continue": False,
+                                "provider": exc.provider,
+                                "model": exc.model,
+                                "failure_phase": exc.failure_phase,
+                                "message": _user_friendly_message(exc),
+                                "error": exc.raw_error,
+                            },
                             ensure_ascii=False,
                         )
-            except LLMError as exc:
-                logger.exception(
-                    "LLM error for session %s: %s", plan.session_id, exc.code.value
-                )
-                yield json.dumps(
-                    {
-                        "type": "error",
-                        "error_code": exc.code.value,
-                        "retryable": exc.retryable,
-                        "can_continue": False,
-                        "provider": exc.provider,
-                        "model": exc.model,
-                        "failure_phase": exc.failure_phase,
-                        "message": _user_friendly_message(exc),
-                        "error": exc.raw_error,
-                    },
-                    ensure_ascii=False,
-                )
-            except Exception as exc:
-                logger.exception("Agent stream failed for session %s", plan.session_id)
-                yield json.dumps(
-                    {
-                        "type": "error",
-                        "error_code": "AGENT_STREAM_ERROR",
-                        "retryable": False,
-                        "can_continue": False,
-                        "message": "系统内部错误，请稍后重试。",
-                        "error": str(exc),
-                    },
-                    ensure_ascii=False,
-                )
-
-            # Fallback：如果本轮 agent 没触发 backtrack，检查关键词 fallback
-            if plan.phase == phase_before_run:
-                backtrack_target = _detect_backtrack(req.message, plan)
-                if backtrack_target is not None:
-                    reason = f"fallback回退：{req.message[:50]}"
-                    tool_call_id = f"fallback.update_plan_state:{plan.version}"
+                except Exception as exc:
+                    run.status = "failed"
+                    run.error_code = "AGENT_STREAM_ERROR"
+                    run.finished_at = time.time()
+                    logger.exception("Agent stream failed for session %s", plan.session_id)
                     yield json.dumps(
                         {
-                            "type": "tool_call",
-                            "tool_call": {
-                                "id": tool_call_id,
-                                "name": "update_plan_state",
-                                "arguments": {
-                                    "field": "backtrack",
-                                    "value": {
-                                        "to_phase": backtrack_target,
-                                        "reason": reason,
+                            "type": "error",
+                            "error_code": "AGENT_STREAM_ERROR",
+                            "retryable": False,
+                            "can_continue": False,
+                            "message": "系统内部错误，请稍后重试。",
+                            "error": str(exc),
+                        },
+                        ensure_ascii=False,
+                    )
+
+                # Fallback：如果本轮 agent 没触发 backtrack，检查关键词 fallback
+                if plan.phase == phase_before_run:
+                    backtrack_target = _detect_backtrack(req.message, plan)
+                    if backtrack_target is not None:
+                        reason = f"fallback回退：{req.message[:50]}"
+                        tool_call_id = f"fallback.update_plan_state:{plan.version}"
+                        yield json.dumps(
+                            {
+                                "type": "tool_call",
+                                "tool_call": {
+                                    "id": tool_call_id,
+                                    "name": "update_plan_state",
+                                    "arguments": {
+                                        "field": "backtrack",
+                                        "value": {
+                                            "to_phase": backtrack_target,
+                                            "reason": reason,
+                                        },
                                     },
                                 },
                             },
-                        },
-                        ensure_ascii=False,
-                    )
-                    snapshot_path = await state_mgr.save_snapshot(plan)
-                    from_phase = plan.phase
-                    phase_router.prepare_backtrack(
-                        plan,
-                        backtrack_target,
-                        reason,
-                        snapshot_path,
-                    )
-                    await _rotate_trip_on_reset_backtrack(
-                        user_id=session["user_id"],
-                        plan=plan,
-                        to_phase=backtrack_target,
-                        reason_text=req.message,
-                    )
-                    session["needs_rebuild"] = True
-                    yield json.dumps(
-                        {
-                            "type": "tool_result",
-                            "tool_result": {
-                                "tool_call_id": tool_call_id,
-                                "status": "success",
-                                "data": {
-                                    "backtracked": True,
-                                    "from_phase": from_phase,
-                                    "to_phase": backtrack_target,
-                                    "reason": reason,
-                                    "next_action": "请向用户确认回退结果，不要继续调用其他工具",
+                            ensure_ascii=False,
+                        )
+                        snapshot_path = await state_mgr.save_snapshot(plan)
+                        from_phase = plan.phase
+                        phase_router.prepare_backtrack(
+                            plan,
+                            backtrack_target,
+                            reason,
+                            snapshot_path,
+                        )
+                        await _rotate_trip_on_reset_backtrack(
+                            user_id=session["user_id"],
+                            plan=plan,
+                            to_phase=backtrack_target,
+                            reason_text=req.message,
+                        )
+                        session["needs_rebuild"] = True
+                        yield json.dumps(
+                            {
+                                "type": "tool_result",
+                                "tool_result": {
+                                    "tool_call_id": tool_call_id,
+                                    "status": "success",
+                                    "data": {
+                                        "backtracked": True,
+                                        "from_phase": from_phase,
+                                        "to_phase": backtrack_target,
+                                        "reason": reason,
+                                        "next_action": "请向用户确认回退结果，不要继续调用其他工具",
+                                    },
+                                    "error": None,
+                                    "error_code": None,
+                                    "suggestion": None,
                                 },
-                                "error": None,
-                                "error_code": None,
-                                "suggestion": None,
                             },
-                        },
-                        ensure_ascii=False,
-                    )
-                    _schedule_memory_event(
-                        user_id=session["user_id"],
-                        session_id=plan.session_id,
-                        event_type="reject",
-                        object_type="phase_output",
-                        object_payload={
-                            "from_phase": from_phase,
-                            "to_phase": backtrack_target,
-                            "reason": reason,
-                        },
-                        reason_text=reason,
-                    )
-
-            if plan.phase < phase_before_run:
-                _cancel_memory_extraction(plan.session_id)
-                await _apply_message_fallbacks(plan, req.message, phase_router)
-
-            await state_mgr.save(plan)
-            await _persist_messages(plan.session_id, messages)
-            await session_store.update(
-                plan.session_id,
-                phase=plan.phase,
-                title=_generate_title(plan),
-            )
-            if plan.phase != phase_before_run:
-                await archive_store.save_snapshot(
-                    plan.session_id,
-                    plan.phase,
-                    json.dumps(plan.to_dict(), ensure_ascii=False),
-                )
-            if plan.phase == 7:
-                await archive_store.save(
-                    plan.session_id,
-                    json.dumps(plan.to_dict(), ensure_ascii=False),
-                    summary=_generate_title(plan),
-                )
-                await session_store.update(plan.session_id, status="archived")
-                if config.memory.enabled:
-                    try:
-                        await _append_trip_episode_once(
+                            ensure_ascii=False,
+                        )
+                        _schedule_memory_event(
                             user_id=session["user_id"],
                             session_id=plan.session_id,
-                            plan=plan,
+                            event_type="reject",
+                            object_type="phase_output",
+                            object_payload={
+                                "from_phase": from_phase,
+                                "to_phase": backtrack_target,
+                                "reason": reason,
+                            },
+                            reason_text=reason,
                         )
-                    except Exception:
-                        pass
-            _schedule_memory_extraction(
-                session_id=plan.session_id,
-                user_id=session["user_id"],
-                messages_snapshot=list(messages),
-                plan_snapshot=plan,
-            )
-            yield json.dumps(
-                {"type": "state_update", "plan": plan.to_dict()},
-                ensure_ascii=False,
-            )
+
+                if plan.phase < phase_before_run:
+                    _cancel_memory_extraction(plan.session_id)
+                    await _apply_message_fallbacks(plan, req.message, phase_router)
+
+                if run.status == "running":
+                    run.status = "completed"
+                    run.finished_at = time.time()
+
+                await state_mgr.save(plan)
+                await _persist_messages(plan.session_id, messages)
+                await session_store.update(
+                    plan.session_id,
+                    phase=plan.phase,
+                    title=_generate_title(plan),
+                    last_run_id=run.run_id,
+                    last_run_status=run.status,
+                    last_run_error=run.error_code,
+                )
+                if plan.phase != phase_before_run:
+                    await archive_store.save_snapshot(
+                        plan.session_id,
+                        plan.phase,
+                        json.dumps(plan.to_dict(), ensure_ascii=False),
+                    )
+                if plan.phase == 7:
+                    await archive_store.save(
+                        plan.session_id,
+                        json.dumps(plan.to_dict(), ensure_ascii=False),
+                        summary=_generate_title(plan),
+                    )
+                    await session_store.update(plan.session_id, status="archived")
+                    if config.memory.enabled:
+                        try:
+                            await _append_trip_episode_once(
+                                user_id=session["user_id"],
+                                session_id=plan.session_id,
+                                plan=plan,
+                            )
+                        except Exception:
+                            pass
+                _schedule_memory_extraction(
+                    session_id=plan.session_id,
+                    user_id=session["user_id"],
+                    messages_snapshot=list(messages),
+                    plan_snapshot=plan,
+                )
+                yield json.dumps(
+                    {"type": "state_update", "plan": plan.to_dict()},
+                    ensure_ascii=False,
+                )
+
+            finally:
+                keepalive_task.cancel()
+                session.pop("_cancel_event", None)
+                session.pop("_current_run", None)
 
         return EventSourceResponse(event_stream())
+
+    @app.post("/api/chat/{session_id}/cancel")
+    async def cancel_chat(session_id: str):
+        session = sessions.get(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        cancel_event = session.get("_cancel_event")
+        if cancel_event:
+            cancel_event.set()
+        return {"status": "cancelled"}
 
     from api.trace import build_trace
 
