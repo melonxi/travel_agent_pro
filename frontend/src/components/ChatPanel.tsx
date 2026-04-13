@@ -91,9 +91,10 @@ function computeStateChanges(
 interface Props {
   sessionId: string
   onPlanUpdate: (plan: TravelPlanState) => void
+  onMemoryRecall?: (itemIds: string[]) => void
 }
 
-export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
+export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -332,6 +333,8 @@ export default function ChatPanel({ sessionId, onPlanUpdate }: Props) {
               },
             ])
           }
+        } else if (event.type === 'memory_recall' && event.item_ids) {
+          onMemoryRecall?.(event.item_ids)
         }
       })
     } finally {

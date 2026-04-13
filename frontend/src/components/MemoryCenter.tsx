@@ -8,6 +8,7 @@ interface MemoryCenterProps {
   open: boolean;
   onClose: () => void;
   memory: UseMemoryReturn;
+  recalledIds?: string[];
 }
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -40,11 +41,13 @@ function confidenceLevel(c: number): 'high' | 'medium' | 'low' {
 
 function MemoryCard({
   item,
+  recalled,
   onConfirm,
   onReject,
   onDelete,
 }: {
   item: MemoryItem;
+  recalled?: boolean;
   onConfirm?: (id: string) => void;
   onReject?: (id: string) => void;
   onDelete?: (id: string) => void;
@@ -55,6 +58,7 @@ function MemoryCard({
     'memory-card',
     item.status === 'pending' && 'is-pending',
     (item.status === 'rejected' || item.status === 'obsolete') && 'is-archived',
+    recalled && 'is-recalled',
   ]
     .filter(Boolean)
     .join(' ');
@@ -162,6 +166,7 @@ export default function MemoryCenter({
   open,
   onClose,
   memory,
+  recalledIds = [],
 }: MemoryCenterProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('active');
 
@@ -286,6 +291,7 @@ export default function MemoryCenter({
               <MemoryCard
                 key={item.id}
                 item={item}
+                recalled={recalledIds.includes(item.id)}
                 onConfirm={confirmMemory}
                 onReject={rejectMemory}
                 onDelete={deleteMemory}
