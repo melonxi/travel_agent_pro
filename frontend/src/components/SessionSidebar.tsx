@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import SessionItem from './SessionItem'
+import MemoryCenter from './MemoryCenter'
+import { useMemory } from '../hooks/useMemory'
 import type { SessionMeta } from '../types/session'
 
 interface Props {
@@ -19,6 +21,8 @@ export default function SessionSidebar({
 }: Props) {
   const [collapsed, setCollapsed] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [memoryOpen, setMemoryOpen] = useState(false)
+  const memory = useMemory('default_user')
 
   const activeSessions = sessions.filter((session) => session.status === 'active')
   const archivedSessions = sessions.filter((session) => session.status === 'archived')
@@ -40,22 +44,26 @@ export default function SessionSidebar({
 
   if (collapsed) {
     return (
-      <aside className="session-sidebar is-collapsed" aria-label="会话列表">
-        <button
-          type="button"
-          className="sidebar-toggle"
-          onClick={() => setCollapsed(false)}
-          title="展开侧边栏"
-          aria-label="展开侧边栏"
-        >
-          &#9654;
-        </button>
-      </aside>
+      <>
+        <aside className="session-sidebar is-collapsed" aria-label="会话列表">
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setCollapsed(false)}
+            title="展开侧边栏"
+            aria-label="展开侧边栏"
+          >
+            &#9654;
+          </button>
+        </aside>
+        <MemoryCenter open={memoryOpen} onClose={() => setMemoryOpen(false)} memory={memory} />
+      </>
     )
   }
 
   return (
-    <aside className="session-sidebar" aria-label="会话列表">
+    <>
+      <aside className="session-sidebar" aria-label="会话列表">
       <div className="sidebar-header">
         <button
           type="button"
@@ -104,6 +112,19 @@ export default function SessionSidebar({
       </div>
 
       {confirmDelete && <div className="sidebar-confirm-toast">再次点击确认删除</div>}
-    </aside>
+
+        <button
+          type="button"
+          className="sidebar-memory-btn"
+          onClick={() => setMemoryOpen(true)}
+        >
+          🧠 记忆管理
+          {memory.pendingCount > 0 && (
+            <span className="memory-pending-badge">{memory.pendingCount}</span>
+          )}
+        </button>
+      </aside>
+      <MemoryCenter open={memoryOpen} onClose={() => setMemoryOpen(false)} memory={memory} />
+    </>
   )
 }
