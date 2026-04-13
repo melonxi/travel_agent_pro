@@ -66,7 +66,11 @@ function MemoryCard({
     <div className={cardClass}>
       <div className="memory-card-body">
         <span className="memory-domain-tag">{domainLabel}</span>
-        <div className="memory-content">{String(item.value)}</div>
+        <div className="memory-content">
+          {typeof item.value === 'object' && item.value !== null
+            ? JSON.stringify(item.value, null, 2)
+            : String(item.value)}
+        </div>
         {item.source?.quote && (
           <div className="memory-source">{item.source.quote}</div>
         )}
