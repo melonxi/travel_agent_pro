@@ -33,6 +33,11 @@ def _lookup_pricing(model: str) -> dict[str, float] | None:
     return None
 
 
+def lookup_pricing(model: str) -> dict[str, float] | None:
+    """Public API for model pricing lookup."""
+    return _lookup_pricing(model)
+
+
 @dataclass
 class LLMCallRecord:
     provider: str
