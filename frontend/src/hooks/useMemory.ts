@@ -26,7 +26,9 @@ export function useMemory(userId: string): UseMemoryReturn {
 
   const confirmMemory = useCallback(
     async (itemId: string) => {
-      const prev = memoriesRef.current.slice();
+      const target = memoriesRef.current.find((m) => m.id === itemId);
+      if (!target) return;
+      const prevStatus = target.status;
       setMemories((ms) =>
         ms.map((m) =>
           m.id === itemId ? { ...m, status: 'active' as const } : m,
@@ -40,7 +42,11 @@ export function useMemory(userId: string): UseMemoryReturn {
         });
         if (!res.ok) throw new Error();
       } catch {
-        setMemories(prev);
+        setMemories((ms) =>
+          ms.map((m) =>
+            m.id === itemId ? { ...m, status: prevStatus } : m,
+          ),
+        );
         setError('确认失败，请重试');
       }
     },
@@ -49,7 +55,9 @@ export function useMemory(userId: string): UseMemoryReturn {
 
   const rejectMemory = useCallback(
     async (itemId: string) => {
-      const prev = memoriesRef.current.slice();
+      const target = memoriesRef.current.find((m) => m.id === itemId);
+      if (!target) return;
+      const prevStatus = target.status;
       setMemories((ms) =>
         ms.map((m) =>
           m.id === itemId ? { ...m, status: 'rejected' as const } : m,
@@ -63,7 +71,11 @@ export function useMemory(userId: string): UseMemoryReturn {
         });
         if (!res.ok) throw new Error();
       } catch {
-        setMemories(prev);
+        setMemories((ms) =>
+          ms.map((m) =>
+            m.id === itemId ? { ...m, status: prevStatus } : m,
+          ),
+        );
         setError('拒绝失败，请重试');
       }
     },
@@ -72,7 +84,9 @@ export function useMemory(userId: string): UseMemoryReturn {
 
   const deleteMemory = useCallback(
     async (itemId: string) => {
-      const prev = memoriesRef.current.slice();
+      const target = memoriesRef.current.find((m) => m.id === itemId);
+      if (!target) return;
+      const prevStatus = target.status;
       setMemories((ms) =>
         ms.map((m) =>
           m.id === itemId ? { ...m, status: 'obsolete' as const } : m,
@@ -84,7 +98,11 @@ export function useMemory(userId: string): UseMemoryReturn {
         });
         if (!res.ok) throw new Error();
       } catch {
-        setMemories(prev);
+        setMemories((ms) =>
+          ms.map((m) =>
+            m.id === itemId ? { ...m, status: prevStatus } : m,
+          ),
+        );
         setError('删除失败，请重试');
       }
     },
