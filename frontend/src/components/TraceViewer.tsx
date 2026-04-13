@@ -63,6 +63,9 @@ function ToolCallRow({ tool, maxDuration }: { tool: TraceToolCall; maxDuration: 
     <div className="trace-tool-row">
       <span className="tool-name">{tool.name}</span>
       <span className={`tool-side-effect ${tool.side_effect}`}>{tool.side_effect}</span>
+      {tool.parallel_group != null && (
+        <span className="tool-parallel-badge" title={`并行组 ${tool.parallel_group}`}>P</span>
+      )}
       <div className="tool-bar-container">
         <div
           className={`tool-bar status-${tool.status}`}
@@ -70,6 +73,20 @@ function ToolCallRow({ tool, maxDuration }: { tool: TraceToolCall; maxDuration: 
         />
       </div>
       <span className="tool-duration">{formatDuration(tool.duration_ms)}</span>
+      {tool.validation_errors && tool.validation_errors.length > 0 && (
+        <div className="tool-validation-errors">
+          {tool.validation_errors.map((err, i) => (
+            <div key={i} className="validation-error-item">{err}</div>
+          ))}
+        </div>
+      )}
+      {tool.judge_scores && (
+        <div className="tool-judge-scores">
+          {Object.entries(tool.judge_scores).map(([key, val]) => (
+            <span key={key} className="judge-score-tag">{key}: {val}</span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -109,6 +126,9 @@ function IterationRow({ iteration, maxLLMDuration }: { iteration: TraceIteration
       <div className="trace-iteration-header" onClick={() => setExpanded(!expanded)}>
         <span className="iter-index">#{iteration.index}</span>
         <span className="iter-phase">P{iteration.phase}</span>
+        {iteration.compression_event && (
+          <span className="iter-compression" title={iteration.compression_event}>C</span>
+        )}
         {llm && (
           <>
             <div className="iter-bar-container">
@@ -126,6 +146,9 @@ function IterationRow({ iteration, maxLLMDuration }: { iteration: TraceIteration
       </div>
       {expanded && (
         <div className="trace-iteration-detail">
+          {iteration.compression_event && (
+            <div className="trace-compression-info">{iteration.compression_event}</div>
+          )}
           {iteration.tool_calls.length > 0 ? (
             <div className="trace-tool-list">
               {iteration.tool_calls.map((tool, i) => (
@@ -136,6 +159,12 @@ function IterationRow({ iteration, maxLLMDuration }: { iteration: TraceIteration
             <div className="trace-no-tools">No tool calls</div>
           )}
           <StateDiffPanel changes={iteration.state_changes} />
+          {iteration.memory_hits && (
+            <div className="trace-memory-hits">
+              命中 {iteration.memory_hits.item_ids.length} 条记忆
+              （core {iteration.memory_hits.core} / trip {iteration.memory_hits.trip} / phase {iteration.memory_hits.phase}）
+            </div>
+          )}
         </div>
       )}
     </div>
