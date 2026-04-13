@@ -30,10 +30,11 @@ _SEARCH_OUTPUT_TOOLS = {"search_flights", "search_accommodations", "search_train
 _MAX_INPUT_LENGTH = 5000
 
 _REQUIRED_RESULT_FIELDS: dict[str, list[str]] = {
-    "search_flights": ["price", "departure_time", "arrival_time"],
-    "search_accommodations": ["price", "name"],
-    "search_trains": ["price", "departure_time"],
+    "search_flights": ["price", "departure_time", "arrival_time", "airline"],
+    "search_accommodations": ["price", "name", "location"],
+    "search_trains": ["price", "departure_time", "arrival_time"],
 }
+_CRITICAL_FIELDS = {"price"}
 
 
 @dataclass
@@ -132,10 +133,15 @@ class ToolGuardrail:
                 if isinstance(item, dict):
                     missing = [f for f in required if f not in item]
                     if missing:
+                        level = (
+                            "error"
+                            if any(field in _CRITICAL_FIELDS for field in missing)
+                            else "warn"
+                        )
                         return GuardrailResult(
                             allowed=True,
                             reason=f"搜索结果缺少必要字段: {', '.join(missing)}",
-                            level="warn",
+                            level=level,
                         )
 
         return GuardrailResult()
