@@ -463,6 +463,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 if compression_events is not None:
                     compression_events.append(
                         {
+                            "timestamp": time.time(),
                             "message_count_before": message_count_before,
                             "message_count_after": len(msgs),
                             "must_keep_count": 0,
@@ -531,6 +532,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             if compression_events is not None:
                 compression_events.append(
                     {
+                        "timestamp": time.time(),
                         "message_count_before": message_count_before,
                         "message_count_after": len(msgs),
                         "must_keep_count": len(must_keep),
