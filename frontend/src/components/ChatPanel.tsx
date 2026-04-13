@@ -104,7 +104,9 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
   const inputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
   const prevPlanRef = useRef<TravelPlanState | null>(null)
-  const { sendMessage } = useSSE()
+  const lastEventTimeRef = useRef<number>(Date.now())
+  const [connectionWarning, setConnectionWarning] = useState(false)
+  const { sendMessage, cancel } = useSSE()
 
   const createMessageId = () =>
     `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -119,6 +121,19 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     if (!streaming) {
       inputRef.current?.focus()
     }
+  }, [streaming])
+
+  const KEEPALIVE_TIMEOUT_MS = 30_000
+  const KEEPALIVE_CHECK_INTERVAL_MS = 5_000
+
+  useEffect(() => {
+    if (!streaming) return
+    const timer = setInterval(() => {
+      if (Date.now() - lastEventTimeRef.current > KEEPALIVE_TIMEOUT_MS) {
+        setConnectionWarning(true)
+      }
+    }, KEEPALIVE_CHECK_INTERVAL_MS)
+    return () => clearInterval(timer)
   }, [streaming])
 
   useEffect(() => {
@@ -218,9 +233,20 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     ]
   }
 
+  const handleStop = async () => {
+    try {
+      await cancel(sessionId)
+    } finally {
+      setStreaming(false)
+      sendingRef.current = false
+    }
+  }
+
   const handleSend = async () => {
     if (!input.trim() || sendingRef.current) return
 
+    lastEventTimeRef.current = Date.now()
+    setConnectionWarning(false)
     sendingRef.current = true
     const userMsg = input.trim()
     let currentAssistantId = createMessageId()
@@ -237,6 +263,8 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
 
     try {
       await sendMessage(sessionId, userMsg, (event: SSEEvent) => {
+        lastEventTimeRef.current = Date.now()
+        setConnectionWarning(false)
         if (event.type === 'text_delta' && event.content) {
           assistantContent += event.content
           const targetId = currentAssistantId
@@ -381,6 +409,11 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
         {streaming && lastMsg?.role === 'assistant' && (
           <span className="streaming-cursor" />
         )}
+        {connectionWarning && streaming && (
+          <div className="connection-warning">
+            连接可能已断开，可尝试停止后重新发送
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
       <div className="input-bar">
@@ -398,16 +431,18 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
             disabled={streaming}
           />
         </div>
-        <button type="button" className={`send-btn${streaming ? ' is-streaming' : ''}`} onClick={() => void handleSend()} disabled={streaming || !input.trim()}>
-          {streaming ? (
-            <span className="send-spinner" />
-          ) : (
+        {streaming ? (
+          <button type="button" className="stop-btn" onClick={() => void handleStop()} title="停止生成">
+            ■
+          </button>
+        ) : (
+          <button type="button" className="send-btn" onClick={() => void handleSend()} disabled={!input.trim()}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="22" y1="2" x2="11" y2="13" />
               <polygon points="22 2 15 22 11 13 2 9 22 2" />
             </svg>
-          )}
-        </button>
+          </button>
+        )}
       </div>
     </div>
   )
