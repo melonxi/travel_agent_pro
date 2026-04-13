@@ -6,6 +6,7 @@ import Timeline from './components/Timeline'
 import BudgetChart from './components/BudgetChart'
 import Phase3Workbench from './components/Phase3Workbench'
 import SessionSidebar from './components/SessionSidebar'
+import TraceViewer from './components/TraceViewer'
 import type { TravelPlanState } from './types/plan'
 import type { SessionMeta } from './types/session'
 
@@ -57,6 +58,8 @@ export default function App() {
   const [sessionList, setSessionList] = useState<SessionMeta[]>([])
   const [chatKey, setChatKey] = useState(0)
   const [bootstrapping, setBootstrapping] = useState(true)
+  const [rightTab, setRightTab] = useState<'plan' | 'trace'>('plan')
+  const [traceTrigger, setTraceTrigger] = useState(0)
   const { dark, toggle: toggleTheme } = useTheme()
   const initializedRef = useRef(false)
   const showPhase3Workbench = Boolean(
@@ -111,6 +114,7 @@ export default function App() {
 
   const handlePlanUpdate = useCallback((newPlan: TravelPlanState) => {
     setPlan(newPlan)
+    setTraceTrigger((n) => n + 1)
     void refreshSessionList()
   }, [refreshSessionList])
 
@@ -208,44 +212,64 @@ export default function App() {
         />
         <ChatPanel key={chatKey} sessionId={sessionId} onPlanUpdate={handlePlanUpdate} />
         <div className="right-panel">
-          {plan && plan.destination && (
-            <div className="destination-banner">
-              <div className="dest-label">目的地</div>
-              <div className="dest-name">{plan.destination}</div>
-              {plan.dates && (
-                <div className="dest-dates">{plan.dates.start} → {plan.dates.end}</div>
-              )}
-              <div className="dest-meta">
-                {plan.budget && (
-                  <div className="dest-chip">
-                    预算 ¥{plan.budget.total.toLocaleString()}
-                  </div>
-                )}
-                {plan.accommodation && (
-                  <div className="dest-chip">
-                    住宿 {plan.accommodation.hotel ?? plan.accommodation.area}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          {plan && (
+          <div className="right-panel-tabs">
+            <button
+              className={`right-tab ${rightTab === 'plan' ? 'active' : ''}`}
+              onClick={() => setRightTab('plan')}
+            >
+              Plan
+            </button>
+            <button
+              className={`right-tab ${rightTab === 'trace' ? 'active' : ''}`}
+              onClick={() => setRightTab('trace')}
+            >
+              Trace
+            </button>
+          </div>
+          {rightTab === 'plan' ? (
             <>
-              {showPhase3Workbench && (
-                <div className="sidebar-section">
-                  <Phase3Workbench plan={plan} />
+              {plan && plan.destination && (
+                <div className="destination-banner">
+                  <div className="dest-label">目的地</div>
+                  <div className="dest-name">{plan.destination}</div>
+                  {plan.dates && (
+                    <div className="dest-dates">{plan.dates.start} → {plan.dates.end}</div>
+                  )}
+                  <div className="dest-meta">
+                    {plan.budget && (
+                      <div className="dest-chip">
+                        预算 ¥{plan.budget.total.toLocaleString()}
+                      </div>
+                    )}
+                    {plan.accommodation && (
+                      <div className="dest-chip">
+                        住宿 {plan.accommodation.hotel ?? plan.accommodation.area}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
-              <div className="sidebar-section">
-                <BudgetChart plan={plan} />
-              </div>
-              <div className="sidebar-section">
-                <MapView dailyPlans={plan.daily_plans} dark={dark} />
-              </div>
-              <div className="sidebar-section">
-                <Timeline dailyPlans={plan.daily_plans} />
-              </div>
+              {plan && (
+                <>
+                  {showPhase3Workbench && (
+                    <div className="sidebar-section">
+                      <Phase3Workbench plan={plan} />
+                    </div>
+                  )}
+                  <div className="sidebar-section">
+                    <BudgetChart plan={plan} />
+                  </div>
+                  <div className="sidebar-section">
+                    <MapView dailyPlans={plan.daily_plans} dark={dark} />
+                  </div>
+                  <div className="sidebar-section">
+                    <Timeline dailyPlans={plan.daily_plans} />
+                  </div>
+                </>
+              )}
             </>
+          ) : (
+            <TraceViewer sessionId={sessionId} refreshTrigger={traceTrigger} />
           )}
         </div>
       </div>
