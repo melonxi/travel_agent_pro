@@ -9,7 +9,9 @@ from agent.types import ToolCall
 
 _INJECTION_PATTERNS = (
     re.compile(r"ignore\s+(previous|all|above)\s+instructions", re.IGNORECASE),
-    re.compile(r"disregard\s+(previous|all|your)\s+(instructions|rules)", re.IGNORECASE),
+    re.compile(
+        r"disregard\s+(previous|all|your)\s+(instructions|rules)", re.IGNORECASE
+    ),
     re.compile(r"you\s+are\s+now\s+a", re.IGNORECASE),
     re.compile(r"system\s*prompt", re.IGNORECASE),
 )
@@ -31,8 +33,11 @@ _MAX_INPUT_LENGTH = 5000
 
 _REQUIRED_RESULT_FIELDS: dict[str, list[str]] = {
     "search_flights": ["price", "departure_time", "arrival_time", "airline"],
-    "search_accommodations": ["price", "name", "location"],
+    "search_accommodations": ["name", "location"],
     "search_trains": ["price", "departure_time", "arrival_time"],
+}
+_PRICE_ALIASES: dict[str, frozenset[str]] = {
+    "search_accommodations": frozenset({"price", "price_per_night"}),
 }
 _CRITICAL_FIELDS = {"price"}
 
@@ -68,9 +73,13 @@ class ToolGuardrail:
             values = self._iter_string_values(tc.arguments)
             for value in values:
                 if any(p.search(value) for p in _INJECTION_PATTERNS):
-                    return GuardrailResult(allowed=False, reason="检测到提示注入风险", level="error")
+                    return GuardrailResult(
+                        allowed=False, reason="检测到提示注入风险", level="error"
+                    )
                 if any(p.search(value) for p in _INJECTION_PATTERNS_ZH):
-                    return GuardrailResult(allowed=False, reason="检测到提示注入风险", level="error")
+                    return GuardrailResult(
+                        allowed=False, reason="检测到提示注入风险", level="error"
+                    )
 
         if not self._is_disabled("past_date"):
             today = self._today or date.today()
@@ -82,13 +91,19 @@ class ToolGuardrail:
                     except ValueError:
                         continue
                     if parsed < today:
-                        return GuardrailResult(allowed=False, reason=f"{field} 不能是过去日期", level="error")
+                        return GuardrailResult(
+                            allowed=False,
+                            reason=f"{field} 不能是过去日期",
+                            level="error",
+                        )
 
         if not self._is_disabled("empty_location"):
             for field in _LOCATION_FIELDS:
                 raw = tc.arguments.get(field)
                 if isinstance(raw, str) and not raw.strip():
-                    return GuardrailResult(allowed=False, reason=f"{field} 不能为空", level="error")
+                    return GuardrailResult(
+                        allowed=False, reason=f"{field} 不能为空", level="error"
+                    )
 
         if (
             not self._is_disabled("invalid_budget")
@@ -99,7 +114,11 @@ class ToolGuardrail:
             if isinstance(value, dict):
                 total = value.get("total")
                 if isinstance(total, (int, float)) and total <= 0:
-                    return GuardrailResult(allowed=False, reason="budget.total 不能为负数或零", level="error")
+                    return GuardrailResult(
+                        allowed=False,
+                        reason="budget.total 不能为负数或零",
+                        level="error",
+                    )
 
         return GuardrailResult()
 
@@ -121,7 +140,9 @@ class ToolGuardrail:
                 if isinstance(item, dict):
                     price = item.get("price")
                     if isinstance(price, (int, float)) and price > 100_000:
-                        return GuardrailResult(allowed=True, reason="结果中存在异常高价", level="warn")
+                        return GuardrailResult(
+                            allowed=True, reason="结果中存在异常高价", level="warn"
+                        )
 
         if (
             not self._is_disabled("missing_fields")
@@ -129,9 +150,13 @@ class ToolGuardrail:
             and isinstance(results, list)
         ):
             required = _REQUIRED_RESULT_FIELDS[tool_name]
+            aliases = _PRICE_ALIASES.get(tool_name)
             for item in results:
                 if isinstance(item, dict):
                     missing = [f for f in required if f not in item]
+                    # Check price aliases: if tool has aliases, require at least one present
+                    if aliases and not any(alias in item for alias in aliases):
+                        missing.append("price")
                     if missing:
                         level = (
                             "error"
