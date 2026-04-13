@@ -305,3 +305,30 @@ def test_session_stats_to_dict_includes_memory_hits():
     )
     d = stats.to_dict()
     assert d["memory_hit_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_update_plan_state_returns_previous_value():
+    """update_plan_state should include previous_value in result."""
+    from state.models import TravelPlanState
+    from tools.update_plan_state import make_update_plan_state_tool
+
+    plan = TravelPlanState(session_id="s1", phase=1, destination="北京")
+    tool_fn = make_update_plan_state_tool(plan)
+    result = await tool_fn(field="destination", value="东京")
+    assert result["previous_value"] == "北京"
+    assert result["updated_field"] == "destination"
+    assert plan.destination == "东京"
+
+
+@pytest.mark.asyncio
+async def test_update_plan_state_previous_value_none_for_new_field():
+    """previous_value is None when field was not previously set."""
+    from state.models import TravelPlanState
+    from tools.update_plan_state import make_update_plan_state_tool
+
+    plan = TravelPlanState(session_id="s1", phase=1)
+    tool_fn = make_update_plan_state_tool(plan)
+    result = await tool_fn(field="destination", value="东京")
+    assert result["previous_value"] is None
+    assert result["updated_field"] == "destination"
