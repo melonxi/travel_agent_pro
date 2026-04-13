@@ -1,10 +1,13 @@
 # backend/agent/loop.py
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, AsyncIterator
 
 from opentelemetry import trace
+
+from run import IterationProgress
 
 from agent.hooks import HookManager
 from agent.types import Message, Role, ToolCall, ToolResult
@@ -33,6 +36,7 @@ class AgentLoop:
         tool_choice_decider: Any | None = None,
         guardrail: Any | None = None,
         parallel_tool_execution: bool = True,
+        cancel_event: asyncio.Event | None = None,
     ):
         self.llm = llm
         self.tool_engine = tool_engine
@@ -54,6 +58,25 @@ class AgentLoop:
         self.parallel_tool_execution = parallel_tool_execution
         self._parallel_group_counter: int = 0
         self._prev_phase3_step: str | None = None
+        self.cancel_event = cancel_event
+        self._progress: IterationProgress = IterationProgress.NO_OUTPUT
+
+    @property
+    def progress(self) -> IterationProgress:
+        return self._progress
+
+    def _check_cancelled(self) -> None:
+        if self.cancel_event and self.cancel_event.is_set():
+            from llm.errors import LLMError, LLMErrorCode
+
+            raise LLMError(
+                code=LLMErrorCode.TRANSIENT,
+                message="用户取消了本轮生成",
+                retryable=False,
+                provider=getattr(self.llm, "provider_name", "unknown"),
+                model=getattr(self.llm, "model", "unknown"),
+                failure_phase="cancelled",
+            )
 
     async def run(
         self,
@@ -73,6 +96,8 @@ class AgentLoop:
             repair_hints_used: set[str] = set()
 
             for iteration in range(self.max_retries):  # safety limit on loop iterations
+                self._check_cancelled()
+                self._progress = IterationProgress.NO_OUTPUT
                 with tracer.start_as_current_span("agent_loop.iteration") as iter_span:
                     iter_span.set_attribute(AGENT_ITERATION, iteration)
 
@@ -121,7 +146,10 @@ class AgentLoop:
                         chat_kwargs["tool_choice"] = tool_choice
 
                     async for chunk in self.llm.chat(messages, **chat_kwargs):
+                        self._check_cancelled()
                         if chunk.type == ChunkType.TEXT_DELTA:
+                            if self._progress == IterationProgress.NO_OUTPUT:
+                                self._progress = IterationProgress.PARTIAL_TEXT
                             text_chunks.append(chunk.content or "")
                             yield chunk
                         elif chunk.type == ChunkType.USAGE:
@@ -129,6 +157,7 @@ class AgentLoop:
                         elif (
                             chunk.type == ChunkType.TOOL_CALL_START and chunk.tool_call
                         ):
+                            self._progress = IterationProgress.PARTIAL_TOOL_CALL
                             tool_calls.append(chunk.tool_call)
                             yield chunk
                         elif chunk.type == ChunkType.DONE:
@@ -227,6 +256,17 @@ class AgentLoop:
                                 ):
                                     saw_state_update = True
 
+                                if self._is_parallel_read_call(batch_tc):
+                                    if (
+                                        self._progress
+                                        != IterationProgress.TOOLS_WITH_WRITES
+                                    ):
+                                        self._progress = (
+                                            IterationProgress.TOOLS_READ_ONLY
+                                        )
+                                else:
+                                    self._progress = IterationProgress.TOOLS_WITH_WRITES
+
                                 messages.append(
                                     Message(
                                         role=Role.TOOL,
@@ -253,6 +293,7 @@ class AgentLoop:
                             continue
 
                         if result is None:
+                            self._check_cancelled()
                             result = await self.tool_engine.execute(tc)
                             result = self._validate_tool_output(tc, result)
                         if (
@@ -260,6 +301,12 @@ class AgentLoop:
                             and result.status == "success"
                         ):
                             saw_state_update = True
+
+                        if self._is_parallel_read_call(tc):
+                            if self._progress != IterationProgress.TOOLS_WITH_WRITES:
+                                self._progress = IterationProgress.TOOLS_READ_ONLY
+                        else:
+                            self._progress = IterationProgress.TOOLS_WITH_WRITES
 
                         messages.append(
                             Message(

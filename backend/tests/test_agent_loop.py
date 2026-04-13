@@ -1,4 +1,6 @@
 # backend/tests/test_agent_loop.py
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -6,8 +8,10 @@ from agent.hooks import HookManager
 from agent.loop import AgentLoop
 from agent.types import Message, Role, ToolCall, ToolResult
 from harness.guardrail import GuardrailResult
+from llm.errors import LLMError, LLMErrorCode
 from llm.types import ChunkType, LLMChunk
 from phase.router import PhaseRouter
+from run import IterationProgress
 from state.models import Accommodation, BacktrackEvent, DateRange, TravelPlanState
 from tools.engine import ToolEngine
 from tools.base import tool
@@ -1349,3 +1353,80 @@ async def test_phase5_repair_detects_json_style_output():
 
     # Repair should have fired (call_count > 1)
     assert call_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_stops_before_llm_call():
+    cancel_event = asyncio.Event()
+    cancel_event.set()  # 已经取消
+
+    mock_llm = MagicMock()
+    mock_llm.provider_name = "openai"
+    mock_llm.model = "gpt-4o"
+    engine = ToolEngine()
+    hooks = HookManager()
+
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_engine=engine,
+        hooks=hooks,
+        cancel_event=cancel_event,
+    )
+    messages = [Message(role=Role.USER, content="hi")]
+    with pytest.raises(LLMError) as exc_info:
+        async for _ in loop.run(messages, phase=1):
+            pass
+    assert exc_info.value.failure_phase == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_stops_during_streaming():
+    cancel_event = asyncio.Event()
+
+    async def fake_chat(messages, **kwargs):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="hello")
+        cancel_event.set()  # 模拟第一个 chunk 后取消
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content=" world")
+
+    mock_llm = MagicMock()
+    mock_llm.provider_name = "openai"
+    mock_llm.model = "gpt-4o"
+    mock_llm.chat = fake_chat
+    engine = ToolEngine()
+    hooks = HookManager()
+
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_engine=engine,
+        hooks=hooks,
+        cancel_event=cancel_event,
+    )
+    messages = [Message(role=Role.USER, content="hi")]
+    chunks = []
+    with pytest.raises(LLMError) as exc_info:
+        async for chunk in loop.run(messages, phase=1):
+            chunks.append(chunk)
+    # 第一个 chunk 应该已经 yield 出来了
+    assert len(chunks) == 1
+    assert chunks[0].content == "hello"
+    assert exc_info.value.failure_phase == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_progress_tracks_partial_text():
+    async def fake_chat(messages, **kwargs):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="hello")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    mock_llm = MagicMock()
+    mock_llm.provider_name = "openai"
+    mock_llm.model = "gpt-4o"
+    mock_llm.chat = fake_chat
+    engine = ToolEngine()
+    hooks = HookManager()
+
+    loop = AgentLoop(llm=mock_llm, tool_engine=engine, hooks=hooks)
+    messages = [Message(role=Role.USER, content="hi")]
+    async for _ in loop.run(messages, phase=1):
+        pass
+    assert loop.progress == IterationProgress.PARTIAL_TEXT
