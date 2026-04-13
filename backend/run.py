@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 
 class IterationProgress(str, Enum):
@@ -22,3 +22,5 @@ class RunRecord:
     error_code: str | None = None
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
+    can_continue: bool = False
+    continuation_context: dict[str, Any] | None = None
