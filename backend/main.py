@@ -397,17 +397,31 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         async def on_validate(**kwargs):
             if kwargs.get("tool_name") == "update_plan_state":
                 tc = kwargs.get("tool_call")
+                result = kwargs.get("result")
                 arguments = tc.arguments if tc and tc.arguments else {}
                 field = arguments.get("field", "")
                 value = arguments.get("value")
+
+                # Capture state_changes from previous_value in tool result
+                session = sessions.get(plan.session_id)
+                if (
+                    result
+                    and result.status == "success"
+                    and isinstance(result.data, dict)
+                    and session
+                ):
+                    prev_val = result.data.get("previous_value")
+                    session["_pending_state_changes"] = [
+                        {"field": field, "before": prev_val, "after": value}
+                    ]
 
                 errors = validate_incremental(plan, field, value)
                 if field in ("selected_transport", "accommodation"):
                     errors.extend(validate_lock_budget(plan))
 
                 if errors:
-                    session = sessions.get(plan.session_id)
                     if session:
+                        session["_pending_validation_errors"] = errors
                         session["messages"].append(
                             Message(
                                 role=Role.SYSTEM,
@@ -1495,6 +1509,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         result=chunk.tool_result,
                         phase=plan.phase,
                     )
+                    # Apply pending state_changes / validation_errors from on_validate hook
+                    _stats = session.get("stats")
+                    if _stats and _stats.tool_calls:
+                        _pending_sc = session.pop("_pending_state_changes", None)
+                        if _pending_sc is not None:
+                            _stats.tool_calls[-1].state_changes = _pending_sc
+                        _pending_ve = session.pop("_pending_validation_errors", None)
+                        if _pending_ve is not None:
+                            _stats.tool_calls[-1].validation_errors = _pending_ve
                 yield json.dumps(event_data, ensure_ascii=False)
                 if (
                     chunk.tool_result
