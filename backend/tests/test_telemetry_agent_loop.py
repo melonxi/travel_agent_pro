@@ -21,10 +21,14 @@ class _PhaseRouter:
 
 
 class _ContextManager:
-    def build_system_message(self, plan, phase_prompt, memory_context="", available_tools=None):
+    def build_system_message(
+        self, plan, phase_prompt, memory_context="", available_tools=None
+    ):
         return Message(role=Role.SYSTEM, content=phase_prompt)
 
-    async def compress_for_transition(self, messages, from_phase, to_phase, llm_factory):
+    async def compress_for_transition(
+        self, messages, from_phase, to_phase, llm_factory
+    ):
         return "summary"
 
 
@@ -35,8 +39,8 @@ class _MemoryManager:
     def generate_summary(self, memory) -> str:
         return ""
 
-    async def generate_context(self, user_id: str, plan) -> str:
-        return ""
+    async def generate_context(self, user_id: str, plan) -> tuple[str, list[str]]:
+        return "", []
 
 
 def _make_loop(llm, engine, hooks):
@@ -73,6 +77,7 @@ def otel_exporter():
 
 async def test_agent_loop_creates_span(otel_exporter):
     """AgentLoop.run() 应创建 agent_loop.run span。"""
+
     async def fake_chat(messages, tools=None, stream=True):
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="hello")
         yield LLMChunk(type=ChunkType.DONE)
@@ -96,6 +101,7 @@ async def test_agent_loop_creates_span(otel_exporter):
 
 async def test_agent_loop_run_span_has_phase_attribute(otel_exporter):
     """agent_loop.run span 应设置 agent.phase 属性。"""
+
     async def fake_chat(messages, tools=None, stream=True):
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="ok")
         yield LLMChunk(type=ChunkType.DONE)
@@ -119,6 +125,7 @@ async def test_agent_loop_run_span_has_phase_attribute(otel_exporter):
 
 async def test_agent_loop_creates_iteration_span(otel_exporter):
     """AgentLoop.run() 应为每次迭代创建 agent_loop.iteration span。"""
+
     async def fake_chat(messages, tools=None, stream=True):
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
         yield LLMChunk(type=ChunkType.DONE)
@@ -141,6 +148,7 @@ async def test_agent_loop_creates_iteration_span(otel_exporter):
 
 async def test_agent_loop_iteration_span_has_iteration_attribute(otel_exporter):
     """agent_loop.iteration span 应设置 agent.iteration 属性为 0（首次迭代）。"""
+
     async def fake_chat(messages, tools=None, stream=True):
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
         yield LLMChunk(type=ChunkType.DONE)

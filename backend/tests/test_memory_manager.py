@@ -35,10 +35,14 @@ async def test_generate_context_includes_active_stored_memory(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
     await manager.store.upsert_item(make_item())
 
-    text = await manager.generate_context("u1", TravelPlanState(session_id="s1"))
+    text, item_ids = await manager.generate_context(
+        "u1", TravelPlanState(session_id="s1")
+    )
 
     assert "## 核心用户画像" in text
     assert "节奏轻松" in text
+    assert "mem-1" in item_ids
+    assert isinstance(item_ids, list)
 
 
 @pytest.mark.asyncio
@@ -120,7 +124,9 @@ def test_travel_plan_state_round_trips_trip_id():
     assert restored.trip_id == "trip-2026-kyoto"
 
 
-def test_memory_config_maps_new_block_and_falls_back_to_legacy_extraction(tmp_path: Path):
+def test_memory_config_maps_new_block_and_falls_back_to_legacy_extraction(
+    tmp_path: Path,
+):
     legacy_cfg = tmp_path / "legacy.yaml"
     legacy_cfg.write_text(
         """

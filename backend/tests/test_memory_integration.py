@@ -271,9 +271,11 @@ async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
     calls = {"context": 0, "summary": 0}
 
-    async def fake_generate_context(self, user_id: str, plan: TravelPlanState) -> str:
+    async def fake_generate_context(
+        self, user_id: str, plan: TravelPlanState
+    ) -> tuple[str, list[str]]:
         calls["context"] += 1
-        return "memory-context-marker"
+        return "memory-context-marker", []
 
     def fake_generate_summary(self, memory):
         calls["summary"] += 1
@@ -310,10 +312,16 @@ async def test_chat_system_prompt_skips_memory_when_disabled(
     app_memory_disabled,
 ):
     memory_mgr = _get_closure_value(app_memory_disabled, "memory_mgr")
-    await memory_mgr.store.upsert_item(_make_item(status="active", value="secret-memory"))
+    await memory_mgr.store.upsert_item(
+        _make_item(status="active", value="secret-memory")
+    )
 
-    async def fake_generate_context(self, user_id: str, plan: TravelPlanState) -> str:
-        raise AssertionError("generate_context should not be called when memory is disabled")
+    async def fake_generate_context(
+        self, user_id: str, plan: TravelPlanState
+    ) -> tuple[str, list[str]]:
+        raise AssertionError(
+            "generate_context should not be called when memory is disabled"
+        )
 
     async def fake_run(self, messages, phase, tools_override=None):
         assert "secret-memory" not in messages[0].content

@@ -298,7 +298,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     # Session-level caches
     sessions: dict[str, dict] = {}  # session_id → {plan, messages, agent}
     memory_extraction_tasks: dict[str, asyncio.Task] = {}
-    memory_extraction_pending: dict[str, tuple[str, list[Message], TravelPlanState]] = {}
+    memory_extraction_pending: dict[
+        str, tuple[str, list[Message], TravelPlanState]
+    ] = {}
     memory_pending_seen: dict[tuple[str, str], set[str]] = {}
     reflection_cache: dict[str, ReflectionInjector] = {}
     quality_gate_retries: dict[tuple[str, int, int], int] = {}
@@ -315,6 +317,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             if queried and queried > 0:
                 resolved_context_window["value"] = queried
                 import logging
+
                 logging.getLogger("travel-agent-pro").info(
                     f"Context window from model API: {queried}"
                 )
@@ -434,25 +437,29 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             if tool_compaction.changed:
                 msgs[:] = tool_compaction.messages
 
-            estimated_after_tool_compaction = estimate_messages_tokens(msgs, tools=tools)
+            estimated_after_tool_compaction = estimate_messages_tokens(
+                msgs, tools=tools
+            )
             if (
                 tool_compaction.changed
                 and estimated_after_tool_compaction <= prompt_budget
             ):
                 if compression_events is not None:
-                    compression_events.append({
-                        "message_count_before": message_count_before,
-                        "message_count_after": len(msgs),
-                        "must_keep_count": 0,
-                        "compressed_count": tool_compaction.compacted_tool_messages,
-                        "estimated_tokens_before": estimated_tokens_before,
-                        "estimated_tokens_after": estimated_after_tool_compaction,
-                        "mode": "tool_compaction",
-                        "reason": (
-                            f"prompt 预算 {prompt_budget} 内进行 {tool_compaction.mode or 'moderate'}"
-                            f" TOOL 压缩，usage_ratio={tool_compaction.usage_ratio_before:.2f}"
-                        ),
-                    })
+                    compression_events.append(
+                        {
+                            "message_count_before": message_count_before,
+                            "message_count_after": len(msgs),
+                            "must_keep_count": 0,
+                            "compressed_count": tool_compaction.compacted_tool_messages,
+                            "estimated_tokens_before": estimated_tokens_before,
+                            "estimated_tokens_after": estimated_after_tool_compaction,
+                            "mode": "tool_compaction",
+                            "reason": (
+                                f"prompt 预算 {prompt_budget} 内进行 {tool_compaction.mode or 'moderate'}"
+                                f" TOOL 压缩，usage_ratio={tool_compaction.usage_ratio_before:.2f}"
+                            ),
+                        }
+                    )
                 return
 
             if not context_mgr.should_compress(msgs, prompt_budget, tools=tools):
@@ -461,10 +468,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             must_keep, compressible = context_mgr.classify_messages(msgs)
             recent = msgs[-4:]
             recent_ids = {id(m) for m in recent}
-            older_compressible = [
-                m for m in compressible if id(m) not in recent_ids
-            ]
-            summary_source = older_compressible if len(older_compressible) > 2 else compressible
+            older_compressible = [m for m in compressible if id(m) not in recent_ids]
+            summary_source = (
+                older_compressible if len(older_compressible) > 2 else compressible
+            )
             if len(summary_source) <= 2:
                 return
 
@@ -506,19 +513,21 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
             estimated_after_summary = estimate_messages_tokens(msgs, tools=tools)
             if compression_events is not None:
-                compression_events.append({
-                    "message_count_before": message_count_before,
-                    "message_count_after": len(msgs),
-                    "must_keep_count": len(must_keep),
-                    "compressed_count": len(summary_source),
-                    "estimated_tokens_before": estimated_tokens_before,
-                    "estimated_tokens_after": estimated_after_summary,
-                    "mode": "history_summary",
-                    "reason": (
-                        f"prompt 预算 {prompt_budget} 仍不足，"
-                        f"压缩旧消息并保留最近 {len(recent)} 条"
-                    ),
-                })
+                compression_events.append(
+                    {
+                        "message_count_before": message_count_before,
+                        "message_count_after": len(msgs),
+                        "must_keep_count": len(must_keep),
+                        "compressed_count": len(summary_source),
+                        "estimated_tokens_before": estimated_tokens_before,
+                        "estimated_tokens_after": estimated_after_summary,
+                        "mode": "history_summary",
+                        "reason": (
+                            f"prompt 预算 {prompt_budget} 仍不足，"
+                            f"压缩旧消息并保留最近 {len(recent)} 条"
+                        ),
+                    }
+                )
 
         hooks.register("before_llm_call", on_before_llm)
 
@@ -565,15 +574,20 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             # Feasibility gate: catch impossible plans early (Phase 1→3)
             if from_phase == 1 and to_phase == 3:
                 from harness.feasibility import check_feasibility
+
                 days_count = _days_count_from_dates(target_plan.dates)
                 budget_total = None
                 if target_plan.budget and target_plan.budget.total:
                     budget_total = target_plan.budget.total
-                feas = check_feasibility(target_plan.destination, budget_total, days_count)
+                feas = check_feasibility(
+                    target_plan.destination, budget_total, days_count
+                )
                 if not feas.feasible:
-                    feedback = "[可行性检查]\n当前旅行计划存在以下问题：\n" + "\n".join(
-                        f"- {r}" for r in feas.reasons
-                    ) + "\n请调整后再继续。"
+                    feedback = (
+                        "[可行性检查]\n当前旅行计划存在以下问题：\n"
+                        + "\n".join(f"- {r}" for r in feas.reasons)
+                        + "\n请调整后再继续。"
+                    )
                     if session:
                         session["messages"].append(
                             Message(role=Role.SYSTEM, content=feedback)
@@ -633,9 +647,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 f"请修正后再进入 Phase {to_phase}：\n{suggestion_text}"
             )
             if session:
-                session["messages"].append(
-                    Message(role=Role.SYSTEM, content=feedback)
-                )
+                session["messages"].append(Message(role=Role.SYSTEM, content=feedback))
             return GateResult(allowed=False, feedback=feedback)
 
         hooks.register_gate("before_phase_transition", on_before_phase_transition)
@@ -678,7 +690,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "budget": plan.budget.to_dict() if plan.budget else None,
             "selected_skeleton_id": plan.selected_skeleton_id,
             "selected_transport": plan.selected_transport,
-            "accommodation": plan.accommodation.to_dict() if plan.accommodation else None,
+            "accommodation": plan.accommodation.to_dict()
+            if plan.accommodation
+            else None,
             "phase3_step": plan.phase3_step,
         }
 
@@ -890,9 +904,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             if same_session or same_trip:
                 session_items.append(item)
         accepted_items = [
-            item.to_dict()
-            for item in session_items
-            if item.status == "active"
+            item.to_dict() for item in session_items if item.status == "active"
         ]
         rejected_items = [
             item.to_dict()
@@ -921,11 +933,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             session_id=session_id,
             trip_id=plan.trip_id,
             destination=plan.destination,
-            dates=(
-                f"{plan.dates.start} - {plan.dates.end}"
-                if plan.dates
-                else None
-            ),
+            dates=(f"{plan.dates.start} - {plan.dates.end}" if plan.dates else None),
             travelers=plan.travelers.to_dict() if plan.travelers else None,
             budget=plan.budget.to_dict() if plan.budget else None,
             selected_skeleton=selected_skeleton,
@@ -1137,7 +1145,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         await _ensure_storage_ready()
         plan = await state_mgr.create_session()
         compression_events: list[dict] = []
-        agent = _build_agent(plan, "default_user", compression_events=compression_events)
+        agent = _build_agent(
+            plan, "default_user", compression_events=compression_events
+        )
         sessions[plan.session_id] = {
             "plan": plan,
             "messages": [],
@@ -1332,7 +1342,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         )
         _cancel_memory_extraction(session_id)
         await state_mgr.save(plan)
-        session["agent"] = _build_agent(plan, session.get("user_id", "default_user"), compression_events=session.get("compression_events"))
+        session["agent"] = _build_agent(
+            plan,
+            session.get("user_id", "default_user"),
+            compression_events=session.get("compression_events"),
+        )
         session["needs_rebuild"] = False
         await session_store.update(
             session_id,
@@ -1363,7 +1377,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         # 检查是否需要重建 agent（上一轮回退导致）
         if session.get("needs_rebuild"):
-            session["agent"] = _build_agent(plan, session["user_id"], compression_events=session.get("compression_events"))
+            session["agent"] = _build_agent(
+                plan,
+                session["user_id"],
+                compression_events=session.get("compression_events"),
+            )
             session["needs_rebuild"] = False
 
         agent = session["agent"]
@@ -1376,10 +1394,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool["name"]
             for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)
         ]
-        memory_context = (
+        memory_context, _recalled_ids = (
             await memory_mgr.generate_context(req.user_id, plan)
             if config.memory.enabled
-            else "暂无相关用户记忆"
+            else ("暂无相关用户记忆", [])
         )
         sys_msg = context_mgr.build_system_message(
             plan,
@@ -1408,7 +1426,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     item
                     for item in await memory_mgr.store.list_items(session["user_id"])
                     if item.status in {"pending", "pending_conflict"}
-                    and f"{item.id}:{item.status}:{item.updated_at}" not in seen_item_ids
+                    and f"{item.id}:{item.status}:{item.updated_at}"
+                    not in seen_item_ids
                 ]
                 if pending_items:
                     seen_item_ids.update(
@@ -1436,10 +1455,13 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     llm_started_at = time.monotonic()
                     continue
                 if chunk.type == ChunkType.CONTEXT_COMPRESSION:
-                    yield json.dumps({
-                        "type": "context_compression",
-                        "compression_info": chunk.compression_info,
-                    }, ensure_ascii=False)
+                    yield json.dumps(
+                        {
+                            "type": "context_compression",
+                            "compression_info": chunk.compression_info,
+                        },
+                        ensure_ascii=False,
+                    )
                     continue
                 event_type = (
                     "tool_call"
