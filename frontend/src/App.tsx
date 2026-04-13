@@ -60,6 +60,7 @@ export default function App() {
   const [bootstrapping, setBootstrapping] = useState(true)
   const [rightTab, setRightTab] = useState<'plan' | 'trace'>('plan')
   const [traceTrigger, setTraceTrigger] = useState(0)
+  const [recalledIds, setRecalledIds] = useState<string[]>([])
   const { dark, toggle: toggleTheme } = useTheme()
   const initializedRef = useRef(false)
   const showPhase3Workbench = Boolean(
@@ -117,6 +118,10 @@ export default function App() {
     setTraceTrigger((n) => n + 1)
     void refreshSessionList()
   }, [refreshSessionList])
+
+  const handleMemoryRecall = useCallback((itemIds: string[]) => {
+    setRecalledIds(itemIds)
+  }, [])
 
   const handleNewSession = useCallback(async () => {
     await createSession()
@@ -200,6 +205,7 @@ export default function App() {
         <SessionSidebar
           sessions={sessionList}
           activeSessionId={sessionId}
+          recalledIds={recalledIds}
           onSelectSession={(id) => {
             void handleSelectSession(id)
           }}
@@ -210,7 +216,7 @@ export default function App() {
             void handleDeleteSession(id)
           }}
         />
-        <ChatPanel key={chatKey} sessionId={sessionId} onPlanUpdate={handlePlanUpdate} />
+        <ChatPanel key={chatKey} sessionId={sessionId} onPlanUpdate={handlePlanUpdate} onMemoryRecall={handleMemoryRecall} />
         <div className="right-panel">
           <div className="right-panel-tabs">
             <button

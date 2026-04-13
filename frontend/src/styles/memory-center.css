@@ -146,6 +146,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: 16px;
+  position: relative;
   transition: all var(--transition-smooth);
 }
 
@@ -498,4 +499,24 @@
   justify-content: center;
   border-radius: 10px;
   padding: 0 5px;
+}
+
+/* ===== Recalled Memory Highlight ===== */
+
+.memory-card.is-recalled {
+  border-left: 3px solid var(--accent-amber, #f59e0b);
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.memory-card.is-recalled::after {
+  content: '本轮命中';
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--accent-amber, #f59e0b);
+  color: #000;
+  font-weight: 600;
 }
