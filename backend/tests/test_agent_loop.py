@@ -75,8 +75,10 @@ class FakeMemoryManager:
     def generate_summary(self, memory) -> str:
         return f"memory:{memory['user_id']}"
 
-    async def generate_context(self, user_id: str, plan: TravelPlanState) -> str:
-        return f"memory:{user_id}"
+    async def generate_context(
+        self, user_id: str, plan: TravelPlanState
+    ) -> tuple[str, list[str]]:
+        return f"memory:{user_id}", []
 
 
 @pytest.fixture
@@ -572,9 +574,13 @@ async def test_phase_rebuild_skips_memory_when_disabled(mock_llm, engine, hooks)
 
 @pytest.mark.asyncio
 async def test_backtrack_rebuild_uses_hard_boundary_without_compression():
-    plan = TravelPlanState(session_id="s1", phase=5, destination="东京",
-                           dates=DateRange(start="2026-05-01", end="2026-05-05"),
-                           accommodation=Accommodation(area="新宿"))
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="东京",
+        dates=DateRange(start="2026-05-01", end="2026-05-05"),
+        accommodation=Accommodation(area="新宿"),
+    )
     context_manager = FakeContextManager()
 
     @tool(
@@ -714,7 +720,10 @@ async def test_phase3_substep_change_refreshes_tools():
         name="update_plan_state",
         description="state",
         phases=[3],
-        parameters={"type": "object", "properties": {"field": {"type": "string"}, "value": {}}},
+        parameters={
+            "type": "object",
+            "properties": {"field": {"type": "string"}, "value": {}},
+        },
     )
     async def update_plan_state(field: str, value):
         if field == "phase3_step":
@@ -868,7 +877,10 @@ async def test_phase3_text_only_skeleton_response_triggers_state_repair():
         observed_messages.append([message.content for message in messages])
 
         if call_count == 1:
-            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="方案A：轻松版\n方案B：平衡版\n方案C：高密度版")
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content="方案A：轻松版\n方案B：平衡版\n方案C：高密度版",
+            )
             yield LLMChunk(type=ChunkType.DONE)
             return
 
@@ -913,7 +925,11 @@ async def test_phase3_text_only_skeleton_response_triggers_state_repair():
     async for _ in agent.run(messages, phase=3):
         pass
 
-    assert [item["id"] for item in plan.skeleton_plans] == ["relaxed", "balanced", "dense"]
+    assert [item["id"] for item in plan.skeleton_plans] == [
+        "relaxed",
+        "balanced",
+        "dense",
+    ]
     assert any(
         content and "skeleton_plans" in content
         for call_messages in observed_messages[1:]
@@ -923,9 +939,13 @@ async def test_phase3_text_only_skeleton_response_triggers_state_repair():
 
 @pytest.mark.asyncio
 async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
-    plan = TravelPlanState(session_id="s1", phase=5, destination="东京",
-                           dates=DateRange(start="2026-05-01", end="2026-05-05"),
-                           accommodation=Accommodation(area="新宿"))
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="东京",
+        dates=DateRange(start="2026-05-01", end="2026-05-05"),
+        accommodation=Accommodation(area="新宿"),
+    )
     executed: list[str] = []
 
     @tool(
@@ -997,7 +1017,12 @@ async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
         user_id="u3",
     )
 
-    chunks = [chunk async for chunk in agent.run([Message(role=Role.USER, content="换个目的地")], phase=5)]
+    chunks = [
+        chunk
+        async for chunk in agent.run(
+            [Message(role=Role.USER, content="换个目的地")], phase=5
+        )
+    ]
 
     skipped = [
         chunk.tool_result
@@ -1124,18 +1149,60 @@ async def test_phase5_text_only_daily_plan_triggers_state_repair():
                     arguments={
                         "field": "daily_plans",
                         "value": [
-                            {"day": 1, "date": "2026-04-15", "activities": [
-                                {"name": "道顿堀", "location": {"name": "道顿堀", "lat": 34.6, "lng": 135.5},
-                                 "start_time": "09:00", "end_time": "12:00", "category": "food", "cost": 0}
-                            ]},
-                            {"day": 2, "date": "2026-04-16", "activities": [
-                                {"name": "大阪城", "location": {"name": "大阪城", "lat": 34.6, "lng": 135.5},
-                                 "start_time": "09:00", "end_time": "15:00", "category": "landmark", "cost": 600}
-                            ]},
-                            {"day": 3, "date": "2026-04-17", "activities": [
-                                {"name": "环球影城", "location": {"name": "USJ", "lat": 34.6, "lng": 135.4},
-                                 "start_time": "09:00", "end_time": "20:00", "category": "theme_park", "cost": 8600}
-                            ]},
+                            {
+                                "day": 1,
+                                "date": "2026-04-15",
+                                "activities": [
+                                    {
+                                        "name": "道顿堀",
+                                        "location": {
+                                            "name": "道顿堀",
+                                            "lat": 34.6,
+                                            "lng": 135.5,
+                                        },
+                                        "start_time": "09:00",
+                                        "end_time": "12:00",
+                                        "category": "food",
+                                        "cost": 0,
+                                    }
+                                ],
+                            },
+                            {
+                                "day": 2,
+                                "date": "2026-04-16",
+                                "activities": [
+                                    {
+                                        "name": "大阪城",
+                                        "location": {
+                                            "name": "大阪城",
+                                            "lat": 34.6,
+                                            "lng": 135.5,
+                                        },
+                                        "start_time": "09:00",
+                                        "end_time": "15:00",
+                                        "category": "landmark",
+                                        "cost": 600,
+                                    }
+                                ],
+                            },
+                            {
+                                "day": 3,
+                                "date": "2026-04-17",
+                                "activities": [
+                                    {
+                                        "name": "环球影城",
+                                        "location": {
+                                            "name": "USJ",
+                                            "lat": 34.6,
+                                            "lng": 135.4,
+                                        },
+                                        "start_time": "09:00",
+                                        "end_time": "20:00",
+                                        "category": "theme_park",
+                                        "cost": 8600,
+                                    }
+                                ],
+                            },
                         ],
                     },
                 ),

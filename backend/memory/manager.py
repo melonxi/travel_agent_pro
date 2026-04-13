@@ -94,11 +94,14 @@ class MemoryManager:
 
         return "\n".join(parts) if parts else "暂无用户画像"
 
-    async def generate_context(self, user_id: str, plan: TravelPlanState) -> str:
+    async def generate_context(
+        self, user_id: str, plan: TravelPlanState
+    ) -> tuple[str, list[str]]:
         items = await self.store.list_items(user_id)
         retrieved = RetrievedMemory(
             core=self.retriever.retrieve_core_profile(items),
             trip=self.retriever.retrieve_trip_memory(items, plan),
             phase=self.retriever.retrieve_phase_relevant(items, plan, plan.phase),
         )
-        return format_memory_context(retrieved)
+        item_ids = [it.id for it in retrieved.core + retrieved.trip + retrieved.phase]
+        return format_memory_context(retrieved), item_ids
