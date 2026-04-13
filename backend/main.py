@@ -207,10 +207,21 @@ def _days_count_from_dates(dates: Any | None) -> int | None:
     return (end_date - start_date).days
 
 
+def _truncate_preview(value: Any, max_len: int = 120) -> str:
+    """Truncate a value to a short preview string."""
+    if value is None:
+        return ""
+    text = str(value) if not isinstance(value, str) else value
+    if len(text) > max_len:
+        return text[:max_len] + "…"
+    return text
+
+
 def _record_tool_result_stats(
     *,
     stats: SessionStats | None,
     tool_call_names: dict[str, str],
+    tool_call_args: dict[str, dict],
     result: ToolResult,
     phase: int,
 ) -> None:
@@ -224,6 +235,14 @@ def _record_tool_result_stats(
     if not isinstance(duration, (int, float)):
         duration = 0.0
     parallel_group = metadata.get("parallel_group")
+
+    # Build previews
+    args = tool_call_args.get(result.tool_call_id, {})
+    arguments_preview = _truncate_preview(args) if args else ""
+    result_preview = _truncate_preview(result.data) if result.data else ""
+    if result.error:
+        result_preview = _truncate_preview(f"ERROR: {result.error}")
+
     stats.record_tool_call(
         tool_name=tool_name,
         duration_ms=float(duration),
@@ -231,6 +250,8 @@ def _record_tool_result_stats(
         error_code=result.error_code,
         phase=phase,
         parallel_group=parallel_group,
+        arguments_preview=arguments_preview,
+        result_preview=result_preview,
     )
 
 
@@ -1421,10 +1442,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool["name"]
             for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)
         ]
-        memory_context, recalled_ids = (
+        memory_context, recalled_ids, mem_core, mem_trip, mem_phase = (
             await memory_mgr.generate_context(req.user_id, plan)
             if config.memory.enabled
-            else ("暂无相关用户记忆", [])
+            else ("暂无相关用户记忆", [], 0, 0, 0)
         )
 
         if recalled_ids:
@@ -1435,9 +1456,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 session_stats.memory_hits.append(
                     MemoryHitRecord(
                         item_ids=recalled_ids,
-                        core_count=len(recalled_ids),
-                        trip_count=0,
-                        phase_count=0,
+                        core_count=mem_core,
+                        trip_count=mem_trip,
+                        phase_count=mem_phase,
                     )
                 )
 
@@ -1469,6 +1490,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     ensure_ascii=False,
                 )
             tool_call_names: dict[str, str] = {}
+            tool_call_args: dict[str, dict] = {}
             if config.memory.enabled:
                 seen_key = (session["user_id"], plan.session_id)
                 seen_item_ids = memory_pending_seen.setdefault(seen_key, set())
@@ -1525,6 +1547,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     event_data["content"] = chunk.content
                 if chunk.tool_call:
                     tool_call_names[chunk.tool_call.id] = chunk.tool_call.name
+                    tool_call_args[chunk.tool_call.id] = chunk.tool_call.arguments or {}
                     event_data["tool_call"] = {
                         "id": chunk.tool_call.id,
                         "name": chunk.tool_call.name,
@@ -1542,6 +1565,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     _record_tool_result_stats(
                         stats=session.get("stats"),
                         tool_call_names=tool_call_names,
+                        tool_call_args=tool_call_args,
                         result=chunk.tool_result,
                         phase=plan.phase,
                     )

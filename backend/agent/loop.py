@@ -431,10 +431,10 @@ class AgentLoop:
             )
 
         phase_prompt = self.phase_router.get_prompt(to_phase)
-        memory_context, _recalled_ids = (
+        memory_context, _recalled_ids, *_ = (
             await self.memory_mgr.generate_context(self.user_id, self.plan)
             if self.memory_enabled
-            else ("暂无相关用户记忆", [])
+            else ("暂无相关用户记忆", [], 0, 0, 0)
         )
         rebuilt = [
             self.context_manager.build_system_message(

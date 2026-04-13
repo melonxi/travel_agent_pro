@@ -273,9 +273,9 @@ async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
 
     async def fake_generate_context(
         self, user_id: str, plan: TravelPlanState
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], int, int, int]:
         calls["context"] += 1
-        return "memory-context-marker", []
+        return "memory-context-marker", [], 0, 0, 0
 
     def fake_generate_summary(self, memory):
         calls["summary"] += 1
@@ -318,7 +318,7 @@ async def test_chat_system_prompt_skips_memory_when_disabled(
 
     async def fake_generate_context(
         self, user_id: str, plan: TravelPlanState
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], int, int, int]:
         raise AssertionError(
             "generate_context should not be called when memory is disabled"
         )

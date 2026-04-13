@@ -58,6 +58,8 @@ class ToolCallRecord:
     error_code: str | None
     phase: int
     timestamp: float = field(default_factory=time.time)
+    arguments_preview: str = ""
+    result_preview: str = ""
     state_changes: list[dict] | None = None
     parallel_group: int | None = None
     validation_errors: list[str] | None = None
@@ -111,6 +113,8 @@ class SessionStats:
         error_code: str | None,
         phase: int,
         parallel_group: int | None = None,
+        arguments_preview: str = "",
+        result_preview: str = "",
     ) -> None:
         self.tool_calls.append(
             ToolCallRecord(
@@ -119,6 +123,8 @@ class SessionStats:
                 status=status,
                 error_code=error_code,
                 phase=phase,
+                arguments_preview=arguments_preview,
+                result_preview=result_preview,
                 parallel_group=parallel_group,
             )
         )

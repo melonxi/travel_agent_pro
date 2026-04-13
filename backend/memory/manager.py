@@ -96,12 +96,16 @@ class MemoryManager:
 
     async def generate_context(
         self, user_id: str, plan: TravelPlanState
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], int, int, int]:
+        """Return (context_text, all_item_ids, core_count, trip_count, phase_count)."""
         items = await self.store.list_items(user_id)
         retrieved = RetrievedMemory(
             core=self.retriever.retrieve_core_profile(items),
             trip=self.retriever.retrieve_trip_memory(items, plan),
             phase=self.retriever.retrieve_phase_relevant(items, plan, plan.phase),
         )
-        item_ids = [it.id for it in retrieved.core + retrieved.trip + retrieved.phase]
-        return format_memory_context(retrieved), item_ids
+        core_ids = [it.id for it in retrieved.core]
+        trip_ids = [it.id for it in retrieved.trip]
+        phase_ids = [it.id for it in retrieved.phase]
+        all_ids = core_ids + trip_ids + phase_ids
+        return format_memory_context(retrieved), all_ids, len(core_ids), len(trip_ids), len(phase_ids)

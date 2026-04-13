@@ -35,7 +35,7 @@ async def test_generate_context_includes_active_stored_memory(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
     await manager.store.upsert_item(make_item())
 
-    text, item_ids = await manager.generate_context(
+    text, item_ids, core_count, trip_count, phase_count = await manager.generate_context(
         "u1", TravelPlanState(session_id="s1")
     )
 
@@ -43,6 +43,9 @@ async def test_generate_context_includes_active_stored_memory(tmp_path: Path):
     assert "节奏轻松" in text
     assert "mem-1" in item_ids
     assert isinstance(item_ids, list)
+    assert core_count >= 1
+    assert isinstance(trip_count, int)
+    assert isinstance(phase_count, int)
 
 
 @pytest.mark.asyncio
