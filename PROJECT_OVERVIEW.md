@@ -31,20 +31,22 @@
 ```
 travel_agent_pro/
 ├── backend/                    # Python 后端
-│   ├── main.py                 # FastAPI 入口 (856 行), API 端点, 会话管理, SSE 流
+│   ├── main.py                 # FastAPI 入口 (~950 行), API 端点, 会话管理, SSE 流, cancel/continue 端点, _run_agent_stream 共享函数
+│   ├── run.py                  # RunRecord / IterationProgress 数据结构 (LLM 韧性运行追踪)
 │   ├── config.py               # 配置加载 (.env + config.yaml), 多 LLM 按阶段切换
 │   ├── agent/                  # Agent 循环引擎
-│   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复，集成自省/强制工具/护栏/读工具批量执行/parallel_group 标记
+│   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复，集成自省/强制工具/护栏/读工具批量执行/parallel_group 标记/cancel_event 检查/IterationProgress 追踪
 │   │   ├── compaction.py       # 上下文压缩: token 预算计算、渐进式压缩
 │   │   ├── hooks.py            # 钩子系统 (before_llm_call, after_tool_call)
 │   │   ├── reflection.py       # ReflectionInjector: 关键阶段自省 prompt 注入
 │   │   ├── tool_choice.py      # ToolChoiceDecider: 强制 update_plan_state 调用判定
-│   │   └── types.py            # Message, ToolCall, ToolResult 数据类
+│   │   └── types.py            # Message, ToolCall, ToolResult 数据类 (Message.incomplete 标记中断消息)
 │   ├── llm/                    # LLM 抽象层
 │   │   ├── base.py             # LLMProvider Protocol (chat, count_tokens, get_context_window)
+│   │   ├── errors.py           # LLMError 异常体系: LLMErrorCode 枚举 + LLMError 异常类 + classify_by_http_status 工厂
 │   │   ├── factory.py          # 工厂: provider 字符串 → 具体实例
-│   │   ├── openai_provider.py  # OpenAI 实现 (流式 + tiktoken)
-│   │   ├── anthropic_provider.py # Anthropic 实现 (非流式回退)
+│   │   ├── openai_provider.py  # OpenAI 实现 (流式 + tiktoken + 错误归一化 + 瞬态重试)
+│   │   ├── anthropic_provider.py # Anthropic 实现 (非流式回退 + 错误归一化 + 瞬态重试)
 │   │   └── types.py            # LLMChunk, ChunkType 枚举
 │   ├── state/                  # 旅行状态模型
 │   │   ├── models.py           # TravelPlanState 完整数据类 (350+ 行)
@@ -85,7 +87,7 @@ travel_agent_pro/
 │   │   └── normalizers.py      # API 响应数据标准化 (15KB)
 │   ├── storage/                # 数据库层
 │   │   ├── database.py         # SQLite 连接与 schema 初始化
-│   │   ├── session_store.py    # 会话 CRUD
+│   │   ├── session_store.py    # 会话 CRUD + run 追踪字段 (last_run_id/status/error)
 │   │   ├── message_store.py    # 消息读写 (按 seq 排序)
 │   │   └── archive_store.py    # 快照与归档
 │   ├── harness/                # 5 层质量守护
@@ -106,14 +108,14 @@ travel_agent_pro/
 │   │   └── stats.py            # SessionStats: token用量/模型定价/工具耗时 + ToolCallRecord(含 state_changes/parallel_group/validation_errors/judge_scores) + MemoryHitRecord + memory_hits
 │   ├── api/                    # API 模块
 │   │   └── trace.py            # build_trace(): 构建会话 trace 视图 (迭代/工具/状态变化/成本/compression_events/parallel_group/validation_errors/judge_scores/memory_hits)
-│   └── tests/                  # pytest 测试套件 (76+ 个测试文件, 590+ 测试)
+│   └── tests/                  # pytest 测试套件 (88+ 个测试文件, 700+ 测试)
 │
 ├── frontend/                   # React 前端
 │   ├── src/
 │   │   ├── main.tsx            # React 19 入口
 │   │   ├── App.tsx             # 应用壳: 会话管理, 主题, 三栏布局, Plan/Trace 标签切换
 │   │   ├── components/
-│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 停止按钮, 连接超时检测
+│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 停止按钮, 连接超时检测, 继续按钮, 未完成消息标注
 │   │   │   ├── TraceViewer.tsx # Trace 视图: SummaryBar/IterationRow/ToolCallRow/StateDiffPanel, 渲染 parallel_group badge/validation_errors/judge_scores/compression_event/memory_hits
 │   │   │   ├── MessageBubble.tsx # 消息渲染: Markdown, 工具卡, 压缩提示
 │   │   │   ├── SessionSidebar.tsx # 会话侧边栏: 列表/新建/删除 + 记忆管理入口
@@ -125,7 +127,7 @@ travel_agent_pro/
 │   │   │   ├── BudgetChart.tsx # 预算可视化
 │   │   │   └── MemoryCenter.tsx # 记忆管理抽屉: 3 Tab(活跃/待确认/归档), 乐观更新, 本轮命中记忆高亮(is-recalled)
 │   │   ├── hooks/
-│   │   │   ├── useSSE.ts       # SSE 流式连接 Hook (AbortController + cancel 取消支持)
+│   │   │   ├── useSSE.ts       # SSE 流式连接 Hook (streamSSE 共享函数 + sendMessage + cancel + continueGeneration)
 │   │   │   ├── useMemory.ts    # 记忆 CRUD Hook: fetch/confirm/reject/delete + 乐观更新
 │   │   │   └── useTrace.ts     # Trace 数据获取 Hook (fetch + auto-refresh)
 │   │   ├── types/
@@ -210,6 +212,8 @@ travel_agent_pro/
     ↓
 [AgentLoop.run()] 进入迭代循环 (max_retries=30)
     │
+    ├─ [_check_cancelled()] → 3 个检查点: 迭代开始/LLM流式chunk前/工具执行前
+    │
     ├─ [Hook: before_llm_call]
     │   ├─ ContextManager.build_system_message() → 注入 soul + 阶段提示 + 状态快照
     │   ├─ ReflectionInjector.check_and_inject() → 在 Phase 3 lock / Phase 5 complete 注入自检提示
@@ -228,6 +232,8 @@ travel_agent_pro/
     │   └─ SoftJudge → pace/geography/coherence/personalization 评分 → judge_scores 写入 ToolCallRecord（_pending_judge_scores 暂存模式）
     │
     └─ yield LLMChunk → SSE 事件流 → 前端实时渲染
+        ↓ (异常或取消时)
+    [RunRecord 生命周期] 记录运行状态 + can_continue 判定 + continuation_context 保存
 ```
 
 ---
@@ -273,6 +279,30 @@ llm_overrides:
     provider: "openai"
     model: "gpt-4o"
 ```
+
+### LLM 错误归一化与韧性
+
+三层韧性架构：**错误归一化 → 停止生成 → 安全继续**
+
+```
+LLM API 异常
+    ↓
+[Provider._classify_error()] → LLMError(code, retryable, provider, status_code)
+    ↓                              │
+    ├─ TRANSIENT (5xx)             → 自动重试 (1s, 3s)，_has_yielded 后不重试
+    ├─ RATE_LIMITED (429)          → 自动重试 (1s, 3s)，_has_yielded 后不重试
+    ├─ BAD_REQUEST (400/422)       → 不重试，通知用户
+    ├─ STREAM_INTERRUPTED          → 流式中断，通知用户
+    └─ PROTOCOL_ERROR (兜底)       → 不重试，通知用户
+    ↓
+[main.py except 块] → SSE error 事件 (error_code/retryable/can_continue/user_message)
+    ↓
+[RunRecord] → can_continue 判定 (基于 IterationProgress: 有 tool_calls 或 text_tokens>0)
+    ↓
+[前端] → 停止按钮 / 继续按钮 / 未完成消息标注
+```
+
+**关键安全机制**：`_has_yielded` 标志防止 async generator 在已 yield 数据后重试（避免重复输出）。
 
 ---
 
@@ -331,17 +361,19 @@ POST /api/chat/{sessionId}  →  ReadableStream (NDJSON)
   state_update        → 方案状态变化 (完整 TravelPlanState)
   context_compression → 上下文压缩通知
   memory_recall       → 本轮命中的记忆 ID 列表 (item_ids[])
-  done                → 流结束
+  error               → LLM 错误 (error_code/retryable/can_continue/failure_phase/user_message)
+  keepalive           → 心跳 (每 15s，前端 30s 无事件显示超时警告)
+  done                → 流结束 (run_id/run_status/can_continue)
 ```
 
 ### 关键组件
-- **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理 + 停止按钮(streaming 时替代发送按钮) + 连接超时警告(30s 无事件)
+- **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理 + 停止按钮(streaming 时替代发送按钮) + 连接超时警告(30s 无事件) + 继续按钮(can_continue 时显示) + 未完成消息标注(incomplete 标记)
 - **Phase3Workbench**: 旅行画像 / 候选池 / 骨架方案 / 锁定区 / 风险 (5 卡片)
 - **MemoryCenter**: 右滑抽屉, 3 Tab (活跃/待确认/归档), 卡片式记忆管理, 确认/拒绝/删除 + 乐观更新, 本轮命中记忆高亮（通过 App → SessionSidebar 透传 recalledIds + is-recalled CSS class + "本轮命中" badge）
 - **MapView**: Leaflet 地图, 活动标记 + 路线连线, 明暗主题
 - **Timeline**: 逐日活动时间线
 - **BudgetChart**: 预算进度条 + 按日分布
-- **useSSE**: 自定义 Hook, ReadableStream 解析 NDJSON, AbortController 取消请求 + cancel() 调用后端取消端点
+- **useSSE**: 自定义 Hook, streamSSE 共享函数 (sendMessage/continueGeneration 复用), AbortController 取消请求 + cancel() 调用后端取消端点 + continueGeneration() 调用 continue 端点
 - **useMemory**: 记忆 CRUD Hook, ref-based 乐观更新, pendingCount 统计
 
 ### 设计系统 "Solstice"
@@ -353,7 +385,7 @@ POST /api/chat/{sessionId}  →  ReadableStream (NDJSON)
 
 ### SQLite Schema (4 表)
 ```sql
-sessions     → session_id, user_id, title, phase, status, created_at, updated_at
+sessions     → session_id, user_id, title, phase, status, created_at, updated_at, last_run_id, last_run_status, last_run_error
 messages     → id, session_id, role, content, tool_calls(JSON), tool_call_id, seq
 plan_snapshots → id, session_id, phase, plan_json, created_at
 archives     → id, session_id, plan_json, summary, created_at
@@ -385,7 +417,9 @@ POST /api/sessions                        → 创建新会话
 GET  /api/sessions                        → 列出所有会话
 GET  /api/sessions/{id}                   → 会话元数据
 DELETE /api/sessions/{id}                 → 软删除会话
-POST /api/chat/{id}                       → 发送消息 (SSE 流式响应)
+POST /api/chat/{id}                       → 发送消息 (SSE 流式响应, 含 keepalive 心跳)
+POST /api/chat/{id}/cancel                → 取消当前生成 (设置 cancel_event, 等待 run 结束)
+POST /api/chat/{id}/continue              → 安全继续中断的生成 (基于 RunRecord.continuation_context)
 GET  /api/sessions/{id}/plan (或 /api/plan/{id}) → 获取旅行方案
 GET  /api/messages/{id}                   → 获取会话消息历史
 POST /api/backtrack/{id}                  → 回退到指定阶段
@@ -517,16 +551,17 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | Tool Guardrails | 确定性规则校验 + 中文注入检测 + 工具结果字段分级校验（住宿 `price_per_night` 别名兼容），不依赖 LLM，可按规则名禁用 |
 | Trace Data Pipeline | "丰富 Stats 层，Trace 只做读取"：on_validate/on_soft_judge 钩子将 state_changes/validation_errors/judge_scores post-hoc 写入 ToolCallRecord（`_pending_*` 暂存解决时序差距）；loop.py 标记 parallel_group；generate_context 返回 recalled item IDs；build_trace 纯读取消费所有字段 |
 | Memory Recall SSE | memory_recall SSE 事件携带 item_ids[]，前端 App 状态提升 recalledIds → SessionSidebar → MemoryCenter is-recalled 高亮 |
+| LLM 韧性三层架构 | 错误归一化 (LLMError + Provider._classify_error) → 停止生成 (cancel_event + 3 检查点 + RunRecord) → 安全继续 (can_continue 判定 + continuation_context + continue endpoint)；`_has_yielded` 防止流式重试重复输出；TRANSIENT 错误自动重试 2 次 (1s, 3s)；IterationProgress 追踪迭代进度判定是否可继续 |
 
 ---
 
 ## 17. 测试体系
 
-- **后端单元测试**：78+ 个文件、640+ 测试，覆盖 Agent 循环、LLM 供应商、状态管理、阶段路由、工具执行、存储、压缩、验证、遥测、护栏、可行性、评估管线、Trace 数据通道
+- **后端单元测试**：80+ 个文件、700+ 测试，覆盖 Agent 循环、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 数据通道、RunRecord/IterationProgress
 - **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner；pass@k 稳定性评估支持同一 golden case 多次执行，统计 pass_rate、断言一致性、工具重叠率、成本/延迟分布，并通过 `scripts/eval-stability.py` 生成 JSON + Markdown 报告
 - **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 覆盖 live Phase 1 主流程；根目录 `playwright.config.ts` 在显式指定脚本时只运行对应的 `scripts/failure-analysis/capture_screenshots.ts` 或 `scripts/demo/demo-full-flow.spec.ts`，并忽略 `.worktrees/`；其中 demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，只需要 frontend dev server，并把截图/视频写入 `screenshots/demos/`；failure-analysis raw results 写入 `scripts/failure-analysis/results/`，该目录为本地生成产物，不提交到 git
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---
 
-*最后更新：2026-04-13 | 当前 HEAD: 见 `git log --oneline -1`*
+*最后更新：2026-04-14 | 当前 HEAD: 见 `git log --oneline -1`*
