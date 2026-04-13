@@ -118,7 +118,10 @@ async def test_streaming_chat_emits_done_when_finish_reason_arrives_without_delt
         instance.chat.completions.create = AsyncMock(return_value=stream)
         provider.client = instance
 
-        chunks = [chunk async for chunk in provider.chat([Message(role=Role.USER, content="hi")])]
+        chunks = [
+            chunk
+            async for chunk in provider.chat([Message(role=Role.USER, content="hi")])
+        ]
 
     assert [chunk.type for chunk in chunks] == [ChunkType.TEXT_DELTA, ChunkType.DONE]
     assert chunks[0].content == "hello"
@@ -147,9 +150,17 @@ async def test_streaming_chat_flushes_tool_calls_when_finish_reason_chunk_has_no
         instance.chat.completions.create = AsyncMock(return_value=stream)
         provider.client = instance
 
-        chunks = [chunk async for chunk in provider.chat([Message(role=Role.USER, content="hi")], tools=[])]
+        chunks = [
+            chunk
+            async for chunk in provider.chat(
+                [Message(role=Role.USER, content="hi")], tools=[]
+            )
+        ]
 
-    assert [chunk.type for chunk in chunks] == [ChunkType.TOOL_CALL_START, ChunkType.DONE]
+    assert [chunk.type for chunk in chunks] == [
+        ChunkType.TOOL_CALL_START,
+        ChunkType.DONE,
+    ]
     assert chunks[0].tool_call == ToolCall(
         id="call_1",
         name="search_poi",
@@ -159,7 +170,9 @@ async def test_streaming_chat_flushes_tool_calls_when_finish_reason_chunk_has_no
 
 async def test_chat_passes_tool_choice_when_tools_are_present(provider):
     response = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="done", tool_calls=None))]
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="done", tool_calls=None))
+        ]
     )
 
     with patch("llm.openai_provider.AsyncOpenAI") as MockClient:
@@ -178,7 +191,10 @@ async def test_chat_passes_tool_choice_when_tools_are_present(provider):
                         "parameters": {"type": "object", "properties": {}},
                     }
                 ],
-                tool_choice={"type": "function", "function": {"name": "search_flights"}},
+                tool_choice={
+                    "type": "function",
+                    "function": {"name": "search_flights"},
+                },
                 stream=False,
             )
         ]
@@ -188,3 +204,84 @@ async def test_chat_passes_tool_choice_when_tools_are_present(provider):
         "type": "function",
         "function": {"name": "search_flights"},
     }
+
+
+# ── Error classification & retry tests ──
+
+
+from llm.errors import LLMError, LLMErrorCode
+
+
+def test_classify_error_api_status_503(provider):
+    import openai
+
+    exc = openai.APIStatusError(
+        message="overloaded",
+        response=MagicMock(status_code=503),
+        body=None,
+    )
+    result = provider._classify_error(exc)
+    assert isinstance(result, LLMError)
+    assert result.code == LLMErrorCode.TRANSIENT
+    assert result.retryable is True
+
+
+def test_classify_error_api_status_429(provider):
+    import openai
+
+    exc = openai.APIStatusError(
+        message="rate limited",
+        response=MagicMock(status_code=429),
+        body=None,
+    )
+    result = provider._classify_error(exc)
+    assert result.code == LLMErrorCode.RATE_LIMITED
+
+
+def test_classify_error_connection_error(provider):
+    import openai
+
+    exc = openai.APIConnectionError(request=MagicMock())
+    result = provider._classify_error(exc)
+    assert result.code == LLMErrorCode.TRANSIENT
+    assert result.retryable is True
+
+
+def test_classify_error_unknown_exception(provider):
+    exc = RuntimeError("something weird")
+    result = provider._classify_error(exc)
+    assert result.code == LLMErrorCode.PROTOCOL_ERROR
+    assert result.retryable is False
+
+
+def test_provider_name(provider):
+    assert provider.provider_name == "openai"
+
+
+@pytest.mark.asyncio
+async def test_chat_raises_llm_error_on_api_failure(provider):
+    import openai
+
+    with (
+        patch("llm.openai_provider.AsyncOpenAI") as MockClient,
+        patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(
+            side_effect=openai.APIStatusError(
+                message="overloaded",
+                response=MagicMock(status_code=503),
+                body=None,
+            )
+        )
+        provider.client = instance
+        with pytest.raises(LLMError) as exc_info:
+            async for _ in provider.chat(
+                [Message(role=Role.USER, content="hi")],
+                stream=False,
+            ):
+                pass
+        assert exc_info.value.code == LLMErrorCode.TRANSIENT
+        # 503 is retryable, should retry 2 times (3 total calls)
+        assert instance.chat.completions.create.await_count == 3
+        assert mock_sleep.await_count == 2

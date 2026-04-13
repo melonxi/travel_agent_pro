@@ -10,10 +10,18 @@ from opentelemetry import trace as otel_trace
 
 from agent.types import Message, Role, ToolCall
 from llm.types import ChunkType, LLMChunk
-from telemetry.attributes import LLM_PROVIDER, LLM_MODEL, EVENT_LLM_REQUEST, EVENT_LLM_RESPONSE, truncate
+from telemetry.attributes import (
+    LLM_PROVIDER,
+    LLM_MODEL,
+    EVENT_LLM_REQUEST,
+    EVENT_LLM_RESPONSE,
+    truncate,
+)
 
 
 class OpenAIProvider:
+    _RETRY_DELAYS = (1.0, 3.0)
+
     def __init__(
         self, model: str = "gpt-4o", temperature: float = 0.7, max_tokens: int = 4096
     ):
@@ -21,6 +29,65 @@ class OpenAIProvider:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.client = AsyncOpenAI()
+
+    @property
+    def provider_name(self) -> str:
+        return "openai"
+
+    def _classify_error(
+        self, exc: Exception, *, failure_phase: str = "connection"
+    ) -> "LLMError":
+        import openai
+        from llm.errors import LLMError, LLMErrorCode, classify_by_http_status
+
+        if isinstance(exc, LLMError):
+            return exc
+        if isinstance(exc, openai.APIConnectionError):
+            return LLMError(
+                code=LLMErrorCode.TRANSIENT,
+                message=str(exc),
+                retryable=True,
+                provider="openai",
+                model=self.model,
+                failure_phase="connection",
+                raw_error=repr(exc),
+            )
+        if isinstance(exc, openai.APIStatusError):
+            return classify_by_http_status(
+                exc.status_code,
+                provider="openai",
+                model=self.model,
+                raw_error=str(exc),
+            )
+        if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+            return LLMError(
+                code=LLMErrorCode.TRANSIENT,
+                message=str(exc),
+                retryable=True,
+                provider="openai",
+                model=self.model,
+                failure_phase="connection",
+                raw_error=repr(exc),
+            )
+        if isinstance(exc, json.JSONDecodeError):
+            return LLMError(
+                code=LLMErrorCode.PROTOCOL_ERROR,
+                message="Failed to parse LLM response JSON",
+                retryable=False,
+                provider="openai",
+                model=self.model,
+                failure_phase="parsing",
+                raw_error=repr(exc),
+            )
+        return LLMError(
+            code=LLMErrorCode.PROTOCOL_ERROR,
+            message=str(exc),
+            retryable=False,
+            provider="openai",
+            model=self.model,
+            failure_phase=failure_phase,
+            raw_error=repr(exc),
+        )
 
     def _convert_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
@@ -93,11 +160,14 @@ class OpenAIProvider:
             span.set_attribute(LLM_PROVIDER, "openai")
             span.set_attribute(LLM_MODEL, self.model)
             total_chars = sum(len(m.content or "") for m in messages)
-            span.add_event(EVENT_LLM_REQUEST, {
-                "message_count": len(messages),
-                "total_chars": total_chars,
-                "has_tools": tools is not None and len(tools) > 0,
-            })
+            span.add_event(
+                EVENT_LLM_REQUEST,
+                {
+                    "message_count": len(messages),
+                    "total_chars": total_chars,
+                    "has_tools": tools is not None and len(tools) > 0,
+                },
+            )
             kwargs: dict[str, Any] = {
                 "model": self.model,
                 "messages": self._convert_messages(messages),
@@ -112,86 +182,142 @@ class OpenAIProvider:
             if stream:
                 kwargs["stream_options"] = {"include_usage": True}
 
-            if not stream:
-                response = await self.client.chat.completions.create(**kwargs)
-                choice = response.choices[0]
-                if choice.message.content:
-                    yield LLMChunk(
-                        type=ChunkType.TEXT_DELTA, content=choice.message.content
-                    )
-                if choice.message.tool_calls:
-                    for tc in choice.message.tool_calls:
-                        yield LLMChunk(
-                            type=ChunkType.TOOL_CALL_START,
-                            tool_call=ToolCall(
-                                id=tc.id,
-                                name=tc.function.name,
-                                arguments=json.loads(tc.function.arguments),
-                            ),
+            import asyncio as _asyncio
+            from llm.errors import LLMError
+
+            _has_yielded = False
+            max_conn_retries = 2
+            for _attempt in range(max_conn_retries + 1):
+                try:
+                    if not stream:
+                        response = await self.client.chat.completions.create(**kwargs)
+                        choice = response.choices[0]
+                        if choice.message.content:
+                            yield LLMChunk(
+                                type=ChunkType.TEXT_DELTA,
+                                content=choice.message.content,
+                            )
+                        if choice.message.tool_calls:
+                            for tc in choice.message.tool_calls:
+                                yield LLMChunk(
+                                    type=ChunkType.TOOL_CALL_START,
+                                    tool_call=ToolCall(
+                                        id=tc.id,
+                                        name=tc.function.name,
+                                        arguments=json.loads(tc.function.arguments),
+                                    ),
+                                )
+                        text_preview = truncate(
+                            choice.message.content or "", max_len=200
                         )
-                text_preview = truncate(choice.message.content or "", max_len=200)
-                tool_names = []
-                if choice.message.tool_calls:
-                    tool_names = [tc.function.name for tc in choice.message.tool_calls]
-                span.add_event(EVENT_LLM_RESPONSE, {
-                    "text_preview": text_preview,
-                    "tool_calls": json.dumps(tool_names),
-                })
-                if hasattr(response, 'usage') and response.usage:
-                    yield LLMChunk(
-                        type=ChunkType.USAGE,
-                        usage_info={
-                            "input_tokens": response.usage.prompt_tokens,
-                            "output_tokens": response.usage.completion_tokens,
+                        tool_names = []
+                        if choice.message.tool_calls:
+                            tool_names = [
+                                tc.function.name for tc in choice.message.tool_calls
+                            ]
+                        span.add_event(
+                            EVENT_LLM_RESPONSE,
+                            {
+                                "text_preview": text_preview,
+                                "tool_calls": json.dumps(tool_names),
+                            },
+                        )
+                        if hasattr(response, "usage") and response.usage:
+                            yield LLMChunk(
+                                type=ChunkType.USAGE,
+                                usage_info={
+                                    "input_tokens": response.usage.prompt_tokens,
+                                    "output_tokens": response.usage.completion_tokens,
+                                },
+                            )
+                        yield LLMChunk(type=ChunkType.DONE)
+                        return
+
+                    response = await self.client.chat.completions.create(**kwargs)
+                    current_tool_calls: dict[int, dict] = {}
+                    collected_text = ""
+
+                    async for chunk in response:
+                        # Check for usage data (final chunk in stream)
+                        if hasattr(chunk, "usage") and chunk.usage:
+                            yield LLMChunk(
+                                type=ChunkType.USAGE,
+                                usage_info={
+                                    "input_tokens": chunk.usage.prompt_tokens,
+                                    "output_tokens": chunk.usage.completion_tokens,
+                                },
+                            )
+
+                        choice = chunk.choices[0] if chunk.choices else None
+                        if not choice:
+                            continue
+
+                        delta = choice.delta
+                        if delta:
+                            if delta.content:
+                                collected_text += delta.content
+                                _has_yielded = True
+                                yield LLMChunk(
+                                    type=ChunkType.TEXT_DELTA, content=delta.content
+                                )
+
+                            if delta.tool_calls:
+                                for tc_delta in delta.tool_calls:
+                                    idx = tc_delta.index
+                                    if idx not in current_tool_calls:
+                                        current_tool_calls[idx] = {
+                                            "id": tc_delta.id or "",
+                                            "name": "",
+                                            "arguments": "",
+                                        }
+                                    entry = current_tool_calls[idx]
+                                    if tc_delta.id:
+                                        entry["id"] = tc_delta.id
+                                    if tc_delta.function:
+                                        if tc_delta.function.name:
+                                            entry["name"] = tc_delta.function.name
+                                        if tc_delta.function.arguments:
+                                            entry["arguments"] += (
+                                                tc_delta.function.arguments
+                                            )
+
+                        if choice.finish_reason:
+                            for entry in current_tool_calls.values():
+                                yield LLMChunk(
+                                    type=ChunkType.TOOL_CALL_START,
+                                    tool_call=ToolCall(
+                                        id=entry["id"],
+                                        name=entry["name"],
+                                        arguments=json.loads(entry["arguments"])
+                                        if entry["arguments"]
+                                        else {},
+                                    ),
+                                )
+                            tool_call_names = [
+                                entry["name"] for entry in current_tool_calls.values()
+                            ]
+                            span.add_event(
+                                EVENT_LLM_RESPONSE,
+                                {
+                                    "text_preview": truncate(
+                                        collected_text, max_len=200
+                                    ),
+                                    "tool_calls": json.dumps(tool_call_names),
+                                },
+                            )
+                            yield LLMChunk(type=ChunkType.DONE)
+                            return
+
+                    tool_call_names = [
+                        entry["name"] for entry in current_tool_calls.values()
+                    ]
+                    span.add_event(
+                        EVENT_LLM_RESPONSE,
+                        {
+                            "text_preview": truncate(collected_text, max_len=200),
+                            "tool_calls": json.dumps(tool_call_names),
                         },
                     )
-                yield LLMChunk(type=ChunkType.DONE)
-                return
-
-            response = await self.client.chat.completions.create(**kwargs)
-            current_tool_calls: dict[int, dict] = {}
-            collected_text = ""
-
-            async for chunk in response:
-                # Check for usage data (final chunk in stream)
-                if hasattr(chunk, 'usage') and chunk.usage:
-                    yield LLMChunk(
-                        type=ChunkType.USAGE,
-                        usage_info={
-                            "input_tokens": chunk.usage.prompt_tokens,
-                            "output_tokens": chunk.usage.completion_tokens,
-                        },
-                    )
-
-                choice = chunk.choices[0] if chunk.choices else None
-                if not choice:
-                    continue
-
-                delta = choice.delta
-                if delta:
-                    if delta.content:
-                        collected_text += delta.content
-                        yield LLMChunk(type=ChunkType.TEXT_DELTA, content=delta.content)
-
-                    if delta.tool_calls:
-                        for tc_delta in delta.tool_calls:
-                            idx = tc_delta.index
-                            if idx not in current_tool_calls:
-                                current_tool_calls[idx] = {
-                                    "id": tc_delta.id or "",
-                                    "name": "",
-                                    "arguments": "",
-                                }
-                            entry = current_tool_calls[idx]
-                            if tc_delta.id:
-                                entry["id"] = tc_delta.id
-                            if tc_delta.function:
-                                if tc_delta.function.name:
-                                    entry["name"] = tc_delta.function.name
-                                if tc_delta.function.arguments:
-                                    entry["arguments"] += tc_delta.function.arguments
-
-                if choice.finish_reason:
                     for entry in current_tool_calls.values():
                         yield LLMChunk(
                             type=ChunkType.TOOL_CALL_START,
@@ -203,33 +329,22 @@ class OpenAIProvider:
                                 else {},
                             ),
                         )
-                    tool_call_names = [
-                        entry["name"] for entry in current_tool_calls.values()
-                    ]
-                    span.add_event(EVENT_LLM_RESPONSE, {
-                        "text_preview": truncate(collected_text, max_len=200),
-                        "tool_calls": json.dumps(tool_call_names),
-                    })
                     yield LLMChunk(type=ChunkType.DONE)
                     return
-
-            tool_call_names = [entry["name"] for entry in current_tool_calls.values()]
-            span.add_event(EVENT_LLM_RESPONSE, {
-                "text_preview": truncate(collected_text, max_len=200),
-                "tool_calls": json.dumps(tool_call_names),
-            })
-            for entry in current_tool_calls.values():
-                yield LLMChunk(
-                    type=ChunkType.TOOL_CALL_START,
-                    tool_call=ToolCall(
-                        id=entry["id"],
-                        name=entry["name"],
-                        arguments=json.loads(entry["arguments"])
-                        if entry["arguments"]
-                        else {},
-                    ),
-                )
-            yield LLMChunk(type=ChunkType.DONE)
+                except LLMError:
+                    raise
+                except Exception as exc:
+                    llm_err = self._classify_error(exc)
+                    if (
+                        llm_err.failure_phase == "connection"
+                        and llm_err.retryable
+                        and _attempt < max_conn_retries
+                        and not _has_yielded
+                    ):
+                        delay = self._RETRY_DELAYS[_attempt]
+                        await _asyncio.sleep(delay)
+                        continue
+                    raise llm_err
 
     async def count_tokens(self, messages: list[Message]) -> int:
         try:
@@ -293,7 +408,12 @@ class OpenAIProvider:
                 raw = model_info
             else:
                 raw = {}
-            for key in ("context_window", "max_model_len", "context_length", "max_context_length"):
+            for key in (
+                "context_window",
+                "max_model_len",
+                "context_length",
+                "max_context_length",
+            ):
                 value = raw.get(key)
                 if isinstance(value, int) and value > 0:
                     return value
