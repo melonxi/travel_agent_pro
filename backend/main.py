@@ -223,12 +223,14 @@ def _record_tool_result_stats(
     duration = metadata.get("duration_ms", 0.0)
     if not isinstance(duration, (int, float)):
         duration = 0.0
+    parallel_group = metadata.get("parallel_group")
     stats.record_tool_call(
         tool_name=tool_name,
         duration_ms=float(duration),
         status=result.status,
         error_code=result.error_code,
         phase=phase,
+        parallel_group=parallel_group,
     )
 
 

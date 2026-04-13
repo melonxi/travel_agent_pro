@@ -52,6 +52,7 @@ class AgentLoop:
         self.tool_choice_decider = tool_choice_decider
         self.guardrail = guardrail
         self.parallel_tool_execution = parallel_tool_execution
+        self._parallel_group_counter: int = 0
         self._prev_phase3_step: str | None = None
 
     async def run(
@@ -203,6 +204,9 @@ class AgentLoop:
                                 read_batch.append((scan_idx, scan_tc))
                                 scan_idx += 1
 
+                            self._parallel_group_counter += 1
+                            current_group = self._parallel_group_counter
+
                             batch_results = await self.tool_engine.execute_batch(
                                 [call for _, call in read_batch]
                             )
@@ -210,6 +214,9 @@ class AgentLoop:
                                 read_batch,
                                 batch_results,
                             ):
+                                if batch_result.metadata is None:
+                                    batch_result.metadata = {}
+                                batch_result.metadata["parallel_group"] = current_group
                                 result = self._validate_tool_output(
                                     batch_tc,
                                     batch_result,
