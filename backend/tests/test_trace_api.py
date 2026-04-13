@@ -64,12 +64,20 @@ async def test_trace_with_stats(app):
     session_id = "test-stats-session"
     stats = SessionStats()
     stats.record_llm_call(
-        provider="openai", model="gpt-4o", input_tokens=100,
-        output_tokens=50, duration_ms=200.0, phase=1, iteration=1,
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        duration_ms=200.0,
+        phase=1,
+        iteration=1,
     )
     stats.record_tool_call(
-        tool_name="web_search", duration_ms=150.0,
-        status="ok", error_code=None, phase=1,
+        tool_name="web_search",
+        duration_ms=150.0,
+        status="ok",
+        error_code=None,
+        phase=1,
     )
     sessions[session_id] = {"stats": stats, "messages": [], "plan": None}
 
@@ -111,12 +119,22 @@ async def test_trace_iterations_ordered(app):
     session_id = "test-iter-order"
     stats = SessionStats()
     stats.record_llm_call(
-        provider="openai", model="gpt-4o", input_tokens=100,
-        output_tokens=50, duration_ms=200.0, phase=1, iteration=1,
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        duration_ms=200.0,
+        phase=1,
+        iteration=1,
     )
     stats.record_llm_call(
-        provider="openai", model="gpt-4o-mini", input_tokens=80,
-        output_tokens=40, duration_ms=100.0, phase=1, iteration=2,
+        provider="openai",
+        model="gpt-4o-mini",
+        input_tokens=80,
+        output_tokens=40,
+        duration_ms=100.0,
+        phase=1,
+        iteration=2,
     )
     sessions[session_id] = {"stats": stats, "messages": [], "plan": None}
 
@@ -142,16 +160,27 @@ async def test_trace_tool_side_effects(app):
     session_id = "test-side-effects"
     stats = SessionStats()
     stats.record_llm_call(
-        provider="openai", model="gpt-4o", input_tokens=100,
-        output_tokens=50, duration_ms=200.0, phase=1, iteration=1,
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        duration_ms=200.0,
+        phase=1,
+        iteration=1,
     )
     stats.record_tool_call(
-        tool_name="web_search", duration_ms=100.0,
-        status="ok", error_code=None, phase=1,
+        tool_name="web_search",
+        duration_ms=100.0,
+        status="ok",
+        error_code=None,
+        phase=1,
     )
     stats.record_tool_call(
-        tool_name="update_plan_state", duration_ms=50.0,
-        status="ok", error_code=None, phase=1,
+        tool_name="update_plan_state",
+        duration_ms=50.0,
+        status="ok",
+        error_code=None,
+        phase=1,
     )
     sessions[session_id] = {"stats": stats, "messages": [], "plan": None}
 
@@ -182,8 +211,11 @@ async def test_trace_orphan_tool_calls(app):
     sessions = _get_sessions(app)
     stats: SessionStats = sessions[session_id]["stats"]
     stats.record_tool_call(
-        tool_name="web_search", duration_ms=500.0,
-        status="success", error_code=None, phase=1,
+        tool_name="web_search",
+        duration_ms=500.0,
+        status="success",
+        error_code=None,
+        phase=1,
     )
 
     async with AsyncClient(
@@ -195,3 +227,81 @@ async def test_trace_orphan_tool_calls(app):
     assert data["iterations"][0]["llm_call"] is None
     assert len(data["iterations"][0]["tool_calls"]) == 1
     assert data["iterations"][0]["tool_calls"][0]["name"] == "web_search"
+
+
+def test_tool_call_record_new_fields():
+    """ToolCallRecord accepts state_changes, parallel_group, validation_errors, judge_scores."""
+    from telemetry.stats import ToolCallRecord
+
+    rec = ToolCallRecord(
+        tool_name="update_plan_state",
+        duration_ms=50.0,
+        status="ok",
+        error_code=None,
+        phase=1,
+        state_changes=[{"field": "destination", "before": None, "after": "东京"}],
+        parallel_group=1,
+        validation_errors=["时间冲突"],
+        judge_scores={"pace": 4, "geography": 5},
+    )
+    assert rec.state_changes == [
+        {"field": "destination", "before": None, "after": "东京"}
+    ]
+    assert rec.parallel_group == 1
+    assert rec.validation_errors == ["时间冲突"]
+    assert rec.judge_scores == {"pace": 4, "geography": 5}
+
+
+def test_tool_call_record_defaults_none():
+    """New fields default to None for backward compatibility."""
+    from telemetry.stats import ToolCallRecord
+
+    rec = ToolCallRecord(
+        tool_name="web_search",
+        duration_ms=100.0,
+        status="ok",
+        error_code=None,
+        phase=1,
+    )
+    assert rec.state_changes is None
+    assert rec.parallel_group is None
+    assert rec.validation_errors is None
+    assert rec.judge_scores is None
+
+
+def test_memory_hit_record():
+    """MemoryHitRecord stores recall metadata."""
+    from telemetry.stats import MemoryHitRecord
+
+    rec = MemoryHitRecord(
+        item_ids=["mem-1", "mem-2"],
+        core_count=1,
+        trip_count=0,
+        phase_count=1,
+    )
+    assert rec.item_ids == ["mem-1", "mem-2"]
+    assert rec.core_count == 1
+    assert rec.timestamp > 0
+
+
+def test_session_stats_memory_hits():
+    """SessionStats has memory_hits list, defaults empty."""
+    stats = SessionStats()
+    assert stats.memory_hits == []
+
+
+def test_session_stats_to_dict_includes_memory_hits():
+    """to_dict includes memory_hits count."""
+    from telemetry.stats import MemoryHitRecord
+
+    stats = SessionStats()
+    stats.memory_hits.append(
+        MemoryHitRecord(
+            item_ids=["m1"],
+            core_count=1,
+            trip_count=0,
+            phase_count=0,
+        )
+    )
+    d = stats.to_dict()
+    assert d["memory_hit_count"] == 1
