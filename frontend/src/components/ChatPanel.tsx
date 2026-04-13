@@ -335,6 +335,16 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
           }
         } else if (event.type === 'memory_recall' && event.item_ids) {
           onMemoryRecall?.(event.item_ids)
+        } else if (event.type === 'error') {
+          const message = event.message ?? '模型服务暂时不可用，请稍后重试。'
+          const detail = event.error ? `\n\n${event.error}` : ''
+          setMessages((prev) =>
+            prev.map((item) =>
+              item.id === currentAssistantId
+                ? { ...item, content: `${message}${detail}` }
+                : item,
+            ),
+          )
         }
       })
     } finally {

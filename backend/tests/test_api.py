@@ -407,6 +407,31 @@ async def test_chat_stream_emits_tool_result_event(app):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_emits_error_event_when_agent_stream_raises(app):
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已完成搜索，正在整理")
+        raise RuntimeError("Xunfei request failed: Engine Busy")
+
+    with patch("agent.loop.AgentLoop.run", fake_run):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "继续整理搜索结果"},
+            )
+
+    assert resp.status_code == 200
+    assert '"type": "text_delta"' in resp.text
+    assert '"type": "error"' in resp.text
+    assert '"error_code": "AGENT_STREAM_ERROR"' in resp.text
+    assert "Engine Busy" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_emits_incremental_state_update_after_successful_update_plan_state(app):
     async def fake_run(self, messages, phase, tools_override=None):
         call = ToolCall(
