@@ -1419,11 +1419,26 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool["name"]
             for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)
         ]
-        memory_context, _recalled_ids = (
+        memory_context, recalled_ids = (
             await memory_mgr.generate_context(req.user_id, plan)
             if config.memory.enabled
             else ("暂无相关用户记忆", [])
         )
+
+        if recalled_ids:
+            from telemetry.stats import MemoryHitRecord
+
+            session_stats = session.get("stats")
+            if session_stats is not None:
+                session_stats.memory_hits.append(
+                    MemoryHitRecord(
+                        item_ids=recalled_ids,
+                        core_count=len(recalled_ids),
+                        trip_count=0,
+                        phase_count=0,
+                    )
+                )
+
         sys_msg = context_mgr.build_system_message(
             plan,
             phase_prompt,
@@ -1443,6 +1458,14 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         phase_before_run = plan.phase
 
         async def event_stream():
+            if recalled_ids:
+                yield json.dumps(
+                    {
+                        "type": "memory_recall",
+                        "item_ids": recalled_ids,
+                    },
+                    ensure_ascii=False,
+                )
             tool_call_names: dict[str, str] = {}
             if config.memory.enabled:
                 seen_key = (session["user_id"], plan.session_id)
