@@ -58,12 +58,26 @@ class ToolCallRecord:
     error_code: str | None
     phase: int
     timestamp: float = field(default_factory=time.time)
+    state_changes: list[dict] | None = None
+    parallel_group: int | None = None
+    validation_errors: list[str] | None = None
+    judge_scores: dict | None = None
+
+
+@dataclass
+class MemoryHitRecord:
+    item_ids: list[str]
+    core_count: int
+    trip_count: int
+    phase_count: int
+    timestamp: float = field(default_factory=time.time)
 
 
 @dataclass
 class SessionStats:
     llm_calls: list[LLMCallRecord] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
+    memory_hits: list[MemoryHitRecord] = field(default_factory=list)
 
     def record_llm_call(
         self,
@@ -76,15 +90,17 @@ class SessionStats:
         phase: int,
         iteration: int,
     ) -> None:
-        self.llm_calls.append(LLMCallRecord(
-            provider=provider,
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            duration_ms=duration_ms,
-            phase=phase,
-            iteration=iteration,
-        ))
+        self.llm_calls.append(
+            LLMCallRecord(
+                provider=provider,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                duration_ms=duration_ms,
+                phase=phase,
+                iteration=iteration,
+            )
+        )
 
     def record_tool_call(
         self,
@@ -95,13 +111,15 @@ class SessionStats:
         error_code: str | None,
         phase: int,
     ) -> None:
-        self.tool_calls.append(ToolCallRecord(
-            tool_name=tool_name,
-            duration_ms=duration_ms,
-            status=status,
-            error_code=error_code,
-            phase=phase,
-        ))
+        self.tool_calls.append(
+            ToolCallRecord(
+                tool_name=tool_name,
+                duration_ms=duration_ms,
+                status=status,
+                error_code=error_code,
+                phase=phase,
+            )
+        )
 
     @property
     def total_input_tokens(self) -> int:
@@ -130,7 +148,14 @@ class SessionStats:
         return total
 
     def to_dict(self) -> dict:
-        by_model: dict[str, dict] = defaultdict(lambda: {"input_tokens": 0, "output_tokens": 0, "calls": 0, "duration_ms": 0.0})
+        by_model: dict[str, dict] = defaultdict(
+            lambda: {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "calls": 0,
+                "duration_ms": 0.0,
+            }
+        )
         for r in self.llm_calls:
             entry = by_model[r.model]
             entry["input_tokens"] += r.input_tokens
@@ -138,7 +163,9 @@ class SessionStats:
             entry["calls"] += 1
             entry["duration_ms"] += r.duration_ms
 
-        by_tool: dict[str, dict] = defaultdict(lambda: {"calls": 0, "duration_ms": 0.0, "errors": 0})
+        by_tool: dict[str, dict] = defaultdict(
+            lambda: {"calls": 0, "duration_ms": 0.0, "errors": 0}
+        )
         for r in self.tool_calls:
             entry = by_tool[r.tool_name]
             entry["calls"] += 1
@@ -154,6 +181,7 @@ class SessionStats:
             "estimated_cost_usd": round(self.estimated_cost_usd, 6),
             "llm_call_count": len(self.llm_calls),
             "tool_call_count": len(self.tool_calls),
+            "memory_hit_count": len(self.memory_hits),
             "by_model": dict(by_model),
             "by_tool": dict(by_tool),
         }
