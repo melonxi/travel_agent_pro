@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import MessageBubble from './MessageBubble'
 import { useSSE } from '../hooks/useSSE'
-import type { SSEEvent, TravelPlanState } from '../types/plan'
+import type { PhaseTransitionEvent, SSEEvent, TravelPlanState } from '../types/plan'
 import type { SessionMessage } from '../types/session'
 
 interface StateChange {
@@ -92,6 +92,7 @@ interface Props {
   sessionId: string
   onPlanUpdate: (plan: TravelPlanState) => void
   onMemoryRecall?: (itemIds: string[]) => void
+  onPhaseTransition: (event: PhaseTransitionEvent) => void
 }
 
 interface EventHandlerState {
@@ -190,7 +191,7 @@ function createErrorFeedback(event: SSEEvent): StreamFeedback {
   }
 }
 
-export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: Props) {
+export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onPhaseTransition }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -349,7 +350,9 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     lastEventTimeRef.current = Date.now()
     setStreamFeedback((prev) => (prev?.kind === 'waiting' ? null : prev))
 
-    if (event.type === 'text_delta' && event.content) {
+    if (event.type === 'phase_transition') {
+      onPhaseTransition(event)
+    } else if (event.type === 'text_delta' && event.content) {
       state.assistantContent += event.content
       const targetId = state.currentAssistantId
       setMessages((prev) => {

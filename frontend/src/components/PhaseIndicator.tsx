@@ -7,9 +7,15 @@ const PHASE_STEPS = [
 
 interface Props {
   currentPhase: number
+  phaseOverride?: {
+    phase: number
+    step?: string | null
+    expiresAt: number
+  } | null
 }
 
-export default function PhaseIndicator({ currentPhase }: Props) {
+export default function PhaseIndicator({ currentPhase, phaseOverride }: Props) {
+  void phaseOverride
   return (
     <div className="phase-bar">
       {PHASE_STEPS.map((step) => {
