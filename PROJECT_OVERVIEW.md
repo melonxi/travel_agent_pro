@@ -47,7 +47,7 @@ travel_agent_pro/
 │   │   ├── factory.py          # 工厂: provider 字符串 → 具体实例
 │   │   ├── openai_provider.py  # OpenAI 实现 (流式 + tiktoken + 错误归一化 + 瞬态重试)
 │   │   ├── anthropic_provider.py # Anthropic 实现 (非流式回退 + 错误归一化 + 瞬态重试)
-│   │   └── types.py            # LLMChunk, ChunkType 枚举（含文本/工具/usage 以及 phase_transition、agent_status 协议事件）
+│   │   └── types.py            # LLMChunk, ChunkType 枚举
 │   ├── state/                  # 旅行状态模型
 │   │   ├── models.py           # TravelPlanState 完整数据类 (350+ 行)
 │   │   ├── manager.py          # StateManager: JSON 文件持久化
