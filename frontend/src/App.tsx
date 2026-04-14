@@ -207,6 +207,26 @@ export default function App() {
     }
   }, [phaseOverride, plan])
 
+  useEffect(() => {
+    if (!phaseOverride) return
+
+    const remainingMs = phaseOverride.expiresAt - Date.now()
+    if (remainingMs <= 0) {
+      setPhaseOverride(null)
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setPhaseOverride((currentOverride) => (
+        currentOverride?.expiresAt === phaseOverride.expiresAt ? null : currentOverride
+      ))
+    }, remainingMs)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [phaseOverride])
+
   if (bootstrapping || !sessionId) {
     return (
       <div className="loading-screen">
