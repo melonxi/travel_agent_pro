@@ -204,6 +204,9 @@ async def test_loop_yields_phase_transition_on_check_and_apply(
     assert len(phase_chunks) == 1
     assert phase_chunks[0].phase_info["from_phase"] == 1
     assert phase_chunks[0].phase_info["to_phase"] == 3
+    assert phase_chunks[0].phase_info["from_step"] == "brief"
+    assert phase_chunks[0].phase_info["to_step"] == "brief"
+    assert phase_chunks[0].phase_info["reason"] == "check_and_apply_transition"
 
 
 @pytest.mark.asyncio
