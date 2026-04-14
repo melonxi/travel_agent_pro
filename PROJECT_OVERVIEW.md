@@ -142,7 +142,7 @@ travel_agent_pro/
 │   ├── vite.config.ts          # Vite 6: /api → localhost:8000 代理
 │   └── package.json            # React 19, Leaflet, react-markdown
 │
-├── docs/                       # 架构文档与学习笔记（含 docs/failure-analysis.md 失败案例报告）
+├── docs/                       # 架构文档与学习笔记（含 docs/learning/2026-04-13-失败案例分析.md 失败案例报告）
 ├── scripts/                    # dev.sh/dev-stop.sh + eval-stability.py（pass@k live/mock稳定性评估）+ failure-analysis/（live 场景执行与截图采集）+ demo/（deterministic 录屏）
 │   └── demo/                   # demo/seed-memory.json + demo-scripted-session.json + run-all-demos.sh + README + demo-full-flow.spec.ts
 ├── backend/data/               # 本地运行时持久化：sessions.db、sessions/、users/
@@ -554,7 +554,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | Trace Data Pipeline | "丰富 Stats 层，Trace 只做读取"：on_validate/on_soft_judge 钩子将 state_changes/validation_errors/judge_scores post-hoc 写入 ToolCallRecord（`_pending_*` 暂存解决时序差距）；loop.py 标记 parallel_group；generate_context 返回 recalled item IDs；build_trace 纯读取消费所有字段 |
 | Memory Recall SSE | memory_recall SSE 事件携带 item_ids[]，前端 App 状态提升 recalledIds → SessionSidebar → MemoryCenter is-recalled 高亮 |
 | LLM 韧性三层架构 | 错误归一化 (LLMError + Provider._classify_error) → 停止生成 (cancel_event + 3 检查点 + RunRecord) → 安全继续 (can_continue 判定 + continuation_context + continue endpoint)；`_has_yielded` 防止流式重试重复输出；TRANSIENT 错误自动重试 2 次 (1s, 3s)；IterationProgress 追踪迭代进度判定是否可继续 |
-| 重试机制学习文档 | `docs/learning/2026-04-14-retry-recovery-mechanism.md` 详细说明前后端如何围绕 `retryable/can_continue/run_status` 配合，并附 Mermaid 总览图、状态机图、字段映射图与三类典型时序图 |
+| 重试机制学习文档 | `docs/learning/2026-04-14-重试恢复机制.md` 详细说明前后端如何围绕 `retryable/can_continue/run_status` 配合，并附 Mermaid 总览图、状态机图、字段映射图与三类典型时序图 |
 
 ---
 
