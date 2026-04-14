@@ -44,7 +44,14 @@ Important:
                 suggestion="Use web_search or xiaohongshu_search for destination research instead.",
             )
 
-        raw_list = await flyai_client.fast_search(query=query)
+        try:
+            raw_list = await flyai_client.fast_search(query=query)
+        except RuntimeError as exc:
+            raise ToolError(
+                str(exc),
+                error_code="SERVICE_UNAVAILABLE",
+                suggestion="Check FlyAI CLI quota/auth status or retry later.",
+            ) from exc
 
         results = []
         for item in raw_list:
@@ -53,8 +60,7 @@ Important:
                 {
                     "title": payload.get("title", ""),
                     "price": payload.get("price"),
-                    "booking_url": payload.get("jumpUrl")
-                    or payload.get("detailUrl"),
+                    "booking_url": payload.get("jumpUrl") or payload.get("detailUrl"),
                     "image_url": payload.get("picUrl") or payload.get("mainPic"),
                 }
             )

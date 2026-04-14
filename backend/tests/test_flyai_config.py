@@ -42,6 +42,17 @@ def test_load_config_flyai_missing(tmp_path):
     assert cfg.flyai.cli_timeout == 30
 
 
+def test_load_config_reads_flyai_api_key_from_env(monkeypatch, tmp_path):
+    """load_config should fall back to FLYAI_API_KEY when YAML omits flyai.api_key."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("flyai:\n  enabled: true\n")
+    monkeypatch.setenv("FLYAI_API_KEY", "env-flyai-key")
+
+    cfg = load_config(str(cfg_file))
+
+    assert cfg.flyai.api_key == "env-flyai-key"
+
+
 def test_load_config_falls_back_to_repo_root_for_relative_path(monkeypatch, tmp_path):
     """Relative config path should resolve from repo root when cwd is backend/."""
     backend_dir = tmp_path / "project" / "backend"

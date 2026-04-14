@@ -106,3 +106,122 @@ async def test_empty_item_list(mock_which_found):
         client = FlyAIClient(timeout=10)
         result = await client.search_hotels(dest_name="东京")
         assert result == []
+
+
+@pytest.mark.asyncio
+async def test_http_error_text_raises_runtime_error(mock_which_found):
+    from tools.flyai_client import FlyAIClient
+
+    payload = (
+        b'MCP HTTP 429:\nBody: {"jsonrpc":"2.0","id":"1","error":{"code":-32603,'
+        b'"message":"Trial limit reached. Please visit the console at flyai.open.fliggy.com to get a formal API Key"}}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=_make_proc_mock(payload)):
+        client = FlyAIClient(timeout=10)
+        with pytest.raises(RuntimeError, match="Trial limit reached"):
+            await client.search_flight(
+                origin="上海", destination="北京", dep_date="2026-05-01"
+            )
+
+
+@pytest.mark.asyncio
+async def test_stderr_http_error_raises_runtime_error(mock_which_found):
+    from tools.flyai_client import FlyAIClient
+
+    stderr = (
+        b'MCP HTTP 429:\nBody: {"jsonrpc":"2.0","id":"1","error":{"code":-32603,'
+        b'"message":"Trial limit reached. Please visit the console at flyai.open.fliggy.com to get a formal API Key"}}'
+    )
+
+    with patch(
+        "asyncio.create_subprocess_exec",
+        return_value=_make_proc_mock(b"", stderr_data=stderr, returncode=1),
+    ):
+        client = FlyAIClient(timeout=10)
+        with pytest.raises(RuntimeError, match="Trial limit reached"):
+            await client.search_flight(
+                origin="上海", destination="北京", dep_date="2026-05-01"
+            )
+
+
+@pytest.mark.asyncio
+async def test_success_json_with_irrelevant_stderr_does_not_raise(mock_which_found):
+    from tools.flyai_client import FlyAIClient
+
+    payload = json.dumps(
+        {
+            "status": 0,
+            "message": "success",
+            "data": {"itemList": [{"title": "CA1881", "price": "980"}]},
+        }
+    ).encode()
+    stderr = b"debug log: retrying request metadata refresh"
+
+    with patch(
+        "asyncio.create_subprocess_exec",
+        return_value=_make_proc_mock(payload, stderr_data=stderr, returncode=0),
+    ):
+        client = FlyAIClient(timeout=10)
+        result = await client.search_flight(
+            origin="上海", destination="北京", date="2026-05-01"
+        )
+        assert result == [{"title": "CA1881", "price": "980"}]
+
+
+@pytest.mark.asyncio
+async def test_success_json_with_mcp_http_debug_stderr_does_not_raise(mock_which_found):
+    from tools.flyai_client import FlyAIClient
+
+    payload = json.dumps(
+        {
+            "status": 0,
+            "message": "success",
+            "data": {"itemList": [{"title": "CA1881", "price": "980"}]},
+        }
+    ).encode()
+    stderr = b"MCP HTTP debug transport connected"
+
+    with patch(
+        "asyncio.create_subprocess_exec",
+        return_value=_make_proc_mock(payload, stderr_data=stderr, returncode=0),
+    ):
+        client = FlyAIClient(timeout=10)
+        result = await client.search_flight(
+            origin="上海", destination="北京", date="2026-05-01"
+        )
+        assert result == [{"title": "CA1881", "price": "980"}]
+
+
+@pytest.mark.asyncio
+async def test_http_error_with_trailing_noise_still_raises_runtime_error(
+    mock_which_found,
+):
+    from tools.flyai_client import FlyAIClient
+
+    payload = (
+        b'MCP HTTP 429:\nBody: {"jsonrpc":"2.0","id":"1","error":{"code":-32603,'
+        b'"message":"Trial limit reached. Please visit the console at flyai.open.fliggy.com to get a formal API Key"}}\n'
+        b'debug: trailing payload {"status":"retry"}\n'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=_make_proc_mock(payload)):
+        client = FlyAIClient(timeout=10)
+        with pytest.raises(RuntimeError, match="Trial limit reached"):
+            await client.search_flight(
+                origin="上海", destination="北京", dep_date="2026-05-01"
+            )
+
+
+@pytest.mark.asyncio
+async def test_body_error_without_mcp_http_prefix_does_not_raise(mock_which_found):
+    from tools.flyai_client import FlyAIClient
+
+    payload = b'Request Body: {"error":{"message":"Trial limit reached but this is just a log"}}'
+
+    with patch("asyncio.create_subprocess_exec", return_value=_make_proc_mock(payload)):
+        client = FlyAIClient(timeout=10)
+        result = await client.search_flight(
+            origin="上海", destination="北京", dep_date="2026-05-01"
+        )
+        assert result == []

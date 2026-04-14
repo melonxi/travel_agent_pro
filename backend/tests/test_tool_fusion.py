@@ -16,6 +16,7 @@ from config import ApiKeysConfig
 def api_keys():
     return ApiKeysConfig(
         amadeus_key="test_key",
+        amadeus_secret="test_secret",
         google_maps="test_maps_key",
     )
 
@@ -67,6 +68,9 @@ AMADEUS_RESPONSE = {
 async def test_flights_both_succeed(api_keys, mock_flyai_client):
     from tools.search_flights import make_search_flights_tool
 
+    respx.post("https://test.api.amadeus.com/v1/security/oauth2/token").mock(
+        return_value=Response(200, json={"access_token": "test_access_token"})
+    )
     respx.post("https://test.api.amadeus.com/v2/shopping/flight-offers").mock(
         return_value=Response(200, json=AMADEUS_RESPONSE)
     )
@@ -87,7 +91,7 @@ async def test_flights_both_succeed(api_keys, mock_flyai_client):
                             "duration": "240分钟",
                             "seatClassName": "经济舱",
                         }
-                    ]
+                    ],
                 }
             ],
             "jumpUrl": "https://fliggy.com/f/123",
@@ -105,6 +109,9 @@ async def test_flights_both_succeed(api_keys, mock_flyai_client):
 async def test_flights_flyai_fails(api_keys, mock_flyai_client):
     from tools.search_flights import make_search_flights_tool
 
+    respx.post("https://test.api.amadeus.com/v1/security/oauth2/token").mock(
+        return_value=Response(200, json={"access_token": "test_access_token"})
+    )
     respx.post("https://test.api.amadeus.com/v2/shopping/flight-offers").mock(
         return_value=Response(200, json=AMADEUS_RESPONSE)
     )
@@ -122,6 +129,9 @@ async def test_flights_flyai_fails(api_keys, mock_flyai_client):
 async def test_flights_flyai_disabled(api_keys, mock_flyai_unavailable):
     from tools.search_flights import make_search_flights_tool
 
+    respx.post("https://test.api.amadeus.com/v1/security/oauth2/token").mock(
+        return_value=Response(200, json={"access_token": "test_access_token"})
+    )
     respx.post("https://test.api.amadeus.com/v2/shopping/flight-offers").mock(
         return_value=Response(200, json=AMADEUS_RESPONSE)
     )

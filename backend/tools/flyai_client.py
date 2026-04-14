@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 class FlyAIClient:
     """Async wrapper around the flyai Node.js CLI tool (@fly-ai/flyai-cli).
 
-    All public methods return list[dict] (or str for ai_search).
-    They never raise exceptions — errors are logged and an empty
-    list/string is returned (graceful degradation).
+    All public methods return list[dict] (or str for ai_search) on success.
+    Transport and parse failures degrade gracefully to empty results, while
+    recognized FlyAI CLI/MCP error responses raise RuntimeError.
     """
 
     def __init__(self, timeout: int = 30, api_key: str | None = None) -> None:
@@ -79,7 +79,9 @@ class FlyAIClient:
         # fd 1 directly to a file descriptor, so all data lands on disk.
         fd, tmp_path = tempfile.mkstemp(suffix=".json", prefix="flyai_")
         os.close(fd)
-        shell_cmd = " ".join(_shell_quote(c) for c in cmd) + f" > {_shell_quote(tmp_path)}"
+        shell_cmd = (
+            " ".join(_shell_quote(c) for c in cmd) + f" > {_shell_quote(tmp_path)}"
+        )
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -117,12 +119,24 @@ class FlyAIClient:
 
         if not raw_output and stdout:
             raw_output = stdout.decode("utf-8", errors="replace")
+        stderr_output = (
+            stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+        )
 
         try:
             data = json.loads(raw_output)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            cli_error = _extract_cli_error(stderr_output) or _extract_cli_error(
+                raw_output
+            )
+            if cli_error:
+                raise RuntimeError(cli_error)
             logger.warning("FlyAI CLI invalid JSON: %s", exc)
             return "" if _raw_data else []
+
+        cli_error = _extract_cli_error(stderr_output)
+        if cli_error and data.get("status") != 0:
+            raise RuntimeError(cli_error)
 
         if data.get("status") != 0:
             logger.debug("FlyAI CLI non-zero status: %s", data.get("message"))
@@ -135,9 +149,78 @@ class FlyAIClient:
         return (data.get("data") or {}).get("itemList", [])
 
 
+def _extract_cli_error(raw_output: str) -> str | None:
+    text = raw_output.strip()
+    if not text:
+        return None
+
+    if "MCP HTTP" not in text:
+        return None
+
+    payload_text = _extract_body_json(text)
+    if payload_text:
+        try:
+            payload = json.loads(payload_text)
+        except json.JSONDecodeError:
+            return None
+
+        if payload.get("jsonrpc") is None:
+            return None
+
+        error = payload.get("error") or {}
+        message = error.get("message")
+        if isinstance(message, str) and message:
+            return message
+        return None
+
+    return None
+
+
+def _extract_body_json(text: str) -> str | None:
+    body_index = text.find("Body:")
+    if body_index == -1:
+        return None
+
+    brace_start = text.find("{", body_index)
+    if brace_start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for index in range(brace_start, len(text)):
+        char = text[index]
+
+        if escaped:
+            escaped = False
+            continue
+
+        if char == "\\":
+            escaped = in_string
+            continue
+
+        if char == '"':
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace_start : index + 1]
+
+    return None
+
+
 def _shell_quote(s: str) -> str:
     """Quote a string for safe shell interpolation."""
     import shlex
+
     return shlex.quote(s)
 
 

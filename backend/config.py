@@ -209,7 +209,9 @@ def _build_api_keys(api_raw: dict) -> ApiKeysConfig:
 def _build_xhs_config(xhs_raw: dict) -> XhsConfig:
     return XhsConfig(
         enabled=_as_bool(xhs_raw.get("enabled"), True),
-        cli_bin=os.environ.get("XHS_CLI_BIN", _resolve_env(xhs_raw.get("cli_bin", "xhs")) or "xhs"),
+        cli_bin=os.environ.get(
+            "XHS_CLI_BIN", _resolve_env(xhs_raw.get("cli_bin", "xhs")) or "xhs"
+        ),
         cli_timeout=int(
             os.environ.get(
                 "XHS_CLI_TIMEOUT",
@@ -325,7 +327,9 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     flyai = FlyAIConfig(
         enabled=_as_bool(flyai_raw.get("enabled"), True),
         cli_timeout=int(flyai_raw.get("cli_timeout", 30)),
-        api_key=_resolve_env(flyai_raw.get("api_key", "")) or None,
+        api_key=_resolve_env(flyai_raw.get("api_key", ""))
+        or os.environ.get("FLYAI_API_KEY")
+        or None,
     )
     xhs = _build_xhs_config(raw.get("xhs", {}))
     quality_gate = _build_quality_gate_config(raw.get("quality_gate", {}))
