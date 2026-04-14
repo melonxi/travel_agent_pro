@@ -989,6 +989,7 @@ body::after {
   background: var(--bg-glass);
   backdrop-filter: blur(20px) saturate(1.3);
   border-top: 1px solid var(--border-subtle);
+  position: relative;
 }
 
 .input-wrapper {
@@ -1047,13 +1048,56 @@ body::after {
 }
 
 .send-btn:disabled {
-  opacity: 0.2;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
 .send-btn svg {
   width: 18px;
   height: 18px;
+}
+
+.stop-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.04));
+  color: #f87171;
+  cursor: pointer;
+  transition: all var(--transition-smooth);
+  flex-shrink: 0;
+}
+
+.stop-btn:hover {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.08));
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.15);
+  transform: translateY(-2px);
+}
+
+.stop-btn:active {
+  transform: translateY(0) scale(0.96);
+}
+
+.stop-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.send-btn--hidden,
+.stop-btn--hidden {
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  transform: scale(0.8);
+}
+
+.send-btn,
+.stop-btn {
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 /* ── Right Panel (Info Sidebar) ───────────────────── */
