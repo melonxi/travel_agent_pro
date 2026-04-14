@@ -108,7 +108,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
   const bottomRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const sendingRef = useRef(false)
+  
   const prevPlanRef = useRef<TravelPlanState | null>(null)
   const lastEventTimeRef = useRef<number>(Date.now())
   const [connectionWarning, setConnectionWarning] = useState(false)
@@ -245,7 +245,6 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
       await cancel(sessionId)
     } finally {
       setStreaming(false)
-      sendingRef.current = false
     }
   }
 
@@ -365,12 +364,11 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
   }
 
   const handleSend = async () => {
-    if (!input.trim() || sendingRef.current) return
+    if (!input.trim() || streaming) return
 
     lastEventTimeRef.current = Date.now()
     setConnectionWarning(false)
     setCanContinue(false)
-    sendingRef.current = true
     const userMsg = input.trim()
     const state: EventHandlerState = {
       currentAssistantId: createMessageId(),
@@ -388,7 +386,6 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     try {
       await sendMessage(sessionId, userMsg, createEventHandler(state))
     } finally {
-      sendingRef.current = false
       setStreaming(false)
       const lastId = state.currentAssistantId
       setMessages((prev) => prev.filter((message) =>
@@ -400,9 +397,8 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
   const lastMsg = messages[messages.length - 1]
 
   const handleContinue = async () => {
-    if (sendingRef.current) return
+    if (streaming) return
     setCanContinue(false)
-    sendingRef.current = true
     setStreaming(true)
     lastEventTimeRef.current = Date.now()
     setConnectionWarning(false)
@@ -420,7 +416,6 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     try {
       await continueGeneration(sessionId, createEventHandler(state))
     } finally {
-      sendingRef.current = false
       setStreaming(false)
       const lastId = state.currentAssistantId
       setMessages((prev) => prev.filter((message) =>
