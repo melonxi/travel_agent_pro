@@ -7,7 +7,7 @@ const PHASE_STEPS = [
   { phase: 7, label: '出发前查漏', displayNum: '4' },
 ] as const
 
-const ADVANCING_DURATION_MS = 650
+const ADVANCING_DURATION_MS = 300
 
 interface Props {
   currentPhase: number
