@@ -248,7 +248,7 @@ export default function App() {
           <span className="brand-tag">travel agent</span>
         </div>
         <div className="header-right">
-          {plan && <PhaseIndicator currentPhase={plan.phase} phaseOverride={phaseOverride} />}
+          {plan && <PhaseIndicator currentPhase={plan.phase} overridePhase={phaseOverride?.phase ?? null} />}
           <ThemeToggle dark={dark} onToggle={toggleTheme} />
           <span className="session-badge">#{sessionId.slice(0, 8)}</span>
         </div>
