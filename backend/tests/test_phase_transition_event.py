@@ -278,7 +278,14 @@ async def test_loop_yields_phase_transition_on_explicit_path(
     chunks = [c async for c in agent.run([], phase=1)]
     phase_chunks = [c for c in chunks if c.type == ChunkType.PHASE_TRANSITION]
 
-    assert any(c.phase_info["to_phase"] == 3 for c in phase_chunks)
+    assert len(phase_chunks) == 1
+    assert phase_chunks[0].phase_info == {
+        "from_phase": 1,
+        "to_phase": 3,
+        "from_step": "brief",
+        "to_step": "brief",
+        "reason": "update_plan_state_direct",
+    }
 
 
 @pytest.mark.asyncio
