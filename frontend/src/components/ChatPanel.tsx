@@ -468,22 +468,34 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
               e.preventDefault()
               void handleSend()
             }}
-            placeholder="告诉我你想去哪里..."
+            placeholder="告诉我你想去哪里…（Enter 发送）"
             disabled={streaming}
           />
         </div>
-        {streaming ? (
-          <button type="button" className="stop-btn" onClick={() => void handleStop()} title="停止生成">
-            ■
-          </button>
-        ) : (
-          <button type="button" className="send-btn" onClick={() => void handleSend()} disabled={!input.trim()}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-          </button>
-        )}
+        <button
+          type="button"
+          className={`send-btn ${streaming ? 'send-btn--hidden' : ''}`}
+          onClick={() => void handleSend()}
+          disabled={!input.trim()}
+          aria-label="发送消息"
+          title={!input.trim() ? '请输入内容' : '发送'}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13" />
+            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className={`stop-btn ${!streaming ? 'stop-btn--hidden' : ''}`}
+          onClick={() => void handleStop()}
+          aria-label="停止生成"
+          title="停止生成"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+            <rect x="6" y="6" width="12" height="12" rx="2" />
+          </svg>
+        </button>
       </div>
     </div>
   )
