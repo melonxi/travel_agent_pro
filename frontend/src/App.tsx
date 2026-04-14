@@ -7,8 +7,14 @@ import BudgetChart from './components/BudgetChart'
 import Phase3Workbench from './components/Phase3Workbench'
 import SessionSidebar from './components/SessionSidebar'
 import TraceViewer from './components/TraceViewer'
-import type { TravelPlanState } from './types/plan'
+import type { PhaseTransitionEvent, TravelPlanState } from './types/plan'
 import type { SessionMeta } from './types/session'
+
+type PhaseOverride = {
+  phase: number
+  step?: string | null
+  expiresAt: number
+} | null
 
 function useTheme() {
   const [dark, setDark] = useState(() => {
@@ -55,6 +61,7 @@ function BrandMark() {
 export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [plan, setPlan] = useState<TravelPlanState | null>(null)
+  const [phaseOverride, setPhaseOverride] = useState<PhaseOverride>(null)
   const [sessionList, setSessionList] = useState<SessionMeta[]>([])
   const [chatKey, setChatKey] = useState(0)
   const [bootstrapping, setBootstrapping] = useState(true)
@@ -97,6 +104,7 @@ export default function App() {
 
   const openSession = useCallback(async (id: string) => {
     const planData = await loadPlan(id)
+    setPhaseOverride(null)
     setSessionId(id)
     setPlan(planData)
     setChatKey((value) => value + 1)
@@ -118,6 +126,19 @@ export default function App() {
     setTraceTrigger((n) => n + 1)
     void refreshSessionList()
   }, [refreshSessionList])
+
+  const handlePhaseTransition = useCallback((event: PhaseTransitionEvent) => {
+    if (event.from_phase > event.to_phase) {
+      setPhaseOverride(null)
+      return
+    }
+
+    setPhaseOverride({
+      phase: event.to_phase,
+      step: event.to_step,
+      expiresAt: Date.now() + 800,
+    })
+  }, [])
 
   const handleMemoryRecall = useCallback((itemIds: string[]) => {
     setRecalledIds(itemIds)
@@ -175,6 +196,17 @@ export default function App() {
     void bootstrap()
   }, [createSession, openSession, refreshSessionList])
 
+  useEffect(() => {
+    if (!plan || !phaseOverride) return
+    if (plan.phase !== phaseOverride.phase) return
+
+    const currentStep = plan.phase === 3 ? plan.phase3_step ?? null : null
+    const overrideStep = phaseOverride.step ?? null
+    if (overrideStep === null || currentStep === overrideStep) {
+      setPhaseOverride(null)
+    }
+  }, [phaseOverride, plan])
+
   if (bootstrapping || !sessionId) {
     return (
       <div className="loading-screen">
@@ -196,7 +228,7 @@ export default function App() {
           <span className="brand-tag">travel agent</span>
         </div>
         <div className="header-right">
-          {plan && <PhaseIndicator currentPhase={plan.phase} />}
+          {plan && <PhaseIndicator currentPhase={plan.phase} phaseOverride={phaseOverride} />}
           <ThemeToggle dark={dark} onToggle={toggleTheme} />
           <span className="session-badge">#{sessionId.slice(0, 8)}</span>
         </div>
@@ -216,7 +248,13 @@ export default function App() {
             void handleDeleteSession(id)
           }}
         />
-        <ChatPanel key={chatKey} sessionId={sessionId} onPlanUpdate={handlePlanUpdate} onMemoryRecall={handleMemoryRecall} />
+        <ChatPanel
+          key={chatKey}
+          sessionId={sessionId}
+          onPlanUpdate={handlePlanUpdate}
+          onMemoryRecall={handleMemoryRecall}
+          onPhaseTransition={handlePhaseTransition}
+        />
         <div className="right-panel">
           <div className="right-panel-tabs">
             <button
@@ -259,7 +297,7 @@ export default function App() {
                 <>
                   {showPhase3Workbench && (
                     <div className="sidebar-section">
-                      <Phase3Workbench plan={plan} />
+                      <Phase3Workbench plan={plan} phaseOverride={phaseOverride} />
                     </div>
                   )}
                   <div className="sidebar-section">
