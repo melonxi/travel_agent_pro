@@ -9,6 +9,7 @@ from agent.types import Message, Role, ToolCall
 from llm.types import ChunkType, LLMChunk
 from main import create_app
 from state.models import TravelPlanState
+from tools.base import tool
 from tools.engine import ToolEngine
 from tools.update_plan_state import make_update_plan_state_tool
 
@@ -134,6 +135,63 @@ def agent_with_router(plan_phase1):
     return agent, mock_router
 
 
+@pytest.fixture
+def agent_with_tool_that_writes_phase(plan_phase1):
+    engine = ToolEngine()
+
+    @tool(
+        name="jump_phase",
+        description="directly updates phase",
+        phases=[1],
+        parameters={"type": "object", "properties": {}},
+        side_effect="write",
+    )
+    async def jump_phase() -> dict:
+        plan_phase1.phase = 3
+        return {"phase": 3}
+
+    engine.register(jump_phase)
+
+    llm = MagicMock()
+    mock_router = MagicMock()
+    mock_router.get_prompt.side_effect = lambda phase: f"phase-{phase}-prompt"
+    mock_router.check_and_apply_transition = AsyncMock(return_value=False)
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="jump_phase",
+                    arguments={},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        phase_router=mock_router,
+        context_manager=_PhaseTransitionContextManager(),
+        plan=plan_phase1,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=_PhaseTransitionMemoryManager(),
+        user_id="u1",
+    )
+    return agent
+
+
 def _get_sessions(app) -> dict:
     for route in app.routes:
         endpoint = getattr(route, "endpoint", None)
@@ -207,6 +265,20 @@ async def test_loop_yields_phase_transition_on_check_and_apply(
     assert phase_chunks[0].phase_info["from_step"] == "brief"
     assert phase_chunks[0].phase_info["to_step"] == "brief"
     assert phase_chunks[0].phase_info["reason"] == "check_and_apply_transition"
+
+
+@pytest.mark.asyncio
+async def test_loop_yields_phase_transition_on_explicit_path(
+    agent_with_tool_that_writes_phase,
+):
+    """When a tool directly changes plan.phase, loop emits phase_transition in
+    the explicit phase-change branch before rebuilding."""
+    agent = agent_with_tool_that_writes_phase
+
+    chunks = [c async for c in agent.run([], phase=1)]
+    phase_chunks = [c for c in chunks if c.type == ChunkType.PHASE_TRANSITION]
+
+    assert any(c.phase_info["to_phase"] == 3 for c in phase_chunks)
 
 
 @pytest.mark.asyncio

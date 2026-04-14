@@ -379,6 +379,16 @@ class AgentLoop:
                         self.plan.phase if self.plan is not None else current_phase
                     )
                     if phase_after_batch != phase_before_batch:
+                        yield LLMChunk(
+                            type=ChunkType.PHASE_TRANSITION,
+                            phase_info={
+                                "from_phase": phase_before_batch,
+                                "to_phase": phase_after_batch,
+                                "from_step": phase3_step_before_batch,
+                                "to_step": getattr(self.plan, "phase3_step", None),
+                                "reason": "update_plan_state_direct",
+                            },
+                        )
                         messages[:] = await self._rebuild_messages_for_phase_change(
                             messages=messages,
                             from_phase=phase_before_batch,
