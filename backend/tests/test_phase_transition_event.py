@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 import pytest
@@ -88,3 +89,37 @@ async def test_sse_emits_phase_transition_event(app, sessions, session_id):
             )
     assert '"type": "phase_transition"' in resp.text
     assert '"to_phase": 3' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_sse_emits_agent_status_event(app, sessions, session_id):
+    async def fake_agent_run(*args, **kwargs):
+        yield LLMChunk(
+            type=ChunkType.AGENT_STATUS,
+            agent_status={
+                "stage": "thinking",
+                "iteration": 2,
+                "max_iterations": 5,
+            },
+        )
+        yield LLMChunk(type=ChunkType.DONE)
+
+    with patch("agent.loop.AgentLoop.run", fake_agent_run):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                f"/api/chat/{session_id}", json={"message": "去成都", "user_id": "u1"}
+            )
+
+    events = [
+        json.loads(line[len("data:") :].strip())
+        for line in resp.text.splitlines()
+        if line.startswith("data:") and line[len("data:") :].strip()
+    ]
+    assert {
+        "type": "agent_status",
+        "stage": "thinking",
+        "iteration": 2,
+        "max_iterations": 5,
+    } in events
