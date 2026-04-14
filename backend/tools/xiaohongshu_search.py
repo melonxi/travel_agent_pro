@@ -54,6 +54,10 @@ _PARAMETERS = {
             "type": "integer",
             "description": "search_notes 的页码。小于 1 时会按 1 处理。旅行推荐场景优先先看第 1 页，只有结果明显不够时再谨慎翻页，以降低风控风险。",
         },
+        "max_results": {
+            "type": "integer",
+            "description": "仅在 search_notes 时使用。期望返回的笔记数量。当前实现会在工具层自动限制在 1 到 10，并截断返回结果。",
+        },
         "cursor": {
             "type": "string",
             "description": "get_comments 的评论分页 cursor。",
@@ -97,6 +101,7 @@ Supported operations:
         sort: str = "general",
         note_type: str = "all",
         page: int = 1,
+        max_results: int = 5,
         cursor: str = "",
         fetch_all: bool = False,
     ) -> dict[str, Any]:
@@ -121,24 +126,24 @@ Supported operations:
                     error_code="INVALID_INPUT",
                     suggestion="Pass a Xiaohongshu search keyword.",
                 )
+            max_results = max(1, min(10, max_results))
             data = await client.search_notes(
                 keyword=keyword,
                 sort=sort,
                 note_type=note_type,
                 page=max(1, page),
             )
+            items = data.get("items", [])[:max_results]
             return {
                 "operation": operation,
                 "keyword": keyword,
                 "has_more": bool(data.get("has_more", False)),
-                "items": [_normalize_search_item(item) for item in data.get("items", [])],
+                "items": [_normalize_search_item(item) for item in items],
                 "_metadata": {
                     "page": max(1, page),
+                    "max_results": max_results,
                     "source": "xiaohongshu_cli",
-                    "items": [
-                        _extract_search_item_metadata(item)
-                        for item in data.get("items", [])
-                    ],
+                    "items": [_extract_search_item_metadata(item) for item in items],
                 },
             }
 
@@ -171,7 +176,9 @@ Supported operations:
             )
             return {
                 "operation": operation,
-                "comments": [_normalize_comment(comment) for comment in data.get("comments", [])],
+                "comments": [
+                    _normalize_comment(comment) for comment in data.get("comments", [])
+                ],
                 "has_more": bool(data.get("has_more", False)),
                 "cursor": data.get("cursor", ""),
                 "_metadata": {
@@ -193,8 +200,14 @@ def _normalize_search_item(item: dict[str, Any]) -> dict[str, Any]:
     note_card = item.get("note_card", item) if isinstance(item, dict) else {}
     user = note_card.get("user", {}) if isinstance(note_card, dict) else {}
     interact = note_card.get("interact_info", {}) if isinstance(note_card, dict) else {}
-    note_id = item.get("id", note_card.get("note_id", "")) if isinstance(item, dict) else ""
-    token = item.get("xsec_token", note_card.get("xsec_token", "")) if isinstance(item, dict) else ""
+    note_id = (
+        item.get("id", note_card.get("note_id", "")) if isinstance(item, dict) else ""
+    )
+    token = (
+        item.get("xsec_token", note_card.get("xsec_token", ""))
+        if isinstance(item, dict)
+        else ""
+    )
     return {
         "note_id": note_id,
         "title": str(note_card.get("title", note_card.get("display_title", ""))),
@@ -213,17 +226,25 @@ def _normalize_note_detail(data: dict[str, Any]) -> dict[str, Any]:
     user = note.get("user", {}) if isinstance(note, dict) else {}
     interact = note.get("interact_info", {}) if isinstance(note, dict) else {}
     tags = note.get("tag_list", []) if isinstance(note, dict) else []
-    note_id = note.get("note_id", data.get("note_id", "")) if isinstance(note, dict) else ""
+    note_id = (
+        note.get("note_id", data.get("note_id", "")) if isinstance(note, dict) else ""
+    )
     token = note.get("xsec_token", "") if isinstance(note, dict) else ""
 
     return {
         "note_id": note_id,
-        "title": note.get("title", note.get("display_title", "Untitled")) if isinstance(note, dict) else "Untitled",
+        "title": note.get("title", note.get("display_title", "Untitled"))
+        if isinstance(note, dict)
+        else "Untitled",
         "desc": note.get("desc", "") if isinstance(note, dict) else "",
         "liked_count": str(interact.get("liked_count", "0")),
         "collected_count": str(interact.get("collected_count", "0")),
         "comment_count": str(interact.get("comment_count", "0")),
-        "tags": [tag.get("name", "") for tag in tags if isinstance(tag, dict) and tag.get("name")],
+        "tags": [
+            tag.get("name", "")
+            for tag in tags
+            if isinstance(tag, dict) and tag.get("name")
+        ],
         "note_type": "video" if note.get("type") == "video" else "image",
         "url": _build_note_url(note_id, token),
     }
@@ -234,15 +255,23 @@ def _normalize_comment(comment: dict[str, Any]) -> dict[str, Any]:
     return {
         "nickname": user.get("nickname", "Unknown"),
         "content": comment.get("content", "") if isinstance(comment, dict) else "",
-        "like_count": str(comment.get("like_count", "0")) if isinstance(comment, dict) else "0",
+        "like_count": str(comment.get("like_count", "0"))
+        if isinstance(comment, dict)
+        else "0",
     }
 
 
 def _extract_search_item_metadata(item: dict[str, Any]) -> dict[str, Any]:
     note_card = item.get("note_card", item) if isinstance(item, dict) else {}
     user = note_card.get("user", {}) if isinstance(note_card, dict) else {}
-    note_id = item.get("id", note_card.get("note_id", "")) if isinstance(item, dict) else ""
-    token = item.get("xsec_token", note_card.get("xsec_token", "")) if isinstance(item, dict) else ""
+    note_id = (
+        item.get("id", note_card.get("note_id", "")) if isinstance(item, dict) else ""
+    )
+    token = (
+        item.get("xsec_token", note_card.get("xsec_token", ""))
+        if isinstance(item, dict)
+        else ""
+    )
     return {
         "note_id": note_id,
         "author": user.get("nickname", ""),
@@ -269,7 +298,9 @@ def _extract_note_detail_metadata(data: dict[str, Any]) -> dict[str, Any]:
 
 def _extract_comment_metadata(comment: dict[str, Any]) -> dict[str, Any]:
     return {
-        "comment_id": comment.get("id", comment.get("comment_id", "")) if isinstance(comment, dict) else "",
+        "comment_id": comment.get("id", comment.get("comment_id", ""))
+        if isinstance(comment, dict)
+        else "",
         "sub_comment_count": _coerce_int(comment.get("sub_comment_count", 0))
         if isinstance(comment, dict)
         else 0,
