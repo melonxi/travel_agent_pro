@@ -305,6 +305,70 @@ async def test_sse_emits_phase_transition_event(app, sessions, session_id):
 
 
 @pytest.mark.asyncio
+async def test_sse_emits_phase_transition_for_phase3_step_update(
+    app, sessions, session_id
+):
+    session = sessions[session_id]
+    session["plan"].phase = 3
+    session["plan"].phase3_step = "brief"
+    agent = session["agent"]
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_phase3_step",
+                    name="update_plan_state",
+                    arguments={"field": "phase3_step", "value": "skeleton"},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已进入 skeleton")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    agent.llm.chat = fake_chat
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            f"/api/chat/{session_id}", json={"message": "进入 skeleton", "user_id": "u1"}
+        )
+
+    events = [
+        json.loads(line[len("data:") :].strip())
+        for line in resp.text.splitlines()
+        if line.startswith("data:") and line[len("data:") :].strip()
+    ]
+    expected_transition = {
+        "type": "phase_transition",
+        "from_phase": 3,
+        "to_phase": 3,
+        "from_step": "brief",
+        "to_step": "skeleton",
+        "reason": "phase3_step_change",
+    }
+
+    state_update_index = next(
+        i for i, event in enumerate(events) if event.get("type") == "state_update"
+    )
+    phase_transition_index = next(
+        i for i, event in enumerate(events) if event == expected_transition
+    )
+
+    assert events[state_update_index]["plan"]["phase"] == 3
+    assert events[state_update_index]["plan"]["phase3_step"] == "skeleton"
+    assert events[phase_transition_index] == expected_transition
+    assert state_update_index < phase_transition_index
+
+
+@pytest.mark.asyncio
 async def test_loop_yields_phase_transition_on_check_and_apply(
     agent_with_router, plan_phase1
 ):

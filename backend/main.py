@@ -441,6 +441,14 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     session["_pending_state_changes"] = [
                         {"field": field, "before": prev_val, "after": value}
                     ]
+                    if result.data.get("updated_field") == "phase3_step":
+                        session["_pending_phase_step_transition"] = {
+                            "from_phase": plan.phase,
+                            "to_phase": plan.phase,
+                            "from_step": result.data.get("previous_value"),
+                            "to_step": result.data.get("new_value"),
+                            "reason": "phase3_step_change",
+                        }
 
                 errors = validate_incremental(plan, field, value)
                 if field in ("selected_transport", "accommodation"):
@@ -1612,6 +1620,14 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             {"type": "state_update", "plan": plan.to_dict()},
                             ensure_ascii=False,
                         )
+                        _pending_step = session.pop(
+                            "_pending_phase_step_transition", None
+                        )
+                        if _pending_step is not None:
+                            yield json.dumps(
+                                {"type": "phase_transition", **_pending_step},
+                                ensure_ascii=False,
+                            )
             except LLMError as exc:
                 if exc.failure_phase == "cancelled":
                     run.status = "cancelled"
