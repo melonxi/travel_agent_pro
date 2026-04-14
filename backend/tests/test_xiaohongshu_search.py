@@ -277,6 +277,59 @@ async def test_xiaohongshu_search_tool_search_notes():
 
 
 @pytest.mark.asyncio
+async def test_xiaohongshu_search_tool_accepts_max_results_and_truncates_items():
+    from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+
+    xhs_client = SimpleNamespace(
+        search_notes=AsyncMock(
+            return_value={
+                "items": [
+                    {
+                        "id": "note_1",
+                        "xsec_token": "token_1",
+                        "note_card": {
+                            "title": "攻略 1",
+                            "type": "image",
+                            "user": {"nickname": "Alice"},
+                            "interact_info": {"liked_count": "12"},
+                        },
+                    },
+                    {
+                        "id": "note_2",
+                        "xsec_token": "token_2",
+                        "note_card": {
+                            "title": "攻略 2",
+                            "type": "image",
+                            "user": {"nickname": "Bob"},
+                            "interact_info": {"liked_count": "9"},
+                        },
+                    },
+                ],
+                "has_more": True,
+            }
+        ),
+        read_note=AsyncMock(),
+        get_comments=AsyncMock(),
+    )
+
+    tool_fn = make_xiaohongshu_search_tool(xhs_client=xhs_client)
+    result = await tool_fn(
+        operation="search_notes",
+        keyword="赛里木湖 夏季 体验",
+        max_results=1,
+    )
+
+    assert [item["note_id"] for item in result["items"]] == ["note_1"]
+    assert [item["note_id"] for item in result["_metadata"]["items"]] == ["note_1"]
+    xhs_client.search_notes.assert_awaited_once_with(
+        keyword="赛里木湖 夏季 体验",
+        sort="general",
+        note_type="all",
+        page=1,
+    )
+
+
+@pytest.mark.asyncio
 async def test_xiaohongshu_search_tool_read_and_comments():
     from tools.xiaohongshu_search import make_xiaohongshu_search_tool
 
@@ -366,7 +419,9 @@ async def test_xiaohongshu_search_tool_registration(monkeypatch):
         endpoint = getattr(route, "endpoint", None)
         if endpoint is None or getattr(endpoint, "__name__", "") != "create_session":
             continue
-        for name, cell in zip(endpoint.__code__.co_freevars, endpoint.__closure__ or ()):
+        for name, cell in zip(
+            endpoint.__code__.co_freevars, endpoint.__closure__ or ()
+        ):
             if name == "sessions":
                 sessions = cell.cell_contents
                 break
@@ -450,6 +505,7 @@ async def test_tool_engine_extracts_xiaohongshu_metadata():
     }
     assert metadata_without_duration == {
         "page": 1,
+        "max_results": 5,
         "source": "xiaohongshu_cli",
         "items": [
             {
