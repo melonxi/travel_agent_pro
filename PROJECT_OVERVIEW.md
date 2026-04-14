@@ -115,7 +115,7 @@ travel_agent_pro/
 │   │   ├── main.tsx            # React 19 入口
 │   │   ├── App.tsx             # 应用壳: 会话管理, 主题, 三栏布局, Plan/Trace 标签切换
 │   │   ├── components/
-│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 停止按钮, 连接超时检测, 继续按钮, 未完成消息标注
+│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 发送/停止按钮(过渡动画+无障碍), 连接超时检测, 继续按钮, 未完成消息标注
 │   │   │   ├── TraceViewer.tsx # Trace 视图: SummaryBar/IterationRow/ToolCallRow/StateDiffPanel, 渲染 parallel_group badge/validation_errors/judge_scores/compression_event/memory_hits
 │   │   │   ├── MessageBubble.tsx # 消息渲染: Markdown, 工具卡, 压缩提示
 │   │   │   ├── SessionSidebar.tsx # 会话侧边栏: 列表/新建/删除 + 记忆管理入口
