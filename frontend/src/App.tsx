@@ -317,7 +317,7 @@ export default function App() {
                 <>
                   {showPhase3Workbench && (
                     <div className="sidebar-section">
-                      <Phase3Workbench plan={plan} phaseOverride={phaseOverride} />
+                      <Phase3Workbench plan={plan} overrideStep={phaseOverride?.step} />
                     </div>
                   )}
                   <div className="sidebar-section">
