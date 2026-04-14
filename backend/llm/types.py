@@ -18,6 +18,8 @@ class ChunkType(str, Enum):
     )
     USAGE = "usage"
     DONE = "done"
+    PHASE_TRANSITION = "phase_transition"
+    AGENT_STATUS = "agent_status"
 
 
 @dataclass
@@ -28,3 +30,5 @@ class LLMChunk:
     tool_result: ToolResult | None = None
     compression_info: dict | None = None
     usage_info: dict | None = None  # {"input_tokens": N, "output_tokens": N}
+    phase_info: dict | None = None
+    agent_status: dict | None = None
