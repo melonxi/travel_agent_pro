@@ -1491,13 +1491,19 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             ensure_ascii=False,
                         )
                         continue
-                    if chunk.type == ChunkType.PHASE_TRANSITION and chunk.phase_info:
+                    if (
+                        chunk.type == ChunkType.PHASE_TRANSITION
+                        and chunk.phase_info is not None
+                    ):
                         yield json.dumps(
                             {"type": "phase_transition", **chunk.phase_info},
                             ensure_ascii=False,
                         )
                         continue
-                    if chunk.type == ChunkType.AGENT_STATUS and chunk.agent_status:
+                    if (
+                        chunk.type == ChunkType.AGENT_STATUS
+                        and chunk.agent_status is not None
+                    ):
                         yield json.dumps(
                             {"type": "agent_status", **chunk.agent_status},
                             ensure_ascii=False,

@@ -123,3 +123,47 @@ async def test_sse_emits_agent_status_event(app, sessions, session_id):
         "iteration": 2,
         "max_iterations": 5,
     } in events
+
+
+@pytest.mark.asyncio
+async def test_sse_emits_phase_transition_event_with_empty_payload(app, sessions, session_id):
+    async def fake_agent_run(*args, **kwargs):
+        yield LLMChunk(type=ChunkType.PHASE_TRANSITION, phase_info={})
+        yield LLMChunk(type=ChunkType.DONE)
+
+    with patch("agent.loop.AgentLoop.run", fake_agent_run):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                f"/api/chat/{session_id}", json={"message": "去成都", "user_id": "u1"}
+            )
+
+    events = [
+        json.loads(line[len("data:") :].strip())
+        for line in resp.text.splitlines()
+        if line.startswith("data:") and line[len("data:") :].strip()
+    ]
+    assert {"type": "phase_transition"} in events
+
+
+@pytest.mark.asyncio
+async def test_sse_emits_agent_status_event_with_empty_payload(app, sessions, session_id):
+    async def fake_agent_run(*args, **kwargs):
+        yield LLMChunk(type=ChunkType.AGENT_STATUS, agent_status={})
+        yield LLMChunk(type=ChunkType.DONE)
+
+    with patch("agent.loop.AgentLoop.run", fake_agent_run):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                f"/api/chat/{session_id}", json={"message": "去成都", "user_id": "u1"}
+            )
+
+    events = [
+        json.loads(line[len("data:") :].strip())
+        for line in resp.text.splitlines()
+        if line.startswith("data:") and line[len("data:") :].strip()
+    ]
+    assert {"type": "agent_status"} in events
