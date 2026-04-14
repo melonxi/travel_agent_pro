@@ -22,6 +22,10 @@ export function shouldAnimateAdvance(previousEffectivePhase: number | null, next
   return previousEffectivePhase !== null && previousEffectivePhase !== nextEffectivePhase
 }
 
+export function resolveAdvancingPhase(previousEffectivePhase: number | null, nextEffectivePhase: number) {
+  return shouldAnimateAdvance(previousEffectivePhase, nextEffectivePhase) ? nextEffectivePhase : null
+}
+
 export default function PhaseIndicator({ currentPhase, overridePhase }: Props) {
   const effectivePhase = resolveEffectivePhase(currentPhase, overridePhase)
   const [advancingPhase, setAdvancingPhase] = useState<number | null>(null)
@@ -31,20 +35,22 @@ export default function PhaseIndicator({ currentPhase, overridePhase }: Props) {
     const previousEffectivePhase = previousEffectivePhaseRef.current
     previousEffectivePhaseRef.current = effectivePhase
 
-    if (overridePhase == null || !shouldAnimateAdvance(previousEffectivePhase, effectivePhase)) {
+    const nextAdvancingPhase = resolveAdvancingPhase(previousEffectivePhase, effectivePhase)
+
+    if (nextAdvancingPhase === null) {
       return
     }
 
-    setAdvancingPhase(effectivePhase)
+    setAdvancingPhase(nextAdvancingPhase)
 
     const timeoutId = window.setTimeout(() => {
-      setAdvancingPhase((phase) => (phase === effectivePhase ? null : phase))
+      setAdvancingPhase((phase) => (phase === nextAdvancingPhase ? null : phase))
     }, ADVANCING_DURATION_MS)
 
     return () => {
       window.clearTimeout(timeoutId)
     }
-  }, [effectivePhase, overridePhase])
+  }, [effectivePhase])
 
   return (
     <div className="phase-bar">
