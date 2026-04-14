@@ -192,6 +192,64 @@ def agent_with_tool_that_writes_phase(plan_phase1):
     return agent
 
 
+@pytest.fixture
+def agent_with_backtrack_tool():
+    plan = TravelPlanState(session_id="s1", phase=5)
+    engine = ToolEngine()
+
+    @tool(
+        name="trigger_backtrack",
+        description="moves plan back to an earlier phase",
+        phases=[5],
+        parameters={"type": "object", "properties": {}},
+        side_effect="write",
+    )
+    async def trigger_backtrack() -> dict:
+        plan.phase = 1
+        return {"backtracked": True, "reason": "用户想换目的地"}
+
+    engine.register(trigger_backtrack)
+
+    llm = MagicMock()
+    mock_router = MagicMock()
+    mock_router.get_prompt.side_effect = lambda phase: f"phase-{phase}-prompt"
+    mock_router.check_and_apply_transition = AsyncMock(return_value=False)
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="trigger_backtrack",
+                    arguments={},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        phase_router=mock_router,
+        context_manager=_PhaseTransitionContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=_PhaseTransitionMemoryManager(),
+        user_id="u1",
+    )
+    return agent
+
+
 def _get_sessions(app) -> dict:
     for route in app.routes:
         endpoint = getattr(route, "endpoint", None)
@@ -286,6 +344,39 @@ async def test_loop_yields_phase_transition_on_explicit_path(
         "to_step": "brief",
         "reason": "update_plan_state_direct",
     }
+
+
+@pytest.mark.asyncio
+async def test_loop_yields_phase_transition_on_backtrack(agent_with_backtrack_tool):
+    order = []
+    original_rebuild = agent_with_backtrack_tool._rebuild_messages_for_phase_change
+
+    async def wrapped_rebuild(*args, **kwargs):
+        order.append("rebuild")
+        return await original_rebuild(*args, **kwargs)
+
+    with patch.object(
+        agent_with_backtrack_tool,
+        "_rebuild_messages_for_phase_change",
+        AsyncMock(side_effect=wrapped_rebuild),
+    ):
+        chunks = []
+        async for chunk in agent_with_backtrack_tool.run([], phase=5):
+            if chunk.type == ChunkType.PHASE_TRANSITION:
+                order.append("transition")
+            chunks.append(chunk)
+
+    phase_chunks = [c for c in chunks if c.type == ChunkType.PHASE_TRANSITION]
+
+    assert len(phase_chunks) == 1
+    assert phase_chunks[0].phase_info == {
+        "from_phase": 5,
+        "to_phase": 1,
+        "from_step": "brief",
+        "to_step": "brief",
+        "reason": "backtrack",
+    }
+    assert order[:2] == ["transition", "rebuild"]
 
 
 @pytest.mark.asyncio
