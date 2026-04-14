@@ -10,6 +10,10 @@
 
 **Spec:** `docs/superpowers/specs/2026-04-13-llm-resilience-design.md`
 
+## Live bug notes
+
+- 2026-04-13: 历史 `backend/data/sessions.db` 可能仍是旧 `sessions` schema，缺少 `last_run_id` / `last_run_status` / `last_run_error` 列。旧会话在 SSE 结束阶段执行 `session_store.update(...)` 时会触发 `sqlite3.OperationalError: no such column: last_run_id`。修复方式是在 `Database.initialize()` 启动时补齐缺失列，保证旧库自动迁移。
+
 ---
 
 ## PR1：LLM 错误归一化
