@@ -115,7 +115,7 @@ travel_agent_pro/
 │   │   ├── main.tsx            # React 19 入口
 │   │   ├── App.tsx             # 应用壳: 会话管理, 主题, 三栏布局, Plan/Trace 标签切换
 │   │   ├── components/
-│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 发送/停止按钮(过渡动画+无障碍), 连接超时检测, 继续按钮, 未完成消息标注
+│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 发送/停止按钮(过渡动画+无障碍), 统一流式状态条(waiting/continue/retry/fatal/stopped), 上一条消息重发
 │   │   │   ├── TraceViewer.tsx # Trace 视图: SummaryBar/IterationRow/ToolCallRow/StateDiffPanel, 渲染 parallel_group badge/validation_errors/judge_scores/compression_event/memory_hits
 │   │   │   ├── MessageBubble.tsx # 消息渲染: Markdown, 工具卡, 压缩提示
 │   │   │   ├── SessionSidebar.tsx # 会话侧边栏: 列表/新建/删除 + 记忆管理入口
@@ -149,6 +149,8 @@ travel_agent_pro/
 ├── config.yaml                 # 运行时配置 (LLM/API/智能层开关/阈值)
 ├── docker-compose.observability.yml # Jaeger 一键启动
 ├── e2e-test.spec.ts            # Playwright E2E 测试
+├── e2e-retry-experience.spec.ts # ChatPanel 重试/继续/停止/不可恢复错误专项 E2E
+├── playwright.retry.config.ts  # 仅运行重试体验专项用例的 Playwright 配置
 ├── AGENTS.md                   # AI Agent 项目规范
 ├── CLAUDE.md                   # Claude 特定规范
 └── PROJECT_OVERVIEW.md         # 👈 本文件
@@ -362,12 +364,12 @@ POST /api/chat/{sessionId}  →  ReadableStream (NDJSON)
   context_compression → 上下文压缩通知
   memory_recall       → 本轮命中的记忆 ID 列表 (item_ids[])
   error               → LLM 错误 (error_code/retryable/can_continue/failure_phase/user_message)
-  keepalive           → 心跳 (每 15s，前端 30s 无事件显示超时警告)
+  keepalive           → 心跳 (每 15s，前端 30s 无事件进入 waiting 状态条)
   done                → 流结束 (run_id/run_status/can_continue)
 ```
 
 ### 关键组件
-- **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理 + 停止按钮(streaming 时替代发送按钮) + 连接超时警告(30s 无事件) + 继续按钮(can_continue 时显示) + 未完成消息标注(incomplete 标记)
+- **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理 + 停止按钮(streaming 时替代发送按钮) + 统一流式状态条（`waiting`/`continue`/`retry`/`fatal`/`stopped`）+ `can_continue` 继续生成 + 保存上一条用户消息用于重新发送
 - **Phase3Workbench**: 旅行画像 / 候选池 / 骨架方案 / 锁定区 / 风险 (5 卡片)
 - **MemoryCenter**: 右滑抽屉, 3 Tab (活跃/待确认/归档), 卡片式记忆管理, 确认/拒绝/删除 + 乐观更新, 本轮命中记忆高亮（通过 App → SessionSidebar 透传 recalledIds + is-recalled CSS class + "本轮命中" badge）
 - **MapView**: Leaflet 地图, 活动标记 + 路线连线, 明暗主题
@@ -559,7 +561,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 
 - **后端单元测试**：80+ 个文件、700+ 测试，覆盖 Agent 循环、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 数据通道、RunRecord/IterationProgress
 - **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner；pass@k 稳定性评估支持同一 golden case 多次执行，统计 pass_rate、断言一致性、工具重叠率、成本/延迟分布，并通过 `scripts/eval-stability.py` 生成 JSON + Markdown 报告
-- **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 覆盖 live Phase 1 主流程；根目录 `playwright.config.ts` 在显式指定脚本时只运行对应的 `scripts/failure-analysis/capture_screenshots.ts` 或 `scripts/demo/demo-full-flow.spec.ts`，并忽略 `.worktrees/`；其中 demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，只需要 frontend dev server，并把截图/视频写入 `screenshots/demos/`；failure-analysis raw results 写入 `scripts/failure-analysis/results/`，该目录为本地生成产物，不提交到 git
+- **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 覆盖 live Phase 1 主流程，`e2e-retry-experience.spec.ts` 覆盖 ChatPanel 的继续生成/重新发送/停止后重发/不可恢复错误四类恢复路径；`playwright.config.ts` 现在支持显式传入任意 `*.spec.ts` 文件名作为 `testMatch`，`playwright.retry.config.ts` 用于只跑重试体验专项用例；demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，只需要 frontend dev server，并把截图/视频写入 `screenshots/demos/`；failure-analysis raw results 写入 `scripts/failure-analysis/results/`，该目录为本地生成产物，不提交到 git
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---

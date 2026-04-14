@@ -9,9 +9,13 @@ const includeCaptureScript =
 const includeDemoScript =
   normalizedArgs.has(demoScript) ||
   normalizedArgs.has(`./${demoScript}`);
+const explicitSpecArgs = process.argv
+  .map((arg) => arg.replace(/\\/g, '/'))
+  .filter((arg) => /(^|\/)\S+\.spec\.ts$/.test(arg));
 const explicitMatches = [
   ...(includeCaptureScript ? [captureScript] : []),
   ...(includeDemoScript ? [demoScript] : []),
+  ...explicitSpecArgs,
 ];
 
 export default defineConfig({
