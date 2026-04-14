@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fill two missing P0 items — 7.1 Failure Analysis (8 failure scenarios → `docs/failure-analysis.md`) and 7.7 Reproducible Demo (Playwright recording + seed data).
+**Goal:** Fill two missing P0 items — 7.1 Failure Analysis (8 failure scenarios → `docs/learning/2026-04-13-失败案例分析.md`) and 7.7 Reproducible Demo (Playwright recording + seed data).
 
 **Architecture:** Failure analysis reuses the existing `backend/evals/` framework — 8 new `failure-*.yaml` golden cases + `run_and_analyze.py` HTTP executor + `failure_report.py` markdown generator. Demo is a single Playwright spec with `test.step()` blocks sharing one browser session, driven by `run-all-demos.sh`.
 
@@ -24,7 +24,7 @@
 | `backend/evals/golden_cases/failure-006-extreme-date.yaml` | Failure scenario: 明天就要飞纽约 |
 | `backend/evals/golden_cases/failure-007-vague-intent.yaml` | Failure scenario: "最近很火的地方" |
 | `backend/evals/golden_cases/failure-008-greedy-itinerary.yaml` | Failure scenario: 5城5天 |
-| `backend/evals/failure_report.py` | Generate `docs/failure-analysis.md` from eval results |
+| `backend/evals/failure_report.py` | Generate `docs/learning/2026-04-13-失败案例分析.md` from eval results |
 | `backend/tests/test_failure_report.py` | Tests for failure_report.py |
 | `scripts/failure-analysis/run_and_analyze.py` | Main script: HTTP executor + eval assertion check |
 | `scripts/failure-analysis/capture_screenshots.ts` | Playwright: open session by ID, take screenshots |
@@ -404,7 +404,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'evals.failure_report'`
 
 ```python
 # backend/evals/failure_report.py
-"""Generate docs/failure-analysis.md from structured scenario results."""
+"""Generate docs/learning/2026-04-13-失败案例分析.md from structured scenario results."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -524,7 +524,7 @@ def generate_failure_report(
 
 def save_failure_report(
     scenarios: list[ScenarioResult],
-    output_path: str = "docs/failure-analysis.md",
+    output_path: str = "docs/learning/2026-04-13-失败案例分析.md",
     **kwargs,
 ) -> str:
     md = generate_failure_report(scenarios, **kwargs)
@@ -547,7 +547,7 @@ Expected: All 8 tests PASS.
 git add backend/evals/failure_report.py backend/tests/test_failure_report.py
 git commit -m "feat(evals): add failure_report.py — markdown generator for failure analysis
 
-Generates docs/failure-analysis.md from structured ScenarioResult data.
+Generates docs/learning/2026-04-13-失败案例分析.md from structured ScenarioResult data.
 Includes taxonomy table, overview, and per-scenario detail sections."
 ```
 
@@ -741,7 +741,7 @@ def run_scenario(client: httpx.Client, case: GoldenCase) -> ScenarioResult:
 def main():
     parser = argparse.ArgumentParser(description="Run failure analysis scenarios")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
-    parser.add_argument("--output", default=str(BACKEND_DIR.parent / "docs" / "failure-analysis.md"))
+    parser.add_argument("--output", default=str(BACKEND_DIR.parent / "docs" / "learning" / "2026-04-13-失败案例分析.md"))
     args = parser.parse_args()
 
     # Load only failure-* cases
@@ -931,7 +931,7 @@ git add scripts/failure-analysis/capture_screenshots.ts
 git commit -m "feat(scripts): add failure analysis screenshot capture
 
 Playwright script that opens completed failure sessions in frontend
-and takes full-page screenshots for docs/failure-analysis.md."
+and takes full-page screenshots for docs/learning/2026-04-13-失败案例分析.md."
 ```
 
 ---
@@ -1325,7 +1325,7 @@ README includes prerequisites, usage, and troubleshooting."
 Execute the failure analysis against the live backend. This requires backend + frontend running.
 
 **Files:**
-- Generates: `docs/failure-analysis.md`
+- Generates: `docs/learning/2026-04-13-失败案例分析.md`
 - Generates: `scripts/failure-analysis/results/failure-results.json`
 - Generates: `screenshots/failure-analysis/*.png`
 
@@ -1344,7 +1344,7 @@ cd /path/to/travel_agent_pro
 python scripts/failure-analysis/run_and_analyze.py
 ```
 
-Expected: 8 scenarios executed, results saved to `scripts/failure-analysis/results/failure-results.json` and `docs/failure-analysis.md`.
+Expected: 8 scenarios executed, results saved to `scripts/failure-analysis/results/failure-results.json` and `docs/learning/2026-04-13-失败案例分析.md`.
 
 - [ ] **Step 3: Capture screenshots**
 
@@ -1352,9 +1352,9 @@ Expected: 8 scenarios executed, results saved to `scripts/failure-analysis/resul
 npx playwright test scripts/failure-analysis/capture_screenshots.ts --config=playwright.config.ts
 ```
 
-- [ ] **Step 4: Review and enhance docs/failure-analysis.md**
+- [ ] **Step 4: Review and enhance docs/learning/2026-04-13-失败案例分析.md**
 
-Open `docs/failure-analysis.md` and fill in the human-review sections:
+Open `docs/learning/2026-04-13-失败案例分析.md` and fill in the human-review sections:
 - Failure category for each scenario
 - Root cause analysis with code references
 - Fix status
@@ -1363,7 +1363,7 @@ Open `docs/failure-analysis.md` and fill in the human-review sections:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/failure-analysis.md scripts/failure-analysis/results/ screenshots/failure-analysis/
+git add docs/learning/2026-04-13-失败案例分析.md scripts/failure-analysis/results/ screenshots/failure-analysis/
 git commit -m "docs: add failure analysis with 8 real scenario results
 
 Executed 8 failure scenarios against live backend:
@@ -1435,13 +1435,13 @@ Add after the existing docs section (find the appropriate location):
 
 ```bash
 # 查看分析报告
-cat docs/failure-analysis.md
+cat docs/learning/2026-04-13-失败案例分析.md
 
 # 重新运行失败分析
 python scripts/failure-analysis/run_and_analyze.py
 ```
 
-详见 [docs/failure-analysis.md](docs/failure-analysis.md)
+详见 [docs/learning/2026-04-13-失败案例分析.md](docs/learning/2026-04-13-失败案例分析.md)
 
 ### 🎬 Demo
 
@@ -1460,7 +1460,7 @@ scripts/demo/run-all-demos.sh
 
 - [ ] **Step 2: Update PROJECT_OVERVIEW.md docs section**
 
-Add entries for `docs/failure-analysis.md`, `scripts/failure-analysis/`, and `scripts/demo/` to the project structure.
+Add entries for `docs/learning/2026-04-13-失败案例分析.md`, `scripts/failure-analysis/`, and `scripts/demo/` to the project structure.
 
 - [ ] **Step 3: Run existing tests to verify no breakage**
 
@@ -1493,7 +1493,7 @@ cd backend && python -m pytest tests/ -v
 - [ ] **Step 2: Verify failure analysis doc exists and has content**
 
 ```bash
-wc -l docs/failure-analysis.md
+wc -l docs/learning/2026-04-13-失败案例分析.md
 ```
 
 Expected: 100+ lines.

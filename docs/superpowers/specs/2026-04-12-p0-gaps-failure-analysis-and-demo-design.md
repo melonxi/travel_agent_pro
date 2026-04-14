@@ -12,7 +12,7 @@
 
 ### 1.1 目标
 
-产出 `docs/failure-analysis.md`，包含 8 个真实场景的系统性失败模式分析。面试时能回答："你的系统什么时候会失败？你怎么知道的？"
+产出 `docs/learning/2026-04-13-失败案例分析.md`，包含 8 个真实场景的系统性失败模式分析。面试时能回答："你的系统什么时候会失败？你怎么知道的？"
 
 ### 1.2 架构 — 复用现有 eval 框架
 
@@ -34,7 +34,7 @@ scripts/failure-analysis/
 ├── run_and_analyze.py           # 主脚本：调用 evals runner → 截图 → 生成文档
 └── capture_screenshots.ts       # Playwright 截图（访问同 session_id 的前端页面）
 
-产出 → docs/failure-analysis.md
+产出 → docs/learning/2026-04-13-失败案例分析.md
      → screenshots/failure-analysis/
 ```
 
@@ -54,7 +54,7 @@ scripts/failure-analysis/
 
 3. **`failure_report.py`**：
    - 读取结构化结果 + 断言通过/失败信息
-   - 自动生成 `docs/failure-analysis.md` 骨架
+   - 自动生成 `docs/learning/2026-04-13-失败案例分析.md` 骨架
    - 人工补充：根因分析（指向代码行）、修复建议、面试话术
 
 ### 1.4 场景清单
@@ -72,7 +72,7 @@ scripts/failure-analysis/
 
 ### 1.5 文档模板
 
-`docs/failure-analysis.md` 结构：
+`docs/learning/2026-04-13-失败案例分析.md` 结构：
 
 ```markdown
 # Travel Agent Pro 失败案例分析
@@ -276,7 +276,7 @@ export default defineConfig({
 | 新建 | `backend/evals/failure_report.py` |
 | 新建 | `scripts/failure-analysis/run_and_analyze.py` |
 | 新建 | `scripts/failure-analysis/capture_screenshots.ts` |
-| 新建 | `docs/failure-analysis.md` |
+| 新建 | `docs/learning/2026-04-13-失败案例分析.md` |
 | 新建 | `scripts/demo/seed-memory.json` |
 | 新建 | `scripts/demo/playwright.config.ts` |
 | 新建 | `scripts/demo/demo-full-flow.spec.ts` |

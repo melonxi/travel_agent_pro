@@ -1,4 +1,4 @@
-"""Generate docs/failure-analysis.md from structured scenario results."""
+"""Generate docs/learning/2026-04-13-失败案例分析.md from structured scenario results."""
 
 from __future__ import annotations
 
@@ -73,7 +73,9 @@ def generate_failure_report(
     for index, scenario in enumerate(scenarios, 1):
         rate = f"{scenario.passed_assertions}/{scenario.total_assertions}"
         finding = scenario.failures[0] if scenario.failures else "所有断言通过"
-        lines.append(f"| {index} | {scenario.name} | {scenario.result_emoji} | {rate} | {finding} |")
+        lines.append(
+            f"| {index} | {scenario.name} | {scenario.result_emoji} | {rate} | {finding} |"
+        )
     lines.append("")
 
     lines.append("## 详细分析\n")
@@ -116,7 +118,7 @@ def generate_failure_report(
 
 def save_failure_report(
     scenarios: list[ScenarioResult],
-    output_path: str = "docs/failure-analysis.md",
+    output_path: str = "docs/learning/2026-04-13-失败案例分析.md",
     **kwargs: Any,
 ) -> str:
     markdown = generate_failure_report(scenarios, **kwargs)

@@ -243,7 +243,9 @@ def main() -> int:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument(
         "--output",
-        default=str(BACKEND_DIR.parent / "docs" / "failure-analysis.md"),
+        default=str(
+            BACKEND_DIR.parent / "docs" / "learning" / "2026-04-13-失败案例分析.md"
+        ),
     )
     args = parser.parse_args()
 

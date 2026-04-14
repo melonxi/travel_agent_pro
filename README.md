@@ -141,9 +141,9 @@ python scripts/failure-analysis/run_and_analyze.py
 npx playwright test scripts/failure-analysis/capture_screenshots.ts --config=playwright.config.ts
 ```
 
-Committed analysis lives in `docs/failure-analysis.md`. Local run artifacts land in:
+Committed analysis lives in `docs/learning/2026-04-13-失败案例分析.md`. Local run artifacts land in:
 
-- `docs/failure-analysis.md` — scenario-by-scenario taxonomy, root cause analysis, and remediation status
+- `docs/learning/2026-04-13-失败案例分析.md` — scenario-by-scenario taxonomy, root cause analysis, and remediation status
 - `scripts/failure-analysis/results/failure-results.json` — raw execution results, generated locally and ignored by git
 - `screenshots/failure-analysis/` — one screenshot per failure scenario
 
@@ -252,7 +252,8 @@ travel_agent_pro/
 │   │   └── components/      # ChatPanel, MapView, Timeline, BudgetChart, etc.
 │   └── vite.config.ts       # Dev proxy to backend
 ├── docs/
-│   └── failure-analysis.md  # Failure taxonomy and root-cause report for P0 gap scenarios
+│   └── learning/
+│       └── 2026-04-13-失败案例分析.md  # Failure taxonomy and root-cause report for P0 gap scenarios
 ├── scripts/
 │   ├── failure-analysis/    # Live scenario runner + screenshot capture harness
 │   └── demo/                # Demo seed helper, scripted fixture, Playwright recording spec

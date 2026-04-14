@@ -18,7 +18,7 @@
   - 当前实现说明，和代码保持同步
 - `docs/context-aware-compaction-plan.md`
   - 本轮改造前的设计计划，不作为最终行为说明
-- `docs/learning/2026-04-06-context-compression-mechanism.md`
+- `docs/learning/2026-04-06-上下文压缩机制.md`
   - 旧版本学习笔记，描述的是历史实现，不再代表当前代码
 
 ## 总览
