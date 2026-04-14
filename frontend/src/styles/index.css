@@ -1051,29 +1051,9 @@ body::after {
   cursor: not-allowed;
 }
 
-.send-btn.is-streaming {
-  opacity: 1;
-  border-color: rgba(212, 162, 76, 0.3);
-  background: linear-gradient(135deg, rgba(212, 162, 76, 0.1), rgba(212, 162, 76, 0.04));
-  cursor: default;
-}
-
 .send-btn svg {
   width: 18px;
   height: 18px;
-}
-
-.send-spinner {
-  width: 18px;
-  height: 18px;
-  border: 2px solid rgba(212, 162, 76, 0.2);
-  border-top-color: var(--accent-amber);
-  border-radius: 50%;
-  animation: sendSpin 0.8s linear infinite;
-}
-
-@keyframes sendSpin {
-  to { transform: rotate(360deg); }
 }
 
 /* ── Right Panel (Info Sidebar) ───────────────────── */
