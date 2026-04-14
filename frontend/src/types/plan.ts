@@ -175,18 +175,18 @@ interface GenericSSEEvent extends BaseSSEEvent {
 
 export interface PhaseTransitionEvent extends BaseSSEEvent {
   type: 'phase_transition'
-  from_phase?: number
-  to_phase?: number
-  from_step?: string
-  to_step?: string
+  from_phase: number
+  to_phase: number
+  from_step?: string | null
+  to_step?: string | null
   reason?: string
 }
 
 export interface AgentStatusEvent extends BaseSSEEvent {
   type: 'agent_status'
-  stage?: string
+  stage: 'thinking' | 'summarizing' | 'compacting'
   iteration?: number
-  hint?: string
+  hint?: string | null
   [key: string]: unknown
 }
 
