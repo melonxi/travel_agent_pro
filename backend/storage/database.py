@@ -67,7 +67,25 @@ class Database:
         self._conn = await aiosqlite.connect(self._db_path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(_SCHEMA)
+        await self._migrate_sessions_table()
         await self._conn.commit()
+
+    async def _migrate_sessions_table(self) -> None:
+        async with self.conn.execute("PRAGMA table_info(sessions)") as cursor:
+            rows = await cursor.fetchall()
+
+        existing_columns = {row["name"] for row in rows}
+        missing_columns = (
+            ("last_run_id", "TEXT"),
+            ("last_run_status", "TEXT"),
+            ("last_run_error", "TEXT"),
+        )
+        for column_name, column_type in missing_columns:
+            if column_name in existing_columns:
+                continue
+            await self.conn.execute(
+                f"ALTER TABLE sessions ADD COLUMN {column_name} {column_type}"
+            )
 
     async def close(self) -> None:
         if self._conn is None:

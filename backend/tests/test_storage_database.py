@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 import pytest_asyncio
 
@@ -52,3 +54,34 @@ async def test_execute_and_fetch(db: Database):
     assert row is not None
     assert row["session_id"] == "s1"
     assert row["user_id"] == "u1"
+
+
+@pytest.mark.asyncio
+async def test_initialize_migrates_legacy_sessions_schema(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+            session_id   TEXT PRIMARY KEY,
+            user_id      TEXT NOT NULL DEFAULT 'default_user',
+            title        TEXT,
+            phase        INTEGER NOT NULL DEFAULT 1,
+            status       TEXT NOT NULL DEFAULT 'active',
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    database = Database(str(db_path))
+    await database.initialize()
+    columns = await database.fetch_all("PRAGMA table_info(sessions)")
+    await database.close()
+
+    column_names = {column["name"] for column in columns}
+    assert "last_run_id" in column_names
+    assert "last_run_status" in column_names
+    assert "last_run_error" in column_names
