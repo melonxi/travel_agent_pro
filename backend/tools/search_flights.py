@@ -36,41 +36,114 @@ _PARAMETERS = {
 # IATA code → Chinese city name
 _IATA_TO_CITY: dict[str, str] = {
     # 北京
-    "PEK": "北京", "PKX": "北京",
+    "PEK": "北京",
+    "PKX": "北京",
     # 上海
-    "SHA": "上海", "PVG": "上海",
+    "SHA": "上海",
+    "PVG": "上海",
     # 一线 & 新一线
-    "CAN": "广州", "SZX": "深圳", "CTU": "成都", "TFU": "成都",
-    "HGH": "杭州", "NKG": "南京", "WUH": "武汉", "CKG": "重庆",
-    "XIY": "西安", "TSN": "天津", "SHE": "沈阳", "DLC": "大连",
-    "TAO": "青岛", "CGO": "郑州", "CSX": "长沙", "KHN": "南昌",
-    "FOC": "福州", "XMN": "厦门", "NNG": "南宁", "HAK": "海口",
-    "SYX": "三亚", "KWE": "贵阳", "HRB": "哈尔滨", "CGQ": "长春",
-    "URC": "乌鲁木齐", "LHW": "兰州", "INC": "银川", "XNN": "西宁",
-    "HET": "呼和浩特", "KMG": "昆明", "TNA": "济南", "SJW": "石家庄",
-    "HFE": "合肥", "WNZ": "温州", "NTG": "南通", "ZUH": "珠海",
+    "CAN": "广州",
+    "SZX": "深圳",
+    "CTU": "成都",
+    "TFU": "成都",
+    "HGH": "杭州",
+    "NKG": "南京",
+    "WUH": "武汉",
+    "CKG": "重庆",
+    "XIY": "西安",
+    "TSN": "天津",
+    "SHE": "沈阳",
+    "DLC": "大连",
+    "TAO": "青岛",
+    "CGO": "郑州",
+    "CSX": "长沙",
+    "KHN": "南昌",
+    "FOC": "福州",
+    "XMN": "厦门",
+    "NNG": "南宁",
+    "HAK": "海口",
+    "SYX": "三亚",
+    "KWE": "贵阳",
+    "HRB": "哈尔滨",
+    "CGQ": "长春",
+    "URC": "乌鲁木齐",
+    "LHW": "兰州",
+    "INC": "银川",
+    "XNN": "西宁",
+    "HET": "呼和浩特",
+    "KMG": "昆明",
+    "TNA": "济南",
+    "SJW": "石家庄",
+    "HFE": "合肥",
+    "WNZ": "温州",
+    "NTG": "南通",
+    "ZUH": "珠海",
     # 旅游城市
-    "DLU": "大理", "LJG": "丽江", "JHG": "西双版纳", "KWL": "桂林",
-    "LXA": "拉萨", "JZH": "九寨沟", "TYN": "太原", "DDG": "丹东",
-    "WEH": "威海", "YNT": "烟台", "YIH": "宜昌", "ZHA": "湛江",
-    "BHY": "北海", "MIG": "绵阳", "YNZ": "盐城", "XUZ": "徐州",
-    "LYA": "洛阳", "ENH": "恩施",
+    "DLU": "大理",
+    "LJG": "丽江",
+    "JHG": "西双版纳",
+    "KWL": "桂林",
+    "LXA": "拉萨",
+    "JZH": "九寨沟",
+    "TYN": "太原",
+    "DDG": "丹东",
+    "WEH": "威海",
+    "YNT": "烟台",
+    "YIH": "宜昌",
+    "ZHA": "湛江",
+    "BHY": "北海",
+    "MIG": "绵阳",
+    "YNZ": "盐城",
+    "XUZ": "徐州",
+    "LYA": "洛阳",
+    "ENH": "恩施",
     # 港澳台
-    "HKG": "香港", "MFM": "澳门", "TPE": "台北", "KHH": "高雄",
+    "HKG": "香港",
+    "MFM": "澳门",
+    "TPE": "台北",
+    "KHH": "高雄",
     # 日韩
-    "NRT": "东京", "HND": "东京", "KIX": "大阪", "ITM": "大阪",
-    "NGO": "名古屋", "FUK": "福冈", "CTS": "札幌", "OKA": "冲绳",
-    "ICN": "首尔", "GMP": "首尔", "PUS": "釜山", "CJU": "济州岛",
+    "NRT": "东京",
+    "HND": "东京",
+    "KIX": "大阪",
+    "ITM": "大阪",
+    "NGO": "名古屋",
+    "FUK": "福冈",
+    "CTS": "札幌",
+    "OKA": "冲绳",
+    "ICN": "首尔",
+    "GMP": "首尔",
+    "PUS": "釜山",
+    "CJU": "济州岛",
     # 东南亚
-    "BKK": "曼谷", "DMK": "曼谷", "SIN": "新加坡", "KUL": "吉隆坡",
-    "DPS": "巴厘岛", "CGK": "雅加达", "MNL": "马尼拉", "SGN": "胡志明市",
-    "HAN": "河内", "DAD": "岘港", "REP": "暹粒", "PNH": "金边",
+    "BKK": "曼谷",
+    "DMK": "曼谷",
+    "SIN": "新加坡",
+    "KUL": "吉隆坡",
+    "DPS": "巴厘岛",
+    "CGK": "雅加达",
+    "MNL": "马尼拉",
+    "SGN": "胡志明市",
+    "HAN": "河内",
+    "DAD": "岘港",
+    "REP": "暹粒",
+    "PNH": "金边",
     "RGN": "仰光",
     # 其他热门
-    "SVO": "莫斯科", "CDG": "巴黎", "LHR": "伦敦", "FRA": "法兰克福",
-    "LAX": "洛杉矶", "JFK": "纽约", "SFO": "旧金山", "SYD": "悉尼",
-    "MEL": "墨尔本", "AKL": "奥克兰", "DXB": "迪拜", "IST": "伊斯坦布尔",
-    "CAI": "开罗", "NBO": "内罗毕",
+    "SVO": "莫斯科",
+    "CDG": "巴黎",
+    "LHR": "伦敦",
+    "FRA": "法兰克福",
+    "LAX": "洛杉矶",
+    "JFK": "纽约",
+    "SFO": "旧金山",
+    "SYD": "悉尼",
+    "MEL": "墨尔本",
+    "AKL": "奥克兰",
+    "DXB": "迪拜",
+    "IST": "伊斯坦布尔",
+    "CAI": "开罗",
+    "NBO": "内罗毕",
 }
 
 
@@ -91,9 +164,27 @@ Don't use when: 航班已预订或不需要飞行。
 
         # Branch 1: Amadeus
         async def _amadeus():
-            if not api_keys.amadeus_key:
+            if not api_keys.amadeus_key or not api_keys.amadeus_secret:
                 return []
             async with httpx.AsyncClient() as client:
+                token_resp = await client.post(
+                    "https://test.api.amadeus.com/v1/security/oauth2/token",
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id": api_keys.amadeus_key,
+                        "client_secret": api_keys.amadeus_secret,
+                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    timeout=10,
+                )
+                token_resp.raise_for_status()
+                access_token = token_resp.json().get("access_token")
+                if not access_token:
+                    raise ToolError(
+                        "Amadeus token response missing access_token",
+                        error_code="AUTH_FAILED",
+                        suggestion="Check AMADEUS_API_KEY and AMADEUS_API_SECRET",
+                    )
                 resp = await client.post(
                     "https://test.api.amadeus.com/v2/shopping/flight-offers",
                     json={
@@ -103,7 +194,7 @@ Don't use when: 航班已预订或不需要飞行。
                         "adults": 1,
                         "max": max_results,
                     },
-                    headers={"Authorization": f"Bearer {api_keys.amadeus_key}"},
+                    headers={"Authorization": f"Bearer {access_token}"},
                     timeout=10,
                 )
                 resp.raise_for_status()
@@ -143,7 +234,7 @@ Don't use when: 航班已预订或不需要飞行。
 
         if not amadeus_results and not flyai_results:
             reasons = []
-            if not api_keys.amadeus_key:
+            if not api_keys.amadeus_key or not api_keys.amadeus_secret:
                 reasons.append("Amadeus API key not configured")
             elif isinstance(results[0], BaseException):
                 reasons.append(f"Amadeus error: {results[0]}")

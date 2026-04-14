@@ -110,3 +110,20 @@ async def test_search_trains_unavailable(mock_flyai_unavailable):
     tool_fn = make_search_trains_tool(mock_flyai_unavailable)
     with pytest.raises(ToolError, match="unavailable"):
         await tool_fn(origin="北京", destination="上海", date="2026-04-15")
+
+
+@pytest.mark.asyncio
+async def test_search_trains_propagates_flyai_runtime_error(mock_flyai_client):
+    mock_flyai_client.search_train.side_effect = RuntimeError(
+        "Trial limit reached. Please configure FLYAI_API_KEY"
+    )
+
+    tool_fn = make_search_trains_tool(mock_flyai_client)
+
+    with pytest.raises(ToolError) as exc_info:
+        await tool_fn(origin="北京", destination="上海", date="2026-04-15")
+
+    error = exc_info.value
+    assert "Trial limit reached" in str(error)
+    assert error.error_code == "SERVICE_UNAVAILABLE"
+    assert error.suggestion == "Check FlyAI CLI quota/auth status or retry later."

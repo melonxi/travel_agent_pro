@@ -77,7 +77,14 @@ Don't use when: 用户明确要坐飞机，或目的地不通火车。
         if max_price is not None:
             kwargs["max_price"] = max_price
 
-        raw_list = await flyai_client.search_train(origin=origin, **kwargs)
+        try:
+            raw_list = await flyai_client.search_train(origin=origin, **kwargs)
+        except RuntimeError as exc:
+            raise ToolError(
+                f"FlyAI train search failed: {exc}",
+                error_code="SERVICE_UNAVAILABLE",
+                suggestion="Check FlyAI CLI quota/auth status or retry later.",
+            ) from exc
 
         if not raw_list:
             raise ToolError(

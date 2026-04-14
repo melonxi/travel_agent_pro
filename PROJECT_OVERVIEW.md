@@ -73,7 +73,7 @@ travel_agent_pro/
 │   │   ├── update_plan_state.py # 核心状态写入工具 (394 行), 冗余检测, 返回 previous_value 用于 state diff
 │   │   ├── xiaohongshu_search.py # 小红书搜索/阅读/评论
 │   │   ├── web_search.py       # Tavily 网页搜索
-│   │   ├── search_flights.py   # 航班搜索 (Amadeus/FlyAI)
+│   │   ├── search_flights.py   # 航班搜索 (Amadeus OAuth2 + FlyAI 双源融合)
 │   │   ├── search_trains.py    # 火车搜索 (FlyAI)
 │   │   ├── search_accommodations.py # 住宿搜索
 │   │   ├── get_poi_info.py     # POI 详情
@@ -330,10 +330,10 @@ lock      → + search_flights, search_trains, search_accommodations
 |------|------|------|
 | 状态 | `update_plan_state` | 核心状态写入 (394 行), 冗余检测 |
 | 决策 | `tool_choice.py` | 根据阶段和对话内容决定是否强制 `update_plan_state` |
-| 搜索 | `xiaohongshu_search`, `web_search`, `quick_travel_search` | 信息获取 |
-| 交通 | `search_flights`, `search_trains`, `calculate_route` | 路线规划 |
+| 搜索 | `xiaohongshu_search`, `web_search`, `quick_travel_search` | 信息获取；`quick_travel_search` 为 FlyAI 单源，CLI 配额/鉴权/服务错误直接透传 |
+| 交通 | `search_flights`, `search_trains`, `calculate_route` | 路线规划；`search_flights` 为双源降级，`search_trains` 为 FlyAI 单源直传错误 |
 | 住宿 | `search_accommodations` | 酒店搜索 |
-| POI | `get_poi_info`, `check_availability` | 景点信息 |
+| POI | `get_poi_info`, `check_availability` | 景点信息；`get_poi_info` 为双源降级，双路失败时汇总真实错误原因 |
 | 行程 | `assemble_day_plan`, `check_feasibility` | 日程编排 |
 | 辅助 | `check_weather`, `generate_summary` | 验证与输出 |
 

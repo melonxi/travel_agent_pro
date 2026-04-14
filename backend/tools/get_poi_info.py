@@ -80,21 +80,47 @@ Don't use when: 已有该景点的完整信息。
 
         google_results = results[0] if not isinstance(results[0], BaseException) else []
         flyai_results = results[1] if not isinstance(results[1], BaseException) else []
+        google_error = results[0] if isinstance(results[0], BaseException) else None
+        flyai_error = results[1] if isinstance(results[1], BaseException) else None
 
-        if isinstance(results[0], BaseException):
-            logger.warning("Google POI search failed: %s", results[0])
-        if isinstance(results[1], BaseException):
-            logger.warning("FlyAI POI search failed: %s", results[1])
+        if google_error:
+            logger.warning("Google POI search failed: %s", google_error)
+        if flyai_error:
+            logger.warning("FlyAI POI search failed: %s", flyai_error)
 
         if not google_results and not flyai_results:
             if not api_keys.google_maps:
+                message = "Google Maps API key not configured"
+                if flyai_error:
+                    message = f"{message}. FlyAI: {flyai_error}"
+                elif not flyai_client:
+                    message = f"{message}. FlyAI: not configured"
+                elif not flyai_client.available:
+                    message = f"{message}. FlyAI: unavailable"
+                else:
+                    message = f"{message}. FlyAI: no results"
                 raise ToolError(
-                    "Google Maps API key not configured",
+                    message,
                     error_code="NO_API_KEY",
                     suggestion="Set GOOGLE_MAPS_API_KEY",
                 )
+
+            failure_reasons = []
+            if google_error:
+                failure_reasons.append(f"Google: {google_error}")
+            if not google_error:
+                failure_reasons.append("Google: no results")
+            if flyai_error:
+                failure_reasons.append(f"FlyAI: {flyai_error}")
+            elif flyai_client and flyai_client.available:
+                failure_reasons.append("FlyAI: no results")
+
+            message = "No POI results from any source"
+            if failure_reasons:
+                message = f"{message}. Reasons: {'; '.join(failure_reasons)}"
+
             raise ToolError(
-                "No POI results from any source",
+                message,
                 error_code="NO_RESULTS",
                 suggestion="Try a different search query",
             )
