@@ -16,7 +16,7 @@ const explicitMatches = [
 
 export default defineConfig({
   testDir: '.',
-  testMatch: explicitMatches.length > 0 ? explicitMatches : 'e2e-test.spec.ts',
+  testMatch: explicitMatches.length > 0 ? explicitMatches : ['e2e-test.spec.ts', 'e2e-send-button.spec.ts'],
   testIgnore: ['.worktrees/**'],
   timeout: 180000,
   use: {
