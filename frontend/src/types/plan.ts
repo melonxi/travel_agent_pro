@@ -144,8 +144,7 @@ export interface CompressionInfo {
   reason: string
 }
 
-export interface SSEEvent {
-  type: 'text_delta' | 'tool_call' | 'tool_result' | 'state_update' | 'context_compression' | 'memory_recall' | 'error' | 'done'
+interface BaseSSEEvent {
   content?: string
   tool_call?: ToolCallEvent
   tool_result?: ToolResultEvent
@@ -161,3 +160,37 @@ export interface SSEEvent {
   run_id?: string
   run_status?: string
 }
+
+interface GenericSSEEvent extends BaseSSEEvent {
+  type:
+    | 'text_delta'
+    | 'tool_call'
+    | 'tool_result'
+    | 'state_update'
+    | 'context_compression'
+    | 'memory_recall'
+    | 'error'
+    | 'done'
+}
+
+export interface PhaseTransitionEvent extends BaseSSEEvent {
+  type: 'phase_transition'
+  from_phase?: number
+  to_phase?: number
+  from_step?: string
+  to_step?: string
+  reason?: string
+}
+
+export interface AgentStatusEvent extends BaseSSEEvent {
+  type: 'agent_status'
+  stage?: string
+  iteration?: number
+  hint?: string
+  [key: string]: unknown
+}
+
+export type SSEEvent =
+  | GenericSSEEvent
+  | PhaseTransitionEvent
+  | AgentStatusEvent
