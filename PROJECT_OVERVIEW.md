@@ -362,6 +362,8 @@ POST /api/chat/{sessionId}  →  ReadableStream (NDJSON)
   tool_result         → 工具结果 (success/error/skipped + data)
   state_update        → 方案状态变化 (完整 TravelPlanState)
   context_compression → 上下文压缩通知
+  phase_transition    → 阶段/子步骤切换事件 (from_phase/to_phase/from_step/to_step/reason)
+  agent_status        → Agent 运行状态事件 (按 chunk.agent_status 透传)
   memory_recall       → 本轮命中的记忆 ID 列表 (item_ids[])
   error               → LLM 错误 (error_code/retryable/can_continue/failure_phase/user_message)
   keepalive           → 心跳 (每 15s，前端 30s 无事件进入 waiting 状态条)
