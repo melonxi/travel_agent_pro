@@ -1,0 +1,6 @@
+{
+  "description": "讯飞 EngineInternalError - system is busy (2026-04-15 澳门会话)",
+  "error_message": "Xunfei request failed with code: 10012, message: EngineInternalError:The system is busy, please try again later.",
+  "expected_code": "LLM_TRANSIENT_ERROR",
+  "expected_retryable": true
+}
