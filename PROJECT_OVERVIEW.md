@@ -39,13 +39,13 @@ travel_agent_pro/
 │   ├── memory/                 # 结构化 global/trip 记忆 + episode：models / store / manager / extraction / policy / retriever / formatter
 │   ├── context/                # 上下文：manager（系统提示/压缩决策）+ soul.md（人格）
 │   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，GLOBAL_RED_FLAGS + PHASE{1,3,5,7}_PROMPT + build_phase3_prompt）/ backtrack
-│   ├── tools/                  # 领域工具：base / engine / update_plan_state / plan_tools(Phase 1/3 trip_basics + Phase 3 强 schema + Phase 5 daily_plans 写工具) / 搜索类 / 规划类 / normalizers
+│   ├── tools/                  # 领域工具：base / engine / update_plan_state / plan_tools(Phase 1/3 trip_basics + append_tools + Phase 3 强 schema + Phase 5 daily_plans 写工具) / 搜索类 / 规划类 / normalizers
 │   ├── storage/                # SQLite 层：database / session_store / message_store / archive_store
 │   ├── harness/                # 5 层守护：guardrail / validator / judge / feasibility
 │   ├── evals/                  # 评估管线：models / runner / stability / failure_report / golden_cases
 │   ├── telemetry/              # 可观测 + 成本：setup / attributes / decorators / stats
 │   ├── api/                    # API 模块：trace 视图构建
-│   └── tests/                  # pytest 测试套件（含 test_plan_tools/ Phase 3 工具专项）
+│   └── tests/                  # pytest 测试套件（含 test_plan_tools/ Phase 1/3/5 写工具专项）
 │
 ├── frontend/                   # React 前端
 │   ├── src/
@@ -221,7 +221,7 @@ LLM API 异常
 
 | 类别 | 工具 |
 |------|------|
-| 状态 | `update_plan_state`（当前公开写入口，含冗余检测，底层复用 `state.plan_writers` 共享写层）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.phase3_tools`（已拆出 Category A Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity schema） |
+| 状态 | `update_plan_state`（当前公开写入口，含冗余检测，底层复用 `state.plan_writers` 共享写层）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.append_tools`（Phase 1/3/5 追加型写工具；追加 preferences/constraints、追加或整体替换 destination_candidates，并对输入类型做严格校验）、`tools.plan_tools.phase3_tools`（已拆出 Category A Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity schema） |
 | 搜索 | `xiaohongshu_search`、`web_search`、`quick_travel_search` |
 | 交通 | `search_flights`（Amadeus + FlyAI 双源融合）、`search_trains`、`calculate_route` |
 | 住宿 | `search_accommodations` |
