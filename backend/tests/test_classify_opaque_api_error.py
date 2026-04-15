@@ -217,3 +217,36 @@ def test_body_dict_message_extracted():
     err = classify_opaque_api_error(exc, provider="openai", model="gpt-4o")
     assert err.code == LLMErrorCode.RATE_LIMITED
     assert err.retryable is True
+
+
+# ── Fixture-driven regression tests ──
+
+import json
+from pathlib import Path
+
+_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "opaque_api_errors"
+
+
+def _load_fixtures():
+    if not _FIXTURE_DIR.is_dir():
+        return []
+    items = []
+    for p in sorted(_FIXTURE_DIR.glob("*.json")):
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+        items.append(pytest.param(data, id=p.stem))
+    return items
+
+
+@pytest.mark.parametrize("fixture", _load_fixtures())
+def test_fixture_regression(fixture):
+    exc = _FakeAPIError(fixture["error_message"])
+    err = classify_opaque_api_error(exc, provider="openai", model="test-model")
+    assert err.code.value == fixture["expected_code"], (
+        f"Expected {fixture['expected_code']}, got {err.code.value} "
+        f"for: {fixture['description']}"
+    )
+    assert err.retryable is fixture["expected_retryable"], (
+        f"Expected retryable={fixture['expected_retryable']}, "
+        f"got {err.retryable} for: {fixture['description']}"
+    )

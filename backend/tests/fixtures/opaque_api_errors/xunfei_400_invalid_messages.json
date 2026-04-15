@@ -1,0 +1,6 @@
+{
+  "description": "讯飞 400 参数校验 - Invalid messages (2026-04-15 香港会话)",
+  "error_message": "Xunfei request failed with status code: 400, Inference failed: request param validation error, Value error, Invalid messages at index 10.",
+  "expected_code": "LLM_BAD_REQUEST",
+  "expected_retryable": false
+}
