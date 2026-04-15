@@ -19,7 +19,7 @@ export function resolveEffectivePhase(currentPhase: number, overridePhase?: numb
 }
 
 export function shouldAnimateAdvance(previousEffectivePhase: number | null, nextEffectivePhase: number) {
-  return previousEffectivePhase !== null && previousEffectivePhase !== nextEffectivePhase
+  return previousEffectivePhase !== null && nextEffectivePhase > previousEffectivePhase
 }
 
 export function resolveAdvancingPhase(previousEffectivePhase: number | null, nextEffectivePhase: number) {

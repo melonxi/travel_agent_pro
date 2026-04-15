@@ -150,7 +150,9 @@ travel_agent_pro/
 ├── docker-compose.observability.yml # Jaeger 一键启动
 ├── e2e-test.spec.ts            # Playwright E2E 测试
 ├── e2e-retry-experience.spec.ts # ChatPanel 重试/继续/停止/不可恢复错误专项 E2E
+├── e2e-waiting-experience.spec.ts # ThinkingBubble 与工具副标题/计时器专项 E2E
 ├── playwright.retry.config.ts  # 仅运行重试体验专项用例的 Playwright 配置
+├── playwright.waiting.config.ts # 仅运行等待体验专项用例的 Playwright 配置
 ├── AGENTS.md                   # AI Agent 项目规范
 ├── CLAUDE.md                   # Claude 特定规范
 └── PROJECT_OVERVIEW.md         # 👈 本文件
@@ -208,7 +210,7 @@ travel_agent_pro/
 ## 5. 核心数据流
 
 ```
-用户消息 (POST /api/sessions/{id}/chat)
+用户消息 (POST /api/chat/{id})
     ↓
 [main.py] 加载会话+方案, 组装消息列表
     ↓
@@ -354,12 +356,14 @@ lock      → + search_flights, search_trains, search_accommodations
 
 ### SSE 流式协议
 ```
-POST /api/chat/{sessionId}  →  ReadableStream (NDJSON)
+POST /api/chat/{sessionId}  →  ReadableStream (SSE data frames)
 
 事件类型:
   text_delta          → 助手文本增量
   tool_call           → 工具调用开始 (名称 + 参数)
   tool_result         → 工具结果 (success/error/skipped + data)
+  phase_transition    → 阶段/Phase 3 子步骤的提前切换信号（可先于 state_update 到达，用于前端乐观同步）
+  agent_status        → ThinkingBubble 阶段状态 (当前已接入 thinking/summarizing + iteration)
   state_update        → 方案状态变化 (完整 TravelPlanState)
   context_compression → 上下文压缩通知
   memory_recall       → 本轮命中的记忆 ID 列表 (item_ids[])
@@ -369,8 +373,11 @@ POST /api/chat/{sessionId}  →  ReadableStream (NDJSON)
 ```
 
 ### 关键组件
-- **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理 + 停止按钮(streaming 时替代发送按钮) + 统一流式状态条（`waiting`/`continue`/`retry`/`fatal`/`stopped`）+ `can_continue` 继续生成 + 保存上一条用户消息用于重新发送
-- **Phase3Workbench**: 旅行画像 / 候选池 / 骨架方案 / 锁定区 / 风险 (5 卡片)
+- **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理 + `phase_transition` 事件处理（收到后先回调 App 更新阶段覆盖，再插入 `PhaseTransitionCard` 系统消息）+ `agent_status` 驱动的 `ThinkingBubble` 生命周期（发送瞬间本地插入，收到 `text_delta`/`tool_call`/`error` 时 200ms fade-out，`done`/stop 收尾时直接移除）+ 停止按钮(streaming 时替代发送按钮) + 统一流式状态条（`waiting`/`continue`/`retry`/`fatal`/`stopped`）+ `can_continue` 继续生成 + 保存上一条用户消息用于重新发送
+- **PhaseIndicator / App**: App 用 `phaseOverride` 暂存最近一次 `phase_transition`（800ms TTL）；`PhaseIndicator` 优先显示 overridePhase，`Phase3Workbench` 同步吃 `overrideStep`，从而在 `state_update` 到达前先切到新阶段/子步骤；当 plan 追平 override 或 TTL 到期后自动清空
+- **Phase3Workbench**: 旅行画像 / 候选池 / 骨架方案 / 锁定区 / 风险 (5 卡片)，支持 `overrideStep` 提前切换到目标子步骤
+- **ThinkingBubble**: stage-aware 等待气泡，默认文案“思考中…”，2 秒内无事件会切到“正在连接…”，第二轮起显示“继续思考…（第 N 轮）”
+- **MessageBubble / PhaseTransitionCard**: system message 的阶段推进卡片，渲染 `.phase-transition-card`，文案格式为“已进入{阶段}{子步骤}”；tool 卡额外显示 `human_label` 副标题、运行耗时与长时运行提醒
 - **MemoryCenter**: 右滑抽屉, 3 Tab (活跃/待确认/归档), 卡片式记忆管理, 确认/拒绝/删除 + 乐观更新, 本轮命中记忆高亮（通过 App → SessionSidebar 透传 recalledIds + is-recalled CSS class + "本轮命中" badge）
 - **MapView**: Leaflet 地图, 活动标记 + 路线连线, 明暗主题
 - **Timeline**: 逐日活动时间线
@@ -562,7 +569,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 
 - **后端单元测试**：80+ 个文件、700+ 测试，覆盖 Agent 循环、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 数据通道、RunRecord/IterationProgress
 - **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner；pass@k 稳定性评估支持同一 golden case 多次执行，统计 pass_rate、断言一致性、工具重叠率、成本/延迟分布，并通过 `scripts/eval-stability.py` 生成 JSON + Markdown 报告
-- **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 覆盖 live Phase 1 主流程，`e2e-retry-experience.spec.ts` 覆盖 ChatPanel 的继续生成/重新发送/停止后重发/不可恢复错误四类恢复路径；`playwright.config.ts` 现在支持显式传入任意 `*.spec.ts` 文件名作为 `testMatch`，`playwright.retry.config.ts` 用于只跑重试体验专项用例；demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，只需要 frontend dev server，并把截图/视频写入 `screenshots/demos/`；failure-analysis raw results 写入 `scripts/failure-analysis/results/`，该目录为本地生成产物，不提交到 git
+- **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 同时覆盖 live Phase 1 主流程和一个 deterministic mocked phase_transition 用例（复用 `scripts/demo/demo-scripted-session.json`，仅 mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，并用 `ReadableStream` 人为拉开 `phase_transition` 与 `state_update` 的到达时序，验证阶段条先跳到 Phase 3 且页面插入 `.phase-transition-card`）；`e2e-retry-experience.spec.ts` 覆盖 ChatPanel 的继续生成/重新发送/停止后重发/不可恢复错误四类恢复路径；`e2e-waiting-experience.spec.ts` 复用浏览器侧 `fetch` + `ReadableStream` mock，覆盖 ThinkingBubble 的立即出现、首个 `text_delta` 后收起，以及工具卡的 `human_label`、实时耗时和 `>=8s` 长时提醒；`playwright.config.ts` 现在支持显式传入任意 `*.spec.ts` 文件名作为 `testMatch`，`playwright.retry.config.ts` / `playwright.waiting.config.ts` 分别用于只跑重试体验和等待体验专项；demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，只需要 frontend dev server，并把截图/视频写入 `screenshots/demos/`；failure-analysis raw results 写入 `scripts/failure-analysis/results/`，该目录为本地生成产物，不提交到 git
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---
