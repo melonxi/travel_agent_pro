@@ -108,7 +108,7 @@ travel_agent_pro/
 │   │   ├── decorators.py       # @trace_agent_loop, @trace_tool_call
 │   │   └── stats.py            # SessionStats: token用量/模型定价/工具耗时 + ToolCallRecord(含 state_changes/parallel_group/validation_errors/judge_scores) + MemoryHitRecord + memory_hits
 │   ├── api/                    # API 模块
-│   │   └── trace.py            # build_trace(): 构建会话 trace 视图 (迭代/工具/状态变化/成本/compression_events/parallel_group/validation_errors/judge_scores/memory_hits)
+│   │   └── trace.py            # build_trace(): 构建会话 trace 视图 (迭代/工具/状态变化/成本/compression_events/parallel_group/validation_errors/judge_scores/memory_hits/significance), _classify_significance() 将每个迭代分级为 high/medium/low/none
 │   └── tests/                  # pytest 测试套件 (88+ 个测试文件, 700+ 测试)
 │
 ├── frontend/                   # React 前端
@@ -116,8 +116,8 @@ travel_agent_pro/
 │   │   ├── main.tsx            # React 19 入口
 │   │   ├── App.tsx             # 应用壳: 会话管理, 主题, 三栏布局, Plan/Trace 标签切换
 │   │   ├── components/
-│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 发送/停止按钮(过渡动画+无障碍), 统一流式状态条(waiting/continue/retry/fatal/stopped), 上一条消息重发, 三档 staleness 检测, RoundSummaryBar, memory chip 插入
-│   │   │   ├── TraceViewer.tsx # Trace 视图: SummaryBar/IterationRow/ToolCallRow/StateDiffPanel, 渲染 parallel_group badge/validation_errors/judge_scores/compression_event/memory_hits
+│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 发送/停止按钮(过渡动画+无障碍), 统一流式状态条(waiting/continue/retry/fatal/stopped), 上一条消息重发, 三档 staleness 检测, RoundSummaryBar, memory chip 插入, onStreamEnd 回调触发 trace 刷新
+│   │   │   ├── TraceViewer.tsx # Trace 视图 V2: 分阶段分组 (PhaseGroupCard/EventRow/CollapsedThinkingRow), significance 分级 (high/medium/low/none) 左边框指示器, SummaryBar 顶部汇总, ToolCallRow/StateDiffPanel 子组件, 连续 thinking step 自动折叠
 │   │   │   ├── MessageBubble.tsx # 消息渲染: Markdown, 工具卡, 压缩提示
 │   │   │   ├── SessionSidebar.tsx # 会话侧边栏: 列表/新建/删除 + 记忆管理入口
 │   │   │   ├── SessionItem.tsx # 单条会话: 标题/阶段/时间
@@ -136,7 +136,7 @@ travel_agent_pro/
 │   │   │   ├── plan.ts         # TravelPlanState 前端类型
 │   │   │   ├── session.ts      # SessionMeta, SessionMessage
 │   │   │   ├── memory.ts       # MemoryItem, MemorySource, TripEpisode, UseMemoryReturn
-│   │   │   └── trace.ts        # SessionTrace, TraceSummary, TraceIteration (含 memory_hits), TraceToolCall (含 parallel_group/validation_errors/judge_scores), MemoryHit
+│   │   │   └── trace.ts        # SessionTrace, TraceSummary, TraceIteration (含 memory_hits/significance), TraceToolCall (含 parallel_group/validation_errors/judge_scores), MemoryHit, Significance, PhaseGroup, PhaseGroupStats, PhaseEvent
 │   │   └── styles/
 │   │       ├── index.css       # "Solstice" 暗色玻璃设计系统 (1900+ 行)
 │   │       ├── memory-center.css # 记忆管理抽屉样式 (500+ 行, Solstice 主题)
