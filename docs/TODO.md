@@ -4,7 +4,7 @@
 
 ### 背景
 
-当前 agent 系统已经具备将工具报错作为 `tool_result` 返回给模型的能力，但对“模型传了不受支持的工具参数”这类错误，仍然缺少足够强的自纠错支持。
+当前 agent 系统已经具备将工具报错作为 `tool_result` 返回给模型的能力，但对"模型传了不受支持的工具参数"这类错误，仍然缺少足够强的自纠错支持。
 
 已出现的实际案例：
 
@@ -29,4 +29,17 @@
 
 ### 目标
 
-让 agent 在工具调用失败时，不只是“把错误返回给模型”，而是能够以更高概率驱动模型完成自我纠错并继续执行。
+让 agent 在工具调用失败时，不只是"把错误返回给模型"，而是能够以更高概率驱动模型完成自我纠错并继续执行。
+
+## 2. [DONE] openai_provider 错误分类：从 APIError 中恢复真实 HTTP 状态码
+
+### 目标
+
+让裸 `APIError`（讯飞等兼容网关常见）被准确归类为 TRANSIENT/RATE_LIMITED/BAD_REQUEST，而不是误报为 PROTOCOL_ERROR。
+
+### 完成记录
+
+- 完成日期：2026-04-15
+- 分支：`fix/llm-error-classify`
+- 改动：`llm/errors.py` 新增 `classify_opaque_api_error()`，两个 provider fallthrough 改调该函数
+- 测试：`test_classify_opaque_api_error.py`（28+ 用例）、`test_anthropic_provider_classify.py`（6 用例）、`test_openai_provider.py` 已有用例更新
