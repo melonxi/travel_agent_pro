@@ -44,7 +44,7 @@ travel_agent_pro/
 │   │   └── types.py            # Message, ToolCall, ToolResult 数据类 (Message.incomplete 标记中断消息)
 │   ├── llm/                    # LLM 抽象层
 │   │   ├── base.py             # LLMProvider Protocol (chat, count_tokens, get_context_window)
-│   │   ├── errors.py           # LLMError 异常体系: LLMErrorCode 枚举 + LLMError 异常类 + classify_by_http_status 工厂
+│   │   ├── errors.py           # LLMError 异常体系: LLMErrorCode 枚举 + LLMError 异常类 + classify_by_http_status 工厂 + classify_opaque_api_error (裸 APIError 分类)
 │   │   ├── factory.py          # 工厂: provider 字符串 → 具体实例
 │   │   ├── openai_provider.py  # OpenAI 实现 (流式 + tiktoken + 错误归一化 + 瞬态重试)
 │   │   ├── anthropic_provider.py # Anthropic 实现 (非流式回退 + 错误归一化 + 瞬态重试)
@@ -310,7 +310,8 @@ LLM API 异常
     ├─ RATE_LIMITED (429)          → 自动重试 (1s, 3s)，_has_yielded 后不重试
     ├─ BAD_REQUEST (400/422)       → 不重试，通知用户
     ├─ STREAM_INTERRUPTED          → 流式中断，通知用户
-    └─ PROTOCOL_ERROR (兜底)       → 不重试，通知用户
+    ├─ PROTOCOL_ERROR (JSON 解析)  → 不重试，通知用户
+    └─ 裸 APIError (兜底)          → classify_opaque_api_error: 状态码/关键词/保守 TRANSIENT
     ↓
 [main.py except 块] → SSE error 事件 (error_code/retryable/can_continue/user_message)
     ↓
