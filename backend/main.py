@@ -1110,6 +1110,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             "id": tool_call.id,
                             "name": tool_call.name,
                             "arguments": tool_call.arguments,
+                            "human_label": tool_call.human_label,
                         }
                         for tool_call in message.tool_calls
                     ],
@@ -1158,6 +1159,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         id=payload["id"],
                         name=payload["name"],
                         arguments=payload["arguments"],
+                        human_label=payload.get("human_label"),
                     )
                     for payload in json.loads(row["tool_calls"])
                 ]
@@ -1537,6 +1539,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             "id": chunk.tool_call.id,
                             "name": chunk.tool_call.name,
                             "arguments": chunk.tool_call.arguments,
+                            "human_label": chunk.tool_call.human_label,
                         }
                     if chunk.tool_result:
                         event_data["tool_result"] = {
@@ -1727,6 +1730,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                                         "reason": reason,
                                     },
                                 },
+                                "human_label": "更新旅行计划",
                             },
                         },
                         ensure_ascii=False,
