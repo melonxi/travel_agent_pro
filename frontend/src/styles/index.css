@@ -890,6 +890,16 @@ body::after {
   color: var(--text-muted);
 }
 
+.breath-dot {
+  margin-left: 6px;
+  color: rgba(255, 180, 90, 0.6);
+  animation: breathDot 1.4s ease-in-out infinite;
+}
+@keyframes breathDot {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 1; }
+}
+
 .tool-details-toggle {
   padding: 0;
   border: 0;
@@ -2229,3 +2239,31 @@ body::after {
 :root[data-theme="light"] .destination-banner::before {
   background: linear-gradient(90deg, transparent, var(--accent-amber), transparent);
 }
+
+/* ── RoundSummaryBar ───────────────────────────────────── */
+.round-summary-bar {
+  height: 22px;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--color-text-muted, var(--text-muted));
+  opacity: 0;
+  animation: summaryFadeInOut 2.5s ease-in-out forwards;
+}
+@keyframes summaryFadeInOut {
+  0%   { opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ── Memory Recall Chip ────────────────────────────────── */
+.system-memory-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; margin: 4px auto;
+  background: rgba(180, 140, 255, 0.08);
+  border: 1px solid rgba(180, 140, 255, 0.2);
+  border-radius: 999px;
+  color: var(--color-text-muted, var(--text-muted)); font-size: 12px;
+  cursor: pointer;
+}
+.system-memory-chip:hover { background: rgba(180, 140, 255, 0.14); }

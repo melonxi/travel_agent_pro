@@ -127,3 +127,80 @@ async def test_agent_loop_yields_summarizing_after_tool_iteration_without_phase_
         "thinking",
         "summarizing",
     ]
+
+
+@pytest.mark.asyncio
+async def test_agent_status_compacting_emitted_when_compression_events_present(
+    engine, hooks
+):
+    """When the on_before_llm hook populates compression_events (meaning context
+    compression is happening), the loop should yield agent_status(compacting)
+    before the compression events and before thinking/summarizing."""
+
+    compression_events: list[dict] = []
+    llm = MagicMock()
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=hooks,
+        max_retries=3,
+        plan=TravelPlanState(session_id="s1", phase=1),
+        compression_events=compression_events,
+    )
+
+    async def on_before_llm(**kwargs):
+        # Simulate the hook detecting compaction is needed and populating events
+        compression_events.append(
+            {
+                "timestamp": 1234567890,
+                "message_count_before": 20,
+                "message_count_after": 8,
+                "must_keep_count": 3,
+                "compressed_count": 12,
+                "estimated_tokens_before": 5000,
+                "estimated_tokens_after": 2000,
+                "mode": "context_compression",
+                "reason": "test",
+            }
+        )
+
+    agent.hooks.register("before_llm_call", on_before_llm)
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    agent.llm.chat = fake_chat
+
+    chunks = [
+        c async for c in agent.run([Message(role=Role.USER, content="hi")], phase=1)
+    ]
+
+    status_chunks = [
+        c for c in chunks if c.type == ChunkType.AGENT_STATUS and c.agent_status
+    ]
+    compression_chunks = [c for c in chunks if c.type == ChunkType.CONTEXT_COMPRESSION]
+
+    # compacting status should be emitted
+    stages = [c.agent_status["stage"] for c in status_chunks]
+    assert "compacting" in stages, f"Expected 'compacting' in stages, got {stages}"
+
+    # compacting should come before thinking
+    compacting_idx = next(
+        i
+        for i, c in enumerate(chunks)
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status
+        and c.agent_status["stage"] == "compacting"
+    )
+    thinking_idx = next(
+        i
+        for i, c in enumerate(chunks)
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status
+        and c.agent_status["stage"] == "thinking"
+    )
+    assert compacting_idx < thinking_idx
+
+    # compression event should also be emitted
+    assert len(compression_chunks) >= 1

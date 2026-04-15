@@ -112,6 +112,11 @@ class AgentLoop:
                     )
 
                     # Yield pending compression events from hook
+                    if self.compression_events:
+                        yield LLMChunk(
+                            type=ChunkType.AGENT_STATUS,
+                            agent_status={"stage": "compacting"},
+                        )
                     while self.compression_events:
                         info = self.compression_events.pop(0)
                         yield LLMChunk(
