@@ -48,6 +48,17 @@ _SET_SKELETON_PLANS_PARAMS = {
 }
 
 
+def _validated_skeleton_id_list(skeleton_plans: list[object]) -> list[str]:
+    valid_ids: list[str] = []
+    for item in skeleton_plans:
+        if not isinstance(item, dict):
+            continue
+        skeleton_id = item.get("id")
+        if isinstance(skeleton_id, str) and skeleton_id.strip():
+            valid_ids.append(skeleton_id)
+    return valid_ids
+
+
 def make_set_skeleton_plans_tool(plan: TravelPlanState):
     @tool(
         name="set_skeleton_plans",
@@ -64,6 +75,7 @@ def make_set_skeleton_plans_tool(plan: TravelPlanState):
                 error_code="INVALID_VALUE",
                 suggestion="请传 list[object]",
             )
+        seen_ids: set[str] = set()
         for i, p in enumerate(plans):
             if not isinstance(p, dict):
                 raise ToolError(
@@ -77,6 +89,33 @@ def make_set_skeleton_plans_tool(plan: TravelPlanState):
                     error_code="INVALID_VALUE",
                     suggestion='每个骨架必须有 id 字段，如 {"id": "plan_a", "name": "轻松版", ...}',
                 )
+            skeleton_id = p.get("id")
+            if not isinstance(skeleton_id, str) or not skeleton_id.strip():
+                raise ToolError(
+                    f"plans[{i}].id 必须是非空字符串",
+                    error_code="INVALID_VALUE",
+                    suggestion='每个骨架必须有非空 id，如 {"id": "plan_a", "name": "轻松版", ...}',
+                )
+            if "name" not in p:
+                raise ToolError(
+                    f"plans[{i}] 缺少必填字段 'name'",
+                    error_code="INVALID_VALUE",
+                    suggestion='每个骨架必须有 name 字段，如 {"id": "plan_a", "name": "轻松版", ...}',
+                )
+            skeleton_name = p.get("name")
+            if not isinstance(skeleton_name, str) or not skeleton_name.strip():
+                raise ToolError(
+                    f"plans[{i}].name 必须是非空字符串",
+                    error_code="INVALID_VALUE",
+                    suggestion='每个骨架必须有非空 name，如 {"id": "plan_a", "name": "轻松版", ...}',
+                )
+            if skeleton_id in seen_ids:
+                raise ToolError(
+                    f"plans[{i}].id {skeleton_id!r} 重复",
+                    error_code="INVALID_VALUE",
+                    suggestion="每个骨架方案的 id 必须唯一",
+                )
+            seen_ids.add(skeleton_id)
         prev_count = len(plan.skeleton_plans)
         write_skeleton_plans(plan, plans)
         return {
@@ -120,7 +159,7 @@ def make_select_skeleton_tool(plan: TravelPlanState):
                 error_code="INVALID_VALUE",
                 suggestion="请传入骨架方案的 id 字段值",
             )
-        existing_ids = [s.get("id") for s in plan.skeleton_plans if isinstance(s, dict)]
+        existing_ids = _validated_skeleton_id_list(plan.skeleton_plans)
         if id not in existing_ids:
             raise ToolError(
                 f"未找到 id={id!r} 的骨架方案",
