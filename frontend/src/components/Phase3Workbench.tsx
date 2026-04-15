@@ -2,6 +2,7 @@ import type { CandidateItem, PlanRisk, Preference, SkeletonPlan, TravelPlanState
 
 type Props = {
   plan: TravelPlanState
+  overrideStep?: string | null
 }
 
 type BriefItem = {
@@ -191,8 +192,8 @@ function lockSummary(plan: TravelPlanState): BriefItem[] {
   return items
 }
 
-export default function Phase3Workbench({ plan }: Props) {
-  const activeStep = plan.phase3_step ?? 'brief'
+export default function Phase3Workbench({ plan, overrideStep }: Props) {
+  const activeStep = overrideStep ?? plan.phase3_step ?? 'brief'
   const shortlist = plan.shortlist ?? []
   const candidatePool = plan.candidate_pool ?? []
   const skeletons = plan.skeleton_plans ?? []

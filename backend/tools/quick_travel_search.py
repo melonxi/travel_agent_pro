@@ -32,9 +32,10 @@ Don't use when:
 Important:
   - 返回结果可能是门票、酒店、签证、跟团游等跨品类混合列表。
   - 这不是结构化预订搜索器，更适合快速扫面而不是精确决策。
-返回标题、价格、预订链接和图片链接。""",
+        返回标题、价格、预订链接和图片链接。""",
         phases=[1, 3],
         parameters=_PARAMETERS,
+        human_label="快速查行程价格",
     )
     async def quick_travel_search(query: str) -> dict:
         if not flyai_client or not flyai_client.available:

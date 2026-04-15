@@ -47,9 +47,10 @@ def make_search_trains_tool(flyai_client):
         description="""搜索火车/高铁车次信息。
 Use when: 用户在阶段 3-4，需要查询火车或高铁出行方案（国内城市间交通）。
 Don't use when: 用户明确要坐飞机，或目的地不通火车。
-返回车次列表，含车次号、出发/到达站、时间、票价、席别和预订链接。""",
+        返回车次列表，含车次号、出发/到达站、时间、票价、席别和预订链接。""",
         phases=[3],
         parameters=_PARAMETERS,
+        human_label="检索火车",
     )
     async def search_trains(
         origin: str,

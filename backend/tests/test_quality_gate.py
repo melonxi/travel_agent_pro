@@ -111,6 +111,7 @@ def test_record_tool_result_stats_records_duration():
     _record_tool_result_stats(
         stats=stats,
         tool_call_names=tool_call_names,
+        tool_call_args={"tc_1": {"query": "test"}},
         result=result,
         phase=3,
     )

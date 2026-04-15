@@ -169,11 +169,13 @@ async def test_agent_loop_forwards_usage_chunks(agent, mock_llm):
     chunks = [chunk async for chunk in agent.run(messages, phase=1)]
 
     assert [chunk.type for chunk in chunks] == [
+        ChunkType.AGENT_STATUS,
         ChunkType.TEXT_DELTA,
         ChunkType.USAGE,
         ChunkType.DONE,
     ]
-    assert chunks[1].usage_info == {"input_tokens": 100, "output_tokens": 20}
+    assert chunks[0].agent_status["stage"] == "thinking"
+    assert chunks[2].usage_info == {"input_tokens": 100, "output_tokens": 20}
 
 
 @pytest.mark.asyncio
@@ -1406,9 +1408,10 @@ async def test_cancel_event_stops_during_streaming():
     with pytest.raises(LLMError) as exc_info:
         async for chunk in loop.run(messages, phase=1):
             chunks.append(chunk)
-    # 第一个 chunk 应该已经 yield 出来了
-    assert len(chunks) == 1
-    assert chunks[0].content == "hello"
+    # 第一个 chunk 是 agent_status(thinking)，第二个是 text_delta("hello")
+    assert len(chunks) == 2
+    assert chunks[0].type == ChunkType.AGENT_STATUS
+    assert chunks[1].content == "hello"
     assert exc_info.value.failure_phase == "cancelled"
 
 

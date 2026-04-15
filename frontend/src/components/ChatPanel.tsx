@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import MessageBubble from './MessageBubble'
+import ThinkingBubble from './ThinkingBubble'
+import RoundSummaryBar from './RoundSummaryBar'
 import { useSSE } from '../hooks/useSSE'
-import type { SSEEvent, TravelPlanState } from '../types/plan'
+import type { PhaseTransitionEvent, SSEEvent, TravelPlanState } from '../types/plan'
 import type { SessionMessage } from '../types/session'
 
 interface StateChange {
@@ -14,6 +16,9 @@ interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'tool' | 'system'
   content: string
+  humanLabel?: string
+  startedAt?: number
+  endedAt?: number
   toolCallId?: string
   toolName?: string
   toolStatus?: 'pending' | 'success' | 'error' | 'skipped'
@@ -22,6 +27,10 @@ interface ChatMessage {
   toolError?: string
   toolSuggestion?: string
   stateChanges?: StateChange[]
+  phaseTransition?: {
+    to_phase: number
+    to_step?: string | null
+  }
   compressionInfo?: {
     message_count_before: number
     message_count_after: number
@@ -30,10 +39,14 @@ interface ChatMessage {
     estimated_tokens_before: number
     reason: string
   }
+  memoryChip?: { count: number }
 }
 
 const PHASE_NAMES: Record<number, string> = {
-  1: '需求收集', 2: '信息探索', 3: '方案设计', 4: '精细规划', 5: '最终确认',
+  1: '灵感与目的地',
+  3: '日期与住宿',
+  5: '行程组装',
+  7: '出发前查漏',
 }
 
 function computeStateChanges(
@@ -92,6 +105,7 @@ interface Props {
   sessionId: string
   onPlanUpdate: (plan: TravelPlanState) => void
   onMemoryRecall?: (itemIds: string[]) => void
+  onPhaseTransition: (event: PhaseTransitionEvent) => void
 }
 
 interface EventHandlerState {
@@ -100,6 +114,14 @@ interface EventHandlerState {
   toolMessageIds: Map<string, string>
   completed: boolean
   failed: boolean
+}
+
+interface ThinkingState {
+  createdAt: number
+  stage?: 'thinking' | 'summarizing' | 'compacting'
+  iteration?: number
+  hint?: string | null
+  fading?: boolean
 }
 
 type StreamFeedbackKind = 'waiting' | 'continue' | 'retry' | 'fatal' | 'stopped'
@@ -190,10 +212,11 @@ function createErrorFeedback(event: SSEEvent): StreamFeedback {
   }
 }
 
-export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: Props) {
+export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onPhaseTransition }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
+  const [thinking, setThinking] = useState<ThinkingState | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
@@ -205,9 +228,38 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
   const { sendMessage, cancel, continueGeneration } = useSSE()
   const lastUserMessageRef = useRef('')
   const userStoppedRef = useRef(false)
+  const thinkingDismissTimerRef = useRef<number | null>(null)
+  const [roundSummary, setRoundSummary] = useState<{ toolCount: number; durationMs: number; memoryCount: number } | null>(null)
+  const roundStateRef = useRef({ toolCount: 0, memoryCount: 0, startedAt: 0, memoryChipInserted: false })
 
   const createMessageId = () =>
     `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+  const clearThinkingDismissTimer = () => {
+    if (thinkingDismissTimerRef.current !== null) {
+      window.clearTimeout(thinkingDismissTimerRef.current)
+      thinkingDismissTimerRef.current = null
+    }
+  }
+
+  const showThinking = (next: ThinkingState) => {
+    clearThinkingDismissTimer()
+    setThinking({ ...next, fading: false })
+  }
+
+  const clearThinkingImmediately = () => {
+    clearThinkingDismissTimer()
+    setThinking(null)
+  }
+
+  const dismissThinking = () => {
+    clearThinkingDismissTimer()
+    setThinking((prev) => (prev ? { ...prev, fading: true } : null))
+    thinkingDismissTimerRef.current = window.setTimeout(() => {
+      setThinking(null)
+      thinkingDismissTimerRef.current = null
+    }, 200)
+  }
 
   useEffect(() => {
     if (autoScroll) {
@@ -221,8 +273,25 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     }
   }, [streaming])
 
-  const KEEPALIVE_TIMEOUT_MS = 30_000
+  useEffect(() => () => {
+    clearThinkingDismissTimer()
+  }, [])
+
+  const KEEPALIVE_TIMEOUT_MS = 20_000
   const KEEPALIVE_CHECK_INTERVAL_MS = 5_000
+
+  const [staleness, setStaleness] = useState<'normal' | 'minor' | 'waiting'>('normal')
+
+  useEffect(() => {
+    if (!streaming) { setStaleness('normal'); return }
+    const t = setInterval(() => {
+      const gap = Date.now() - lastEventTimeRef.current
+      if (gap < 8000) setStaleness('normal')
+      else if (gap < 20000) setStaleness('minor')
+      else setStaleness('waiting')
+    }, 2000)
+    return () => clearInterval(t)
+  }, [streaming])
 
   useEffect(() => {
     if (!streaming) return
@@ -239,6 +308,10 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     setStreamFeedback(null)
     lastUserMessageRef.current = ''
     userStoppedRef.current = false
+    setMessages([])
+    setThinking(null)
+    prevPlanRef.current = null
+    setAutoScroll(true)
 
     const restoreMessages = async () => {
       try {
@@ -295,12 +368,11 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
           })
         }
 
-        setMessages(restored)
+        setMessages((prev) => (prev.length === 0 ? restored : [...restored, ...prev]))
         prevPlanRef.current = null
         setAutoScroll(true)
       } catch {
         if (!cancelled) {
-          setMessages([])
           prevPlanRef.current = null
         }
       }
@@ -337,6 +409,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
   const handleStop = async () => {
     if (!streaming) return
     userStoppedRef.current = true
+    clearThinkingImmediately()
     try {
       await cancel(sessionId)
     } finally {
@@ -349,7 +422,23 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     lastEventTimeRef.current = Date.now()
     setStreamFeedback((prev) => (prev?.kind === 'waiting' ? null : prev))
 
-    if (event.type === 'text_delta' && event.content) {
+    if (event.type === 'phase_transition') {
+      onPhaseTransition(event)
+    if (event.from_phase !== event.to_phase) {
+        setMessages((prev) =>
+          insertBeforeAssistant(prev, state.currentAssistantId, {
+            id: createMessageId(),
+            role: 'system',
+            content: '',
+            phaseTransition: {
+              to_phase: event.to_phase,
+              to_step: event.to_step,
+            },
+          }),
+        )
+      }
+    } else if (event.type === 'text_delta' && event.content) {
+      dismissThinking()
       state.assistantContent += event.content
       const targetId = state.currentAssistantId
       setMessages((prev) => {
@@ -364,13 +453,17 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
         )
       })
     } else if (event.type === 'tool_call' && event.tool_call) {
+      dismissThinking()
       const toolCall = event.tool_call
       const toolMessageId = createMessageId()
+      const startedAt = Date.now()
       state.toolMessageIds.set(toolCall.id, toolMessageId)
       const toolMsg: ChatMessage = {
         id: toolMessageId,
         role: 'tool',
         content: '',
+        humanLabel: toolCall.human_label ?? undefined,
+        startedAt,
         toolCallId: toolCall.id,
         toolName: toolCall.name,
         toolStatus: 'pending',
@@ -387,8 +480,10 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
           insertBeforeAssistant(prev, state.currentAssistantId, toolMsg),
         )
       }
+      roundStateRef.current.toolCount += 1
     } else if (event.type === 'tool_result' && event.tool_result) {
       const toolResult = event.tool_result
+      const endedAt = Date.now()
       const toolMessageId = state.toolMessageIds.get(toolResult.tool_call_id)
       setMessages((prev) => {
         if (!toolMessageId) {
@@ -396,6 +491,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
             id: createMessageId(),
             role: 'tool',
             content: '',
+            endedAt,
             toolCallId: toolResult.tool_call_id,
             toolName: toolResult.tool_call_id,
             toolStatus: toolResult.status,
@@ -409,6 +505,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
           message.id === toolMessageId
             ? {
                 ...message,
+                endedAt,
                 toolStatus: toolResult.status,
                 toolResult: toolResult.data,
                 toolError: toolResult.error ?? undefined,
@@ -432,29 +529,55 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
       prevPlanRef.current = event.plan
       onPlanUpdate(event.plan)
       if (changes.length > 0) {
-        setMessages((prev) => [
-          ...prev,
-          {
+        setMessages((prev) =>
+          insertBeforeAssistant(prev, state.currentAssistantId, {
             id: createMessageId(),
             role: 'system',
             content: '',
             stateChanges: changes,
-          },
-        ])
+          }),
+        )
       }
     } else if (event.type === 'memory_recall' && event.item_ids) {
       onMemoryRecall?.(event.item_ids)
+      roundStateRef.current.memoryCount = event.item_ids.length
+      if (!roundStateRef.current.memoryChipInserted && event.item_ids.length > 0) {
+        roundStateRef.current.memoryChipInserted = true
+        setMessages((prev) => [...prev, {
+          id: createMessageId(),
+          role: 'system',
+          content: '',
+          memoryChip: { count: event.item_ids.length },
+        }])
+      }
+    } else if (event.type === 'agent_status') {
+      showThinking({
+        createdAt: Date.now(),
+        stage: event.stage,
+        iteration: typeof event.iteration === 'number' ? event.iteration : undefined,
+        hint: typeof event.hint === 'string' ? event.hint : null,
+      })
     } else if (event.type === 'error') {
       state.failed = true
+      dismissThinking()
       setStreamFeedback(createErrorFeedback(event))
     } else if (event.type === 'done') {
       state.completed = true
+      clearThinkingImmediately()
       setStreamFeedback(null)
+      if (roundStateRef.current.toolCount > 0) {
+        setRoundSummary({
+          toolCount: roundStateRef.current.toolCount,
+          durationMs: Date.now() - roundStateRef.current.startedAt,
+          memoryCount: roundStateRef.current.memoryCount,
+        })
+      }
     }
   }
 
   const finishStream = (state: EventHandlerState) => {
     setStreaming(false)
+    clearThinkingImmediately()
     if (!state.completed && !state.failed && !userStoppedRef.current) {
       setStreamFeedback(createUnexpectedEndFeedback())
     }
@@ -472,6 +595,9 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     lastUserMessageRef.current = userMsg
     lastEventTimeRef.current = Date.now()
     setStreamFeedback(null)
+    setRoundSummary(null)
+    roundStateRef.current = { toolCount: 0, memoryCount: 0, startedAt: Date.now(), memoryChipInserted: false }
+    showThinking({ createdAt: Date.now(), stage: 'thinking' })
     const state: EventHandlerState = {
       currentAssistantId: createMessageId(),
       assistantContent: '',
@@ -486,7 +612,6 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     setMessages((prev) => [
       ...prev,
       { id: createMessageId(), role: 'user', content: userMsg },
-      { id: state.currentAssistantId, role: 'assistant', content: '' },
     ])
     setStreaming(true)
 
@@ -515,6 +640,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
     userStoppedRef.current = false
     lastEventTimeRef.current = Date.now()
     setStreamFeedback(null)
+    showThinking({ createdAt: Date.now(), stage: 'thinking' })
 
     const state: EventHandlerState = {
       currentAssistantId: createMessageId(),
@@ -524,10 +650,6 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
       failed: false,
     }
     setStreaming(true)
-    setMessages((prev) => [
-      ...prev,
-      { id: state.currentAssistantId, role: 'assistant' as const, content: '' },
-    ])
 
     try {
       await continueGeneration(sessionId, createEventHandler(state))
@@ -565,18 +687,35 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall }: P
             role={m.role}
             content={m.content}
             toolName={m.toolName}
+            humanLabel={m.humanLabel}
+            startedAt={m.startedAt}
+            endedAt={m.endedAt}
             toolStatus={m.toolStatus}
             toolArguments={m.toolArguments}
             toolResult={m.toolResult}
             toolError={m.toolError}
             toolSuggestion={m.toolSuggestion}
             stateChanges={m.stateChanges}
+            phaseTransition={m.phaseTransition}
             compressionInfo={m.compressionInfo}
+            staleness={m.role === 'tool' && m.toolStatus === 'pending' ? staleness : undefined}
+            memoryChip={m.memoryChip}
           />
         ))}
+        {thinking && (
+          <ThinkingBubble
+            createdAt={thinking.createdAt}
+            stage={thinking.stage}
+            iteration={thinking.iteration}
+            hint={thinking.hint}
+            fading={thinking.fading}
+            staleness={staleness}
+          />
+        )}
         {streaming && lastMsg?.role === 'assistant' && (
           <span className="streaming-cursor" />
         )}
+        {roundSummary && <RoundSummaryBar {...roundSummary} />}
         {streamFeedback && (
           <div className={`chat-status chat-status--${streamFeedback.tone}`} aria-live="polite">
             <div className="chat-status-main">

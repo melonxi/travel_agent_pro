@@ -21,10 +21,11 @@ def make_generate_summary_tool():
         description="""生成旅行计划摘要。
 Use when: 用户在阶段 7，需要生成最终旅行计划总结。
 Don't use when: 计划尚未完成。
-返回格式化的行程摘要，含天数、预算等关键信息。""",
+        返回格式化的行程摘要，含天数、预算等关键信息。""",
         phases=[7],
         parameters=_PARAMETERS,
         side_effect="write",
+        human_label="生成方案摘要",
     )
     async def generate_trip_summary(plan_data: dict) -> dict:
         if not isinstance(plan_data, dict):

@@ -43,9 +43,10 @@ Important:
   - 当前实现只支持 query、search_depth、max_results 三个输入。
   - 不支持域名白名单、官方站点限定、时间窗口过滤或结构化抽取。
   - max_results 会自动限制在 1 到 10。
-返回 Tavily 的简答和结果列表，包含标题、链接、摘要和分数。对于推荐型 query，它经常能直接给出可用的候选结论。""",
+        返回 Tavily 的简答和结果列表，包含标题、链接、摘要和分数。对于推荐型 query，它经常能直接给出可用的候选结论。""",
         phases=[1, 3],
         parameters=_PARAMETERS,
+        human_label="上网查资料",
     )
     async def web_search(
         query: str,
