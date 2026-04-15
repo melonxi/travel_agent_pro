@@ -1,7 +1,5 @@
 # backend/tests/test_prompt_architecture.py
 """Tests for prompt skill-card architecture upgrade."""
-import pytest
-
 from phase.prompts import (
     GLOBAL_RED_FLAGS,
     PHASE1_PROMPT,
