@@ -38,7 +38,7 @@ travel_agent_pro/
 │   ├── state/                  # 旅行状态模型：models / manager / intake
 │   ├── memory/                 # 结构化 global/trip 记忆 + episode：models / store / manager / extraction / policy / retriever / formatter
 │   ├── context/                # 上下文：manager（系统提示/压缩决策）+ soul.md（人格）
-│   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，含 GLOBAL_RED_FLAGS + PHASE1_PROMPT）/ backtrack
+│   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，GLOBAL_RED_FLAGS + PHASE{1,3,5,7}_PROMPT + build_phase3_prompt）/ backtrack
 │   ├── tools/                  # 领域工具：base / engine / update_plan_state / 搜索类 / 规划类 / normalizers
 │   ├── storage/                # SQLite 层：database / session_store / message_store / archive_store
 │   ├── harness/                # 5 层守护：guardrail / validator / judge / feasibility
@@ -74,25 +74,37 @@ travel_agent_pro/
            (目的地)  (4 子步骤)  (日程详排)  (检查清单)
 ```
 
-### Phase 1 — 灵感与目的地收敛
-- 模糊意图 → 候选目的地 → 锁定
+### Phase 1 — 灵感与目的地收敛（skill-card）
+- 角色：旅行灵感顾问；目标：用最少轮次收敛到一个目的地
+- **回复纪律**："先查后说"——每条建议须有工具查询结果支撑；回复≤150字；一次只给2-3个选项
 - 工具：`xiaohongshu_search`、`web_search`、`quick_travel_search`
+- **完成 Gate**：`destination` 非空 → 自动进入 Phase 3
 - 产出：`destination`
 
-### Phase 3 — 框架规划（4 个子步骤）
-- **brief** → 建立旅行画像（目标/节奏/约束/必做-避免）
-- **candidate** → 候选池构建与筛选
-- **skeleton** → 骨架方案（非逐小时）
-- **lock** → 锁定交通 + 住宿
+### Phase 3 — 框架规划（4 个子步骤，按子步骤动态拼装 prompt）
+- **brief** → 建立旅行画像（目标/节奏/约束/必做-避免）；收敛压力：≤2轮完成
+- **candidate** → 候选池构建与筛选；"锚定→约束→分组→取舍"思考框架
+- **skeleton** → 骨架方案（非逐小时）；独立锚定大交通时序
+- **lock** → 锁定交通 + 住宿；大交通确认时间后即锁
 - **工具门控**：每个子步骤只暴露该阶段所需的工具子集
+- **Prompt 拼装**：`build_phase3_prompt(step)` = `PHASE3_BASE_PROMPT` + `PHASE3_STEP_PROMPTS[step]` + `GLOBAL_RED_FLAGS`
 - 产出：`trip_brief`、`candidate_pool`、`skeleton_plans`、`selected_skeleton_id`、交通/住宿
 
-### Phase 5 — 日程详排
+### Phase 5 — 日程详排（skill-card，路径规划定位）
+- 核心定位：路径规划优化问题——最小化无效移动，最大化体验密度
+- **增量生成策略**：按1-2天增量调用 `assemble_day_plan`，非一次性全量
 - 流程：expand（骨架→日期）→ assemble（活动+时间）→ validate（开放/距离/天气/预算）→ commit
 - 产出：`daily_plans[]`，每天含完整 Activity 列表
 - 运行时上下文必须注入骨架内容、`trip_brief` 字段、偏好和约束
 
-### Phase 7 — 出发前查漏（桩）
+### Phase 7 — 出发前查漏（skill-card）
+- 角色：出发前查漏官；扫描全计划，生成带优先级的检查清单
+- 工具：`check_weather`、`check_availability`、`web_search`
+- 扫描维度：证件签证、天气、预订确认、交通接驳、应急预案
+- **完成 Gate**：所有高优先级项解决 → `generate_summary`
+
+### GLOBAL_RED_FLAGS
+所有阶段 prompt 末尾统一注入跨阶段通用禁令（如"不捏造信息"、"不越阶段边界"等），通过 `PhaseRouter.get_prompt_for_plan()` 和 `build_phase3_prompt()` 自动拼装。
 
 ### 阶段转换机制
 - `PhaseRouter.infer_phase(plan)` 根据字段填充情况推断当前阶段
