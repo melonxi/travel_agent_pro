@@ -43,6 +43,7 @@ data/
 # Test results
 test-results/
 scripts/failure-analysis/results/
+screenshots/
 
 # Claude Code
 .claude/
