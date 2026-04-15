@@ -250,7 +250,7 @@ def test_classify_error_connection_error(provider):
 def test_classify_error_unknown_exception(provider):
     exc = RuntimeError("something weird")
     result = provider._classify_error(exc)
-    assert result.code == LLMErrorCode.PROTOCOL_ERROR
+    assert result.code == LLMErrorCode.TRANSIENT
     assert result.retryable is False
 
 
@@ -285,3 +285,31 @@ async def test_chat_raises_llm_error_on_api_failure(provider):
         # 503 is retryable, should retry 2 times (3 total calls)
         assert instance.chat.completions.create.await_count == 3
         assert mock_sleep.await_count == 2
+
+
+def test_classify_error_opaque_api_error_busy(provider):
+    import openai
+
+    exc = openai.APIError(
+        message="Xunfei request failed with code: 10012, "
+        "message: EngineInternalError:The system is busy",
+        request=MagicMock(),
+        body=None,
+    )
+    result = provider._classify_error(exc)
+    assert result.code == LLMErrorCode.TRANSIENT
+    assert result.retryable is True
+
+
+def test_classify_error_api_status_error_unchanged(provider):
+    """强类型分支行为回归：APIStatusError 仍走 classify_by_http_status。"""
+    import openai
+
+    exc = openai.APIStatusError(
+        message="bad request",
+        response=MagicMock(status_code=400),
+        body=None,
+    )
+    result = provider._classify_error(exc)
+    assert result.code == LLMErrorCode.BAD_REQUEST
+    assert result.retryable is False
