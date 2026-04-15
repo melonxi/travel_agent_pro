@@ -213,14 +213,15 @@ LLM API 异常
 - `@tool` 装饰器声明名称、描述、可用阶段、参数 schema
 - `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM
 - 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM
-- **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（`update_plan_state`、`assemble_day_plan`、`generate_summary`）顺序执行
+- **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（当前对外状态写入口仍以 `update_plan_state` 为主，另有 `assemble_day_plan`、`generate_summary`）顺序执行
+- **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`update_plan_state` 继续作为现有对外写工具，并复用这层能力，后续单一职责 plan tools 也以该层为共同写路径
 - **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集
 
 ### 工具清单
 
 | 类别 | 工具 |
 |------|------|
-| 状态 | `update_plan_state`（核心写入，含冗余检测） |
+| 状态 | `update_plan_state`（当前公开写入口，含冗余检测，底层复用 `state.plan_writers` 共享写层） |
 | 搜索 | `xiaohongshu_search`、`web_search`、`quick_travel_search` |
 | 交通 | `search_flights`（Amadeus + FlyAI 双源融合）、`search_trains`、`calculate_route` |
 | 住宿 | `search_accommodations` |

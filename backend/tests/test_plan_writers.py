@@ -211,12 +211,26 @@ class TestWriteDates:
         assert plan.dates is not None
         assert plan.dates.total_days == 4
 
+    def test_phrase_style_string(self, plan):
+        from state.plan_writers import write_dates
+
+        write_dates(plan, "五一假期去4天")
+        assert plan.dates is not None
+        assert plan.dates.total_days == 4
+
 
 class TestWriteTravelers:
     def test_structured(self, plan):
         from state.plan_writers import write_travelers
 
         write_travelers(plan, {"adults": 2, "children": 1})
+        assert plan.travelers.adults == 2
+        assert plan.travelers.children == 1
+
+    def test_phrase_style_string(self, plan):
+        from state.plan_writers import write_travelers
+
+        write_travelers(plan, "2个大人1个小孩")
         assert plan.travelers.adults == 2
         assert plan.travelers.children == 1
 
@@ -227,6 +241,13 @@ class TestWriteBudget:
 
         write_budget(plan, {"total": 15000, "currency": "CNY"})
         assert plan.budget.total == 15000
+
+    def test_phrase_style_string(self, plan):
+        from state.plan_writers import write_budget
+
+        write_budget(plan, "预算 1.5 万人民币")
+        assert plan.budget.total == 15000
+        assert plan.budget.currency == "CNY"
 
 
 class TestWriteDepartureCity:
@@ -261,6 +282,28 @@ class TestAppendPreferences:
         assert len(plan.preferences) == 1
         assert plan.preferences[0].key == "cuisine"
 
+    def test_accepts_single_dict_as_one_logical_item(self, plan):
+        from state.plan_writers import append_preferences
+
+        append_preferences(plan, {"key": "pace", "value": "慢节奏"})
+        assert len(plan.preferences) == 1
+        assert plan.preferences[0].key == "pace"
+        assert plan.preferences[0].value == "慢节奏"
+
+    def test_accepts_single_string_as_one_logical_item(self, plan):
+        from state.plan_writers import append_preferences
+
+        append_preferences(plan, "美食")
+        assert len(plan.preferences) == 1
+        assert plan.preferences[0].key == "美食"
+        assert plan.preferences[0].value == ""
+
+    def test_rejects_unsupported_iterable_container(self, plan):
+        from state.plan_writers import append_preferences
+
+        with pytest.raises(AssertionError, match="Expected appendable item or list"):
+            append_preferences(plan, ("美食", "自然风光"))
+
 
 class TestAppendConstraints:
     def test_append_dict_items(self, plan):
@@ -274,6 +317,28 @@ class TestAppendConstraints:
         )
         assert len(plan.constraints) == 1
         assert plan.constraints[0].type == "hard"
+
+    def test_accepts_single_dict_as_one_logical_item(self, plan):
+        from state.plan_writers import append_constraints
+
+        append_constraints(plan, {"type": "hard", "description": "不坐红眼航班"})
+        assert len(plan.constraints) == 1
+        assert plan.constraints[0].type == "hard"
+        assert plan.constraints[0].description == "不坐红眼航班"
+
+    def test_accepts_single_string_as_one_logical_item(self, plan):
+        from state.plan_writers import append_constraints
+
+        append_constraints(plan, "避开周末高峰")
+        assert len(plan.constraints) == 1
+        assert plan.constraints[0].type == "soft"
+        assert plan.constraints[0].description == "避开周末高峰"
+
+    def test_rejects_unsupported_iterable_container(self, plan):
+        from state.plan_writers import append_constraints
+
+        with pytest.raises(AssertionError, match="Expected appendable item or list"):
+            append_constraints(plan, ("不早起", "不赶路"))
 
 
 class TestAppendDestinationCandidate:
