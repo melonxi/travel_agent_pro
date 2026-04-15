@@ -327,6 +327,10 @@ function PhaseGroupCard({ group, defaultExpanded }: { group: PhaseGroup; default
 
 export default function TraceViewer({ sessionId, refreshTrigger }: TraceViewerProps) {
   const { trace, loading, error } = useTrace(sessionId, refreshTrigger)
+  const phaseGroups = useMemo(
+    () => (trace ? groupByPhase(trace.iterations) : []),
+    [trace?.iterations],
+  )
 
   if (loading) {
     return <div className="trace-viewer"><div className="trace-loading">Loading trace&hellip;</div></div>
@@ -339,8 +343,6 @@ export default function TraceViewer({ sessionId, refreshTrigger }: TraceViewerPr
   if (!trace || trace.total_iterations === 0) {
     return <div className="trace-viewer"><div className="trace-empty">暂无 trace 数据</div></div>
   }
-
-  const phaseGroups = useMemo(() => groupByPhase(trace.iterations), [trace.iterations])
 
   return (
     <div className="trace-viewer">
