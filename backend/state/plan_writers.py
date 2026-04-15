@@ -182,7 +182,9 @@ def _normalize_append_items(items: Any) -> list[Any]:
         return items
     if isinstance(items, (dict, str)) or not isinstance(items, Iterable):
         return [items]
-    assert False, f"Expected appendable item or list, got {type(items).__name__}"
+    raise AssertionError(
+        f"Expected appendable item or list, got {type(items).__name__}"
+    )
 
 
 def append_preferences(plan: TravelPlanState, items: Any) -> None:
