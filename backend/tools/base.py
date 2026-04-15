@@ -20,6 +20,7 @@ class ToolDef:
     parameters: dict[str, Any]
     _fn: Callable[..., Coroutine[Any, Any, Any]] = field(repr=False)
     side_effect: str = "read"
+    human_label: str | None = None
 
     async def __call__(self, **kwargs: Any) -> Any:
         return await self._fn(**kwargs)
@@ -38,6 +39,7 @@ def tool(
     phases: list[int],
     parameters: dict[str, Any],
     side_effect: str = "read",
+    human_label: str | None = None,
 ) -> Callable:
     def decorator(fn: Callable) -> ToolDef:
         return ToolDef(
@@ -47,6 +49,7 @@ def tool(
             parameters=parameters,
             _fn=fn,
             side_effect=side_effect,
+            human_label=human_label,
         )
 
     return decorator

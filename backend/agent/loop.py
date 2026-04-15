@@ -95,6 +95,9 @@ class AgentLoop:
             original_user_message = self._extract_original_user_message(messages)
             repair_hints_used: set[str] = set()
 
+            iteration_idx = 0
+            prev_iteration_had_tools = False
+            phase_changed_in_prev_iteration = False
             for iteration in range(self.max_retries):  # safety limit on loop iterations
                 self._check_cancelled()
                 self._progress = IterationProgress.NO_OUTPUT
@@ -115,6 +118,21 @@ class AgentLoop:
                             type=ChunkType.CONTEXT_COMPRESSION,
                             compression_info=info,
                         )
+
+                    stage = (
+                        "summarizing"
+                        if prev_iteration_had_tools
+                        and not phase_changed_in_prev_iteration
+                        else "thinking"
+                    )
+                    prev_iteration_had_tools = False
+                    phase_changed_in_prev_iteration = False
+
+                    yield LLMChunk(
+                        type=ChunkType.AGENT_STATUS,
+                        agent_status={"stage": stage, "iteration": iteration_idx},
+                    )
+                    iteration_idx += 1
 
                     if self.reflection is not None and self.plan is not None:
                         reflection_msg = self.reflection.check_and_inject(
@@ -158,6 +176,12 @@ class AgentLoop:
                             chunk.type == ChunkType.TOOL_CALL_START and chunk.tool_call
                         ):
                             self._progress = IterationProgress.PARTIAL_TOOL_CALL
+                            if chunk.tool_call.human_label is None:
+                                tool_def = self.tool_engine.get_tool(
+                                    chunk.tool_call.name
+                                )
+                                if tool_def is not None:
+                                    chunk.tool_call.human_label = tool_def.human_label
                             tool_calls.append(chunk.tool_call)
                             yield chunk
                         elif chunk.type == ChunkType.DONE:
@@ -354,6 +378,8 @@ class AgentLoop:
                         idx += 1
 
                     if needs_rebuild:
+                        prev_iteration_had_tools = True
+                        phase_changed_in_prev_iteration = True
                         phase_after_batch = (
                             self.plan.phase if self.plan is not None else current_phase
                         )
@@ -389,6 +415,8 @@ class AgentLoop:
                         self.plan.phase if self.plan is not None else current_phase
                     )
                     if phase_after_batch != phase_before_batch:
+                        prev_iteration_had_tools = True
+                        phase_changed_in_prev_iteration = True
                         yield LLMChunk(
                             type=ChunkType.PHASE_TRANSITION,
                             phase_info={
@@ -428,6 +456,8 @@ class AgentLoop:
                         )
                         phase_after_batch = self.plan.phase
                         if phase_changed:
+                            prev_iteration_had_tools = True
+                            phase_changed_in_prev_iteration = True
                             yield LLMChunk(
                                 type=ChunkType.PHASE_TRANSITION,
                                 phase_info={
@@ -461,10 +491,13 @@ class AgentLoop:
                         else None
                     )
                     if phase3_step_after_batch != phase3_step_before_batch:
+                        phase_changed_in_prev_iteration = True
                         tools = self.tool_engine.get_tools_for_phase(
                             current_phase,
                             self.plan,
                         )
+
+                    prev_iteration_had_tools = True
 
                     # Loop continues — LLM will see tool results and decide next step
 

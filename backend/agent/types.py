@@ -18,6 +18,7 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
+    human_label: str | None = None
 
 
 @dataclass
@@ -48,7 +49,12 @@ class Message:
             d["name"] = self.name
         if self.tool_calls:
             d["tool_calls"] = [
-                {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                {
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments,
+                    "human_label": tc.human_label,
+                }
                 for tc in self.tool_calls
             ]
         if self.tool_result:

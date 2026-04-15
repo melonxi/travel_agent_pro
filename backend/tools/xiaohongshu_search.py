@@ -89,9 +89,10 @@ Supported operations:
   - search_notes: 关键词搜索笔记列表（适合发现和初筛）
   - read_note: 读取笔记正文详情（适合在初筛后对候选笔记进行深入阅读，提炼正文信息）
   - get_comments: 获取评论区内容（适合通过评论区的观点来判断氛围、口碑、避坑等主观维度，或挖掘玩法细节等正文未覆盖的信息）
-返回归一化的小红书数据结构。""",
+        返回归一化的小红书数据结构。""",
         phases=[1, 3, 5, 7],
         parameters=_PARAMETERS,
+        human_label="翻小红书找灵感",
     )
     async def xiaohongshu_search(
         operation: str,

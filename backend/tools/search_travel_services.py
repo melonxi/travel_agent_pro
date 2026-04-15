@@ -34,9 +34,10 @@ def make_search_travel_services_tool(flyai_client):
         description="""搜索旅行辅助服务：签证办理、旅行保险、电话卡、租车、接送机。
 Use when: 用户在阶段 7，行程已确认，需要推荐实用出行服务。
 Don't use when: 行程尚未确定。
-返回服务列表，含标题、价格和预订链接。""",
+        返回服务列表，含标题、价格和预订链接。""",
         phases=[7],
         parameters=_PARAMETERS,
+        human_label="查旅行配套服务",
     )
     async def search_travel_services(destination: str, service_type: str) -> dict:
         if not flyai_client or not flyai_client.available:
