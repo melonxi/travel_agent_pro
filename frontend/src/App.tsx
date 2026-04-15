@@ -274,6 +274,7 @@ export default function App() {
           onPlanUpdate={handlePlanUpdate}
           onMemoryRecall={handleMemoryRecall}
           onPhaseTransition={handlePhaseTransition}
+          onStreamEnd={() => setTraceTrigger((n) => n + 1)}
         />
         <div className="right-panel">
           <div className="right-panel-tabs">

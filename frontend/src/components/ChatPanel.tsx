@@ -106,6 +106,7 @@ interface Props {
   onPlanUpdate: (plan: TravelPlanState) => void
   onMemoryRecall?: (itemIds: string[]) => void
   onPhaseTransition: (event: PhaseTransitionEvent) => void
+  onStreamEnd?: () => void
 }
 
 interface EventHandlerState {
@@ -212,7 +213,7 @@ function createErrorFeedback(event: SSEEvent): StreamFeedback {
   }
 }
 
-export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onPhaseTransition }: Props) {
+export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onPhaseTransition, onStreamEnd }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -572,6 +573,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
           memoryCount: roundStateRef.current.memoryCount,
         })
       }
+      onStreamEnd?.()
     }
   }
 
