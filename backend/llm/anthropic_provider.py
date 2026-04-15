@@ -42,7 +42,12 @@ class AnthropicProvider:
         self, exc: Exception, *, failure_phase: str = "connection"
     ) -> "LLMError":
         import anthropic
-        from llm.errors import LLMError, LLMErrorCode, classify_by_http_status
+        from llm.errors import (
+            LLMError,
+            LLMErrorCode,
+            classify_by_http_status,
+            classify_opaque_api_error,
+        )
 
         if isinstance(exc, LLMError):
             return exc
@@ -93,14 +98,11 @@ class AnthropicProvider:
                 failure_phase="parsing",
                 raw_error=repr(exc),
             )
-        return LLMError(
-            code=LLMErrorCode.PROTOCOL_ERROR,
-            message=str(exc),
-            retryable=False,
+        return classify_opaque_api_error(
+            exc,
             provider="anthropic",
             model=self.model,
             failure_phase=failure_phase,
-            raw_error=repr(exc),
         )
 
     def _summarize_converted_message(self, message: dict[str, Any]) -> dict[str, Any]:
