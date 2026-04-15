@@ -482,12 +482,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 if errors:
                     if session:
                         session["_pending_validation_errors"] = errors
-                        session["messages"].append(
-                            Message(
-                                role=Role.SYSTEM,
-                                content="[实时约束检查]\n"
-                                + "\n".join(f"- {error}" for error in errors),
-                            )
+                        push_pending_system_note(
+                            session,
+                            "[实时约束检查]\n"
+                            + "\n".join(f"- {error}" for error in errors),
                         )
 
         async def on_before_llm(**kwargs):
@@ -496,6 +494,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             phase = kwargs.get("phase", plan.phase)
             if not msgs:
                 return
+            session = sessions.get(plan.session_id)
+            if session:
+                flush_pending_system_notes(session, msgs)
             prompt_budget = compute_prompt_budget(
                 resolved_context_window["value"],
                 config.llm.max_tokens,
@@ -1221,6 +1222,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "user_id": meta["user_id"],
             "compression_events": compression_events,
             "stats": SessionStats(),
+            "_pending_system_notes": [],
         }
 
     @app.get("/health")
@@ -1243,6 +1245,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "user_id": "default_user",
             "compression_events": compression_events,
             "stats": SessionStats(),
+            "_pending_system_notes": [],
         }
         await session_store.create(plan.session_id, "default_user")
         return {"session_id": plan.session_id, "phase": plan.phase}
