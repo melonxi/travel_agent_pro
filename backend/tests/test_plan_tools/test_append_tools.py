@@ -124,6 +124,23 @@ class TestAddPreferencesTool:
         assert [item.key for item in plan.preferences] == ["old", "new"]
 
     @pytest.mark.asyncio
+    async def test_accepts_loose_dict_and_reports_real_added_count(self):
+        plan = _make_plan()
+        tool_fn = make_add_preferences_tool(plan)
+
+        result = await tool_fn(items=[{"不去": ["迪士尼"], "节奏": "不想太赶"}])
+
+        assert result == {
+            "updated_field": "preferences",
+            "added_count": 2,
+            "total_count": 2,
+            "previous_count": 0,
+        }
+        assert [item.key for item in plan.preferences] == ["不去", "节奏"]
+        assert plan.preferences[0].value == "迪士尼"
+        assert plan.preferences[1].value == "不想太赶"
+
+    @pytest.mark.asyncio
     async def test_rejects_non_list_items(self):
         tool_fn = make_add_preferences_tool(_make_plan())
 

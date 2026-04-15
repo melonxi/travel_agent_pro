@@ -59,7 +59,7 @@ _PREFERENCES_PARAMS = {
                     },
                 ]
             },
-            "description": "偏好列表，支持字符串或 {key, value} 对象",
+            "description": "偏好列表，支持字符串、{key, value} 对象，或会展开为多条偏好的键值映射对象",
         }
     },
     "required": ["items"],
@@ -126,9 +126,10 @@ def make_add_preferences_tool(plan: TravelPlanState):
         _validate_string_or_object_items(items, "items")
         previous_count = len(plan.preferences)
         append_preferences(plan, items)
+        added_count = len(plan.preferences) - previous_count
         return {
             "updated_field": "preferences",
-            "added_count": len(items),
+            "added_count": added_count,
             "total_count": len(plan.preferences),
             "previous_count": previous_count,
         }
