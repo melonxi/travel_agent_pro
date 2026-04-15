@@ -551,7 +551,7 @@ class AgentLoop:
                 "Phase-aware rebuild requires router/context/plan/memory"
             )
 
-        phase_prompt = self.phase_router.get_prompt(to_phase)
+        phase_prompt = self.phase_router.get_prompt_for_plan(self.plan)
         memory_context, _recalled_ids, *_ = (
             await self.memory_mgr.generate_context(self.user_id, self.plan)
             if self.memory_enabled

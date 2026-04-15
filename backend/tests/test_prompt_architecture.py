@@ -133,3 +133,60 @@ class TestBuildPhase3Prompt:
     def test_backward_compat_phase_prompts_3(self):
         """PHASE_PROMPTS[3] must still return a valid prompt (default brief)."""
         assert PHASE_PROMPTS[3] == build_phase3_prompt("brief")
+
+
+from phase.router import PhaseRouter
+from state.models import TravelPlanState
+
+
+class TestPhaseRouterGetPromptForPlan:
+    """get_prompt_for_plan() must use build_phase3_prompt for phase 3."""
+
+    def _make_plan(self, phase: int, phase3_step: str = "brief") -> TravelPlanState:
+        plan = TravelPlanState(session_id="test")
+        plan.phase = phase
+        plan.phase3_step = phase3_step
+        return plan
+
+    def test_phase1_returns_phase1_prompt(self):
+        router = PhaseRouter()
+        plan = self._make_plan(1)
+        prompt = router.get_prompt_for_plan(plan)
+        assert "目的地收敛顾问" in prompt
+
+    def test_phase3_brief(self):
+        router = PhaseRouter()
+        plan = self._make_plan(3, "brief")
+        prompt = router.get_prompt_for_plan(plan)
+        assert "brief" in prompt.lower() or "旅行画像" in prompt
+        assert "锚定不可移动项" not in prompt or "skeleton" in prompt.lower()
+
+    def test_phase3_skeleton(self):
+        router = PhaseRouter()
+        plan = self._make_plan(3, "skeleton")
+        prompt = router.get_prompt_for_plan(plan)
+        assert "锚定不可移动项" in prompt or "骨架" in prompt
+
+    def test_phase3_lock(self):
+        router = PhaseRouter()
+        plan = self._make_plan(3, "lock")
+        prompt = router.get_prompt_for_plan(plan)
+        assert "大交通" in prompt
+
+    def test_phase5_returns_phase5_prompt(self):
+        router = PhaseRouter()
+        plan = self._make_plan(5)
+        prompt = router.get_prompt_for_plan(plan)
+        assert "逐日行程" in prompt or "daily_plans" in prompt
+
+    def test_phase7_returns_phase7_prompt(self):
+        router = PhaseRouter()
+        plan = self._make_plan(7)
+        prompt = router.get_prompt_for_plan(plan)
+        assert "查漏" in prompt or "清单" in prompt
+
+    def test_old_get_prompt_still_works(self):
+        """Backward compat: get_prompt(phase) still returns a valid prompt."""
+        router = PhaseRouter()
+        prompt = router.get_prompt(3)
+        assert len(prompt) > 100
