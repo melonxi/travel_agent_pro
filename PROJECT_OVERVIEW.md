@@ -38,7 +38,7 @@ travel_agent_pro/
 │   ├── state/                  # 旅行状态模型：models / manager / intake
 │   ├── memory/                 # 结构化 global/trip 记忆 + episode：models / store / manager / extraction / policy / retriever / formatter
 │   ├── context/                # 上下文：manager（系统提示/压缩决策）+ soul.md（人格）
-│   ├── phase/                  # 阶段路由：router / prompts / backtrack
+│   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，含 GLOBAL_RED_FLAGS + PHASE1_PROMPT）/ backtrack
 │   ├── tools/                  # 领域工具：base / engine / update_plan_state / 搜索类 / 规划类 / normalizers
 │   ├── storage/                # SQLite 层：database / session_store / message_store / archive_store
 │   ├── harness/                # 5 层守护：guardrail / validator / judge / feasibility
