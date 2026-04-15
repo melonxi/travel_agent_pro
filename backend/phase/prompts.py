@@ -392,7 +392,7 @@ PHASE3_STEP_PROMPTS: dict[str, str] = {
 
 def build_phase3_prompt(step: str = "brief") -> str:
     """Assemble Phase 3 prompt from base + sub-stage specific rules."""
-    return PHASE3_BASE_PROMPT + "\n\n" + PHASE3_STEP_PROMPTS[step]
+    return PHASE3_BASE_PROMPT + "\n\n" + PHASE3_STEP_PROMPTS[step] + "\n\n# 全局 Red Flags\n\n" + GLOBAL_RED_FLAGS
 
 
 PHASE5_PROMPT = """## 角色

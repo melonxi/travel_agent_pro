@@ -285,3 +285,59 @@ class TestPhase7SkillCard:
     def test_phase7_has_checklist_categories(self):
         assert "证件" in PHASE7_PROMPT
         assert "天气" in PHASE7_PROMPT
+
+
+class TestGlobalRedFlagsInjection:
+    """GLOBAL_RED_FLAGS must be injected into all phase prompts."""
+
+    def test_phase1_includes_global_red_flags(self):
+        from phase.router import PhaseRouter
+        from state.models import TravelPlanState
+        router = PhaseRouter()
+        plan = TravelPlanState(session_id="test")
+        plan.phase = 1
+        prompt = router.get_prompt_for_plan(plan)
+        assert GLOBAL_RED_FLAGS in prompt
+
+    def test_phase3_includes_global_red_flags(self):
+        from phase.router import PhaseRouter
+        from state.models import TravelPlanState
+        router = PhaseRouter()
+        plan = TravelPlanState(session_id="test")
+        plan.phase = 3
+        plan.phase3_step = "brief"
+        prompt = router.get_prompt_for_plan(plan)
+        assert GLOBAL_RED_FLAGS in prompt
+
+    def test_phase3_all_steps_include_global_red_flags(self):
+        for step in ("brief", "candidate", "skeleton", "lock"):
+            result = build_phase3_prompt(step)
+            assert GLOBAL_RED_FLAGS in result, f"step {step} missing GLOBAL_RED_FLAGS"
+
+    def test_phase5_includes_global_red_flags(self):
+        from phase.router import PhaseRouter
+        from state.models import TravelPlanState
+        router = PhaseRouter()
+        plan = TravelPlanState(session_id="test")
+        plan.phase = 5
+        prompt = router.get_prompt_for_plan(plan)
+        assert GLOBAL_RED_FLAGS in prompt
+
+    def test_phase7_includes_global_red_flags(self):
+        from phase.router import PhaseRouter
+        from state.models import TravelPlanState
+        router = PhaseRouter()
+        plan = TravelPlanState(session_id="test")
+        plan.phase = 7
+        prompt = router.get_prompt_for_plan(plan)
+        assert GLOBAL_RED_FLAGS in prompt
+
+    def test_red_flags_at_end_of_prompt(self):
+        """GLOBAL_RED_FLAGS should be appended at the end."""
+        from phase.router import PhaseRouter
+        from state.models import TravelPlanState
+        router = PhaseRouter()
+        plan = TravelPlanState(session_id="test")
+        plan.phase = 1
+        prompt = router.get_prompt_for_plan(plan)
+        assert prompt.rstrip().endswith(GLOBAL_RED_FLAGS.rstrip())
