@@ -1,9 +1,43 @@
 """Unit tests for state/plan_writers.py — pure data mutation functions."""
 from __future__ import annotations
 
+from pathlib import Path
+import subprocess
+import sys
+import textwrap
+
 import pytest
 
 from state.models import TravelPlanState
+
+
+def _run_optimized_append(function_name: str, payload_expr: str) -> str:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-O",
+            "-c",
+            textwrap.dedent(
+                f"""
+                from state.plan_writers import {function_name}
+                from state.models import TravelPlanState
+
+                plan = TravelPlanState(session_id="pw-test")
+                try:
+                    {function_name}(plan, {payload_expr})
+                except Exception as exc:
+                    print(type(exc).__name__)
+                else:
+                    print("NO_EXCEPTION")
+                """
+            ),
+        ],
+        capture_output=True,
+        check=True,
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+    )
+    return completed.stdout.strip()
 
 
 @pytest.fixture
@@ -304,6 +338,12 @@ class TestAppendPreferences:
         with pytest.raises(AssertionError, match="Expected appendable item or list"):
             append_preferences(plan, ("美食", "自然风光"))
 
+    def test_rejects_unsupported_iterable_container_under_optimized_python(self):
+        assert (
+            _run_optimized_append("append_preferences", '("美食", "自然风光")')
+            == "AssertionError"
+        )
+
 
 class TestAppendConstraints:
     def test_append_dict_items(self, plan):
@@ -339,6 +379,12 @@ class TestAppendConstraints:
 
         with pytest.raises(AssertionError, match="Expected appendable item or list"):
             append_constraints(plan, ("不早起", "不赶路"))
+
+    def test_rejects_unsupported_iterable_container_under_optimized_python(self):
+        assert (
+            _run_optimized_append("append_constraints", '("不早起", "不赶路")')
+            == "AssertionError"
+        )
 
 
 class TestAppendDestinationCandidate:
