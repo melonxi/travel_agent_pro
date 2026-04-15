@@ -358,6 +358,7 @@ def infer_phase3_step_from_state(
         matched = any(
             s.get("id") == selected_skeleton_id or s.get("name") == selected_skeleton_id
             for s in skeleton_plans
+            if isinstance(s, dict)
         )
         if not matched:
             # Dangling reference — stay in skeleton stage
