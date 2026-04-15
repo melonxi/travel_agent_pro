@@ -5,6 +5,7 @@ from phase.prompts import (
     PHASE1_PROMPT,
     PHASE3_BASE_PROMPT,
     PHASE3_STEP_PROMPTS,
+    PHASE5_PROMPT,
     PHASE_PROMPTS,
     build_phase3_prompt,
 )
@@ -190,3 +191,55 @@ class TestPhaseRouterGetPromptForPlan:
         router = PhaseRouter()
         prompt = router.get_prompt(3)
         assert len(prompt) > 100
+
+
+class TestPhase5SkillCard:
+    """Phase 5 must be rewritten as a skill-card with incremental generation."""
+
+    def test_phase5_has_role(self):
+        assert "## 角色" in PHASE5_PROMPT
+
+    def test_phase5_has_goal(self):
+        assert "## 目标" in PHASE5_PROMPT
+
+    def test_phase5_has_hard_rules(self):
+        assert "## 硬法则" in PHASE5_PROMPT
+
+    def test_phase5_has_completion_gate(self):
+        assert "## 完成 Gate" in PHASE5_PROMPT
+
+    def test_phase5_has_red_flags(self):
+        assert "## Red Flags" in PHASE5_PROMPT
+
+    def test_phase5_has_incremental_strategy(self):
+        """Phase 5 must use incremental generation — fix for Question 3."""
+        assert "增量" in PHASE5_PROMPT or "逐天" in PHASE5_PROMPT or "按天" in PHASE5_PROMPT
+
+    def test_phase5_has_route_planning_framing(self):
+        """Phase 5 must frame as route optimization — fix for Question 5."""
+        assert "路径" in PHASE5_PROMPT or "动线" in PHASE5_PROMPT or "路线" in PHASE5_PROMPT
+
+    def test_phase5_no_batch_all_days_instruction(self):
+        """Must NOT instruct to batch all days at once — the old anti-pattern."""
+        assert "优先一次性用 list[dict] 提交全部天数" not in PHASE5_PROMPT
+
+    def test_phase5_backward_compat(self):
+        assert PHASE_PROMPTS[5] == PHASE5_PROMPT
+
+    def test_phase5_has_input_gate(self):
+        assert "输入 Gate" in PHASE5_PROMPT or "输入检查" in PHASE5_PROMPT or "接手" in PHASE5_PROMPT
+
+    def test_phase5_has_tool_contract(self):
+        assert "工具契约" in PHASE5_PROMPT or "工具策略" in PHASE5_PROMPT
+
+    def test_phase5_mentions_assemble_day_plan(self):
+        assert "assemble_day_plan" in PHASE5_PROMPT
+
+    def test_phase5_mentions_calculate_route(self):
+        assert "calculate_route" in PHASE5_PROMPT
+
+    def test_phase5_has_json_structure(self):
+        assert "DayPlan" in PHASE5_PROMPT or "daily_plans" in PHASE5_PROMPT
+
+    def test_phase5_has_pressure_scenarios(self):
+        assert "压力场景" in PHASE5_PROMPT or "场景" in PHASE5_PROMPT
