@@ -23,6 +23,8 @@ export interface MemoryHit {
   phase: number
 }
 
+export type Significance = 'high' | 'medium' | 'low' | 'none'
+
 export interface TraceIteration {
   index: number
   phase: number
@@ -38,6 +40,7 @@ export interface TraceIteration {
   state_changes: StateChange[]
   compression_event: string | null
   memory_hits: MemoryHit | null
+  significance: Significance
 }
 
 export interface TraceSummary {
@@ -67,3 +70,30 @@ export interface SessionTrace {
   summary: TraceSummary
   iterations: TraceIteration[]
 }
+
+/* ── Frontend-computed types (not from API) ─── */
+
+export interface PhaseGroupStats {
+  tokens: number
+  cost_usd: number
+  duration_ms: number
+  llm_call_count: number
+  tool_call_count: number
+}
+
+export interface PhaseGroup {
+  phase: number
+  label: string
+  iterations: TraceIteration[]
+  stats: PhaseGroupStats
+}
+
+export type PhaseEvent =
+  | { type: 'iteration'; iteration: TraceIteration }
+  | {
+      type: 'thinking_summary'
+      count: number
+      tokens: number
+      duration_ms: number
+      indices: number[]
+    }
