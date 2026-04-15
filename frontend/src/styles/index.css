@@ -900,6 +900,21 @@ body::after {
   50%      { opacity: 1; }
 }
 
+.thinking-collapse {
+  margin-left: 4px;
+  padding: 0 4px;
+  background: none;
+  border: none;
+  color: var(--color-text-muted, rgba(255,255,255,0.45));
+  opacity: 0.5;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.thinking-collapse:hover {
+  opacity: 1;
+}
+
 .tool-details-toggle {
   padding: 0;
   border: 0;
