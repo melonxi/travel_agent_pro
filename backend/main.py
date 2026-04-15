@@ -65,7 +65,6 @@ from tools.check_availability import make_check_availability_tool
 from tools.check_weather import make_check_weather_tool
 from tools.generate_summary import make_generate_summary_tool
 from tools.get_poi_info import make_get_poi_info_tool
-from tools.plan_tools.backtrack import make_request_backtrack_tool
 from tools.search_accommodations import make_search_accommodations_tool
 from tools.search_flights import make_search_flights_tool
 from tools.search_trains import make_search_trains_tool
@@ -431,7 +430,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         tool_engine.register(make_check_availability_tool(config.api_keys))
         tool_engine.register(make_check_weather_tool(config.api_keys))
         tool_engine.register(make_generate_summary_tool())
-        tool_engine.register(make_request_backtrack_tool(plan))
         tool_engine.register(make_quick_travel_search_tool(flyai_client))
         tool_engine.register(make_search_travel_services_tool(flyai_client))
         tool_engine.register(make_web_search_tool(config.api_keys))
@@ -440,11 +438,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         hooks = HookManager()
 
         async def on_tool_call(**kwargs):
-            result = kwargs.get("result")
-            if result and result.data and result.data.get("backtracked"):
-                session = sessions.get(plan.session_id)
-                if session:
-                    session["needs_rebuild"] = True
+            if kwargs.get("tool_name") == "update_plan_state":
+                result = kwargs.get("result")
+                if result and result.data and result.data.get("backtracked"):
+                    session = sessions.get(plan.session_id)
+                    if session:
+                        session["needs_rebuild"] = True
                 return
 
         async def on_validate(**kwargs):

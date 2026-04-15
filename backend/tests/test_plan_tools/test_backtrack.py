@@ -40,8 +40,14 @@ def test_request_backtrack_tool_metadata():
     assert tool_fn.parameters == {
         "type": "object",
         "properties": {
-            "to_phase": {"type": "integer"},
-            "reason": {"type": "string"},
+            "to_phase": {
+                "type": "integer",
+                "description": "要回退到的目标阶段（必须小于当前阶段）",
+            },
+            "reason": {
+                "type": "string",
+                "description": "回退原因",
+            },
         },
         "required": ["to_phase", "reason"],
     }
@@ -126,4 +132,3 @@ async def test_request_backtrack_rejects_blank_reason():
         await tool_fn(to_phase=3, reason="   ")
 
     assert exc_info.value.error_code == "INVALID_VALUE"
-
