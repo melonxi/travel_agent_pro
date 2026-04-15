@@ -43,3 +43,32 @@
 - 分支：`fix/llm-error-classify`
 - 改动：`llm/errors.py` 新增 `classify_opaque_api_error()`，两个 provider fallthrough 改调该函数
 - 测试：`test_classify_opaque_api_error.py`（28+ 用例）、`test_anthropic_provider_classify.py`（6 用例）、`test_openai_provider.py` 已有用例更新
+
+## 3. TraceViewer 迭代行折叠优化
+
+### 背景
+
+当前 `build_trace()`（`backend/api/trace.py:98-153`）为每个 LLM 调用创建一条独立的迭代行。在长对话中（如 289 次 LLM 调用），TraceViewer 右面板会产生大量冗余信息：
+
+- 连续多行属于同一 agent phase，无工具调用，优先级/token/cost 完全相同
+- 用户需要反复滚动才能找到有实际意义的迭代（带工具调用或阶段切换的行）
+- 模型 `astron-code-latest` 不在 `_PRICING` 表（`backend/telemetry/stats.py:10-25`）中，导致所有行显示 0 tokens / <$0.001
+
+### 待办项
+
+#### 后端（`backend/api/trace.py`）
+- 在 `build_trace()` 中识别**连续同 phase、无工具调用**的 LLM 调用序列
+- 将这些序列合并为一个"折叠组"（`collapsed_group`），包含：组内调用数量、首尾时间戳、汇总 token/cost
+- 保留每条原始记录作为 `children`，供前端展开时使用
+
+#### 前端（`frontend/src/components/TraceViewer.tsx`）
+- `IterationRow` 支持渲染折叠组：默认显示汇总行（如 "Phase: plan × 47 calls"），点击展开详情
+- 折叠/展开动画与 Solstice 设计系统一致（glass morph + smooth transition）
+
+#### 补充
+- 将缺失的模型添加到 `_PRICING` 表，或在前端对 0 tokens 的行显示 "N/A" 而非 "0"
+- 考虑对折叠组内无差异的列（priority, tools, cost）只在汇总行显示一次
+
+### 目标
+
+将 TraceViewer 的信噪比从"每个 LLM 调用一行"提升到"每个有意义阶段/工具调用一行"，大幅减少滚动和视觉噪声。

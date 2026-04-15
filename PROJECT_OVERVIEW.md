@@ -595,6 +595,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 - `docs/learning/2026-04-15-superpowers提示词架构调研.md` 记录了借鉴 superpowers skills 优化 `backend/phase/prompts.py` 的结构化提示词方案，`docs/Questions.md` 保留本轮提示词问题原始观察。
 - `docs/superpowers/specs/2026-04-15-llm-error-classification-design.md` 与对应 plan 记录了不透明 `APIError` 分类修复方案，用于解释裸网关错误如何归类为 transient/rate-limit/bad-request。
 - `docs/superpowers/specs/2026-04-15-parallel-toolcall-system-injection-design.md` 与对应 plan 记录了并行 `tool_calls` 场景下 system 消息延迟注入方案，避免破坏 assistant/tool 连续消息协议。
+- `docs/TODO.md` 新增 TraceViewer 迭代行折叠优化待办，聚焦长对话 trace 中连续无工具 LLM 调用的折叠展示与缺失模型价格显示问题。
 
 ---
 
