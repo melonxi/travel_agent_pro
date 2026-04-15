@@ -6,6 +6,7 @@ from phase.prompts import (
     PHASE3_BASE_PROMPT,
     PHASE3_STEP_PROMPTS,
     PHASE5_PROMPT,
+    PHASE7_PROMPT,
     PHASE_PROMPTS,
     build_phase3_prompt,
 )
@@ -243,3 +244,44 @@ class TestPhase5SkillCard:
 
     def test_phase5_has_pressure_scenarios(self):
         assert "压力场景" in PHASE5_PROMPT or "场景" in PHASE5_PROMPT
+
+
+class TestPhase7SkillCard:
+    """Phase 7 must be rewritten with full skill-card structure."""
+
+    def test_phase7_has_role(self):
+        assert "## 角色" in PHASE7_PROMPT
+
+    def test_phase7_has_goal(self):
+        assert "## 目标" in PHASE7_PROMPT
+
+    def test_phase7_has_hard_rules(self):
+        assert "## 硬法则" in PHASE7_PROMPT
+
+    def test_phase7_has_input_gate(self):
+        assert "输入 Gate" in PHASE7_PROMPT or "输入检查" in PHASE7_PROMPT or "接手" in PHASE7_PROMPT
+
+    def test_phase7_has_completion_gate(self):
+        assert "## 完成 Gate" in PHASE7_PROMPT
+
+    def test_phase7_has_red_flags(self):
+        assert "## Red Flags" in PHASE7_PROMPT
+
+    def test_phase7_has_tool_contract(self):
+        assert "工具契约" in PHASE7_PROMPT or "工具策略" in PHASE7_PROMPT
+
+    def test_phase7_mentions_check_weather(self):
+        assert "check_weather" in PHASE7_PROMPT
+
+    def test_phase7_mentions_generate_summary(self):
+        assert "generate_summary" in PHASE7_PROMPT
+
+    def test_phase7_mentions_search_travel_services(self):
+        assert "search_travel_services" in PHASE7_PROMPT
+
+    def test_phase7_backward_compat(self):
+        assert PHASE_PROMPTS[7] == PHASE7_PROMPT
+
+    def test_phase7_has_checklist_categories(self):
+        assert "证件" in PHASE7_PROMPT
+        assert "天气" in PHASE7_PROMPT
