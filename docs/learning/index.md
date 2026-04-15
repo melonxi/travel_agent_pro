@@ -2,6 +2,11 @@
 
 按时间倒序整理 `docs/learning/` 下的学习、研究、复盘与分析文档。
 
+## 2026-04-15
+
+- [Superpowers 提示词架构调研](./2026-04-15-superpowers提示词架构调研.md)
+- [Thinking Stream Spike](./2026-04-15-thinking-stream-spike.md)
+
 ## 2026-04-14
 
 - [Harness 工程竞争力分析](./2026-04-14-harness工程竞争力分析.md)
