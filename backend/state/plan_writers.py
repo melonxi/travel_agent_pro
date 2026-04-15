@@ -9,6 +9,7 @@ adapter call these functions, ensuring identical write behavior.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from state.intake import (
@@ -176,9 +177,17 @@ def _stringify_preference_value(value: Any) -> str:
     return str(value)
 
 
-def append_preferences(plan: TravelPlanState, items: list) -> None:
+def _normalize_append_items(items: Any) -> list[Any]:
+    if isinstance(items, list):
+        return items
+    if isinstance(items, (dict, str)) or not isinstance(items, Iterable):
+        return [items]
+    assert False, f"Expected appendable item or list, got {type(items).__name__}"
+
+
+def append_preferences(plan: TravelPlanState, items: Any) -> None:
     """Append one or more preferences."""
-    for item in items:
+    for item in _normalize_append_items(items):
         if isinstance(item, dict):
             if "key" in item:
                 plan.preferences.append(Preference.from_dict(item))
@@ -196,9 +205,9 @@ def append_preferences(plan: TravelPlanState, items: list) -> None:
             plan.preferences.append(Preference(key=str(item), value=""))
 
 
-def append_constraints(plan: TravelPlanState, items: list[dict]) -> None:
+def append_constraints(plan: TravelPlanState, items: Any) -> None:
     """Append one or more constraints."""
-    for item in items:
+    for item in _normalize_append_items(items):
         if isinstance(item, dict):
             constraint_type = str(item.get("type", "soft"))
             description = str(item.get("description") or item.get("summary") or item)
