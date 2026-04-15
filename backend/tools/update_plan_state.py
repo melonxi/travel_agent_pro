@@ -8,10 +8,21 @@ from state.intake import parse_budget_value, parse_dates_value, parse_travelers_
 from state.models import (
     Accommodation,
     Constraint,
-    DayPlan,
     Preference,
     Travelers,
     TravelPlanState,
+)
+from state.plan_writers import (
+    append_one_day_plan,
+    replace_all_daily_plans,
+    write_accommodation_options,
+    write_alternatives,
+    write_candidate_pool,
+    write_risks,
+    write_shortlist,
+    write_skeleton_plans,
+    write_transport_options,
+    write_trip_brief,
 )
 from tools.base import ToolError, tool
 
@@ -30,8 +41,6 @@ def _snapshot_field(plan: TravelPlanState, field: str) -> Any:
         return plan.budget.to_dict() if plan.budget else None
     if field == "accommodation":
         return plan.accommodation.to_dict() if plan.accommodation else None
-    if field == "phase3_step":
-        return plan.phase3_step
     if field == "selected_skeleton_id":
         return plan.selected_skeleton_id
     if field == "selected_transport":
@@ -44,7 +53,6 @@ def _snapshot_field(plan: TravelPlanState, field: str) -> Any:
 _ALLOWED_FIELDS = {
     "destination",
     "dates",
-    "phase3_step",
     "trip_brief",
     "candidate_pool",
     "shortlist",
@@ -63,6 +71,17 @@ _ALLOWED_FIELDS = {
     "destination_candidates",
     "daily_plans",
     "backtrack",
+}
+
+_STRUCTURED_LIST_FIELDS = {
+    "skeleton_plans",
+    "candidate_pool",
+    "shortlist",
+    "transport_options",
+    "accommodation_options",
+    "risks",
+    "alternatives",
+    "daily_plans",
 }
 
 
@@ -106,19 +125,25 @@ def _append_preferences(plan: TravelPlanState, value: Any) -> None:
     plan.preferences.append(Preference(key=str(value), value=""))
 
 
-def _coerce_jsonish(value: Any) -> Any:
+def _coerce_jsonish(value: Any, *, field: str | None = None) -> Any:
     if isinstance(value, str):
         text = value.strip()
         if text and text[0] in "[{" and text[-1] in "]}":
             try:
-                return _coerce_jsonish(json.loads(text))
+                return _coerce_jsonish(json.loads(text), field=field)
             except json.JSONDecodeError:
+                if field in _STRUCTURED_LIST_FIELDS:
+                    raise ToolError(
+                        f"{field} 必须传原生 list[object]，不要传无法解析的字符串",
+                        error_code="INVALID_VALUE",
+                        suggestion=f"{field} 请直接传 native list[object]，不要传 string",
+                    )
                 return value
         return value
     if isinstance(value, list):
-        return [_coerce_jsonish(item) for item in value]
+        return [_coerce_jsonish(item, field=field) for item in value]
     if isinstance(value, dict):
-        return {key: _coerce_jsonish(item) for key, item in value.items()}
+        return {key: _coerce_jsonish(item, field=field) for key, item in value.items()}
     return value
 
 
@@ -165,8 +190,6 @@ def _normalize_comparable_value(field: str, value: Any) -> Any:
         if isinstance(value, str):
             return {"area": value, "hotel": None}
         return _UNCOMPARABLE
-    if field == "phase3_step":
-        return str(value)
     if field == "selected_skeleton_id":
         return str(value)
     return _UNCOMPARABLE
@@ -183,8 +206,6 @@ def _current_comparable_value(plan: TravelPlanState, field: str) -> Any:
         return plan.budget.to_dict() if plan.budget else None
     if field == "accommodation":
         return plan.accommodation.to_dict() if plan.accommodation else None
-    if field == "phase3_step":
-        return plan.phase3_step
     if field == "selected_skeleton_id":
         return plan.selected_skeleton_id
     return _UNCOMPARABLE
@@ -200,7 +221,7 @@ _PARAMETERS = {
                 f"{', '.join(sorted(_ALLOWED_FIELDS))}。"
                 "阶段 1 常用：destination、dates、travelers、budget、preferences、constraints、destination_candidates、backtrack。"
                 "阶段 3 新增：trip_brief、candidate_pool、shortlist、skeleton_plans、selected_skeleton_id、transport_options、selected_transport、accommodation_options、risks、alternatives。"
-                "注意：phase3_step 由系统自动推导，通常不需要手动写入。"
+                "注意：phase3_step 由系统自动推导，不支持通过本工具写入。"
             ),
         },
         "value": {
@@ -209,11 +230,11 @@ _PARAMETERS = {
                 'destination 建议传纯字符串；dates 建议传 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}；'
                 'travelers 建议传结构化人数或可解析短语；budget 建议传数字、金额字符串或 {"total": number, "currency": "..."}；'
                 "preferences/constraints 为追加写入；destination_candidates 传单个对象会追加，传列表会整体替换；"
-                "trip_brief 建议传 dict 并做增量合并；candidate_pool/shortlist/skeleton_plans/transport_options/accommodation_options/risks/alternatives 传 list 可整体替换、传单个对象会追加；"
+                "trip_brief 建议传 dict 并做增量合并；candidate_pool/shortlist/skeleton_plans/transport_options/accommodation_options/risks/alternatives 传 list[object] 可整体替换、传单个 object 会追加；"
                 "selected_skeleton_id 建议传字符串（必须精确匹配 skeleton_plans 中某项的 id 字段）；selected_transport 建议传 dict；"
-                "phase3_step 由系统自动推导，通常不需要手动写入（如需手动纠正，仅允许 brief/candidate/skeleton/lock）；"
                 'daily_plans 传单个 dict 追加一天（形如 {"day":1,"date":"2026-05-01","activities":[...]}），'
-                '传 list[dict] 整体替换全部天数；每个 activity 必须是 dict，且 location 必须是 {"name":..,"lat":..,"lng":..} dict，'
+                '传 list[object] 整体替换全部天数；结构化列表字段若传 JSON 字符串，必须是合法 JSON；'
+                '每个 activity 必须是 dict，且 location 必须是 {"name":..,"lat":..,"lng":..} dict，'
                 'start_time/end_time 必须是 "HH:MM" 字符串，category 必须提供，cost 必须是数字；'
                 '当 field 为 "backtrack" 时，value 必须为 {"to_phase": int, "reason": str}。'
             ),
@@ -252,9 +273,8 @@ Important:
                 suggestion=f"可用字段: {', '.join(sorted(_ALLOWED_FIELDS))}",
             )
 
-        value = _coerce_jsonish(value)
-
         if field == "backtrack":
+            value = _coerce_jsonish(value, field=field)
             if not isinstance(value, dict) or "to_phase" not in value:
                 raise ToolError(
                     "backtrack 的 value 必须包含 to_phase 字段",
@@ -285,6 +305,23 @@ Important:
             }
 
         previous_value = _snapshot_field(plan, field)
+        value = _coerce_jsonish(value, field=field)
+
+        if field in _STRUCTURED_LIST_FIELDS:
+            if isinstance(value, str):
+                raise ToolError(
+                    f"{field} 必须是 list[object]，不要传 string",
+                    error_code="INVALID_VALUE",
+                    suggestion=f"{field} 请直接传 native list[object]；如果是追加单项，请直接传 dict",
+                )
+            if isinstance(value, list):
+                for index, item in enumerate(value):
+                    if not isinstance(item, dict):
+                        raise ToolError(
+                            f"{field}[{index}] 必须是 object，实际收到 {type(item).__name__}",
+                            error_code="INVALID_VALUE",
+                            suggestion=f"{field} 必须传 list[object]",
+                        )
 
         if field == "destination":
             if isinstance(value, dict):
@@ -293,15 +330,6 @@ Important:
                 plan.destination = str(value)
         elif field == "dates":
             plan.dates = parse_dates_value(value)
-        elif field == "phase3_step":
-            step = str(value)
-            if step not in {"brief", "candidate", "skeleton", "lock"}:
-                raise ToolError(
-                    f"不支持的 phase3_step: {step}",
-                    error_code="INVALID_VALUE",
-                    suggestion="可选值: brief, candidate, skeleton, lock",
-                )
-            plan.phase3_step = step
         elif field == "trip_brief":
             if not isinstance(value, dict):
                 raise ToolError(
@@ -309,29 +337,29 @@ Important:
                     error_code="INVALID_VALUE",
                     suggestion='示例: {"goal": "慢旅行", "pace": "relaxed"}',
                 )
-            plan.trip_brief.update(value)
+            write_trip_brief(plan, value)
         elif field == "candidate_pool":
             if isinstance(value, list):
-                plan.candidate_pool = value
+                write_candidate_pool(plan, value)
             else:
-                plan.candidate_pool.append(value)
+                write_candidate_pool(plan, [*plan.candidate_pool, value])
         elif field == "shortlist":
             if isinstance(value, list):
-                plan.shortlist = value
+                write_shortlist(plan, value)
             else:
-                plan.shortlist.append(value)
+                write_shortlist(plan, [*plan.shortlist, value])
         elif field == "skeleton_plans":
             if isinstance(value, list):
-                plan.skeleton_plans = value
+                write_skeleton_plans(plan, value)
             else:
-                plan.skeleton_plans.append(value)
+                write_skeleton_plans(plan, [*plan.skeleton_plans, value])
         elif field == "selected_skeleton_id":
             plan.selected_skeleton_id = str(value)
         elif field == "transport_options":
             if isinstance(value, list):
-                plan.transport_options = value
+                write_transport_options(plan, value)
             else:
-                plan.transport_options.append(value)
+                write_transport_options(plan, [*plan.transport_options, value])
         elif field == "selected_transport":
             if isinstance(value, dict):
                 plan.selected_transport = value
@@ -339,9 +367,9 @@ Important:
                 plan.selected_transport = {"summary": str(value)}
         elif field == "accommodation_options":
             if isinstance(value, list):
-                plan.accommodation_options = value
+                write_accommodation_options(plan, value)
             else:
-                plan.accommodation_options.append(value)
+                write_accommodation_options(plan, [*plan.accommodation_options, value])
         elif field == "travelers":
             plan.travelers = parse_travelers_value(value)
         elif field == "budget":
@@ -391,14 +419,14 @@ Important:
                 plan.constraints.append(Constraint(type="soft", description=str(value)))
         elif field == "risks":
             if isinstance(value, list):
-                plan.risks = value
+                write_risks(plan, value)
             else:
-                plan.risks.append(value)
+                write_risks(plan, [*plan.risks, value])
         elif field == "alternatives":
             if isinstance(value, list):
-                plan.alternatives = value
+                write_alternatives(plan, value)
             else:
-                plan.alternatives.append(value)
+                write_alternatives(plan, [*plan.alternatives, value])
         elif field == "destination_candidates":
             if isinstance(value, list):
                 plan.destination_candidates = value
@@ -406,11 +434,9 @@ Important:
                 plan.destination_candidates.append(value)
         elif field == "daily_plans":
             if isinstance(value, list):
-                plan.daily_plans = [
-                    DayPlan.from_dict(v) if isinstance(v, dict) else v for v in value
-                ]
+                replace_all_daily_plans(plan, value)
             elif isinstance(value, dict):
-                plan.daily_plans.append(DayPlan.from_dict(value))
+                append_one_day_plan(plan, value)
             else:
                 raise ToolError(
                     "daily_plans 的值必须是 dict（单日）或 list[dict]（多日）",
