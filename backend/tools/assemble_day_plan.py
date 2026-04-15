@@ -61,10 +61,11 @@ def make_assemble_day_plan_tool():
         description="""组装单日行程计划。
 Use when: 用户在阶段 4-5，需要将多个景点排列成合理的日程。
 Don't use when: 行程已排好或只有一个景点。
-使用贪心算法按地理临近度排序，返回排序后的景点和总距离。""",
+        使用贪心算法按地理临近度排序，返回排序后的景点和总距离。""",
         phases=[3, 5],
         parameters=_PARAMETERS,
         side_effect="write",
+        human_label="组装日程",
     )
     async def assemble_day_plan(
         pois: list[dict],

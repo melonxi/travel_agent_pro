@@ -242,6 +242,7 @@ Important:
         phases=[1, 3, 5, 7],
         parameters=_PARAMETERS,
         side_effect="write",
+        human_label="更新旅行计划",
     )
     async def update_plan_state(field: str, value: Any) -> dict:
         if field not in _ALLOWED_FIELDS:

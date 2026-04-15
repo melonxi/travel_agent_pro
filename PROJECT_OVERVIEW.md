@@ -31,11 +31,12 @@
 ```
 travel_agent_pro/
 ├── backend/                    # Python 后端
-│   ├── main.py                 # FastAPI 入口 (~950 行), API 端点, 会话管理, SSE 流, cancel/continue 端点, _run_agent_stream 共享函数
+│   ├── main.py                 # FastAPI 入口 (~950 行), API 端点, 会话管理, SSE 流, cancel/continue 端点, _run_agent_stream 共享函数, KEEPALIVE_INTERVAL_S=8 心跳常量
 │   ├── run.py                  # RunRecord / IterationProgress 数据结构 (LLM 韧性运行追踪)
 │   ├── config.py               # 配置加载 (.env + config.yaml), 多 LLM 按阶段切换
 │   ├── agent/                  # Agent 循环引擎
-│   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复，集成自省/强制工具/护栏/读工具批量执行/parallel_group 标记/cancel_event 检查/IterationProgress 追踪
+│   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复，集成自省/强制工具/护栏/读工具批量执行/parallel_group 标记/cancel_event 检查/IterationProgress 追踪/compression_events 非空时先 yield agent_status(compacting) 预告/narration hint 注入 agent_status
+│   │   ├── narration.py        # 基于规则的推理旁白：按 phase/step 返回中文 hint 文案
 │   │   ├── compaction.py       # 上下文压缩: token 预算计算、渐进式压缩
 │   │   ├── hooks.py            # 钩子系统 (before_llm_call, after_tool_call)
 │   │   ├── reflection.py       # ReflectionInjector: 关键阶段自省 prompt 注入
@@ -115,7 +116,7 @@ travel_agent_pro/
 │   │   ├── main.tsx            # React 19 入口
 │   │   ├── App.tsx             # 应用壳: 会话管理, 主题, 三栏布局, Plan/Trace 标签切换
 │   │   ├── components/
-│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 发送/停止按钮(过渡动画+无障碍), 统一流式状态条(waiting/continue/retry/fatal/stopped), 上一条消息重发
+│   │   │   ├── ChatPanel.tsx   # 聊天面板: SSE 流, 工具卡片, 状态变化展示, 发送/停止按钮(过渡动画+无障碍), 统一流式状态条(waiting/continue/retry/fatal/stopped), 上一条消息重发, 三档 staleness 检测, RoundSummaryBar, memory chip 插入
 │   │   │   ├── TraceViewer.tsx # Trace 视图: SummaryBar/IterationRow/ToolCallRow/StateDiffPanel, 渲染 parallel_group badge/validation_errors/judge_scores/compression_event/memory_hits
 │   │   │   ├── MessageBubble.tsx # 消息渲染: Markdown, 工具卡, 压缩提示
 │   │   │   ├── SessionSidebar.tsx # 会话侧边栏: 列表/新建/删除 + 记忆管理入口
@@ -125,6 +126,7 @@ travel_agent_pro/
 │   │   │   ├── MapView.tsx     # Leaflet 地图: 标记点+路线
 │   │   │   ├── Timeline.tsx    # 日程时间线
 │   │   │   ├── BudgetChart.tsx # 预算可视化
+│   │   │   ├── RoundSummaryBar.tsx # 轮次摘要条: done 后 2.5s 自动消失, 工具数/用时/记忆数
 │   │   │   └── MemoryCenter.tsx # 记忆管理抽屉: 3 Tab(活跃/待确认/归档), 乐观更新, 本轮命中记忆高亮(is-recalled)
 │   │   ├── hooks/
 │   │   │   ├── useSSE.ts       # SSE 流式连接 Hook (streamSSE 共享函数 + sendMessage + cancel + continueGeneration)
@@ -150,7 +152,9 @@ travel_agent_pro/
 ├── docker-compose.observability.yml # Jaeger 一键启动
 ├── e2e-test.spec.ts            # Playwright E2E 测试
 ├── e2e-retry-experience.spec.ts # ChatPanel 重试/继续/停止/不可恢复错误专项 E2E
+├── e2e-waiting-experience.spec.ts # ThinkingBubble 与工具副标题/计时器专项 E2E
 ├── playwright.retry.config.ts  # 仅运行重试体验专项用例的 Playwright 配置
+├── playwright.waiting.config.ts # 仅运行等待体验专项用例的 Playwright 配置
 ├── AGENTS.md                   # AI Agent 项目规范
 ├── CLAUDE.md                   # Claude 特定规范
 └── PROJECT_OVERVIEW.md         # 👈 本文件
@@ -208,7 +212,7 @@ travel_agent_pro/
 ## 5. 核心数据流
 
 ```
-用户消息 (POST /api/sessions/{id}/chat)
+用户消息 (POST /api/chat/{id})
     ↓
 [main.py] 加载会话+方案, 组装消息列表
     ↓
@@ -354,23 +358,29 @@ lock      → + search_flights, search_trains, search_accommodations
 
 ### SSE 流式协议
 ```
-POST /api/chat/{sessionId}  →  ReadableStream (NDJSON)
+POST /api/chat/{sessionId}  →  ReadableStream (SSE data frames)
 
 事件类型:
   text_delta          → 助手文本增量
   tool_call           → 工具调用开始 (名称 + 参数)
   tool_result         → 工具结果 (success/error/skipped + data)
+  phase_transition    → 阶段/Phase 3 子步骤的提前切换信号（可先于 state_update 到达，用于前端乐观同步）
+  agent_status        → ThinkingBubble 阶段状态 (thinking/summarizing/compacting + iteration + hint 旁白)
   state_update        → 方案状态变化 (完整 TravelPlanState)
   context_compression → 上下文压缩通知
   memory_recall       → 本轮命中的记忆 ID 列表 (item_ids[])
   error               → LLM 错误 (error_code/retryable/can_continue/failure_phase/user_message)
-  keepalive           → 心跳 (每 15s，前端 30s 无事件进入 waiting 状态条)
+  keepalive           → 心跳 (每 8s，前端 20s 无事件进入 waiting 状态条)
   done                → 流结束 (run_id/run_status/can_continue)
 ```
 
 ### 关键组件
-- **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理 + 停止按钮(streaming 时替代发送按钮) + 统一流式状态条（`waiting`/`continue`/`retry`/`fatal`/`stopped`）+ `can_continue` 继续生成 + 保存上一条用户消息用于重新发送
-- **Phase3Workbench**: 旅行画像 / 候选池 / 骨架方案 / 锁定区 / 风险 (5 卡片)
+- **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理（首次触发时插入 memory chip 系统消息）+ `phase_transition` 事件处理（收到后先回调 App 更新阶段覆盖，再插入 `PhaseTransitionCard` 系统消息）+ `agent_status` 驱动的 `ThinkingBubble` 生命周期（发送瞬间本地插入，收到 `text_delta`/`tool_call`/`error` 时 200ms fade-out，`done`/stop 收尾时直接移除）+ 三档 staleness 检测（<8s normal / 8-20s minor / ≥20s waiting，2s 轮询）+ `RoundSummaryBar`（done 事件后展示工具数/用时/记忆数，2.5s 自动消失）+ 停止按钮(streaming 时替代发送按钮) + 统一流式状态条（`waiting`/`continue`/`retry`/`fatal`/`stopped`）+ `can_continue` 继续生成 + 保存上一条用户消息用于重新发送
+- **PhaseIndicator / App**: App 用 `phaseOverride` 暂存最近一次 `phase_transition`（800ms TTL）；`PhaseIndicator` 优先显示 overridePhase，`Phase3Workbench` 同步吃 `overrideStep`，从而在 `state_update` 到达前先切到新阶段/子步骤；当 plan 追平 override 或 TTL 到期后自动清空
+- **Phase3Workbench**: 旅行画像 / 候选池 / 骨架方案 / 锁定区 / 风险 (5 卡片)，支持 `overrideStep` 提前切换到目标子步骤
+- **ThinkingBubble**: stage-aware 等待气泡，默认文案“思考中…”，2 秒内无事件会切到“正在连接…”，第二轮起显示“继续思考…（第 N 轮）”；支持 `staleness` prop，minor 档位时显示呼吸小点（⋯）；接收后端 narration hint 旁白文案，支持用户点击收起（localStorage 持久化偏好）
+- **MessageBubble / PhaseTransitionCard**: system message 的阶段推进卡片，渲染 `.phase-transition-card`，文案格式为“已进入{阶段}{子步骤}”；tool 卡额外显示 `human_label` 副标题、运行耗时与长时运行提醒；pending 状态 tool 卡在 staleness=minor 时也显示呼吸小点；支持 `memoryChip` 渲染分支（memory_recall 内联 chip，点击跳转 MemoryCenter）
+- **RoundSummaryBar**: done 事件后 2.5s 自动消失的轮次摘要条，显示工具数、用时、记忆命中数
 - **MemoryCenter**: 右滑抽屉, 3 Tab (活跃/待确认/归档), 卡片式记忆管理, 确认/拒绝/删除 + 乐观更新, 本轮命中记忆高亮（通过 App → SessionSidebar 透传 recalledIds + is-recalled CSS class + "本轮命中" badge）
 - **MapView**: Leaflet 地图, 活动标记 + 路线连线, 明暗主题
 - **Timeline**: 逐日活动时间线
@@ -552,7 +562,7 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 | Memory System | schema v2 结构化记忆（global/trip 双 scope）；每轮 chat 后按 trigger 后台提取候选；policy 全字段 PII 检测脱敏（payment/membership 域直接阻断、邮箱正则、9-18 位数字序列、证件/联系方式短语检测 + `_redact_for_storage` 递归脱敏）；合并/确认流程；system prompt 前按 `memory.enabled` 三路检索（core profile / trip memory / phase-domain，硬编码 core_limit=10, phase_limit=8）按 trip_id 隔离；新行程回退 obsolete 旧 trip memory 并轮转 trip_id；Phase 7 幂等归档 episode（JSONL 独立存储，不参与 prompt 注入检索）|
 | Tool Guardrails | 确定性规则校验 + 中文注入检测 + 工具结果字段分级校验（住宿 `price_per_night` 别名兼容），不依赖 LLM，可按规则名禁用 |
 | Trace Data Pipeline | "丰富 Stats 层，Trace 只做读取"：on_validate/on_soft_judge 钩子将 state_changes/validation_errors/judge_scores post-hoc 写入 ToolCallRecord（`_pending_*` 暂存解决时序差距）；loop.py 标记 parallel_group；generate_context 返回 recalled item IDs；build_trace 纯读取消费所有字段 |
-| Memory Recall SSE | memory_recall SSE 事件携带 item_ids[]，前端 App 状态提升 recalledIds → SessionSidebar → MemoryCenter is-recalled 高亮 |
+| Memory Recall SSE | memory_recall SSE 事件携带 item_ids[]，前端 App 状态提升 recalledIds → SessionSidebar → MemoryCenter is-recalled 高亮；ChatPanel 首次收到 memory_recall 时插入 memory chip 系统消息（点击跳转 MemoryCenter） |
 | LLM 韧性三层架构 | 错误归一化 (LLMError + Provider._classify_error) → 停止生成 (cancel_event + 3 检查点 + RunRecord) → 安全继续 (can_continue 判定 + continuation_context + continue endpoint)；`_has_yielded` 防止流式重试重复输出；TRANSIENT 错误自动重试 2 次 (1s, 3s)；IterationProgress 追踪迭代进度判定是否可继续 |
 | 重试机制学习文档 | `docs/learning/2026-04-14-重试恢复机制.md` 详细说明前后端如何围绕 `retryable/can_continue/run_status` 配合，并附 Mermaid 总览图、状态机图、字段映射图与三类典型时序图 |
 
@@ -562,9 +572,9 @@ config.yaml           → 运行时配置 (LLM 模型/阶段覆盖/阈值/功能
 
 - **后端单元测试**：80+ 个文件、700+ 测试，覆盖 Agent 循环、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 数据通道、RunRecord/IterationProgress
 - **评估管线**：23 个黄金测试用例 (YAML)，6 种断言类型，离线评估 runner；pass@k 稳定性评估支持同一 golden case 多次执行，统计 pass_rate、断言一致性、工具重叠率、成本/延迟分布，并通过 `scripts/eval-stability.py` 生成 JSON + Markdown 报告
-- **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 覆盖 live Phase 1 主流程，`e2e-retry-experience.spec.ts` 覆盖 ChatPanel 的继续生成/重新发送/停止后重发/不可恢复错误四类恢复路径；`playwright.config.ts` 现在支持显式传入任意 `*.spec.ts` 文件名作为 `testMatch`，`playwright.retry.config.ts` 用于只跑重试体验专项用例；demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，只需要 frontend dev server，并把截图/视频写入 `screenshots/demos/`；failure-analysis raw results 写入 `scripts/failure-analysis/results/`，该目录为本地生成产物，不提交到 git
+- **E2E 测试**：Playwright，根目录 `e2e-test.spec.ts` 同时覆盖 live Phase 1 主流程和一个 deterministic mocked phase_transition 用例（复用 `scripts/demo/demo-scripted-session.json`，仅 mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，并用 `ReadableStream` 人为拉开 `phase_transition` 与 `state_update` 的到达时序，验证阶段条先跳到 Phase 3 且页面插入 `.phase-transition-card`）；`e2e-retry-experience.spec.ts` 覆盖 ChatPanel 的继续生成/重新发送/停止后重发/不可恢复错误四类恢复路径；`e2e-waiting-experience.spec.ts` 复用浏览器侧 `fetch` + `ReadableStream` mock，覆盖 ThinkingBubble 的立即出现、首个 `text_delta` 后收起，以及工具卡的 `human_label`、实时耗时和 `>=8s` 长时提醒；`playwright.config.ts` 现在支持显式传入任意 `*.spec.ts` 文件名作为 `testMatch`，`playwright.retry.config.ts` / `playwright.waiting.config.ts` 分别用于只跑重试体验和等待体验专项；demo spec 基于 `demo-scripted-session.json` mock `/api/sessions`、`/api/plan`、`/api/messages`、`/api/chat`，稳定回放 Phase 1 → Phase 3（显式选择住宿候选）→ Phase 5 → backtrack，只需要 frontend dev server，并把截图/视频写入 `screenshots/demos/`；failure-analysis raw results 写入 `scripts/failure-analysis/results/`，该目录为本地生成产物，不提交到 git
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---
 
-*最后更新：2026-04-14 | 当前 HEAD: 见 `git log --oneline -1`*
+*最后更新：2026-04-15 | 当前 HEAD: 见 `git log --oneline -1`*

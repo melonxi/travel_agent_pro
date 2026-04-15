@@ -26,9 +26,10 @@ def make_check_weather_tool(api_keys: ApiKeysConfig):
 Use when: 用户在阶段 5 或 7，需要了解目的地天气情况。
 Don't use when: 已有天气信息或不需要天气数据。
 Important: city 参数必须使用英文名称（如 Tokyo 而非 东京），OpenWeather API 不支持中文城市名。
-返回城市天气预报，含温度、天气描述等。""",
+        返回城市天气预报，含温度、天气描述等。""",
         phases=[5, 7],
         parameters=_PARAMETERS,
+        human_label="查天气",
     )
     async def check_weather_forecast(city: str, date: str) -> dict:
         if not api_keys.openweather:

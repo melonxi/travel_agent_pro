@@ -77,6 +77,8 @@ from tools.xiaohongshu_search import make_xiaohongshu_search_tool
 
 logger = logging.getLogger(__name__)
 
+KEEPALIVE_INTERVAL_S = 8
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -441,6 +443,14 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     session["_pending_state_changes"] = [
                         {"field": field, "before": prev_val, "after": value}
                     ]
+                    if result.data.get("updated_field") == "phase3_step":
+                        session["_pending_phase_step_transition"] = {
+                            "from_phase": plan.phase,
+                            "to_phase": plan.phase,
+                            "from_step": result.data.get("previous_value"),
+                            "to_step": result.data.get("new_value"),
+                            "reason": "phase3_step_change",
+                        }
 
                 errors = validate_incremental(plan, field, value)
                 if field in ("selected_transport", "accommodation"):
@@ -1102,6 +1112,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             "id": tool_call.id,
                             "name": tool_call.name,
                             "arguments": tool_call.arguments,
+                            "human_label": tool_call.human_label,
                         }
                         for tool_call in message.tool_calls
                     ],
@@ -1150,6 +1161,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         id=payload["id"],
                         name=payload["name"],
                         arguments=payload["arguments"],
+                        human_label=payload.get("human_label"),
                     )
                     for payload in json.loads(row["tool_calls"])
                 ]
@@ -1451,7 +1463,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         async def _keepalive_loop():
             try:
                 while True:
-                    await asyncio.sleep(15)
+                    await asyncio.sleep(KEEPALIVE_INTERVAL_S)
                     await keepalive_queue.put(json.dumps({"type": "keepalive"}))
             except asyncio.CancelledError:
                 pass
@@ -1491,6 +1503,24 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             ensure_ascii=False,
                         )
                         continue
+                    if (
+                        chunk.type == ChunkType.PHASE_TRANSITION
+                        and chunk.phase_info is not None
+                    ):
+                        yield json.dumps(
+                            {"type": "phase_transition", **chunk.phase_info},
+                            ensure_ascii=False,
+                        )
+                        continue
+                    if (
+                        chunk.type == ChunkType.AGENT_STATUS
+                        and chunk.agent_status is not None
+                    ):
+                        yield json.dumps(
+                            {"type": "agent_status", **chunk.agent_status},
+                            ensure_ascii=False,
+                        )
+                        continue
                     event_type = (
                         "tool_call"
                         if chunk.tool_call and chunk.type.value == "tool_call_start"
@@ -1511,6 +1541,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             "id": chunk.tool_call.id,
                             "name": chunk.tool_call.name,
                             "arguments": chunk.tool_call.arguments,
+                            "human_label": chunk.tool_call.human_label,
                         }
                     if chunk.tool_result:
                         event_data["tool_result"] = {
@@ -1594,6 +1625,14 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             {"type": "state_update", "plan": plan.to_dict()},
                             ensure_ascii=False,
                         )
+                        _pending_step = session.pop(
+                            "_pending_phase_step_transition", None
+                        )
+                        if _pending_step is not None:
+                            yield json.dumps(
+                                {"type": "phase_transition", **_pending_step},
+                                ensure_ascii=False,
+                            )
             except LLMError as exc:
                 if exc.failure_phase == "cancelled":
                     run.status = "cancelled"
@@ -1693,6 +1732,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                                         "reason": reason,
                                     },
                                 },
+                                "human_label": "更新旅行计划",
                             },
                         },
                         ensure_ascii=False,

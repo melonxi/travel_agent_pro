@@ -768,7 +768,7 @@ git commit -m "feat(frontend): Phase3Workbench honors overrideStep"
 - Modify: `frontend/src/components/ChatPanel.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：MessageBubble 新增 variant**
+- [x] **Step 1：MessageBubble 新增 variant**
 
 在 `MessageBubble.tsx` 的 `if (role === 'system' && stateChanges...)` 分支之前追加：
 
@@ -790,7 +790,7 @@ if (role === 'system' && phaseTransition) {
 
 `PHASE_LABELS` / `STEP_LABELS` 常量定义在文件头。Props 加 `phaseTransition?: { to_phase: number; to_step?: string | null }`。
 
-- [ ] **Step 2：ChatPanel 在 phase_transition 事件时插入卡片**
+- [x] **Step 2：ChatPanel 在 phase_transition 事件时插入卡片**
 
 Task 8 中的分派改为：
 
@@ -811,7 +811,7 @@ if (event.type === 'phase_transition' && event.to_phase !== undefined) {
 
 `ChatMessage` 接口加 `phaseTransition?: { to_phase: number; to_step?: string | null }`。
 
-- [ ] **Step 3：CSS**
+- [x] **Step 3：CSS**
 
 `frontend/src/styles/index.css`：
 
@@ -850,7 +850,7 @@ git commit -m "feat(frontend): add PhaseTransitionCard for phase change announce
 **Files:**
 - Modify: `e2e-test.spec.ts`
 
-- [ ] **Step 1：扩展 demo spec**
+- [x] **Step 1：扩展 demo spec**
 
 在 Phase 1 → Phase 3 的断言点追加：
 
@@ -879,7 +879,7 @@ npx playwright test e2e-test.spec.ts
 
 Expected: 全部通过
 
-- [ ] **Step 3：PROJECT_OVERVIEW.md 同步**
+- [x] **Step 3：PROJECT_OVERVIEW.md 同步**
 
 在 SSE 协议段添加 `phase_transition` 事件说明，在"关键组件"段说明 `phaseOverride` 机制。
 
@@ -1255,7 +1255,7 @@ git commit -m "feat(tools): populate human_label for all registered tools"
 - Create: `frontend/src/components/ThinkingBubble.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：组件骨架**
+- [x] **Step 1：组件骨架**
 
 ```tsx
 import { useEffect, useState } from 'react'
@@ -1296,7 +1296,7 @@ export default function ThinkingBubble({ createdAt, stage = 'thinking', iteratio
 }
 ```
 
-- [ ] **Step 2：CSS**
+- [x] **Step 2：CSS**
 
 ```css
 .thinking-bubble {
@@ -1359,7 +1359,7 @@ git commit -m "feat(frontend): add ThinkingBubble component with stage-aware cop
 **Files:**
 - Modify: `frontend/src/components/ChatPanel.tsx`
 
-- [ ] **Step 1：新增 state**
+- [x] **Step 1：新增 state**
 
 ```tsx
 const [thinking, setThinking] = useState<{
@@ -1370,7 +1370,7 @@ const [thinking, setThinking] = useState<{
 } | null>(null)
 ```
 
-- [ ] **Step 2：handleSend 本地立即触发**
+- [x] **Step 2：handleSend 本地立即触发**
 
 ```tsx
 const handleSend = async () => {
@@ -1381,7 +1381,7 @@ const handleSend = async () => {
 }
 ```
 
-- [ ] **Step 3：事件回调中控制生命周期**
+- [x] **Step 3：事件回调中控制生命周期**
 
 ```tsx
 if (event.type === 'agent_status' && event.stage) {
@@ -1400,7 +1400,7 @@ if (event.type === 'text_delta' || event.type === 'tool_call' || event.type === 
 }
 ```
 
-- [ ] **Step 4：渲染**
+- [x] **Step 4：渲染**
 
 在 `{messages.map(...)}` 之后、`streaming-cursor` 之前：
 
@@ -1434,7 +1434,7 @@ git commit -m "feat(frontend): wire ThinkingBubble lifecycle to agent_status SSE
 - Modify: `frontend/src/components/ChatPanel.tsx`（新增 startedAt/endedAt 字段）
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：ChatMessage 加计时字段**
+- [x] **Step 1：ChatMessage 加计时字段**
 
 `ChatPanel.tsx` 的 `ChatMessage` 接口：
 
@@ -1449,7 +1449,7 @@ interface ChatMessage {
 
 tool_call 事件到达时 `startedAt: Date.now()`, `humanLabel: event.tool_call.human_label`；tool_result 到达时 `endedAt: Date.now()`。
 
-- [ ] **Step 2：MessageBubble 渲染**
+- [x] **Step 2：MessageBubble 渲染**
 
 ```tsx
 interface Props {
@@ -1482,7 +1482,7 @@ return (
 )
 ```
 
-- [ ] **Step 3：Pending 状态计时器重渲染**
+- [x] **Step 3：Pending 状态计时器重渲染**
 
 MessageBubble 内用 useEffect + setInterval 每 500ms 强制更新（仅 pending 时）：
 
@@ -1495,7 +1495,7 @@ useEffect(() => {
 }, [toolStatus])
 ```
 
-- [ ] **Step 4：CSS**
+- [x] **Step 4：CSS**
 
 ```css
 .tool-subtitle {
@@ -1543,7 +1543,7 @@ git commit -m "feat(frontend): tool card shows human_label and live elapsed time
 **Files:**
 - Modify: `frontend/src/components/MessageBubble.tsx`
 
-- [ ] **Step 1：实现**
+- [x] **Step 1：实现**
 
 在 tool 分支内：
 
@@ -1584,7 +1584,7 @@ git commit -m "feat(frontend): warn long-running tool calls after 8 seconds"
 - Create: `playwright.waiting.config.ts`
 - Modify: `scripts/demo/demo-scripted-session.json`（追加 waiting scenario 所需事件）
 
-- [ ] **Step 1：编写 spec**
+- [x] **Step 1：编写 spec**
 
 ```ts
 import { test, expect } from '@playwright/test'
@@ -1611,7 +1611,7 @@ test.describe('Agent waiting experience', () => {
 })
 ```
 
-- [ ] **Step 2：playwright.waiting.config.ts**
+- [x] **Step 2：playwright.waiting.config.ts**
 
 参照 `playwright.retry.config.ts` 结构：
 
@@ -1625,7 +1625,7 @@ export default defineConfig({
 })
 ```
 
-- [ ] **Step 3：运行**
+- [x] **Step 3：运行**
 
 ```bash
 npx playwright test --config playwright.waiting.config.ts
@@ -1633,11 +1633,11 @@ npx playwright test --config playwright.waiting.config.ts
 
 Expected: 全部通过
 
-- [ ] **Step 4：PROJECT_OVERVIEW.md 同步**
+- [x] **Step 4：PROJECT_OVERVIEW.md 同步**
 
 追加 `agent_status` 事件到 SSE 协议段，在"关键组件"段说明 ThinkingBubble 和工具卡增强。
 
-- [ ] **Step 5：提交 + PR2 收尾**
+- [x] **Step 5：提交 + PR2 收尾**
 
 ```bash
 git add e2e-waiting-experience.spec.ts playwright.waiting.config.ts scripts/demo/demo-scripted-session.json PROJECT_OVERVIEW.md
@@ -1654,7 +1654,7 @@ git commit -m "test(e2e): cover ThinkingBubble lifecycle and tool card enhanceme
 - Modify: `backend/main.py`（`_keepalive_loop` 内 `asyncio.sleep(15)`）
 - Test: `backend/tests/test_keepalive_interval.py`（新建）
 
-- [ ] **Step 1：写测试**
+- [x] **Step 1：写测试**
 
 ```python
 import asyncio
@@ -1668,7 +1668,7 @@ async def test_keepalive_sends_every_8_seconds(app, sessions, session_id):
     ...
 ```
 
-- [ ] **Step 2：改代码**
+- [x] **Step 2：改代码**
 
 ```python
 async def _keepalive_loop():
@@ -1680,7 +1680,7 @@ async def _keepalive_loop():
         pass
 ```
 
-- [ ] **Step 3：运行 + 提交**
+- [x] **Step 3：运行 + 提交**
 
 ```bash
 cd backend && pytest tests/test_keepalive_interval.py -v
@@ -1697,7 +1697,7 @@ git commit -m "feat(api): tighten keepalive cadence from 15s to 8s"
 - Modify: `backend/agent/loop.py`
 - Test: `backend/tests/test_agent_status_event.py`
 
-- [ ] **Step 1：写测试**
+- [x] **Step 1：写测试**
 
 ```python
 @pytest.mark.asyncio
@@ -1707,7 +1707,7 @@ async def test_agent_status_compacting_emitted_when_budget_exceeded(agent_over_b
     assert "compacting" in stages
 ```
 
-- [ ] **Step 2：context/manager.py 暴露预判**
+- [x] **Step 2：context/manager.py 暴露预判**
 
 在 `ContextManager` 中新增：
 
@@ -1718,7 +1718,7 @@ def will_trigger_compaction(self, messages: list[Message], phase: int) -> bool:
     return estimated_tokens / budget > 0.60
 ```
 
-- [ ] **Step 3：loop.py 使用预判**
+- [x] **Step 3：loop.py 使用预判**
 
 在 yield `thinking` 之前：
 
@@ -1730,7 +1730,7 @@ if self.context.will_trigger_compaction(messages, phase):
     )
 ```
 
-- [ ] **Step 4：运行 + 提交**
+- [x] **Step 4：运行 + 提交**
 
 ```bash
 cd backend && pytest tests/test_agent_status_event.py -v
@@ -1748,7 +1748,7 @@ git commit -m "feat(loop): emit agent_status(compacting) pre-announcement when b
 - Modify: `frontend/src/components/MessageBubble.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：ChatPanel staleness state**
+- [x] **Step 1：ChatPanel staleness state**
 
 ```tsx
 const [staleness, setStaleness] = useState<'normal' | 'minor' | 'waiting'>('normal')
@@ -1767,13 +1767,13 @@ useEffect(() => {
 // 现有 KEEPALIVE_TIMEOUT_MS 已有的 feedback 升级逻辑改用 staleness === 'waiting'
 ```
 
-- [ ] **Step 2：KEEPALIVE_TIMEOUT_MS 30s → 20s**
+- [x] **Step 2：KEEPALIVE_TIMEOUT_MS 30s → 20s**
 
 ```tsx
 const KEEPALIVE_TIMEOUT_MS = 20_000
 ```
 
-- [ ] **Step 3：呼吸小点**
+- [x] **Step 3：呼吸小点**
 
 ThinkingBubble / MessageBubble tool 分支内读取 `staleness` prop（从 ChatPanel 透传）。若 `staleness === 'minor'`：
 
@@ -1795,7 +1795,7 @@ CSS：
 }
 ```
 
-- [ ] **Step 4：类型检查 + 提交**
+- [x] **Step 4：类型检查 + 提交**
 
 ```bash
 cd frontend && npm run build
@@ -1812,7 +1812,7 @@ git commit -m "feat(frontend): three-tier staleness indicator with breath dot at
 - Modify: `frontend/src/components/ChatPanel.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：组件**
+- [x] **Step 1：组件**
 
 ```tsx
 import { useEffect, useState } from 'react'
@@ -1839,7 +1839,7 @@ export default function RoundSummaryBar({ toolCount, durationMs, memoryCount }: 
 }
 ```
 
-- [ ] **Step 2：ChatPanel 集成**
+- [x] **Step 2：ChatPanel 集成**
 
 `ChatPanel.tsx`：
 
@@ -1870,7 +1870,7 @@ if (event.run_status === 'completed') {
 
 渲染：`{summary && <RoundSummaryBar {...summary} />}`
 
-- [ ] **Step 3：CSS**
+- [x] **Step 3：CSS**
 
 ```css
 .round-summary-bar {
@@ -1889,7 +1889,7 @@ if (event.run_status === 'completed') {
 }
 ```
 
-- [ ] **Step 4：类型检查 + 提交**
+- [x] **Step 4：类型检查 + 提交**
 
 ```bash
 cd frontend && npm run build
@@ -1906,7 +1906,7 @@ git commit -m "feat(frontend): RoundSummaryBar after done event with 2.5s fade"
 - Modify: `frontend/src/components/MessageBubble.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：ChatPanel 处理**
+- [x] **Step 1：ChatPanel 处理**
 
 在 `memory_recall` 事件回调中新增"本轮首次"判定（利用 `roundStateRef.current.memoryChipInserted` bool）：
 
@@ -1928,7 +1928,7 @@ if (event.type === 'memory_recall' && event.item_ids) {
 
 `handleSend` 开始时重置 `memoryChipInserted = false`。`ChatMessage` 接口加 `memoryChip?: { count: number }`。
 
-- [ ] **Step 2：MessageBubble variant**
+- [x] **Step 2：MessageBubble variant**
 
 ```tsx
 if (role === 'system' && memoryChip) {
@@ -1946,7 +1946,7 @@ if (role === 'system' && memoryChip) {
 
 App.tsx 监听 `openMemoryCenter` 事件打开抽屉（复用已有逻辑）。
 
-- [ ] **Step 3：CSS**
+- [x] **Step 3：CSS**
 
 ```css
 .system-memory-chip {
@@ -1961,7 +1961,7 @@ App.tsx 监听 `openMemoryCenter` 事件打开抽屉（复用已有逻辑）。
 .system-memory-chip:hover { background: rgba(180, 140, 255, 0.14); }
 ```
 
-- [ ] **Step 4：类型检查 + 提交 + PR3 收尾**
+- [x] **Step 4：类型检查 + 提交 + PR3 收尾**
 
 ```bash
 cd frontend && npm run build
@@ -1979,7 +1979,7 @@ git commit -m "feat(frontend): inline memory_recall chip with MemoryCenter jump"
 - Create: `backend/agent/narration.py`
 - Create: `backend/tests/test_narration.py`
 
-- [ ] **Step 1：写测试**
+- [x] **Step 1：写测试**
 
 ```python
 from agent.narration import compute_narration
@@ -2021,7 +2021,7 @@ def test_unrecognized_state_returns_none():
     assert compute_narration(plan) is None
 ```
 
-- [ ] **Step 2：实现**
+- [x] **Step 2：实现**
 
 ```python
 from state.models import TravelPlanState
@@ -2049,7 +2049,7 @@ def compute_narration(plan: TravelPlanState) -> str | None:
     return None
 ```
 
-- [ ] **Step 3：运行 + 提交**
+- [x] **Step 3：运行 + 提交**
 
 ```bash
 cd backend && pytest tests/test_narration.py -v
@@ -2066,7 +2066,7 @@ git commit -m "feat(agent): rule-based narration hints for each phase/step"
 - Modify: `backend/agent/loop.py`
 - Test: `backend/tests/test_agent_status_event.py`
 
-- [ ] **Step 1：写测试**
+- [x] **Step 1：写测试**
 
 ```python
 @pytest.mark.asyncio
@@ -2079,7 +2079,7 @@ async def test_agent_status_thinking_includes_narration_hint_for_phase1(agent_ph
     assert thinking.agent_status["hint"] == "先搞清楚你想去哪，然后翻点真实游记"
 ```
 
-- [ ] **Step 2：实现**
+- [x] **Step 2：实现**
 
 Task 13/14 的 yield 处：
 
@@ -2093,7 +2093,7 @@ yield LLMChunk(
 )
 ```
 
-- [ ] **Step 3：运行 + 提交**
+- [x] **Step 3：运行 + 提交**
 
 ```bash
 cd backend && pytest tests/test_agent_status_event.py -v
@@ -2109,7 +2109,7 @@ git commit -m "feat(loop): inject narration hint into agent_status events"
 - Modify: `frontend/src/components/ThinkingBubble.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：收起按钮 + localStorage 持久化**
+- [x] **Step 1：收起按钮 + localStorage 持久化**
 
 ```tsx
 const STORAGE_KEY = 'thinkingBubble.collapsed'
@@ -2138,7 +2138,7 @@ export default function ThinkingBubble({ ... }: Props) {
 }
 ```
 
-- [ ] **Step 2：CSS**
+- [x] **Step 2：CSS**
 
 ```css
 .thinking-collapse {
@@ -2152,7 +2152,7 @@ export default function ThinkingBubble({ ... }: Props) {
 .thinking-collapse:hover { opacity: 1; }
 ```
 
-- [ ] **Step 3：提交**
+- [x] **Step 3：提交**
 
 ```bash
 cd frontend && npm run build
@@ -2167,7 +2167,7 @@ git commit -m "feat(frontend): ThinkingBubble hint display with dismiss preferen
 **Files:**
 - Create: `docs/learning/2026-0X-XX-thinking-stream-spike.md`（占位日期待落地时确定）
 
-- [ ] **Step 1：调研与文档**
+- [x] **Step 1：调研与文档**
 
 不写代码。产出一份 memo 回答以下问题：
 
@@ -2178,7 +2178,7 @@ git commit -m "feat(frontend): ThinkingBubble hint display with dismiss preferen
 
 memo 结尾给出"下一迭代是否启动实施"的建议。
 
-- [ ] **Step 2：提交**
+- [x] **Step 2：提交**
 
 ```bash
 git add docs/learning/*-thinking-stream-spike.md
