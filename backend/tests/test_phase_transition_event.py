@@ -5,7 +5,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from agent.hooks import HookManager
 from agent.loop import AgentLoop
-from agent.types import Message, Role, ToolCall
+from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from main import create_app
 from state.models import TravelPlanState
@@ -441,6 +441,27 @@ async def test_loop_yields_phase_transition_on_backtrack(agent_with_backtrack_to
         "reason": "backtrack",
     }
     assert order[:2] == ["transition", "rebuild"]
+
+
+@pytest.mark.asyncio
+async def test_request_backtrack_result_marks_session_for_rebuild(
+    app, sessions, session_id
+):
+    session = sessions[session_id]
+    result = ToolResult(
+        tool_call_id="tc_backtrack",
+        status="success",
+        data={"backtracked": True},
+    )
+
+    await session["agent"].hooks.run(
+        "after_tool_call",
+        tool_name="request_backtrack",
+        tool_call=ToolCall(id="tc_backtrack", name="request_backtrack", arguments={}),
+        result=result,
+    )
+
+    assert session["needs_rebuild"] is True
 
 
 @pytest.mark.asyncio
