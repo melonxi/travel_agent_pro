@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -17,16 +17,37 @@ interface StateChange {
   value: string
 }
 
+const PHASE_LABELS: Record<number, string> = {
+  1: '灵感与目的地',
+  3: '日期与住宿',
+  5: '行程组装',
+  7: '出发前查漏',
+}
+
+const STEP_LABELS: Record<string, string> = {
+  brief: '旅行画像',
+  candidate: '候选筛选',
+  skeleton: '骨架方案',
+  lock: '锁定交通与住宿',
+}
+
 interface Props {
   role: 'user' | 'assistant' | 'tool' | 'system'
   content: string
   toolName?: string
+  humanLabel?: string
+  startedAt?: number
+  endedAt?: number
   toolStatus?: 'pending' | 'success' | 'error' | 'skipped'
   toolArguments?: Record<string, unknown>
   toolResult?: unknown
   toolError?: string
   toolSuggestion?: string
   stateChanges?: StateChange[]
+  phaseTransition?: {
+    to_phase: number
+    to_step?: string | null
+  }
   compressionInfo?: CompressionInfo
 }
 
@@ -38,15 +59,50 @@ export default function MessageBubble({
   role,
   content,
   toolName,
+  humanLabel,
+  startedAt,
+  endedAt,
   toolStatus,
   toolArguments,
   toolResult,
   toolError,
   toolSuggestion,
   stateChanges,
+  phaseTransition,
   compressionInfo,
 }: Props) {
   const [detailsExpanded, setDetailsExpanded] = useState(false)
+  const [now, setNow] = useState(Date.now())
+
+  useEffect(() => {
+    if (role !== 'tool' || toolStatus !== 'pending') return undefined
+
+    const timer = window.setInterval(() => {
+      setNow(Date.now())
+    }, 500)
+
+    return () => window.clearInterval(timer)
+  }, [role, toolStatus])
+
+  if (role === 'system' && phaseTransition) {
+    const phaseLabel = PHASE_LABELS[phaseTransition.to_phase] ?? `Phase ${phaseTransition.to_phase}`
+    const stepLabel = phaseTransition.to_step
+      ? (STEP_LABELS[phaseTransition.to_step] ?? phaseTransition.to_step)
+      : null
+    const message = `已进入${phaseLabel}${stepLabel ? ` · ${stepLabel}` : ''}`
+
+    return (
+      <div className="message system-phase-transition">
+        <div className="phase-transition-card">
+          <div className="phase-transition-header">
+            <span className="phase-transition-marker" aria-hidden="true" />
+            <span className="phase-transition-title">阶段推进</span>
+          </div>
+          <div className="phase-transition-text">{message}</div>
+        </div>
+      </div>
+    )
+  }
 
   if (role === 'system' && stateChanges && stateChanges.length > 0) {
     return (
@@ -102,12 +158,29 @@ export default function MessageBubble({
     const statusLabel =
       toolStatus === 'error' ? '失败' : toolStatus === 'success' ? '成功' : '执行中'
     const resolvedStatusLabel = toolStatus === 'skipped' ? '已跳过' : statusLabel
+    const elapsedMs = startedAt
+      ? Math.max(0, (endedAt ?? (toolStatus === 'pending' ? now : Date.now())) - startedAt)
+      : null
+    const elapsedLabel = elapsedMs !== null ? `${(elapsedMs / 1000).toFixed(1)}s` : null
+    const isLongRunning = toolStatus === 'pending' && elapsedMs !== null && elapsedMs >= 8000
+    const subtitleBase = humanLabel ?? toolName ?? null
+    const subtitleLabel = subtitleBase
+      ? `${subtitleBase}${isLongRunning ? '（运行较久，请稍候）' : ''}`
+      : null
 
     return (
       <div className={`message tool ${toolStatus ?? 'pending'}`}>
         <div className="tool-card">
           <div className="tool-card-header">
-            <span className="tool-badge">{toolName}</span>
+            <div className="tool-card-meta">
+              <span className="tool-badge">{toolName}</span>
+              {(subtitleLabel || elapsedLabel) && (
+                <div className={`tool-subtitle ${isLongRunning ? 'long-running' : ''}`}>
+                  {subtitleLabel && <span>{subtitleLabel}</span>}
+                  {elapsedLabel && <span className="tool-elapsed">{elapsedLabel}</span>}
+                </div>
+              )}
+            </div>
             <div className="tool-card-actions">
               <span className={`tool-status ${toolStatus ?? 'pending'}`}>{resolvedStatusLabel}</span>
               {(toolArguments || toolResult !== undefined) && (

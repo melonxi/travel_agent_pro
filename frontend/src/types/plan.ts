@@ -124,6 +124,7 @@ export interface ToolCallEvent {
   id: string
   name: string
   arguments: Record<string, unknown>
+  human_label?: string | null
 }
 
 export interface ToolResultEvent {

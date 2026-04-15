@@ -768,7 +768,7 @@ git commit -m "feat(frontend): Phase3Workbench honors overrideStep"
 - Modify: `frontend/src/components/ChatPanel.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：MessageBubble 新增 variant**
+- [x] **Step 1：MessageBubble 新增 variant**
 
 在 `MessageBubble.tsx` 的 `if (role === 'system' && stateChanges...)` 分支之前追加：
 
@@ -790,7 +790,7 @@ if (role === 'system' && phaseTransition) {
 
 `PHASE_LABELS` / `STEP_LABELS` 常量定义在文件头。Props 加 `phaseTransition?: { to_phase: number; to_step?: string | null }`。
 
-- [ ] **Step 2：ChatPanel 在 phase_transition 事件时插入卡片**
+- [x] **Step 2：ChatPanel 在 phase_transition 事件时插入卡片**
 
 Task 8 中的分派改为：
 
@@ -811,7 +811,7 @@ if (event.type === 'phase_transition' && event.to_phase !== undefined) {
 
 `ChatMessage` 接口加 `phaseTransition?: { to_phase: number; to_step?: string | null }`。
 
-- [ ] **Step 3：CSS**
+- [x] **Step 3：CSS**
 
 `frontend/src/styles/index.css`：
 
@@ -850,7 +850,7 @@ git commit -m "feat(frontend): add PhaseTransitionCard for phase change announce
 **Files:**
 - Modify: `e2e-test.spec.ts`
 
-- [ ] **Step 1：扩展 demo spec**
+- [x] **Step 1：扩展 demo spec**
 
 在 Phase 1 → Phase 3 的断言点追加：
 
@@ -879,7 +879,7 @@ npx playwright test e2e-test.spec.ts
 
 Expected: 全部通过
 
-- [ ] **Step 3：PROJECT_OVERVIEW.md 同步**
+- [x] **Step 3：PROJECT_OVERVIEW.md 同步**
 
 在 SSE 协议段添加 `phase_transition` 事件说明，在"关键组件"段说明 `phaseOverride` 机制。
 
@@ -1255,7 +1255,7 @@ git commit -m "feat(tools): populate human_label for all registered tools"
 - Create: `frontend/src/components/ThinkingBubble.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：组件骨架**
+- [x] **Step 1：组件骨架**
 
 ```tsx
 import { useEffect, useState } from 'react'
@@ -1296,7 +1296,7 @@ export default function ThinkingBubble({ createdAt, stage = 'thinking', iteratio
 }
 ```
 
-- [ ] **Step 2：CSS**
+- [x] **Step 2：CSS**
 
 ```css
 .thinking-bubble {
@@ -1359,7 +1359,7 @@ git commit -m "feat(frontend): add ThinkingBubble component with stage-aware cop
 **Files:**
 - Modify: `frontend/src/components/ChatPanel.tsx`
 
-- [ ] **Step 1：新增 state**
+- [x] **Step 1：新增 state**
 
 ```tsx
 const [thinking, setThinking] = useState<{
@@ -1370,7 +1370,7 @@ const [thinking, setThinking] = useState<{
 } | null>(null)
 ```
 
-- [ ] **Step 2：handleSend 本地立即触发**
+- [x] **Step 2：handleSend 本地立即触发**
 
 ```tsx
 const handleSend = async () => {
@@ -1381,7 +1381,7 @@ const handleSend = async () => {
 }
 ```
 
-- [ ] **Step 3：事件回调中控制生命周期**
+- [x] **Step 3：事件回调中控制生命周期**
 
 ```tsx
 if (event.type === 'agent_status' && event.stage) {
@@ -1400,7 +1400,7 @@ if (event.type === 'text_delta' || event.type === 'tool_call' || event.type === 
 }
 ```
 
-- [ ] **Step 4：渲染**
+- [x] **Step 4：渲染**
 
 在 `{messages.map(...)}` 之后、`streaming-cursor` 之前：
 
@@ -1434,7 +1434,7 @@ git commit -m "feat(frontend): wire ThinkingBubble lifecycle to agent_status SSE
 - Modify: `frontend/src/components/ChatPanel.tsx`（新增 startedAt/endedAt 字段）
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：ChatMessage 加计时字段**
+- [x] **Step 1：ChatMessage 加计时字段**
 
 `ChatPanel.tsx` 的 `ChatMessage` 接口：
 
@@ -1449,7 +1449,7 @@ interface ChatMessage {
 
 tool_call 事件到达时 `startedAt: Date.now()`, `humanLabel: event.tool_call.human_label`；tool_result 到达时 `endedAt: Date.now()`。
 
-- [ ] **Step 2：MessageBubble 渲染**
+- [x] **Step 2：MessageBubble 渲染**
 
 ```tsx
 interface Props {
@@ -1482,7 +1482,7 @@ return (
 )
 ```
 
-- [ ] **Step 3：Pending 状态计时器重渲染**
+- [x] **Step 3：Pending 状态计时器重渲染**
 
 MessageBubble 内用 useEffect + setInterval 每 500ms 强制更新（仅 pending 时）：
 
@@ -1495,7 +1495,7 @@ useEffect(() => {
 }, [toolStatus])
 ```
 
-- [ ] **Step 4：CSS**
+- [x] **Step 4：CSS**
 
 ```css
 .tool-subtitle {
@@ -1543,7 +1543,7 @@ git commit -m "feat(frontend): tool card shows human_label and live elapsed time
 **Files:**
 - Modify: `frontend/src/components/MessageBubble.tsx`
 
-- [ ] **Step 1：实现**
+- [x] **Step 1：实现**
 
 在 tool 分支内：
 
@@ -1584,7 +1584,7 @@ git commit -m "feat(frontend): warn long-running tool calls after 8 seconds"
 - Create: `playwright.waiting.config.ts`
 - Modify: `scripts/demo/demo-scripted-session.json`（追加 waiting scenario 所需事件）
 
-- [ ] **Step 1：编写 spec**
+- [x] **Step 1：编写 spec**
 
 ```ts
 import { test, expect } from '@playwright/test'
@@ -1611,7 +1611,7 @@ test.describe('Agent waiting experience', () => {
 })
 ```
 
-- [ ] **Step 2：playwright.waiting.config.ts**
+- [x] **Step 2：playwright.waiting.config.ts**
 
 参照 `playwright.retry.config.ts` 结构：
 
@@ -1625,7 +1625,7 @@ export default defineConfig({
 })
 ```
 
-- [ ] **Step 3：运行**
+- [x] **Step 3：运行**
 
 ```bash
 npx playwright test --config playwright.waiting.config.ts
@@ -1633,11 +1633,11 @@ npx playwright test --config playwright.waiting.config.ts
 
 Expected: 全部通过
 
-- [ ] **Step 4：PROJECT_OVERVIEW.md 同步**
+- [x] **Step 4：PROJECT_OVERVIEW.md 同步**
 
 追加 `agent_status` 事件到 SSE 协议段，在"关键组件"段说明 ThinkingBubble 和工具卡增强。
 
-- [ ] **Step 5：提交 + PR2 收尾**
+- [x] **Step 5：提交 + PR2 收尾**
 
 ```bash
 git add e2e-waiting-experience.spec.ts playwright.waiting.config.ts scripts/demo/demo-scripted-session.json PROJECT_OVERVIEW.md
@@ -2191,18 +2191,18 @@ git commit -m "docs: thinking stream spike memo evaluating reasoning chunk suppo
 
 ### Spec coverage
 - [x] 新事件 `phase_transition` 的 4 种触发路径 → Task 3/4/5/6
-- [x] 新事件 `agent_status`（thinking/summarizing/compacting/hint） → Task 13/14/24/29
+- [ ] 新事件 `agent_status`（thinking/summarizing/compacting/hint） → Task 13/14/24/29
 - [x] `tool_call.human_label` 字段 + 24 个工具 → Task 15/16/17
 - [x] PhaseIndicator override + 动画 → Task 8/9
 - [x] Phase3Workbench override → Task 10
 - [x] PhaseTransitionCard → Task 11
-- [x] ThinkingBubble 组件与生命周期 → Task 18/19/30
+- [ ] ThinkingBubble 组件与生命周期 → Task 18/19/30
 - [x] 工具副标题 + 计时器 + 8s 警告 → Task 20/21
-- [x] Keepalive 8s 与 staleness 三档 → Task 23/25
-- [x] RoundSummaryBar → Task 26
-- [x] memory_recall 内联 chip → Task 27
-- [x] Track A narration → Task 28/29
-- [x] Track B spike memo → Task 31
+- [ ] Keepalive 8s 与 staleness 三档 → Task 23/25
+- [ ] RoundSummaryBar → Task 26
+- [ ] memory_recall 内联 chip → Task 27
+- [ ] Track A narration → Task 28/29
+- [ ] Track B spike memo → Task 31
 - [x] E2E 覆盖 → Task 12/22
 
 ### 明确非目标
