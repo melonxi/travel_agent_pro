@@ -442,3 +442,40 @@ class TestExecuteBacktrack:
         plan.phase = 3
         result = execute_backtrack(plan, to_phase=2, reason="test")
         assert result["to_phase"] == 1
+
+
+# --- L4: reader-side defense ---
+
+
+class TestInferPhase3StepRobustness:
+    """infer_phase3_step_from_state must handle non-dict skeleton elements."""
+
+    def test_filters_string_elements(self):
+        from state.models import DateRange, infer_phase3_step_from_state
+
+        result = infer_phase3_step_from_state(
+            phase=3,
+            dates=DateRange(start="2026-05-01", end="2026-05-05"),
+            trip_brief={"goal": "test"},
+            candidate_pool=[{"name": "A"}],
+            shortlist=[{"name": "A"}],
+            skeleton_plans=["corrupted_string", {"id": "plan_a", "name": "ok"}],
+            selected_skeleton_id="plan_a",
+            accommodation=None,
+        )
+        assert result == "lock"
+
+    def test_filters_int_elements(self):
+        from state.models import DateRange, infer_phase3_step_from_state
+
+        result = infer_phase3_step_from_state(
+            phase=3,
+            dates=DateRange(start="2026-05-01", end="2026-05-05"),
+            trip_brief={"goal": "test"},
+            candidate_pool=None,
+            shortlist=None,
+            skeleton_plans=[42, {"id": "plan_b", "name": "ok"}],
+            selected_skeleton_id="plan_b",
+            accommodation=None,
+        )
+        assert result == "lock"
