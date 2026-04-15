@@ -221,7 +221,7 @@ LLM API 异常
 
 | 类别 | 工具 |
 |------|------|
-| 状态 | `update_plan_state`（当前公开写入口，含冗余检测，底层复用 `state.plan_writers` 共享写层）、`tools.plan_tools.phase3_tools`（已拆出 Category A Phase 3 强 schema 写工具工厂） |
+| 状态 | `update_plan_state`（当前公开写入口，含冗余检测，底层复用 `state.plan_writers` 共享写层）、`tools.plan_tools.phase3_tools`（已拆出 Category A Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退） |
 | 搜索 | `xiaohongshu_search`、`web_search`、`quick_travel_search` |
 | 交通 | `search_flights`（Amadeus + FlyAI 双源融合）、`search_trains`、`calculate_route` |
 | 住宿 | `search_accommodations` |

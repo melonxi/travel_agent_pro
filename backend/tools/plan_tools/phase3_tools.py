@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from state.models import TravelPlanState
 from state.plan_writers import (
+    clear_selected_skeleton_id,
     write_accommodation,
     write_accommodation_options,
     write_alternatives,
@@ -48,15 +49,82 @@ _SET_SKELETON_PLANS_PARAMS = {
 }
 
 
-def _validated_skeleton_id_list(skeleton_plans: list[object]) -> list[str]:
-    valid_ids: list[str] = []
+def _validated_skeleton_id_map(skeleton_plans: list[object]) -> tuple[dict[str, str], set[str]]:
+    valid_ids: dict[str, str] = {}
+    colliding_ids: set[str] = set()
     for item in skeleton_plans:
         if not isinstance(item, dict):
             continue
         skeleton_id = item.get("id")
         if isinstance(skeleton_id, str) and skeleton_id.strip():
-            valid_ids.append(skeleton_id)
-    return valid_ids
+            normalized_id = skeleton_id.strip()
+            existing_raw_id = valid_ids.get(normalized_id)
+            if existing_raw_id is None:
+                valid_ids[normalized_id] = skeleton_id
+            else:
+                colliding_ids.add(normalized_id)
+    return valid_ids, colliding_ids
+
+
+def _reconcile_selected_skeleton_after_rewrite(
+    plan: TravelPlanState,
+    previous_skeleton_plans: list[object],
+    normalized_plans: list[dict],
+    seen_ids: set[str],
+) -> None:
+    current_selected_id = plan.selected_skeleton_id
+    if not isinstance(current_selected_id, str):
+        return
+
+    normalized_selected_id = current_selected_id.strip()
+    matched_previous_id_indexes: set[int] = set()
+    matched_previous_name_indexes: set[int] = set()
+    for index, item in enumerate(previous_skeleton_plans):
+        if not isinstance(item, dict):
+            continue
+        previous_id = item.get("id")
+        previous_name = item.get("name")
+        if isinstance(previous_id, str) and previous_id.strip() == normalized_selected_id:
+            matched_previous_id_indexes.add(index)
+        if isinstance(previous_name, str) and previous_name.strip() == normalized_selected_id:
+            matched_previous_name_indexes.add(index)
+
+    matched_previous_indexes = matched_previous_id_indexes | matched_previous_name_indexes
+    if len(matched_previous_indexes) != 1:
+        clear_selected_skeleton_id(plan)
+        return
+
+    matched_previous_index = next(iter(matched_previous_indexes))
+    matched_ids = [
+        skeleton_plan["id"]
+        for skeleton_plan in normalized_plans
+        if skeleton_plan.get("name") == normalized_selected_id
+    ]
+
+    def write_if_uniquely_resolved(candidate: str) -> None:
+        matching_indexes = {
+            index
+            for index, skeleton_plan in enumerate(normalized_plans)
+            if skeleton_plan.get("id") == candidate or skeleton_plan.get("name") == candidate
+        }
+        if len(matching_indexes) == 1:
+            write_selected_skeleton_id(plan, candidate)
+        else:
+            clear_selected_skeleton_id(plan)
+
+    if matched_previous_index in matched_previous_id_indexes:
+        if normalized_selected_id in seen_ids:
+            write_if_uniquely_resolved(normalized_selected_id)
+        elif matched_previous_index in matched_previous_name_indexes and len(matched_ids) == 1:
+            write_if_uniquely_resolved(matched_ids[0])
+        else:
+            clear_selected_skeleton_id(plan)
+        return
+
+    if len(matched_ids) == 1:
+        write_if_uniquely_resolved(matched_ids[0])
+    else:
+        clear_selected_skeleton_id(plan)
 
 
 def make_set_skeleton_plans_tool(plan: TravelPlanState):
@@ -76,6 +144,7 @@ def make_set_skeleton_plans_tool(plan: TravelPlanState):
                 suggestion="请传 list[object]",
             )
         seen_ids: set[str] = set()
+        normalized_plans: list[dict] = []
         for i, p in enumerate(plans):
             if not isinstance(p, dict):
                 raise ToolError(
@@ -109,18 +178,31 @@ def make_set_skeleton_plans_tool(plan: TravelPlanState):
                     error_code="INVALID_VALUE",
                     suggestion='每个骨架必须有非空 name，如 {"id": "plan_a", "name": "轻松版", ...}',
                 )
-            if skeleton_id in seen_ids:
+            normalized_id = skeleton_id.strip()
+            normalized_name = skeleton_name.strip()
+            if normalized_id in seen_ids:
                 raise ToolError(
-                    f"plans[{i}].id {skeleton_id!r} 重复",
+                    f"plans[{i}].id {normalized_id!r} 重复",
                     error_code="INVALID_VALUE",
                     suggestion="每个骨架方案的 id 必须唯一",
                 )
-            seen_ids.add(skeleton_id)
+            seen_ids.add(normalized_id)
+            normalized_plan = dict(p)
+            normalized_plan["id"] = normalized_id
+            normalized_plan["name"] = normalized_name
+            normalized_plans.append(normalized_plan)
         prev_count = len(plan.skeleton_plans)
-        write_skeleton_plans(plan, plans)
+        previous_skeleton_plans = list(plan.skeleton_plans)
+        write_skeleton_plans(plan, normalized_plans)
+        _reconcile_selected_skeleton_after_rewrite(
+            plan,
+            previous_skeleton_plans,
+            normalized_plans,
+            seen_ids,
+        )
         return {
             "updated_field": "skeleton_plans",
-            "count": len(plans),
+            "count": len(normalized_plans),
             "previous_count": prev_count,
         }
 
@@ -159,18 +241,27 @@ def make_select_skeleton_tool(plan: TravelPlanState):
                 error_code="INVALID_VALUE",
                 suggestion="请传入骨架方案的 id 字段值",
             )
-        existing_ids = _validated_skeleton_id_list(plan.skeleton_plans)
-        if id not in existing_ids:
+        normalized_id = id.strip()
+        existing_id_map, colliding_ids = _validated_skeleton_id_map(plan.skeleton_plans)
+        if normalized_id in colliding_ids:
             raise ToolError(
-                f"未找到 id={id!r} 的骨架方案",
+                f"id={normalized_id!r} 存在冲突的历史骨架记录",
                 error_code="INVALID_VALUE",
-                suggestion=f"可选 id: {', '.join(existing_ids) if existing_ids else '(无已写入骨架)'}",
+                suggestion="请先清理重复的骨架 id 后再选择",
             )
+        if normalized_id not in existing_id_map:
+            selectable_ids = [existing_id for existing_id in existing_id_map if existing_id not in colliding_ids]
+            raise ToolError(
+                f"未找到 id={normalized_id!r} 的骨架方案",
+                error_code="INVALID_VALUE",
+                suggestion=f"可选 id: {', '.join(selectable_ids) if selectable_ids else '(无已写入骨架)'}",
+            )
+        matched_id = existing_id_map[normalized_id]
         prev = plan.selected_skeleton_id
-        write_selected_skeleton_id(plan, id)
+        write_selected_skeleton_id(plan, matched_id)
         return {
             "updated_field": "selected_skeleton_id",
-            "new_value": id,
+            "new_value": matched_id,
             "previous_value": prev,
         }
 

@@ -78,6 +78,15 @@ class TestWriteSelectedSkeletonId:
             write_selected_skeleton_id(plan, 123)
 
 
+class TestClearSelectedSkeletonId:
+    def test_clears_selection(self, plan):
+        from state.plan_writers import clear_selected_skeleton_id
+
+        plan.selected_skeleton_id = "plan_a"
+        clear_selected_skeleton_id(plan)
+        assert plan.selected_skeleton_id is None
+
+
 class TestWriteCandidatePool:
     def test_replaces_wholesale(self, plan):
         from state.plan_writers import write_candidate_pool

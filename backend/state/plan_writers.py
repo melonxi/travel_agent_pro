@@ -45,6 +45,11 @@ def write_selected_skeleton_id(plan: TravelPlanState, skeleton_id: str) -> None:
     plan.selected_skeleton_id = skeleton_id
 
 
+def clear_selected_skeleton_id(plan: TravelPlanState) -> None:
+    """Clear any previously selected skeleton plan."""
+    plan.selected_skeleton_id = None
+
+
 def write_candidate_pool(plan: TravelPlanState, pool: list[dict]) -> None:
     assert isinstance(pool, list), f"Expected list, got {type(pool).__name__}"
     plan.candidate_pool = pool
