@@ -1258,6 +1258,11 @@ body::after {
   height: 18px;
 }
 
+@keyframes stop-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.25); }
+  50%      { box-shadow: 0 0 12px 3px rgba(239, 68, 68, 0.35); }
+}
+
 .stop-btn {
   display: flex;
   align-items: center;
@@ -1271,6 +1276,7 @@ body::after {
   cursor: pointer;
   transition: all var(--transition-smooth);
   flex-shrink: 0;
+  animation: stop-pulse 2s ease-in-out infinite;
 }
 
 .stop-btn:hover {
@@ -1288,8 +1294,8 @@ body::after {
   height: 18px;
 }
 
-.send-btn--hidden,
-.stop-btn--hidden {
+.send-btn.send-btn--hidden,
+.stop-btn.stop-btn--hidden {
   opacity: 0;
   pointer-events: none;
   position: absolute;
