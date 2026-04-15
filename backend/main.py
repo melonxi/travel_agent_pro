@@ -1898,7 +1898,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         # Build system message
         phase_router.sync_phase_state(plan)
-        phase_prompt = phase_router.get_prompt(plan.phase)
+        phase_prompt = phase_router.get_prompt_for_plan(plan)
         available_tools = [
             tool["name"]
             for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)

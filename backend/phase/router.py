@@ -6,7 +6,7 @@ from typing import Any
 from opentelemetry import trace
 
 from phase.backtrack import BacktrackService
-from phase.prompts import PHASE_CONTROL_MODE, PHASE_PROMPTS
+from phase.prompts import PHASE_CONTROL_MODE, PHASE_PROMPTS, build_phase3_prompt
 from state.models import TravelPlanState, infer_phase3_step_from_state
 from telemetry.attributes import EVENT_PHASE_PLAN_SNAPSHOT, PHASE_FROM, PHASE_TO
 
@@ -67,6 +67,13 @@ class PhaseRouter:
 
     def get_prompt(self, phase: int) -> str:
         return PHASE_PROMPTS.get(phase, PHASE_PROMPTS[1])
+
+    def get_prompt_for_plan(self, plan: TravelPlanState) -> str:
+        """Return phase prompt; for Phase 3, dynamically assemble by sub-stage."""
+        if plan.phase == 3:
+            step = getattr(plan, "phase3_step", "brief") or "brief"
+            return build_phase3_prompt(step)
+        return PHASE_PROMPTS.get(plan.phase, PHASE_PROMPTS[1])
 
     def get_control_mode(self, phase: int) -> str:
         return PHASE_CONTROL_MODE.get(phase, "conversational")
