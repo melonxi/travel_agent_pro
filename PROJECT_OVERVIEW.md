@@ -242,6 +242,17 @@ travel_agent_pro/
     [RunRecord 生命周期] 记录运行状态 + can_continue 判定 + continuation_context 保存
 ```
 
+### pending system notes 缓冲区
+
+Session 字典持有 `_pending_system_notes: list[str]`，用于缓存在工具执行阶段
+产生、但**不应**立即 append 到 `session["messages"]` 的 SYSTEM 消息（典型如
+实时约束检查 `[实时约束检查]`）。
+
+- 写入点：`on_validate` 等工具执行回调，经 `push_pending_system_note(session, content)` 追加。
+- 消费点：**唯一**的 flush 发生在 `on_before_llm` 开头，经 `flush_pending_system_notes(session, msgs)` 按序 append 到 msgs 末尾并清空缓冲区。
+- 目的：保证 `assistant.tool_calls → 全部 tool 答复` 的协议序列原子性；并行 tool_calls 期间任何 SYSTEM 都只会落在整组 tool 之后、下一次 assistant 之前。
+- 不落盘：session 重载后重置为 `[]`，未 flush 的提醒丢失（提醒本身是状态派生物，无需持久化）。
+
 ---
 
 ## 6. 上下文压缩机制（关键设计）
