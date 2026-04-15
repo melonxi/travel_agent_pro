@@ -63,6 +63,29 @@ def _match_memory_hits(
     return None
 
 
+def _classify_significance(iteration: dict) -> str:
+    """Classify iteration significance for frontend display priority.
+
+    Returns one of: 'high', 'medium', 'low', 'none'.
+    - high:   state_changes, validation_errors, judge_scores, or write-side-effect tools
+    - medium: read-side-effect tools only
+    - low:    compression_event or memory_hits only (no tools)
+    - none:   pure thinking (LLM only, nothing else)
+    """
+    if iteration.get("state_changes"):
+        return "high"
+    for tc in iteration.get("tool_calls", []):
+        if tc.get("validation_errors") or tc.get("judge_scores"):
+            return "high"
+    tool_calls = iteration.get("tool_calls", [])
+    if tool_calls:
+        has_write = any(tc.get("side_effect") == "write" for tc in tool_calls)
+        return "high" if has_write else "medium"
+    if iteration.get("compression_event") or iteration.get("memory_hits"):
+        return "low"
+    return "none"
+
+
 def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
     """Build structured trace from session's stats data."""
     stats: SessionStats = session.get("stats", SessionStats())
@@ -133,24 +156,24 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
             cost = (llm.input_tokens / 1_000_000) * pricing["input"]
             cost += (llm.output_tokens / 1_000_000) * pricing["output"]
 
-        iterations.append(
-            {
-                "index": i + 1,
-                "phase": llm.phase,
-                "llm_call": {
-                    "provider": llm.provider,
-                    "model": llm.model,
-                    "input_tokens": llm.input_tokens,
-                    "output_tokens": llm.output_tokens,
-                    "duration_ms": round(llm.duration_ms, 1),
-                    "cost_usd": round(cost, 6),
-                },
-                "tool_calls": iter_tool_dicts,
-                "state_changes": _collect_state_changes(iter_tools),
-                "compression_event": _match_compression_event(llm, compression_events),
-                "memory_hits": _match_memory_hits(llm, stats.memory_hits),
-            }
-        )
+        iter_dict = {
+            "index": i + 1,
+            "phase": llm.phase,
+            "llm_call": {
+                "provider": llm.provider,
+                "model": llm.model,
+                "input_tokens": llm.input_tokens,
+                "output_tokens": llm.output_tokens,
+                "duration_ms": round(llm.duration_ms, 1),
+                "cost_usd": round(cost, 6),
+            },
+            "tool_calls": iter_tool_dicts,
+            "state_changes": _collect_state_changes(iter_tools),
+            "compression_event": _match_compression_event(llm, compression_events),
+            "memory_hits": _match_memory_hits(llm, stats.memory_hits),
+        }
+        iter_dict["significance"] = _classify_significance(iter_dict)
+        iterations.append(iter_dict)
 
     # Handle remaining/orphan tool calls (no parent LLM call)
     remaining_tools: list[ToolCallRecord] = []
@@ -174,17 +197,17 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
         tool_idx += 1
 
     if remaining_tool_dicts:
-        iterations.append(
-            {
-                "index": len(iterations) + 1,
-                "phase": remaining_tools[0].phase if remaining_tools else 0,
-                "llm_call": None,
-                "tool_calls": remaining_tool_dicts,
-                "state_changes": _collect_state_changes(remaining_tools),
-                "compression_event": None,
-                "memory_hits": None,
-            }
-        )
+        orphan_dict = {
+            "index": len(iterations) + 1,
+            "phase": remaining_tools[0].phase if remaining_tools else 0,
+            "llm_call": None,
+            "tool_calls": remaining_tool_dicts,
+            "state_changes": _collect_state_changes(remaining_tools),
+            "compression_event": None,
+            "memory_hits": None,
+        }
+        orphan_dict["significance"] = _classify_significance(orphan_dict)
+        iterations.append(orphan_dict)
 
     return {
         "session_id": session_id,
