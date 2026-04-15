@@ -49,6 +49,8 @@ interface Props {
     to_step?: string | null
   }
   compressionInfo?: CompressionInfo
+  staleness?: 'normal' | 'minor' | 'waiting'
+  memoryChip?: { count: number }
 }
 
 function formatJson(value: unknown) {
@@ -70,6 +72,8 @@ export default function MessageBubble({
   stateChanges,
   phaseTransition,
   compressionInfo,
+  staleness,
+  memoryChip,
 }: Props) {
   const [detailsExpanded, setDetailsExpanded] = useState(false)
   const [now, setNow] = useState(Date.now())
@@ -83,6 +87,18 @@ export default function MessageBubble({
 
     return () => window.clearInterval(timer)
   }, [role, toolStatus])
+
+  if (role === 'system' && memoryChip) {
+    return (
+      <button
+        type="button"
+        className="message system-memory-chip"
+        onClick={() => window.dispatchEvent(new CustomEvent('openMemoryCenter'))}
+      >
+        💭 本轮使用 {memoryChip.count} 条旅行记忆
+      </button>
+    )
+  }
 
   if (role === 'system' && phaseTransition) {
     const phaseLabel = PHASE_LABELS[phaseTransition.to_phase] ?? `Phase ${phaseTransition.to_phase}`
@@ -178,6 +194,7 @@ export default function MessageBubble({
                 <div className={`tool-subtitle ${isLongRunning ? 'long-running' : ''}`}>
                   {subtitleLabel && <span>{subtitleLabel}</span>}
                   {elapsedLabel && <span className="tool-elapsed">{elapsedLabel}</span>}
+                  {staleness === 'minor' && <span className="breath-dot">⋯</span>}
                 </div>
               )}
             </div>

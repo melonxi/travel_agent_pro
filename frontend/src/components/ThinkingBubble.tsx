@@ -6,6 +6,7 @@ interface Props {
   iteration?: number
   hint?: string | null
   fading?: boolean
+  staleness?: 'normal' | 'minor' | 'waiting'
 }
 
 const STAGE_LABELS: Record<'thinking' | 'summarizing' | 'compacting', string> = {
@@ -14,7 +15,7 @@ const STAGE_LABELS: Record<'thinking' | 'summarizing' | 'compacting', string> = 
   compacting: '整理上下文中…',
 }
 
-export default function ThinkingBubble({ createdAt, stage = 'thinking', iteration, hint, fading = false }: Props) {
+export default function ThinkingBubble({ createdAt, stage = 'thinking', iteration, hint, fading = false, staleness = 'normal' }: Props) {
   const [now, setNow] = useState(Date.now())
 
   useEffect(() => {
@@ -38,6 +39,7 @@ export default function ThinkingBubble({ createdAt, stage = 'thinking', iteratio
       <div className={`bubble thinking-bubble${fading ? ' fading' : ''}`}>
         <span className="thinking-bubble-dot" aria-hidden="true" />
         <span>{label}</span>
+        {staleness === 'minor' && <span className="breath-dot">⋯</span>}
       </div>
     </div>
   )

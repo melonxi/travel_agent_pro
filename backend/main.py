@@ -77,6 +77,8 @@ from tools.xiaohongshu_search import make_xiaohongshu_search_tool
 
 logger = logging.getLogger(__name__)
 
+KEEPALIVE_INTERVAL_S = 8
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -1461,7 +1463,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         async def _keepalive_loop():
             try:
                 while True:
-                    await asyncio.sleep(15)
+                    await asyncio.sleep(KEEPALIVE_INTERVAL_S)
                     await keepalive_queue.put(json.dumps({"type": "keepalive"}))
             except asyncio.CancelledError:
                 pass

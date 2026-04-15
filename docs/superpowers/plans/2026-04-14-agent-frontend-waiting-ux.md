@@ -1654,7 +1654,7 @@ git commit -m "test(e2e): cover ThinkingBubble lifecycle and tool card enhanceme
 - Modify: `backend/main.py`（`_keepalive_loop` 内 `asyncio.sleep(15)`）
 - Test: `backend/tests/test_keepalive_interval.py`（新建）
 
-- [ ] **Step 1：写测试**
+- [x] **Step 1：写测试**
 
 ```python
 import asyncio
@@ -1668,7 +1668,7 @@ async def test_keepalive_sends_every_8_seconds(app, sessions, session_id):
     ...
 ```
 
-- [ ] **Step 2：改代码**
+- [x] **Step 2：改代码**
 
 ```python
 async def _keepalive_loop():
@@ -1680,7 +1680,7 @@ async def _keepalive_loop():
         pass
 ```
 
-- [ ] **Step 3：运行 + 提交**
+- [x] **Step 3：运行 + 提交**
 
 ```bash
 cd backend && pytest tests/test_keepalive_interval.py -v
@@ -1697,7 +1697,7 @@ git commit -m "feat(api): tighten keepalive cadence from 15s to 8s"
 - Modify: `backend/agent/loop.py`
 - Test: `backend/tests/test_agent_status_event.py`
 
-- [ ] **Step 1：写测试**
+- [x] **Step 1：写测试**
 
 ```python
 @pytest.mark.asyncio
@@ -1707,7 +1707,7 @@ async def test_agent_status_compacting_emitted_when_budget_exceeded(agent_over_b
     assert "compacting" in stages
 ```
 
-- [ ] **Step 2：context/manager.py 暴露预判**
+- [x] **Step 2：context/manager.py 暴露预判**
 
 在 `ContextManager` 中新增：
 
@@ -1718,7 +1718,7 @@ def will_trigger_compaction(self, messages: list[Message], phase: int) -> bool:
     return estimated_tokens / budget > 0.60
 ```
 
-- [ ] **Step 3：loop.py 使用预判**
+- [x] **Step 3：loop.py 使用预判**
 
 在 yield `thinking` 之前：
 
@@ -1730,7 +1730,7 @@ if self.context.will_trigger_compaction(messages, phase):
     )
 ```
 
-- [ ] **Step 4：运行 + 提交**
+- [x] **Step 4：运行 + 提交**
 
 ```bash
 cd backend && pytest tests/test_agent_status_event.py -v
@@ -1748,7 +1748,7 @@ git commit -m "feat(loop): emit agent_status(compacting) pre-announcement when b
 - Modify: `frontend/src/components/MessageBubble.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：ChatPanel staleness state**
+- [x] **Step 1：ChatPanel staleness state**
 
 ```tsx
 const [staleness, setStaleness] = useState<'normal' | 'minor' | 'waiting'>('normal')
@@ -1767,13 +1767,13 @@ useEffect(() => {
 // 现有 KEEPALIVE_TIMEOUT_MS 已有的 feedback 升级逻辑改用 staleness === 'waiting'
 ```
 
-- [ ] **Step 2：KEEPALIVE_TIMEOUT_MS 30s → 20s**
+- [x] **Step 2：KEEPALIVE_TIMEOUT_MS 30s → 20s**
 
 ```tsx
 const KEEPALIVE_TIMEOUT_MS = 20_000
 ```
 
-- [ ] **Step 3：呼吸小点**
+- [x] **Step 3：呼吸小点**
 
 ThinkingBubble / MessageBubble tool 分支内读取 `staleness` prop（从 ChatPanel 透传）。若 `staleness === 'minor'`：
 
@@ -1795,7 +1795,7 @@ CSS：
 }
 ```
 
-- [ ] **Step 4：类型检查 + 提交**
+- [x] **Step 4：类型检查 + 提交**
 
 ```bash
 cd frontend && npm run build
@@ -1812,7 +1812,7 @@ git commit -m "feat(frontend): three-tier staleness indicator with breath dot at
 - Modify: `frontend/src/components/ChatPanel.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：组件**
+- [x] **Step 1：组件**
 
 ```tsx
 import { useEffect, useState } from 'react'
@@ -1839,7 +1839,7 @@ export default function RoundSummaryBar({ toolCount, durationMs, memoryCount }: 
 }
 ```
 
-- [ ] **Step 2：ChatPanel 集成**
+- [x] **Step 2：ChatPanel 集成**
 
 `ChatPanel.tsx`：
 
@@ -1870,7 +1870,7 @@ if (event.run_status === 'completed') {
 
 渲染：`{summary && <RoundSummaryBar {...summary} />}`
 
-- [ ] **Step 3：CSS**
+- [x] **Step 3：CSS**
 
 ```css
 .round-summary-bar {
@@ -1889,7 +1889,7 @@ if (event.run_status === 'completed') {
 }
 ```
 
-- [ ] **Step 4：类型检查 + 提交**
+- [x] **Step 4：类型检查 + 提交**
 
 ```bash
 cd frontend && npm run build
@@ -1906,7 +1906,7 @@ git commit -m "feat(frontend): RoundSummaryBar after done event with 2.5s fade"
 - Modify: `frontend/src/components/MessageBubble.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：ChatPanel 处理**
+- [x] **Step 1：ChatPanel 处理**
 
 在 `memory_recall` 事件回调中新增"本轮首次"判定（利用 `roundStateRef.current.memoryChipInserted` bool）：
 
@@ -1928,7 +1928,7 @@ if (event.type === 'memory_recall' && event.item_ids) {
 
 `handleSend` 开始时重置 `memoryChipInserted = false`。`ChatMessage` 接口加 `memoryChip?: { count: number }`。
 
-- [ ] **Step 2：MessageBubble variant**
+- [x] **Step 2：MessageBubble variant**
 
 ```tsx
 if (role === 'system' && memoryChip) {
@@ -1946,7 +1946,7 @@ if (role === 'system' && memoryChip) {
 
 App.tsx 监听 `openMemoryCenter` 事件打开抽屉（复用已有逻辑）。
 
-- [ ] **Step 3：CSS**
+- [x] **Step 3：CSS**
 
 ```css
 .system-memory-chip {
@@ -1961,7 +1961,7 @@ App.tsx 监听 `openMemoryCenter` 事件打开抽屉（复用已有逻辑）。
 .system-memory-chip:hover { background: rgba(180, 140, 255, 0.14); }
 ```
 
-- [ ] **Step 4：类型检查 + 提交 + PR3 收尾**
+- [x] **Step 4：类型检查 + 提交 + PR3 收尾**
 
 ```bash
 cd frontend && npm run build
@@ -2198,9 +2198,9 @@ git commit -m "docs: thinking stream spike memo evaluating reasoning chunk suppo
 - [x] PhaseTransitionCard → Task 11
 - [ ] ThinkingBubble 组件与生命周期 → Task 18/19/30
 - [x] 工具副标题 + 计时器 + 8s 警告 → Task 20/21
-- [ ] Keepalive 8s 与 staleness 三档 → Task 23/25
-- [ ] RoundSummaryBar → Task 26
-- [ ] memory_recall 内联 chip → Task 27
+- [x] Keepalive 8s 与 staleness 三档 → Task 23/25
+- [x] RoundSummaryBar → Task 26
+- [x] memory_recall 内联 chip → Task 27
 - [ ] Track A narration → Task 28/29
 - [ ] Track B spike memo → Task 31
 - [x] E2E 覆盖 → Task 12/22
