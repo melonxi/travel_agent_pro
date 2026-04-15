@@ -35,7 +35,7 @@ travel_agent_pro/
 │   ├── config.py               # 配置加载（.env + config.yaml）
 │   ├── agent/                  # Agent 循环：loop / compaction / hooks / reflection / tool_choice / narration / types
 │   ├── llm/                    # LLM 抽象：base Protocol / errors / factory / openai_provider / anthropic_provider
-│   ├── state/                  # 旅行状态模型：models / manager / intake
+│   ├── state/                  # 旅行状态模型：models / manager / intake / plan_writers
 │   ├── memory/                 # 结构化 global/trip 记忆 + episode：models / store / manager / extraction / policy / retriever / formatter
 │   ├── context/                # 上下文：manager（系统提示/压缩决策）+ soul.md（人格）
 │   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，GLOBAL_RED_FLAGS + PHASE{1,3,5,7}_PROMPT + build_phase3_prompt）/ backtrack
