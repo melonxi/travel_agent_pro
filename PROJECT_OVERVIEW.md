@@ -45,7 +45,7 @@ travel_agent_pro/
 │   ├── evals/                  # 评估管线：models / runner / stability / failure_report / golden_cases
 │   ├── telemetry/              # 可观测 + 成本：setup / attributes / decorators / stats
 │   ├── api/                    # API 模块：trace 视图构建
-│   └── tests/                  # pytest 测试套件
+│   └── tests/                  # pytest 测试套件（含 test_plan_tools/ Phase 3 工具专项）
 │
 ├── frontend/                   # React 前端
 │   ├── src/
@@ -406,7 +406,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 
 ## 17. 测试体系
 
-- **后端单元测试**：覆盖 Agent 循环、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 通道、RunRecord/IterationProgress
+- **后端单元测试**：覆盖 Agent 循环、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 通道、RunRecord/IterationProgress；Phase 3 强 schema 写工具集中回归位于 `backend/tests/test_plan_tools/test_phase3_tools.py`
 - **评估管线**：golden cases（YAML）+ 断言评估 + 离线 runner；`scripts/eval-stability.py` 生成 pass@k 稳定性报告（JSON + Markdown）；`scripts/failure-analysis/` 对 live backend 执行失败场景并产出分析报告
 - **E2E 测试**：Playwright 三套专项配置——主流程（含 deterministic mock 的阶段切换）、重试体验（继续/重发/停止/不可恢复错误）、等待体验（ThinkingBubble 与工具耗时提示）；demo spec 基于 `demo-scripted-session.json` 稳定回放 Phase 1 → Phase 3 → Phase 5 → backtrack
 - **运行**：`cd backend && pytest` / `npx playwright test`
