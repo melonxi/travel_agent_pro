@@ -214,8 +214,8 @@ LLM API 异常
 - `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM
 - 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM
 - **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（当前对外状态写入口仍以 `update_plan_state` 为主，另有 `assemble_day_plan`、`generate_summary`）顺序执行
-- **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`update_plan_state` 继续作为现有对外写工具，并复用这层能力，后续单一职责 plan tools 也以该层为共同写路径
-- **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集
+- **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`update_plan_state` 作为严格适配层保留旧签名，对 destination/dates/travelers/budget 的短语容错、部分追加语义和 backtrack 入口做兼容，同时把 trip_brief 与 Phase 3 结构化列表写入委托给共享 writer
+- **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集；`phase3_step` 由路由推断，不再通过 `update_plan_state` 对外暴露
 
 ### 工具清单
 

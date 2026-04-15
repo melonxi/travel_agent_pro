@@ -5,6 +5,7 @@ import pytest
 
 from state.intake import extract_trip_facts
 from state.models import TravelPlanState
+from tools.base import ToolError
 from tools.update_plan_state import make_update_plan_state_tool
 
 
@@ -143,7 +144,7 @@ async def test_add_constraint_accepts_loose_dict(tool_fn, plan):
 
 
 @pytest.mark.asyncio
-async def test_phase3_structured_fields_accept_json_strings(tool_fn, plan):
+async def test_valid_json_strings_are_decoded_before_update(tool_fn, plan):
     await tool_fn(
         field="trip_brief",
         value='{"goal":"慢旅行","pace":"relaxed"}',
@@ -169,10 +170,16 @@ async def test_phase3_structured_fields_accept_json_strings(tool_fn, plan):
 
 @pytest.mark.asyncio
 async def test_invalid_field(tool_fn):
-    from tools.base import ToolError
-
     with pytest.raises(ToolError):
         await tool_fn(field="nonexistent", value="x")
+
+
+@pytest.mark.asyncio
+async def test_phase3_step_is_no_longer_writable(tool_fn):
+    with pytest.raises(ToolError) as excinfo:
+        await tool_fn(field="phase3_step", value="brief")
+
+    assert excinfo.value.error_code == "INVALID_FIELD"
 
 
 @pytest.mark.asyncio
@@ -224,7 +231,5 @@ async def test_daily_plans_list_replaces_with_loose_shapes(tool_fn, plan):
 
 @pytest.mark.asyncio
 async def test_daily_plans_rejects_scalar(tool_fn):
-    from tools.base import ToolError
-
     with pytest.raises(ToolError):
         await tool_fn(field="daily_plans", value="not a dict or list")
