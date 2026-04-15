@@ -3,7 +3,10 @@
 from phase.prompts import (
     GLOBAL_RED_FLAGS,
     PHASE1_PROMPT,
+    PHASE3_BASE_PROMPT,
+    PHASE3_STEP_PROMPTS,
     PHASE_PROMPTS,
+    build_phase3_prompt,
 )
 
 
@@ -60,3 +63,73 @@ class TestPhase1SkillCard:
         assert "预算" in PHASE1_PROMPT
         prompt_lower = PHASE1_PROMPT.lower()
         assert "red flag" in prompt_lower or "Red Flags" in PHASE1_PROMPT
+
+
+class TestPhase3Split:
+    """Phase 3 must be split into base + per-step prompts."""
+
+    def test_base_prompt_exists(self):
+        assert len(PHASE3_BASE_PROMPT) > 100
+
+    def test_base_prompt_has_role(self):
+        assert "## 角色" in PHASE3_BASE_PROMPT
+
+    def test_base_prompt_has_state_write_discipline(self):
+        assert "状态写入纪律" in PHASE3_BASE_PROMPT or "状态写入契约" in PHASE3_BASE_PROMPT
+
+    def test_step_prompts_cover_all_steps(self):
+        assert set(PHASE3_STEP_PROMPTS.keys()) == {"brief", "candidate", "skeleton", "lock"}
+
+    def test_each_step_has_goal(self):
+        for step, prompt in PHASE3_STEP_PROMPTS.items():
+            assert "目标" in prompt, f"step {step} missing 目标"
+
+    def test_each_step_has_tool_strategy(self):
+        for step, prompt in PHASE3_STEP_PROMPTS.items():
+            assert "工具" in prompt, f"step {step} missing tool strategy"
+
+    def test_each_step_has_completion_gate(self):
+        for step, prompt in PHASE3_STEP_PROMPTS.items():
+            assert "完成 Gate" in prompt or "完成标志" in prompt, f"step {step} missing completion gate"
+
+    def test_each_step_has_red_flags(self):
+        for step, prompt in PHASE3_STEP_PROMPTS.items():
+            assert "Red Flags" in prompt or "red flag" in prompt.lower(), f"step {step} missing Red Flags"
+
+    def test_brief_has_convergence_pressure(self):
+        """Brief must have convergence pressure — the fix for Question 8."""
+        assert "轮" in PHASE3_STEP_PROMPTS["brief"] or "收敛" in PHASE3_STEP_PROMPTS["brief"]
+
+    def test_skeleton_has_thinking_framework(self):
+        """Skeleton must have structured thinking — the fix for Question 4."""
+        assert "锚点" in PHASE3_STEP_PROMPTS["skeleton"] or "锚定" in PHASE3_STEP_PROMPTS["skeleton"]
+
+    def test_lock_mentions_transport_timing(self):
+        """Lock must address transport timing — the fix for Question 2."""
+        assert "大交通" in PHASE3_STEP_PROMPTS["lock"]
+
+
+class TestBuildPhase3Prompt:
+    """build_phase3_prompt() must assemble base + step correctly."""
+
+    def test_default_returns_base_plus_brief(self):
+        result = build_phase3_prompt()
+        assert PHASE3_BASE_PROMPT in result
+        assert PHASE3_STEP_PROMPTS["brief"] in result
+
+    def test_specific_step(self):
+        for step in ("brief", "candidate", "skeleton", "lock"):
+            result = build_phase3_prompt(step)
+            assert PHASE3_BASE_PROMPT in result
+            assert PHASE3_STEP_PROMPTS[step] in result
+
+    def test_only_one_step_included(self):
+        result = build_phase3_prompt("skeleton")
+        assert PHASE3_STEP_PROMPTS["skeleton"] in result
+        assert PHASE3_STEP_PROMPTS["brief"] not in result
+        assert PHASE3_STEP_PROMPTS["candidate"] not in result
+        assert PHASE3_STEP_PROMPTS["lock"] not in result
+
+    def test_backward_compat_phase_prompts_3(self):
+        """PHASE_PROMPTS[3] must still return a valid prompt (default brief)."""
+        assert PHASE_PROMPTS[3] == build_phase3_prompt("brief")

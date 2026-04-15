@@ -161,7 +161,8 @@ def test_phase3_prompt_prioritizes_brief_sync_before_external_search(router):
 
 
 def test_phase3_candidate_prompt_limits_search_and_forbids_search_narration(router):
-    prompt = router.get_prompt(3)
+    from phase.prompts import build_phase3_prompt
+    prompt = build_phase3_prompt("candidate")
     assert "先写状态，再按需补充验证" in prompt
     assert "优先控制在 1 次 `xiaohongshu_search` 加 0-1 次 `web_search`" in prompt
     assert "不要在正文里反复说“我先搜一下”" in prompt
