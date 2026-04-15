@@ -1979,7 +1979,7 @@ git commit -m "feat(frontend): inline memory_recall chip with MemoryCenter jump"
 - Create: `backend/agent/narration.py`
 - Create: `backend/tests/test_narration.py`
 
-- [ ] **Step 1：写测试**
+- [x] **Step 1：写测试**
 
 ```python
 from agent.narration import compute_narration
@@ -2021,7 +2021,7 @@ def test_unrecognized_state_returns_none():
     assert compute_narration(plan) is None
 ```
 
-- [ ] **Step 2：实现**
+- [x] **Step 2：实现**
 
 ```python
 from state.models import TravelPlanState
@@ -2049,7 +2049,7 @@ def compute_narration(plan: TravelPlanState) -> str | None:
     return None
 ```
 
-- [ ] **Step 3：运行 + 提交**
+- [x] **Step 3：运行 + 提交**
 
 ```bash
 cd backend && pytest tests/test_narration.py -v
@@ -2066,7 +2066,7 @@ git commit -m "feat(agent): rule-based narration hints for each phase/step"
 - Modify: `backend/agent/loop.py`
 - Test: `backend/tests/test_agent_status_event.py`
 
-- [ ] **Step 1：写测试**
+- [x] **Step 1：写测试**
 
 ```python
 @pytest.mark.asyncio
@@ -2079,7 +2079,7 @@ async def test_agent_status_thinking_includes_narration_hint_for_phase1(agent_ph
     assert thinking.agent_status["hint"] == "先搞清楚你想去哪，然后翻点真实游记"
 ```
 
-- [ ] **Step 2：实现**
+- [x] **Step 2：实现**
 
 Task 13/14 的 yield 处：
 
@@ -2093,7 +2093,7 @@ yield LLMChunk(
 )
 ```
 
-- [ ] **Step 3：运行 + 提交**
+- [x] **Step 3：运行 + 提交**
 
 ```bash
 cd backend && pytest tests/test_agent_status_event.py -v
@@ -2109,7 +2109,7 @@ git commit -m "feat(loop): inject narration hint into agent_status events"
 - Modify: `frontend/src/components/ThinkingBubble.tsx`
 - Modify: `frontend/src/styles/index.css`
 
-- [ ] **Step 1：收起按钮 + localStorage 持久化**
+- [x] **Step 1：收起按钮 + localStorage 持久化**
 
 ```tsx
 const STORAGE_KEY = 'thinkingBubble.collapsed'
@@ -2138,7 +2138,7 @@ export default function ThinkingBubble({ ... }: Props) {
 }
 ```
 
-- [ ] **Step 2：CSS**
+- [x] **Step 2：CSS**
 
 ```css
 .thinking-collapse {
@@ -2152,7 +2152,7 @@ export default function ThinkingBubble({ ... }: Props) {
 .thinking-collapse:hover { opacity: 1; }
 ```
 
-- [ ] **Step 3：提交**
+- [x] **Step 3：提交**
 
 ```bash
 cd frontend && npm run build
@@ -2167,7 +2167,7 @@ git commit -m "feat(frontend): ThinkingBubble hint display with dismiss preferen
 **Files:**
 - Create: `docs/learning/2026-0X-XX-thinking-stream-spike.md`（占位日期待落地时确定）
 
-- [ ] **Step 1：调研与文档**
+- [x] **Step 1：调研与文档**
 
 不写代码。产出一份 memo 回答以下问题：
 
@@ -2178,7 +2178,7 @@ git commit -m "feat(frontend): ThinkingBubble hint display with dismiss preferen
 
 memo 结尾给出"下一迭代是否启动实施"的建议。
 
-- [ ] **Step 2：提交**
+- [x] **Step 2：提交**
 
 ```bash
 git add docs/learning/*-thinking-stream-spike.md
@@ -2191,18 +2191,18 @@ git commit -m "docs: thinking stream spike memo evaluating reasoning chunk suppo
 
 ### Spec coverage
 - [x] 新事件 `phase_transition` 的 4 种触发路径 → Task 3/4/5/6
-- [ ] 新事件 `agent_status`（thinking/summarizing/compacting/hint） → Task 13/14/24/29
+- [x] 新事件 `agent_status`（thinking/summarizing/compacting/hint） → Task 13/14/24/29
 - [x] `tool_call.human_label` 字段 + 24 个工具 → Task 15/16/17
 - [x] PhaseIndicator override + 动画 → Task 8/9
 - [x] Phase3Workbench override → Task 10
 - [x] PhaseTransitionCard → Task 11
-- [ ] ThinkingBubble 组件与生命周期 → Task 18/19/30
+- [x] ThinkingBubble 组件与生命周期 → Task 18/19/30
 - [x] 工具副标题 + 计时器 + 8s 警告 → Task 20/21
 - [x] Keepalive 8s 与 staleness 三档 → Task 23/25
 - [x] RoundSummaryBar → Task 26
 - [x] memory_recall 内联 chip → Task 27
-- [ ] Track A narration → Task 28/29
-- [ ] Track B spike memo → Task 31
+- [x] Track A narration → Task 28/29
+- [x] Track B spike memo → Task 31
 - [x] E2E 覆盖 → Task 12/22
 
 ### 明确非目标

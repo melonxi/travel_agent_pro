@@ -10,6 +10,7 @@ from opentelemetry import trace
 from run import IterationProgress
 
 from agent.hooks import HookManager
+from agent.narration import compute_narration
 from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from telemetry.attributes import AGENT_PHASE, AGENT_ITERATION
@@ -133,9 +134,14 @@ class AgentLoop:
                     prev_iteration_had_tools = False
                     phase_changed_in_prev_iteration = False
 
+                    hint = compute_narration(self.plan) if self.plan else None
                     yield LLMChunk(
                         type=ChunkType.AGENT_STATUS,
-                        agent_status={"stage": stage, "iteration": iteration_idx},
+                        agent_status={
+                            "stage": stage,
+                            "iteration": iteration_idx,
+                            "hint": hint,
+                        },
                     )
                     iteration_idx += 1
 

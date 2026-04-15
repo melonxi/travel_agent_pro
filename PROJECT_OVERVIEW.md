@@ -35,7 +35,8 @@ travel_agent_pro/
 │   ├── run.py                  # RunRecord / IterationProgress 数据结构 (LLM 韧性运行追踪)
 │   ├── config.py               # 配置加载 (.env + config.yaml), 多 LLM 按阶段切换
 │   ├── agent/                  # Agent 循环引擎
-│   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复，集成自省/强制工具/护栏/读工具批量执行/parallel_group 标记/cancel_event 检查/IterationProgress 追踪/compression_events 非空时先 yield agent_status(compacting) 预告
+│   │   ├── loop.py             # 核心循环: LLM→工具执行→阶段转换→修复，集成自省/强制工具/护栏/读工具批量执行/parallel_group 标记/cancel_event 检查/IterationProgress 追踪/compression_events 非空时先 yield agent_status(compacting) 预告/narration hint 注入 agent_status
+│   │   ├── narration.py        # 基于规则的推理旁白：按 phase/step 返回中文 hint 文案
 │   │   ├── compaction.py       # 上下文压缩: token 预算计算、渐进式压缩
 │   │   ├── hooks.py            # 钩子系统 (before_llm_call, after_tool_call)
 │   │   ├── reflection.py       # ReflectionInjector: 关键阶段自省 prompt 注入
@@ -364,7 +365,7 @@ POST /api/chat/{sessionId}  →  ReadableStream (SSE data frames)
   tool_call           → 工具调用开始 (名称 + 参数)
   tool_result         → 工具结果 (success/error/skipped + data)
   phase_transition    → 阶段/Phase 3 子步骤的提前切换信号（可先于 state_update 到达，用于前端乐观同步）
-  agent_status        → ThinkingBubble 阶段状态 (当前已接入 thinking/summarizing/compacting + iteration)
+  agent_status        → ThinkingBubble 阶段状态 (thinking/summarizing/compacting + iteration + hint 旁白)
   state_update        → 方案状态变化 (完整 TravelPlanState)
   context_compression → 上下文压缩通知
   memory_recall       → 本轮命中的记忆 ID 列表 (item_ids[])
@@ -377,7 +378,7 @@ POST /api/chat/{sessionId}  →  ReadableStream (SSE data frames)
 - **ChatPanel**: 消息列表 + 工具卡片 + 状态变化芯片 + 自动滚动 + memory_recall SSE 事件处理（首次触发时插入 memory chip 系统消息）+ `phase_transition` 事件处理（收到后先回调 App 更新阶段覆盖，再插入 `PhaseTransitionCard` 系统消息）+ `agent_status` 驱动的 `ThinkingBubble` 生命周期（发送瞬间本地插入，收到 `text_delta`/`tool_call`/`error` 时 200ms fade-out，`done`/stop 收尾时直接移除）+ 三档 staleness 检测（<8s normal / 8-20s minor / ≥20s waiting，2s 轮询）+ `RoundSummaryBar`（done 事件后展示工具数/用时/记忆数，2.5s 自动消失）+ 停止按钮(streaming 时替代发送按钮) + 统一流式状态条（`waiting`/`continue`/`retry`/`fatal`/`stopped`）+ `can_continue` 继续生成 + 保存上一条用户消息用于重新发送
 - **PhaseIndicator / App**: App 用 `phaseOverride` 暂存最近一次 `phase_transition`（800ms TTL）；`PhaseIndicator` 优先显示 overridePhase，`Phase3Workbench` 同步吃 `overrideStep`，从而在 `state_update` 到达前先切到新阶段/子步骤；当 plan 追平 override 或 TTL 到期后自动清空
 - **Phase3Workbench**: 旅行画像 / 候选池 / 骨架方案 / 锁定区 / 风险 (5 卡片)，支持 `overrideStep` 提前切换到目标子步骤
-- **ThinkingBubble**: stage-aware 等待气泡，默认文案“思考中…”，2 秒内无事件会切到“正在连接…”，第二轮起显示“继续思考…（第 N 轮）”；支持 `staleness` prop，minor 档位时显示呼吸小点（⋯）
+- **ThinkingBubble**: stage-aware 等待气泡，默认文案“思考中…”，2 秒内无事件会切到“正在连接…”，第二轮起显示“继续思考…（第 N 轮）”；支持 `staleness` prop，minor 档位时显示呼吸小点（⋯）；接收后端 narration hint 旁白文案，支持用户点击收起（localStorage 持久化偏好）
 - **MessageBubble / PhaseTransitionCard**: system message 的阶段推进卡片，渲染 `.phase-transition-card`，文案格式为“已进入{阶段}{子步骤}”；tool 卡额外显示 `human_label` 副标题、运行耗时与长时运行提醒；pending 状态 tool 卡在 staleness=minor 时也显示呼吸小点；支持 `memoryChip` 渲染分支（memory_recall 内联 chip，点击跳转 MemoryCenter）
 - **RoundSummaryBar**: done 事件后 2.5s 自动消失的轮次摘要条，显示工具数、用时、记忆命中数
 - **MemoryCenter**: 右滑抽屉, 3 Tab (活跃/待确认/归档), 卡片式记忆管理, 确认/拒绝/删除 + 乐观更新, 本轮命中记忆高亮（通过 App → SessionSidebar 透传 recalledIds + is-recalled CSS class + "本轮命中" badge）

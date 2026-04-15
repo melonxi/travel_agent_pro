@@ -204,3 +204,67 @@ async def test_agent_status_compacting_emitted_when_compression_events_present(
 
     # compression event should also be emitted
     assert len(compression_chunks) >= 1
+
+
+@pytest.mark.asyncio
+async def test_agent_status_thinking_includes_narration_hint(engine, hooks):
+    """agent_status(thinking) should include a narration hint based on the plan."""
+    llm = MagicMock()
+    plan = TravelPlanState(session_id="s1", phase=1, destination=None)
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=hooks,
+        max_retries=3,
+        plan=plan,
+    )
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="ok")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    agent.llm.chat = fake_chat
+
+    chunks = [
+        c async for c in agent.run([Message(role=Role.USER, content="hi")], phase=1)
+    ]
+    thinking = next(
+        c
+        for c in chunks
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status
+        and c.agent_status["stage"] == "thinking"
+    )
+    assert thinking.agent_status["hint"] == "先搞清楚你想去哪，然后翻点真实游记"
+
+
+@pytest.mark.asyncio
+async def test_agent_status_hint_is_none_for_unknown_phase(engine, hooks):
+    """agent_status hint should be None for an unrecognized phase."""
+    llm = MagicMock()
+    plan = TravelPlanState(session_id="s1", phase=99)
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=hooks,
+        max_retries=3,
+        plan=plan,
+    )
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="ok")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    agent.llm.chat = fake_chat
+
+    chunks = [
+        c async for c in agent.run([Message(role=Role.USER, content="hi")], phase=99)
+    ]
+    thinking = next(
+        c
+        for c in chunks
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status
+        and c.agent_status["stage"] == "thinking"
+    )
+    assert thinking.agent_status["hint"] is None
