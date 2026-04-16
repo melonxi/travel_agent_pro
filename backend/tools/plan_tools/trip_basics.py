@@ -15,27 +15,73 @@ from state.plan_writers import (
 from tools.base import ToolError, tool
 
 _PARAMETERS = {
-    'type': 'object',
-    'properties': {
-        'destination': {
-            'description': '目的地名称',
-            'anyOf': [{'type': 'string'}, {'type': 'object'}],
+    "type": "object",
+    "properties": {
+        "destination": {
+            "description": "目的地名称",
+            "anyOf": [{"type": "string"}, {"type": "object"}],
         },
-        'dates': {
-            'description': '出行日期。可传 {start, end} 或可解析短语',
-            'anyOf': [{'type': 'string'}, {'type': 'object'}],
+        "dates": {
+            "description": '出行日期。推荐传 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}，也可传自然语言短语如 "5月1号到5月5号"',
+            "anyOf": [
+                {"type": "string"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "start": {
+                            "type": "string",
+                            "description": "开始日期，YYYY-MM-DD",
+                        },
+                        "end": {
+                            "type": "string",
+                            "description": "结束日期，YYYY-MM-DD",
+                        },
+                    },
+                    "required": ["start", "end"],
+                },
+            ],
         },
-        'travelers': {
-            'description': '同行人数。可传 {adults, children?}、短语或整数',
-            'anyOf': [{'type': 'string'}, {'type': 'object'}, {'type': 'integer'}],
+        "travelers": {
+            "description": '同行人数。推荐传 {"adults": 2, "children": 0}，也可传整数（视为成人数）或短语如 "2人"',
+            "anyOf": [
+                {"type": "string"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "adults": {"type": "integer", "description": "成人数量"},
+                        "children": {
+                            "type": "integer",
+                            "description": "儿童数量",
+                            "default": 0,
+                        },
+                    },
+                    "required": ["adults"],
+                },
+                {"type": "integer"},
+            ],
         },
-        'budget': {
-            'description': '预算。可传 {total, currency?}、短语或数字',
-            'anyOf': [{'type': 'string'}, {'type': 'object'}, {'type': 'number'}],
+        "budget": {
+            "description": '预算。推荐传 {"total": 10000, "currency": "CNY"}，也可传数字或短语如 "1万"',
+            "anyOf": [
+                {"type": "string"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "total": {"type": "number", "description": "总预算金额"},
+                        "currency": {
+                            "type": "string",
+                            "description": "货币代码",
+                            "default": "CNY",
+                        },
+                    },
+                    "required": ["total"],
+                },
+                {"type": "number"},
+            ],
         },
-        'departure_city': {
-            'description': '出发城市。可传字符串或含 city/name 的对象',
-            'anyOf': [{'type': 'string'}, {'type': 'object'}],
+        "departure_city": {
+            "description": "出发城市。可传字符串或含 city/name 的对象",
+            "anyOf": [{"type": "string"}, {"type": "object"}],
         },
     },
 }
@@ -48,8 +94,8 @@ def _validated_dates_or_error(value: str | dict) -> None:
         parsed = None
     if parsed is None:
         raise ToolError(
-            f'无法解析日期: {value!r}',
-            error_code='INVALID_VALUE',
+            f"无法解析日期: {value!r}",
+            error_code="INVALID_VALUE",
             suggestion='请传入 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"} 或可解析短语',
         )
     try:
@@ -57,17 +103,17 @@ def _validated_dates_or_error(value: str | dict) -> None:
         dt_date.fromisoformat(parsed.end)
     except (TypeError, ValueError):
         raise ToolError(
-            f'无法解析日期: {value!r}',
-            error_code='INVALID_VALUE',
+            f"无法解析日期: {value!r}",
+            error_code="INVALID_VALUE",
             suggestion='请传入 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"} 或可解析短语',
         )
 
 
 def _validated_travelers_or_error(value: str | dict | int) -> None:
-    if isinstance(value, dict) and 'adults' not in value:
+    if isinstance(value, dict) and "adults" not in value:
         raise ToolError(
-            f'无法解析人数: {value!r}',
-            error_code='INVALID_VALUE',
+            f"无法解析人数: {value!r}",
+            error_code="INVALID_VALUE",
             suggestion='请传入 {"adults": 2} 或 "2人" 等可解析格式',
         )
     try:
@@ -76,8 +122,8 @@ def _validated_travelers_or_error(value: str | dict | int) -> None:
         parsed = None
     if parsed is None:
         raise ToolError(
-            f'无法解析人数: {value!r}',
-            error_code='INVALID_VALUE',
+            f"无法解析人数: {value!r}",
+            error_code="INVALID_VALUE",
             suggestion='请传入 {"adults": 2} 或 "2人" 等可解析格式',
         )
     if (
@@ -89,8 +135,8 @@ def _validated_travelers_or_error(value: str | dict | int) -> None:
         or parsed.children < 0
     ):
         raise ToolError(
-            f'无法解析人数: {value!r}',
-            error_code='INVALID_VALUE',
+            f"无法解析人数: {value!r}",
+            error_code="INVALID_VALUE",
             suggestion='请传入 {"adults": 2} 或 "2人" 等可解析格式',
         )
 
@@ -102,30 +148,30 @@ def _validated_budget_or_error(value: str | dict | float | int) -> None:
         parsed = None
     if parsed is None:
         raise ToolError(
-            f'无法解析预算: {value!r}',
-            error_code='INVALID_VALUE',
+            f"无法解析预算: {value!r}",
+            error_code="INVALID_VALUE",
             suggestion='请传入 {"total": 10000} 或 "1万" 或数字',
         )
     if not isinstance(parsed.total, Real) or isinstance(parsed.total, bool):
         raise ToolError(
-            f'无法解析预算: {value!r}',
-            error_code='INVALID_VALUE',
+            f"无法解析预算: {value!r}",
+            error_code="INVALID_VALUE",
             suggestion='请传入 {"total": 10000} 或 "1万" 或数字',
         )
 
 
 def make_update_trip_basics_tool(plan: TravelPlanState):
     @tool(
-        name='update_trip_basics',
+        name="update_trip_basics",
         description=(
-            '更新行程基础信息（目的地、日期、人数、预算、出发城市）。'
-            '每个字段均可选，只传需要更新的字段。'
-            '支持结构化输入和自然语言短语。'
+            "更新行程基础信息（目的地、日期、人数、预算、出发城市）。"
+            "每个字段均可选，只传需要更新的字段。"
+            "支持结构化输入和自然语言短语。"
         ),
         phases=[1, 3],
         parameters=_PARAMETERS,
-        side_effect='write',
-        human_label='更新行程基础信息',
+        side_effect="write",
+        human_label="更新行程基础信息",
     )
     async def update_trip_basics(
         destination: str | dict | None = None,
@@ -139,9 +185,9 @@ def make_update_trip_basics_tool(plan: TravelPlanState):
             for value in (destination, dates, travelers, budget, departure_city)
         ):
             raise ToolError(
-                '至少需要提供一个字段进行更新',
-                error_code='INVALID_VALUE',
-                suggestion='可更新字段: destination, dates, travelers, budget, departure_city',
+                "至少需要提供一个字段进行更新",
+                error_code="INVALID_VALUE",
+                suggestion="可更新字段: destination, dates, travelers, budget, departure_city",
             )
 
         if dates is not None:
@@ -157,27 +203,27 @@ def make_update_trip_basics_tool(plan: TravelPlanState):
 
         if destination is not None:
             write_destination(plan, destination)
-            updated_fields.append('destination')
+            updated_fields.append("destination")
 
         if dates is not None:
             write_dates(plan, dates)
-            updated_fields.append('dates')
+            updated_fields.append("dates")
 
         if travelers is not None:
             write_travelers(plan, travelers)
-            updated_fields.append('travelers')
+            updated_fields.append("travelers")
 
         if budget is not None:
             write_budget(plan, budget)
-            updated_fields.append('budget')
+            updated_fields.append("budget")
 
         if departure_city is not None:
             write_departure_city(plan, departure_city)
-            updated_fields.append('departure_city')
+            updated_fields.append("departure_city")
 
         return {
-            'updated_fields': updated_fields,
-            'count': len(updated_fields),
+            "updated_fields": updated_fields,
+            "count": len(updated_fields),
         }
 
     return update_trip_basics
