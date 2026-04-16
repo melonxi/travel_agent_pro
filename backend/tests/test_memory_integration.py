@@ -511,10 +511,10 @@ async def test_tool_backtrack_reset_rotates_trip_memory(monkeypatch, app):
             type=ChunkType.TOOL_CALL_START,
             tool_call=ToolCall(
                 id="tc1",
-                name="update_plan_state",
+                name="request_backtrack",
                 arguments={
-                    "field": "backtrack",
-                    "value": {"to_phase": 1, "reason": "用户想换目的地"},
+                    "to_phase": 1,
+                    "reason": "用户想换目的地",
                 },
             ),
         )

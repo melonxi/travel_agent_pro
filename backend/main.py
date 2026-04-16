@@ -69,11 +69,11 @@ from tools.search_accommodations import make_search_accommodations_tool
 from tools.search_flights import make_search_flights_tool
 from tools.search_trains import make_search_trains_tool
 from tools.ai_travel_search import make_ai_travel_search_tool
-from tools.update_plan_state import make_update_plan_state_tool
 from tools.quick_travel_search import make_quick_travel_search_tool
 from tools.search_travel_services import make_search_travel_services_tool
 from tools.web_search import make_web_search_tool
 from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+from tools.plan_tools import PLAN_WRITER_TOOL_NAMES, make_all_plan_tools
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +244,116 @@ def _truncate_preview(value: Any, max_len: int = 120) -> str:
     if len(text) > max_len:
         return text[:max_len] + "…"
     return text
+
+
+def _plan_writer_updates(
+    tool_name: str,
+    arguments: dict[str, Any],
+    result_data: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if tool_name == "update_trip_basics":
+        updated_fields = result_data.get("updated_fields")
+        if not isinstance(updated_fields, list):
+            return []
+        return [
+            {"field": field, "value": arguments.get(field)}
+            for field in updated_fields
+            if isinstance(field, str) and field in arguments
+        ]
+
+    if tool_name == "request_backtrack":
+        return []
+
+    mapping: dict[str, tuple[str, Any]] = {
+        "set_trip_brief": ("trip_brief", arguments.get("fields")),
+        "set_candidate_pool": ("candidate_pool", arguments.get("pool")),
+        "set_shortlist": ("shortlist", arguments.get("items")),
+        "set_skeleton_plans": ("skeleton_plans", arguments.get("plans")),
+        "select_skeleton": ("selected_skeleton_id", arguments.get("id")),
+        "set_transport_options": ("transport_options", arguments.get("options")),
+        "select_transport": ("selected_transport", arguments.get("choice")),
+        "set_accommodation_options": (
+            "accommodation_options",
+            arguments.get("options"),
+        ),
+        "set_accommodation": (
+            "accommodation",
+            {"area": arguments.get("area"), "hotel": arguments.get("hotel")},
+        ),
+        "set_risks": ("risks", arguments.get("list")),
+        "set_alternatives": ("alternatives", arguments.get("list")),
+        "add_preferences": ("preferences", arguments.get("items")),
+        "add_constraints": ("constraints", arguments.get("items")),
+        "add_destination_candidate": (
+            "destination_candidates",
+            arguments.get("item"),
+        ),
+        "set_destination_candidates": (
+            "destination_candidates",
+            arguments.get("items"),
+        ),
+        "append_day_plan": (
+            "daily_plans",
+            {
+                "day": arguments.get("day"),
+                "date": arguments.get("date"),
+                "activities": arguments.get("activities"),
+            },
+        ),
+        "replace_daily_plans": ("daily_plans", arguments.get("days")),
+    }
+    if tool_name not in mapping:
+        return []
+    field, value = mapping[tool_name]
+    return [{"field": field, "value": value}]
+
+
+def _plan_writer_state_changes(
+    tool_name: str,
+    arguments: dict[str, Any],
+    result_data: dict[str, Any],
+) -> list[dict[str, Any]]:
+    updates = _plan_writer_updates(tool_name, arguments, result_data)
+    if not updates:
+        return []
+
+    updated_field = result_data.get("updated_field")
+    if (
+        isinstance(updated_field, str)
+        and (
+            "previous_value" in result_data
+            or "new_value" in result_data
+        )
+    ):
+        return [
+            {
+                "field": updated_field,
+                "before": result_data.get("previous_value"),
+                "after": result_data.get("new_value", updates[0]["value"]),
+            }
+        ]
+
+    return [
+        {
+            "field": update["field"],
+            "before": None,
+            "after": update["value"],
+        }
+        for update in updates
+    ]
+
+
+def _plan_writer_updated_fields(result_data: dict[str, Any]) -> set[str]:
+    fields: set[str] = set()
+    updated_field = result_data.get("updated_field")
+    if isinstance(updated_field, str):
+        fields.add(updated_field)
+    updated_fields = result_data.get("updated_fields")
+    if isinstance(updated_fields, list):
+        fields.update(
+            field for field in updated_fields if isinstance(field, str)
+        )
+    return fields
 
 
 def _record_tool_result_stats(
@@ -417,7 +527,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 api_key=config.flyai.api_key,
             )
 
-        tool_engine.register(make_update_plan_state_tool(plan))
+        for plan_tool in make_all_plan_tools(plan):
+            tool_engine.register(plan_tool)
         tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
         tool_engine.register(make_search_trains_tool(flyai_client))
         tool_engine.register(make_ai_travel_search_tool(flyai_client))
@@ -438,55 +549,54 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         hooks = HookManager()
 
         async def on_tool_call(**kwargs):
-            if kwargs.get("tool_name") == "update_plan_state":
+            tool_name = kwargs.get("tool_name")
+            if tool_name in PLAN_WRITER_TOOL_NAMES:
                 result = kwargs.get("result")
-                if result and result.data and result.data.get("backtracked"):
+                if result and isinstance(result.data, dict) and result.data.get("backtracked"):
                     session = sessions.get(plan.session_id)
                     if session:
                         session["needs_rebuild"] = True
                 return
 
         async def on_validate(**kwargs):
-            if kwargs.get("tool_name") == "update_plan_state":
+            tool_name = kwargs.get("tool_name")
+            if tool_name in PLAN_WRITER_TOOL_NAMES:
                 tc = kwargs.get("tool_call")
                 result = kwargs.get("result")
                 arguments = tc.arguments if tc and tc.arguments else {}
-                field = arguments.get("field", "")
-                value = arguments.get("value")
-
-                # Capture state_changes from previous_value in tool result
                 session = sessions.get(plan.session_id)
-                if (
+                if not (
                     result
                     and result.status == "success"
                     and isinstance(result.data, dict)
                     and session
                 ):
-                    prev_val = result.data.get("previous_value")
-                    session["_pending_state_changes"] = [
-                        {"field": field, "before": prev_val, "after": value}
-                    ]
-                    if result.data.get("updated_field") == "phase3_step":
-                        session["_pending_phase_step_transition"] = {
-                            "from_phase": plan.phase,
-                            "to_phase": plan.phase,
-                            "from_step": result.data.get("previous_value"),
-                            "to_step": result.data.get("new_value"),
-                            "reason": "phase3_step_change",
-                        }
+                    return
 
-                errors = validate_incremental(plan, field, value)
-                if field in ("selected_transport", "accommodation"):
-                    errors.extend(validate_lock_budget(plan))
+                updates = _plan_writer_updates(tool_name, arguments, result.data)
+                if not updates:
+                    return
+
+                session["_pending_state_changes"] = _plan_writer_state_changes(
+                    tool_name,
+                    arguments,
+                    result.data,
+                )
+                errors: list[str] = []
+                for update in updates:
+                    field = update["field"]
+                    value = update["value"]
+                    errors.extend(validate_incremental(plan, field, value))
+                    if field in ("selected_transport", "accommodation"):
+                        errors.extend(validate_lock_budget(plan))
 
                 if errors:
-                    if session:
-                        session["_pending_validation_errors"] = errors
-                        push_pending_system_note(
-                            session,
-                            "[实时约束检查]\n"
-                            + "\n".join(f"- {error}" for error in errors),
-                        )
+                    session["_pending_validation_errors"] = errors
+                    push_pending_system_note(
+                        session,
+                        "[实时约束检查]\n"
+                        + "\n".join(f"- {error}" for error in errors),
+                    )
 
         async def on_before_llm(**kwargs):
             msgs = kwargs.get("messages")
@@ -1606,16 +1716,14 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         chunk.tool_result
                         and chunk.tool_result.status == "success"
                         and tool_call_names.get(chunk.tool_result.tool_call_id)
-                        == "update_plan_state"
+                        in PLAN_WRITER_TOOL_NAMES
                     ):
                         result_data = (
                             chunk.tool_result.data
                             if isinstance(chunk.tool_result.data, dict)
                             else {}
                         )
-                        updated_field = None
-                        if isinstance(chunk.tool_result.data, dict):
-                            updated_field = chunk.tool_result.data.get("updated_field")
+                        updated_fields = _plan_writer_updated_fields(result_data)
                         if result_data.get("backtracked"):
                             await _rotate_trip_on_reset_backtrack(
                                 user_id=session["user_id"],
@@ -1623,7 +1731,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                                 to_phase=int(result_data.get("to_phase", plan.phase)),
                                 reason_text=str(result_data.get("reason", "")),
                             )
-                        elif updated_field == "selected_skeleton_id":
+                        elif "selected_skeleton_id" in updated_fields:
                             _schedule_memory_event(
                                 user_id=session["user_id"],
                                 session_id=plan.session_id,
@@ -1631,7 +1739,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                                 object_type="skeleton",
                                 object_payload=chunk.tool_result.data or {},
                             )
-                        elif updated_field == "selected_transport":
+                        elif "selected_transport" in updated_fields:
                             _schedule_memory_event(
                                 user_id=session["user_id"],
                                 session_id=plan.session_id,
@@ -1639,7 +1747,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                                 object_type="transport",
                                 object_payload=chunk.tool_result.data or {},
                             )
-                        elif updated_field == "accommodation":
+                        elif "accommodation" in updated_fields:
                             _schedule_memory_event(
                                 user_id=session["user_id"],
                                 session_id=plan.session_id,
@@ -1744,21 +1852,18 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 backtrack_target = _detect_backtrack(user_message, plan)
                 if backtrack_target is not None:
                     reason = f"fallback回退：{user_message[:50]}"
-                    tool_call_id = f"fallback.update_plan_state:{plan.version}"
+                    tool_call_id = f"fallback.request_backtrack:{plan.version}"
                     yield json.dumps(
                         {
                             "type": "tool_call",
                             "tool_call": {
                                 "id": tool_call_id,
-                                "name": "update_plan_state",
+                                "name": "request_backtrack",
                                 "arguments": {
-                                    "field": "backtrack",
-                                    "value": {
-                                        "to_phase": backtrack_target,
-                                        "reason": reason,
-                                    },
+                                    "to_phase": backtrack_target,
+                                    "reason": reason,
                                 },
-                                "human_label": "更新旅行计划",
+                                "human_label": "回退到之前阶段",
                             },
                         },
                         ensure_ascii=False,

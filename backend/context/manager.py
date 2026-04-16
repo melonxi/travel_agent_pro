@@ -16,6 +16,7 @@ from telemetry.attributes import (
     CONTEXT_TOKENS_BEFORE,
     EVENT_CONTEXT_COMPRESSION,
 )
+from tools.plan_tools import PLAN_WRITER_TOOL_NAMES as _PLAN_WRITER_NAMES
 
 # Keywords that signal user preferences — these messages must survive compression
 _PREFERENCE_SIGNALS = [
@@ -75,14 +76,14 @@ class ContextManager:
             "---",
             "",
             "## 工具使用硬规则\n\n"
-            "- 当用户提供了明确的规划信息（目的地、日期、预算、人数、偏好、约束、住宿、候选地等）时，如果这些信息尚未写入当前规划状态，或是在修改已有值，必须先调用 `update_plan_state` 写入状态，不能只在自然语言里复述。\n"
-            "- 同一条用户消息里如果包含多个字段，可以连续调用多次 `update_plan_state`。\n"
-            "- 如果某个字段已经准确体现在“当前规划状态”里，不要重复调用 `update_plan_state` 写入相同值。\n"
+            "- 当用户提供了明确的规划信息（目的地、日期、预算、人数、偏好、约束、住宿、候选地等）时，如果这些信息尚未写入当前规划状态，或是在修改已有值，必须先调用对应的状态写入工具写入状态，不能只在自然语言里复述。\n"
+            "- 同一条用户消息里如果包含多个字段，可以连续调用多个状态写入工具。\n"
+            "- 如果某个字段已经准确体现在“当前规划状态”里，不要重复写入相同值。\n"
             "- 只能写入用户本轮或历史中明确说过的信息，不要把你的推断、推荐、联想、示例、默认值写入状态。\n"
             "- 如果用户只说了“玩5天”“3万预算”“3个人”，只能记录天数/预算/人数这一层信息；没有明确年月日时，不要擅自写入具体出发和返回日期。\n"
             "- `preferences` 只用于记录用户明确表达的偏好，例如“节奏轻松”“想住海边”“喜欢美食”；不要把你总结出来的必去景点、推荐区域、住宿分析、行程建议写进 `preferences`。\n"
             "- `constraints` 只用于用户明确提出的硬/软约束；不要把你为方便规划而脑补的需求写进 `constraints`。\n"
-            "- 当用户要求推翻之前的阶段决策时，必须使用 `update_plan_state(field=\"backtrack\", value={...})`。\n"
+            "- 当用户要求推翻之前的阶段决策时，必须使用 `request_backtrack(to_phase=..., reason=\"...\")`。\n"
             "- 如果用户问“你现在在哪个阶段 / 当前有哪些工具 / 现在能不能查航班或酒店”，必须严格按照“当前规划状态”和本轮提供的工具列表回答，不要凭记忆猜测。\n"
             "- 完成必要的状态写入后，再继续提问、解释或给建议。",
             "",
@@ -309,8 +310,8 @@ class ContextManager:
 
         - Keep every user message verbatim.
         - Condense each assistant text turn to its first 200 chars.
-        - Render every tool call as one line (``update_plan_state`` shows
-          ``field → value``; other tools show name + status + a short result
+        - Render every tool call as one line (plan-writing tools show
+          ``tool_name args``; other tools show name + status + a short result
           fingerprint).
         - System messages are skipped; they are re-emitted by the new phase's
           system message rebuild path.
@@ -322,8 +323,7 @@ class ContextManager:
 
         lines: list[str] = []
         # Track the assistant message whose tool_calls produced each tool
-        # result, so ``update_plan_state(field=..., value=...)`` can be
-        # rendered as a single decision line.
+        # result, so plan-writing tools can be rendered as a single decision line.
         pending_tool_calls: dict[str, ToolCall] = {}
 
         for message in messages:
@@ -361,17 +361,15 @@ class ContextManager:
     ) -> str:
         name = tool_call.name if tool_call else "tool"
 
-        # update_plan_state is the richest signal — render it as a decision.
-        if tool_call and tool_call.name == "update_plan_state":
-            field = tool_call.arguments.get("field", "?")
-            value = tool_call.arguments.get("value")
-            value_preview = self._short_repr(value)
+        # Plan-writing tools — render as decisions
+        if tool_call and tool_call.name in _PLAN_WRITER_NAMES:
+            args_preview = self._short_repr(tool_call.arguments)
             if result.status == "success":
-                return f"决策: update_plan_state {field} = {value_preview}"
+                return f"决策: {tool_call.name} {args_preview}"
             if result.status == "skipped":
-                return f"跳过: update_plan_state {field}（{result.error_code or 'skipped'}）"
+                return f"跳过: {tool_call.name}（{result.error_code or 'skipped'}）"
             return (
-                f"失败: update_plan_state {field} — {result.error_code or ''} "
+                f"失败: {tool_call.name} — {result.error_code or ''} "
                 f"{(result.error or '').strip()}"
             ).strip()
 

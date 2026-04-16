@@ -26,9 +26,9 @@ from tools.search_accommodations import make_search_accommodations_tool
 from tools.search_flights import make_search_flights_tool
 from tools.search_trains import make_search_trains_tool
 from tools.search_travel_services import make_search_travel_services_tool
-from tools.update_plan_state import make_update_plan_state_tool
 from tools.web_search import make_web_search_tool
 from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+from tests.helpers.register_plan_tools import register_all_plan_tools
 
 
 class DummyLLM:
@@ -76,7 +76,7 @@ def _build_default_tool_engine(plan: TravelPlanState) -> ToolEngine:
     api_keys = ApiKeysConfig()
     flyai_client = _FakeFlyAIClient()
 
-    engine.register(make_update_plan_state_tool(plan))
+    register_all_plan_tools(engine, plan)
     engine.register(make_search_flights_tool(api_keys, flyai_client))
     engine.register(make_search_trains_tool(flyai_client))
     engine.register(make_ai_travel_search_tool(flyai_client))
@@ -245,8 +245,9 @@ def test_current_default_registered_tools_all_have_human_label():
     plan = TravelPlanState(session_id="s1", phase=1)
     engine = _build_default_tool_engine(plan)
 
+    # Split plan tools replace the legacy omnibus state adapter
     expected_default_names = {
-        "update_plan_state",
+        "update_trip_basics",
         "search_flights",
         "search_trains",
         "ai_travel_search",

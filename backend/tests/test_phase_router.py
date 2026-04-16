@@ -126,7 +126,7 @@ def test_phase5_prompt_mentions_actual_phase5_tools(router):
         "check_availability",
         "check_weather",
         "xiaohongshu_search",
-        "update_plan_state",
+        "append_day_plan",
     ]:
         assert tool_name in prompt
 

@@ -6,11 +6,12 @@ from telemetry.stats import (
     LLMCallRecord,
     lookup_pricing,
 )
+from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
 
 # Fallback write-effect tools — used when no ToolEngine is available
 _WRITE_TOOLS = frozenset(
-    {
-        "update_plan_state",
+    PLAN_WRITER_TOOL_NAMES
+    | {
         "assemble_day_plan",
         "generate_summary",
     }
@@ -18,7 +19,7 @@ _WRITE_TOOLS = frozenset(
 
 
 def _collect_state_changes(tool_calls: list[ToolCallRecord]) -> list[dict]:
-    """Extract state_changes from update_plan_state ToolCallRecords."""
+    """Extract state_changes from plan-writer ToolCallRecords."""
     changes = []
     for tc in tool_calls:
         if tc.state_changes:

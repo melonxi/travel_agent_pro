@@ -56,7 +56,10 @@ class ReflectionInjector:
             '1. 用户最初提到的所有"必去"景点是否都安排了？\n'
             f"2. 每天的节奏是否符合用户偏好（{pace_preference}）？\n"
             "3. 有没有连续两天重复相似类型的活动？\n"
-            "如果发现问题，调用 update_plan_state 修正。如果没有问题，继续。"
+            "如果发现内容问题，优先调用 `replace_daily_plans(...)` 修正；"
+            "如果只是缺少某几天，调用 `append_day_plan(...)` 填充；"
+            "如果问题需要回到上游重新决策，调用 `request_backtrack`。"
+            "如果没有问题，继续。"
         )
 
     def _summarize_preferences(self, preferences: list[Preference]) -> str:

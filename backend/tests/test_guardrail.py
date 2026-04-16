@@ -46,8 +46,8 @@ def test_empty_destination_rejected(guardrail):
 def test_negative_budget_rejected(guardrail):
     tc = ToolCall(
         id="1",
-        name="update_plan_state",
-        arguments={"field": "budget", "value": {"total": -1000}},
+        name="update_trip_basics",
+        arguments={"budget": {"total": -1000}},
     )
     result = guardrail.validate_input(tc)
     assert not result.allowed
@@ -57,8 +57,8 @@ def test_negative_budget_rejected(guardrail):
 def test_valid_budget_allowed(guardrail):
     tc = ToolCall(
         id="1",
-        name="update_plan_state",
-        arguments={"field": "budget", "value": {"total": 10000}},
+        name="update_trip_basics",
+        arguments={"budget": {"total": 10000}},
     )
     result = guardrail.validate_input(tc)
     assert result.allowed
@@ -67,8 +67,8 @@ def test_valid_budget_allowed(guardrail):
 def test_negative_budget_string_rejected(guardrail):
     tc = ToolCall(
         id="1",
-        name="update_plan_state",
-        arguments={"field": "budget", "value": {"total": "-500"}},
+        name="update_trip_basics",
+        arguments={"budget": {"total": "-500"}},
     )
     result = guardrail.validate_input(tc)
     assert not result.allowed
@@ -78,8 +78,8 @@ def test_negative_budget_string_rejected(guardrail):
 def test_positive_budget_string_allowed(guardrail):
     tc = ToolCall(
         id="1",
-        name="update_plan_state",
-        arguments={"field": "budget", "value": {"total": "10000"}},
+        name="update_trip_basics",
+        arguments={"budget": {"total": "10000"}},
     )
     result = guardrail.validate_input(tc)
     assert result.allowed
@@ -356,3 +356,152 @@ def test_output_accommodation_no_price_at_all_is_error(guardrail):
     )
     assert result.level == "error"
     assert "price" in result.reason
+
+
+def test_negative_budget_rejected_via_update_trip_basics(guardrail):
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": -500}},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_valid_budget_via_update_trip_basics(guardrail):
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": 10000}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert result.allowed
+
+
+def test_negative_budget_string_rejected_via_update_trip_basics(guardrail):
+    """Negative budget as string should be rejected."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": "-500", "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_negative_budget_chinese_string_rejected_via_update_trip_basics(guardrail):
+    """Negative budget as Chinese string like '-1万' should be rejected."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": "-1万", "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_negative_budget_number_rejected_via_update_trip_basics(guardrail):
+    """Negative budget as number should be rejected."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": -1000, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_zero_budget_number_rejected_via_update_trip_basics(guardrail):
+    """Zero budget should be rejected."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": 0, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_positive_budget_string_allowed_via_update_trip_basics(guardrail):
+    """Positive budget as string should pass."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": "5000", "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert result.allowed
+
+
+def test_positive_budget_number_allowed_via_update_trip_basics(guardrail):
+    """Positive budget as number should pass."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": 5000, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert result.allowed
+
+
+def test_negative_budget_dict_with_string_total_rejected_via_update_trip_basics(guardrail):
+    """Dict budget with negative string total like '-500' should be rejected."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": "-500"}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_negative_budget_dict_with_chinese_string_total_rejected_via_update_trip_basics(guardrail):
+    """Dict budget with negative Chinese string total like '-1万' should be rejected."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": "-1万"}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_zero_budget_dict_with_string_total_rejected_via_update_trip_basics(guardrail):
+    """Dict budget with zero string total '0' should be rejected."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": "0"}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_positive_budget_dict_with_string_total_allowed_via_update_trip_basics(guardrail):
+    """Dict budget with positive string total like '10000' should pass."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": "10000"}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert result.allowed
+
+
+def test_positive_budget_dict_with_chinese_string_total_allowed_via_update_trip_basics(guardrail):
+    """Dict budget with positive Chinese string total like '1万' should pass."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": "1万"}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert result.allowed

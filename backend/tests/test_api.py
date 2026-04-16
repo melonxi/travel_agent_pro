@@ -352,8 +352,8 @@ async def test_chat_stream_emits_tool_call_event(app):
             type=ChunkType.TOOL_CALL_START,
             tool_call=ToolCall(
                 id="tc_1",
-                name="update_plan_state",
-                arguments={"field": "destination", "value": "Tokyo"},
+                name="update_trip_basics",
+                arguments={"destination": "Tokyo"},
             ),
         )
         yield LLMChunk(type=ChunkType.DONE)
@@ -432,12 +432,12 @@ async def test_chat_stream_emits_error_event_when_agent_stream_raises(app):
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_emits_incremental_state_update_after_successful_update_plan_state(app):
+async def test_chat_stream_emits_incremental_state_update_after_successful_plan_tool(app):
     async def fake_run(self, messages, phase, tools_override=None):
         call = ToolCall(
             id="tc_state_1",
-            name="update_plan_state",
-            arguments={"field": "destination", "value": "东京"},
+            name="update_trip_basics",
+            arguments={"destination": "东京"},
         )
         yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=call)
         result = await self.tool_engine.execute(call)
@@ -517,9 +517,9 @@ async def test_chat_ambiguous_destination_question_does_not_create_fake_destinat
 async def test_chat_updates_plan_only_via_tool_execution(app):
     async def fake_run(self, messages, phase, tools_override=None):
         call = ToolCall(
-            id="tc_ups_1",
-            name="update_plan_state",
-            arguments={"field": "destination", "value": "东京"},
+            id="tc_utb_1",
+            name="update_trip_basics",
+            arguments={"destination": "东京"},
         )
         yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=call)
         result = await self.tool_engine.execute(call)

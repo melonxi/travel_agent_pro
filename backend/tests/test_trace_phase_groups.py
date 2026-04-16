@@ -10,7 +10,7 @@ class TestClassifySignificance:
         iteration = {
             "tool_calls": [
                 {
-                    "name": "update_plan_state",
+                    "name": "update_trip_basics",
                     "side_effect": "write",
                     "validation_errors": None,
                     "judge_scores": None,
@@ -28,7 +28,7 @@ class TestClassifySignificance:
         iteration = {
             "tool_calls": [
                 {
-                    "name": "update_plan_state",
+                    "name": "replace_daily_plans",
                     "side_effect": "write",
                     "validation_errors": ["時間冲突"],
                     "judge_scores": None,
@@ -60,7 +60,7 @@ class TestClassifySignificance:
         iteration = {
             "tool_calls": [
                 {
-                    "name": "update_plan_state",
+                    "name": "update_trip_basics",
                     "side_effect": "write",
                     "validation_errors": None,
                     "judge_scores": None,
@@ -131,7 +131,7 @@ class TestClassifySignificance:
                     "judge_scores": None,
                 },
                 {
-                    "name": "update_plan_state",
+                    "name": "update_trip_basics",
                     "side_effect": "write",
                     "validation_errors": None,
                     "judge_scores": None,

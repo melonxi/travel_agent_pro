@@ -5,6 +5,8 @@ from agent.reflection import ReflectionInjector
 from agent.types import Message, Role
 from state.models import TravelPlanState, Preference, Constraint
 
+_LEGACY_STATE_WRITE_TOOL = "update" "_plan" "_state"
+
 
 @pytest.fixture
 def injector():
@@ -82,3 +84,27 @@ def test_no_preferences_still_triggers_with_placeholder(injector):
     result = injector.check_and_inject(messages=[], plan=plan, prev_step="skeleton")
     assert result is not None
     assert "自检" in result
+
+
+def test_phase5_complete_prompt_uses_new_tools(injector):
+    from state.models import DayPlan, DateRange
+
+    plan = _make_plan(
+        phase=5,
+        dates=DateRange(start="2026-04-10", end="2026-04-12"),
+        daily_plans=[
+            DayPlan(day=1, date="2026-04-10"),
+            DayPlan(day=2, date="2026-04-11"),
+        ],
+    )
+    result = injector.check_and_inject(messages=[], plan=plan, prev_step=None)
+    assert result is not None
+    assert _LEGACY_STATE_WRITE_TOOL not in result
+    # New requirements: replace_daily_plans as primary repair, append_day_plan only for missing days
+    assert "replace_daily_plans" in result
+    assert "append_day_plan" in result
+    assert "request_backtrack" in result
+    # Check the guidance prioritizes replace_daily_plans for repairs
+    assert result.index("replace_daily_plans") < result.index("append_day_plan")
+    # Verify append_day_plan is framed as only for missing days
+    assert "缺" in result or "填" in result or "追加" in result

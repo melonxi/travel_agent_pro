@@ -259,7 +259,7 @@ class TestToolOverlap:
         execs = [
             EvalExecution(
                 state={"destination": "東京"},
-                tool_calls=["web_search", "update_plan_state"],
+                tool_calls=["web_search", "update_trip_basics"],
                 responses=["ok"],
                 stats={"estimated_cost_usd": 0.10},
             )
