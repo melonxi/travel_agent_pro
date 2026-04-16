@@ -335,3 +335,24 @@ def test_output_accommodation_no_price_at_all_is_error(guardrail):
     )
     assert result.level == "error"
     assert "price" in result.reason
+
+
+def test_negative_budget_rejected_via_update_trip_basics(guardrail):
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": -500}},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_valid_budget_via_update_trip_basics(guardrail):
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": 10000}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert result.allowed

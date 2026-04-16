@@ -724,8 +724,9 @@ class AgentLoop:
             return (
                 "[状态同步提醒]\n"
                 "你刚刚已经完成了旅行画像说明，但 `trip_brief` 仍为空。"
-                '请先调用 `update_plan_state(field="trip_brief", value={...})`'
-                " 写入结构化 brief；如果日期、预算、人数、偏好、约束是用户明确说过的，也要补写对应状态。"
+                "请先调用 `set_trip_brief(fields={...})`"
+                " 写入结构化 brief；如果日期、预算、人数、偏好、约束是用户明确说过的，"
+                "也要用 `update_trip_basics` 和 `add_preferences` / `add_constraints` 补写。"
                 "写完后再继续，不要重复整段面向用户解释。"
             )
 
@@ -740,7 +741,8 @@ class AgentLoop:
             return (
                 "[状态同步提醒]\n"
                 "你刚刚已经给出了候选筛选结果，但 `candidate_pool` / `shortlist` 仍为空。"
-                "请先调用 `update_plan_state` 把候选全集写入 `candidate_pool`，把第一轮筛选结果写入 `shortlist`。"
+                "请先调用 `set_candidate_pool(pool=[...])` 写入候选全集，"
+                "再调用 `set_shortlist(items=[...])` 写入第一轮筛选结果。"
                 "写入 shortlist 后系统会自动推进子阶段。"
             )
 
@@ -756,9 +758,10 @@ class AgentLoop:
             return (
                 "[状态同步提醒]\n"
                 "你刚刚已经给出了 2-3 套骨架方案，但 `skeleton_plans` 仍为空。"
-                '请先调用 `update_plan_state(field="skeleton_plans", value=[...])`'
-                " 写入结构化骨架方案列表（传 list 整体替换）。"
-                "如果用户已经明确选中某套方案，再写 `selected_skeleton_id`，系统会自动推进到 lock 子阶段。"
+                "请先调用 `set_skeleton_plans(plans=[...])`"
+                " 写入结构化骨架方案列表。"
+                '如果用户已经明确选中某套方案，再调用 `select_skeleton(id="...")`，'
+                "系统会自动推进到 lock 子阶段。"
             )
 
         if (
@@ -847,21 +850,25 @@ class AgentLoop:
                 "[状态同步提醒]\n"
                 f"你刚刚已经给出了逐日行程安排，但 `daily_plans` 仍只有 {planned_count}/{total_days} 天。"
                 f"还需要写入 {remaining} 天的行程。"
-                '请立即调用 `update_plan_state(field="daily_plans", value=[...])` '
-                "把你刚才描述的每一天行程以结构化 JSON 写入。"
+                "请立即调用 `replace_daily_plans(days=[...])` 批量写入全部天数，"
+                "或调用 `append_day_plan(...)` 逐天追加。"
                 "每天必须包含 day、date、activities（含 name/location/start_time/end_time/category/cost）。"
-                "可以一次性传入 list[dict] 写入全部天数，也可以逐天传入单个 dict 追加。"
             )
         return None
 
     def _should_skip_redundant_update(self, tool_call: ToolCall) -> bool:
-        if tool_call.name != "update_plan_state" or self.plan is None:
+        if self.plan is None:
             return False
-        field = tool_call.arguments.get("field")
-        if not isinstance(field, str):
-            return False
-        return is_redundant_update_plan_state(
-            self.plan,
-            field=field,
-            value=tool_call.arguments.get("value"),
-        )
+        # Legacy adapter path
+        if tool_call.name == "update_plan_state":
+            field = tool_call.arguments.get("field")
+            if not isinstance(field, str):
+                return False
+            return is_redundant_update_plan_state(
+                self.plan,
+                field=field,
+                value=tool_call.arguments.get("value"),
+            )
+        # New single-responsibility tools have clear semantics;
+        # redundancy checks are less needed. Skip for now.
+        return False

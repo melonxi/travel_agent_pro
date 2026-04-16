@@ -82,3 +82,21 @@ def test_no_preferences_still_triggers_with_placeholder(injector):
     result = injector.check_and_inject(messages=[], plan=plan, prev_step="skeleton")
     assert result is not None
     assert "自检" in result
+
+
+def test_phase5_complete_prompt_uses_new_tools(injector):
+    from state.models import DayPlan, DateRange
+
+    plan = _make_plan(
+        phase=5,
+        dates=DateRange(start="2026-04-10", end="2026-04-12"),
+        daily_plans=[
+            DayPlan(day=1, date="2026-04-10"),
+            DayPlan(day=2, date="2026-04-11"),
+        ],
+    )
+    result = injector.check_and_inject(messages=[], plan=plan, prev_step=None)
+    assert result is not None
+    assert "update_plan_state" not in result
+    assert "append_day_plan" in result
+    assert "request_backtrack" in result

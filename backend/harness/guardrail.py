@@ -105,14 +105,15 @@ class ToolGuardrail:
                         allowed=False, reason=f"{field} 不能为空", level="error"
                     )
 
-        if (
-            not self._is_disabled("invalid_budget")
-            and tc.name == "update_plan_state"
-            and tc.arguments.get("field") == "budget"
-        ):
-            value = tc.arguments.get("value")
-            if isinstance(value, dict):
-                total = value.get("total")
+        if not self._is_disabled("invalid_budget"):
+            budget_value = None
+            if tc.name == "update_plan_state" and tc.arguments.get("field") == "budget":
+                budget_value = tc.arguments.get("value")
+            elif tc.name == "update_trip_basics" and "budget" in tc.arguments:
+                budget_value = tc.arguments.get("budget")
+
+            if isinstance(budget_value, dict):
+                total = budget_value.get("total")
                 if isinstance(total, (int, float)) and total <= 0:
                     return GuardrailResult(
                         allowed=False,
