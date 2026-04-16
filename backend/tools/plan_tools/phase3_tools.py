@@ -758,8 +758,9 @@ def make_set_trip_brief_tool(plan: TravelPlanState):
         name="set_trip_brief",
         description=(
             "更新旅行画像（增量合并到现有 trip_brief）。\n"
-            "触发条件：收集到用户的旅行目标、节奏偏好、出发城市、必去/不去等画像信息后必须立即调用。\n"
-            "禁止行为：此工具只用于写旅行画像，不要用它记录骨架选择（应用 select_skeleton）、候选池（应用 set_candidate_pool）或其他非画像信息。\n"
+            "标准字段：goal（旅行目标）、pace（relaxed/balanced/intensive）、departure_city（出发城市）。\n"
+            "禁止写入：must_do/avoid 应使用 add_preferences / add_constraints；预算应使用 update_trip_basics。\n"
+            "禁止行为：不要用此工具记录骨架选择（应用 select_skeleton）、候选池（应用 set_candidate_pool）或其他非画像信息。\n"
             "写入后效果：trip_brief 增量合并，brief 子阶段完成的必要条件。"
         ),
         phases=[3],
