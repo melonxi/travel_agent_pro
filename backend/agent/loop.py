@@ -736,9 +736,9 @@ class AgentLoop:
             return (
                 "[状态同步提醒]\n"
                 "你刚刚已经完成了旅行画像说明，但 `trip_brief` 仍为空。"
-                "请先调用 `set_trip_brief(fields={...})`"
-                " 写入结构化 brief；如果日期、预算、人数、偏好、约束是用户明确说过的，"
-                "也要用 `update_trip_basics` 和 `add_preferences` / `add_constraints` 补写。"
+                "请先调用 `set_trip_brief(fields={goal, pace, departure_city})`"
+                " 写入画像核心字段；must_do 用 `add_preferences` 写入，"
+                "avoid 用 `add_constraints` 写入，预算用 `update_trip_basics` 写入。"
                 "写完后再继续，不要重复整段面向用户解释。"
             )
 
