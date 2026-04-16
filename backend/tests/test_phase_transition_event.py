@@ -5,12 +5,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from agent.hooks import HookManager
 from agent.loop import AgentLoop
-from agent.types import Message, Role, ToolCall
+from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from main import create_app
 from state.models import TravelPlanState
 from tools.base import tool
 from tools.engine import ToolEngine
+from tools.plan_tools.trip_basics import make_update_trip_basics_tool
 from tools.update_plan_state import make_update_plan_state_tool
 
 
@@ -250,6 +251,53 @@ def agent_with_backtrack_tool():
     return agent
 
 
+@pytest.fixture
+def agent_with_split_writer_phase_transition(plan_phase1):
+    engine = ToolEngine()
+    engine.register(make_update_trip_basics_tool(plan_phase1))
+
+    llm = MagicMock()
+    mock_router = MagicMock()
+    mock_router.get_prompt.side_effect = lambda phase: f"phase-{phase}-prompt"
+    mock_router.check_and_apply_transition.side_effect = _promote_phase(
+        plan_phase1, to_phase=3
+    )
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_split_writer",
+                    name="update_trip_basics",
+                    arguments={"destination": "成都"},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        phase_router=mock_router,
+        context_manager=_PhaseTransitionContextManager(),
+        plan=plan_phase1,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=_PhaseTransitionMemoryManager(),
+        user_id="u1",
+    )
+    return agent, mock_router
+
+
 def _get_sessions(app) -> dict:
     for route in app.routes:
         endpoint = getattr(route, "endpoint", None)
@@ -305,12 +353,11 @@ async def test_sse_emits_phase_transition_event(app, sessions, session_id):
 
 
 @pytest.mark.asyncio
-async def test_sse_emits_phase_transition_for_phase3_step_update(
+async def test_sse_emits_state_update_for_set_skeleton_plans(
     app, sessions, session_id
 ):
     session = sessions[session_id]
     session["plan"].phase = 3
-    session["plan"].phase3_step = "brief"
     agent = session["agent"]
     call_count = 0
 
@@ -322,14 +369,18 @@ async def test_sse_emits_phase_transition_for_phase3_step_update(
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
                     id="tc_phase3_step",
-                    name="update_plan_state",
-                    arguments={"field": "phase3_step", "value": "skeleton"},
+                    name="set_skeleton_plans",
+                    arguments={
+                        "plans": [
+                            {"id": "sk-1", "name": "东京 citywalk", "days": [1, 2, 3]}
+                        ]
+                    },
                 ),
             )
             yield LLMChunk(type=ChunkType.DONE)
             return
 
-        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已进入 skeleton")
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已写入骨架方案")
         yield LLMChunk(type=ChunkType.DONE)
 
     agent.llm.chat = fake_chat
@@ -338,7 +389,7 @@ async def test_sse_emits_phase_transition_for_phase3_step_update(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            f"/api/chat/{session_id}", json={"message": "进入 skeleton", "user_id": "u1"}
+            f"/api/chat/{session_id}", json={"message": "写入骨架方案", "user_id": "u1"}
         )
 
     events = [
@@ -346,26 +397,12 @@ async def test_sse_emits_phase_transition_for_phase3_step_update(
         for line in resp.text.splitlines()
         if line.startswith("data:") and line[len("data:") :].strip()
     ]
-    expected_transition = {
-        "type": "phase_transition",
-        "from_phase": 3,
-        "to_phase": 3,
-        "from_step": "brief",
-        "to_step": "skeleton",
-        "reason": "phase3_step_change",
-    }
+    state_update = next(event for event in events if event.get("type") == "state_update")
 
-    state_update_index = next(
-        i for i, event in enumerate(events) if event.get("type") == "state_update"
-    )
-    phase_transition_index = next(
-        i for i, event in enumerate(events) if event == expected_transition
-    )
-
-    assert events[state_update_index]["plan"]["phase"] == 3
-    assert events[state_update_index]["plan"]["phase3_step"] == "skeleton"
-    assert events[phase_transition_index] == expected_transition
-    assert state_update_index < phase_transition_index
+    assert state_update["plan"]["phase"] == 3
+    assert state_update["plan"]["skeleton_plans"] == [
+        {"id": "sk-1", "name": "东京 citywalk", "days": [1, 2, 3]}
+    ]
 
 
 @pytest.mark.asyncio
@@ -387,6 +424,22 @@ async def test_loop_yields_phase_transition_on_check_and_apply(
     assert phase_chunks[0].phase_info["from_step"] == "brief"
     assert phase_chunks[0].phase_info["to_step"] == "brief"
     assert phase_chunks[0].phase_info["reason"] == "check_and_apply_transition"
+
+
+@pytest.mark.asyncio
+async def test_split_plan_writer_triggers_check_and_apply_transition(
+    agent_with_split_writer_phase_transition,
+):
+    agent, mock_router = agent_with_split_writer_phase_transition
+
+    chunks = [c async for c in agent.run([], phase=1)]
+    phase_chunks = [c for c in chunks if c.type == ChunkType.PHASE_TRANSITION]
+
+    assert len(phase_chunks) == 1
+    assert phase_chunks[0].phase_info["from_phase"] == 1
+    assert phase_chunks[0].phase_info["to_phase"] == 3
+    assert phase_chunks[0].phase_info["reason"] == "check_and_apply_transition"
+    assert mock_router.check_and_apply_transition.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -441,6 +494,167 @@ async def test_loop_yields_phase_transition_on_backtrack(agent_with_backtrack_to
         "reason": "backtrack",
     }
     assert order[:2] == ["transition", "rebuild"]
+
+
+@pytest.mark.asyncio
+async def test_request_backtrack_result_marks_session_for_rebuild(
+    app, sessions, session_id
+):
+    session = sessions[session_id]
+    result = ToolResult(
+        tool_call_id="tc_backtrack",
+        status="success",
+        data={"backtracked": True, "to_phase": 1, "reason": "重新规划"},
+    )
+
+    await session["agent"].hooks.run(
+        "after_tool_call",
+        tool_name="request_backtrack",
+        tool_call=ToolCall(
+            id="tc_backtrack",
+            name="request_backtrack",
+            arguments={"to_phase": 1, "reason": "重新规划"},
+        ),
+        result=result,
+    )
+
+    assert session["needs_rebuild"] is True
+
+
+@pytest.mark.asyncio
+async def test_request_backtrack_does_not_track_state_changes(
+    app, sessions, session_id
+):
+    session = sessions[session_id]
+    result = ToolResult(
+        tool_call_id="tc_backtrack_state_changes",
+        status="success",
+        data={"backtracked": True, "to_phase": 1, "reason": "重新规划"},
+    )
+
+    await session["agent"].hooks.run(
+        "after_tool_call",
+        tool_name="request_backtrack",
+        tool_call=ToolCall(
+            id="tc_backtrack_state_changes",
+            name="request_backtrack",
+            arguments={"to_phase": 1, "reason": "重新规划"},
+        ),
+        result=result,
+    )
+
+    assert "_pending_state_changes" not in session
+
+
+@pytest.mark.asyncio
+async def test_update_trip_basics_hook_tracks_state_changes_and_validation_errors(
+    app, sessions, session_id
+):
+    session = sessions[session_id]
+    result = ToolResult(
+        tool_call_id="tc_basics",
+        status="success",
+        data={"updated_fields": ["budget"], "count": 1},
+    )
+
+    await session["agent"].hooks.run(
+        "after_tool_call",
+        tool_name="update_trip_basics",
+        tool_call=ToolCall(
+            id="tc_basics",
+            name="update_trip_basics",
+            arguments={"budget": {"total": 0, "currency": "CNY"}},
+        ),
+        result=result,
+    )
+
+    assert session["_pending_state_changes"] == [
+        {
+            "field": "budget",
+            "before": None,
+            "after": {"total": 0, "currency": "CNY"},
+        }
+    ]
+    assert session["_pending_validation_errors"] == ["budget.total 不能为负数或零"]
+
+
+@pytest.mark.asyncio
+async def test_split_writer_hook_uses_result_values_for_state_changes(
+    app, sessions, session_id
+):
+    session = sessions[session_id]
+    result = ToolResult(
+        tool_call_id="tc_select_transport",
+        status="success",
+        data={
+            "updated_field": "selected_transport",
+            "previous_value": {"mode": "plane"},
+            "new_value": {"mode": "train"},
+        },
+    )
+
+    await session["agent"].hooks.run(
+        "after_tool_call",
+        tool_name="select_transport",
+        tool_call=ToolCall(
+            id="tc_select_transport",
+            name="select_transport",
+            arguments={"choice": {"mode": "train"}},
+        ),
+        result=result,
+    )
+
+    assert session["_pending_state_changes"] == [
+        {
+            "field": "selected_transport",
+            "before": {"mode": "plane"},
+            "after": {"mode": "train"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sse_emits_state_update_for_update_trip_basics(app, sessions, session_id):
+    session = sessions[session_id]
+    agent = session["agent"]
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_trip_basics",
+                    name="update_trip_basics",
+                    arguments={"destination": "东京", "budget": 10000},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已更新")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    agent.llm.chat = fake_chat
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            f"/api/chat/{session_id}", json={"message": "去东京，预算一万", "user_id": "u1"}
+        )
+
+    events = [
+        json.loads(line[len("data:") :].strip())
+        for line in resp.text.splitlines()
+        if line.startswith("data:") and line[len("data:") :].strip()
+    ]
+    state_update = next(event for event in events if event.get("type") == "state_update")
+
+    assert state_update["plan"]["destination"] == "东京"
+    assert state_update["plan"]["budget"]["total"] == 10000.0
 
 
 @pytest.mark.asyncio
