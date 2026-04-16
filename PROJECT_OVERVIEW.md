@@ -39,7 +39,7 @@ travel_agent_pro/
 │   ├── memory/                 # 结构化 global/trip 记忆 + episode：models / store / manager / extraction / policy / retriever / formatter
 │   ├── context/                # 上下文：manager（系统提示/压缩决策）+ soul.md（人格）
 │   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，GLOBAL_RED_FLAGS + PHASE{1,3,5,7}_PROMPT + build_phase3_prompt）/ backtrack
-│   ├── tools/                  # 领域工具：base / engine / update_plan_state / plan_tools(聚合导出 + Phase 1/3 trip_basics + append_tools + Phase 3 强 schema + Phase 5 daily_plans + 回退工具) / 搜索类 / 规划类 / normalizers
+│   ├── tools/                  # 领域工具：base / engine / plan_tools(聚合导出 + Phase 1/3 trip_basics + append_tools + Phase 3 强 schema + Phase 5 daily_plans + 回退工具) / 搜索类 / 规划类 / normalizers
 │   ├── storage/                # SQLite 层：database / session_store / message_store / archive_store
 │   ├── harness/                # 5 层守护：guardrail / validator / judge / feasibility
 │   ├── evals/                  # 评估管线：models / runner / stability / failure_report / golden_cases
@@ -78,7 +78,7 @@ travel_agent_pro/
 - 角色：旅行灵感顾问；目标：用最少轮次收敛到一个目的地
 - **回复纪律**："先查后说"——每条建议须有工具查询结果支撑；回复≤150字；一次只给2-3个选项
 - 工具：`xiaohongshu_search`、`web_search`、`quick_travel_search`、`update_trip_basics`（状态写入）
-- **Prompt 已迁移**：所有 `update_plan_state` 引用已替换为 `update_trip_basics`
+- **Prompt 已迁移**：Phase 1 改为使用 `update_trip_basics` 收口基础行程信息，并在需要时配合 `add_preferences` / `add_constraints`
 - **完成 Gate**：`destination` 非空 → 自动进入 Phase 3
 - 产出：`destination`、可选的 `budget`/`travelers`/`dates`
 
@@ -87,15 +87,15 @@ travel_agent_pro/
 - **candidate** → 候选池构建与筛选；"锚定→约束→分组→取舍"思考框架
 - **skeleton** → 骨架方案（非逐小时）；独立锚定大交通时序
 - **lock** → 锁定交通 + 住宿；大交通确认时间后即锁
-- **工具门控**：每个子步骤只暴露该阶段所需的工具子集；Phase 3 现按 brief/candidate/skeleton/lock 动态放开拆分后的 plan-writing tools（`update_trip_basics`、`set_trip_brief`、`set_candidate_pool`、`set_shortlist`、`set_skeleton_plans`、`select_skeleton`、交通/住宿锁定工具、`add_preferences`、`add_constraints`、`request_backtrack`），并保留 `update_plan_state` 作为过渡适配入口
-- **Prompt 已迁移**：所有 `update_plan_state` 引用已替换为子步骤对应工具（brief 用 `set_trip_brief`，skeleton 用 `select_skeleton`，回退用 `request_backtrack`）
+- **工具门控**：每个子步骤只暴露该阶段所需的工具子集；Phase 3 现按 brief/candidate/skeleton/lock 动态放开对应的 plan-writing tools（`update_trip_basics`、`set_trip_brief`、`set_candidate_pool`、`set_shortlist`、`set_skeleton_plans`、`select_skeleton`、交通/住宿锁定工具、`add_preferences`、`add_constraints`、`request_backtrack`）
+- **Prompt 已迁移**：brief 用 `set_trip_brief` / `add_preferences` / `add_constraints`，candidate 用 `set_candidate_pool` / `set_shortlist`，skeleton 用 `set_skeleton_plans` / `select_skeleton`，回退用 `request_backtrack`
 - **Prompt 拼装**：`build_phase3_prompt(step)` = `PHASE3_BASE_PROMPT` + `PHASE3_STEP_PROMPTS[step]` + `GLOBAL_RED_FLAGS`
 - 产出：`trip_brief`、`candidate_pool`、`skeleton_plans`、`selected_skeleton_id`、交通/住宿
 
 ### Phase 5 — 日程详排（skill-card，路径规划定位）
 - 核心定位：路径规划优化问题——最小化无效移动，最大化体验密度
 - **增量生成策略**：按1-2天增量调用 `assemble_day_plan`，非一次性全量
-- **Prompt 已迁移**：所有 `update_plan_state` 引用已替换为 `append_day_plan` / `replace_daily_plans`（状态写入）、`request_backtrack`（回退）
+- **Prompt 已迁移**：Phase 5 改为使用 `append_day_plan` / `replace_daily_plans`（状态写入）与 `request_backtrack`（回退）
 - 流程：expand（骨架→日期）→ assemble（活动+时间）→ validate（开放/距离/天气/预算）→ commit
 - 产出：`daily_plans[]`，每天含完整 Activity 列表
 - 运行时上下文必须注入骨架内容、`trip_brief` 字段、偏好和约束
@@ -103,12 +103,12 @@ travel_agent_pro/
 ### Phase 7 — 出发前查漏（skill-card）
 - 角色：出发前查漏官；扫描全计划，生成带优先级的检查清单
 - 工具：`check_weather`、`check_availability`、`web_search`、`request_backtrack`（仅在发现严重问题需回退时使用）
-- **Prompt 已迁移**：所有 `update_plan_state` 引用已替换为 `request_backtrack`
+- **Prompt 已迁移**：Phase 7 改为直接使用 `request_backtrack`
 - 扫描维度：证件签证、天气、预订确认、交通接驳、应急预案
 - **完成 Gate**：所有高优先级项解决 → `generate_summary`
 
 ### GLOBAL_RED_FLAGS
-所有阶段 prompt 末尾统一注入跨阶段通用禁令（如"不捏造信息"、"不越阶段边界"等），通过 `PhaseRouter.get_prompt_for_plan()` 和 `build_phase3_prompt()` 自动拼装。**Prompt 已迁移**：所有 `update_plan_state` 引用已替换为"状态写入工具"泛指（第一条规则）、`request_backtrack(to_phase=..., reason=\"...\")`（第二条规则）。
+所有阶段 prompt 末尾统一注入跨阶段通用禁令（如"不捏造信息"、"不越阶段边界"等），通过 `PhaseRouter.get_prompt_for_plan()` 和 `build_phase3_prompt()` 自动拼装。**Prompt 已迁移**：通用规则改为引用"状态写入工具"泛指（第一条规则）与 `request_backtrack(to_phase=..., reason=\"...\")`（第二条规则）。
 
 ### 阶段转换机制
 - `PhaseRouter.infer_phase(plan)` 根据字段填充情况推断当前阶段
@@ -215,25 +215,37 @@ LLM API 异常
 ## 8. 工具系统
 
 - `@tool` 装饰器声明名称、描述、可用阶段、参数 schema
-- `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM；运行时会先注册兼容层 `update_plan_state`，再通过 `make_all_plan_tools(plan)` 一次性注册拆分后的 plan-writing tools；`PLAN_WRITER_TOOL_NAMES` 同时驱动 `AgentLoop` 的 state-write 判定，确保 split writers 也会触发 `check_and_apply_transition`
+- `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM；运行时通过 `make_all_plan_tools(plan)` 一次性注册 19 个 plan-writing tools；`PLAN_WRITER_TOOL_NAMES` 同时驱动 `AgentLoop` 的 state-write 判定，确保所有 writer 都会触发 `check_and_apply_transition`
 - 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM
-- **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（当前对外状态写入口同时包含过渡层 `update_plan_state` 与拆分后的 plan-writing tools，另有 `assemble_day_plan`、`generate_summary`）顺序执行
-- **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`update_plan_state` 作为严格适配层保留旧签名，对 destination/dates/travelers/budget 的短语容错、部分追加语义和 backtrack 入口做兼容，同时把 trip_brief 与 Phase 3 结构化列表写入委托给共享 writer
-- **运行时写后处理**：`backend/main.py` 把 `PLAN_WRITER_TOOL_NAMES` 统一视作状态写工具；split writers 与 `update_plan_state` 一样会触发 `validate_incremental` / `validate_lock_budget`、SSE `state_update`、accept memory 事件、以及 backtrack rebuild。若工具结果显式返回 `previous_value` / `new_value`，`SessionStats.state_changes` 优先记录工具返回的规范化值；`request_backtrack` 只保留 rebuild/transition 语义，不伪造字段 diff
-- **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集，并把 split plan tools 纳入白名单（如 brief 的 `set_trip_brief` / `add_preferences` / `add_constraints`，lock 的交通住宿锁定工具）；`phase3_step` 由路由推断，不再通过 `update_plan_state` 对外暴露
+- **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（19 个 plan-writing tools，以及 `assemble_day_plan`、`generate_summary`）顺序执行
+- **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`tools.plan_tools.*` 负责参数 schema、输入规范化与错误边界，再委托到共享 writer 完成落盘
+- **运行时写后处理**：`backend/main.py` 把 `PLAN_WRITER_TOOL_NAMES` 统一视作状态写工具；所有 writers 都会触发 `validate_incremental` / `validate_lock_budget`、SSE `state_update`、accept memory 事件、以及 backtrack rebuild。若工具结果显式返回 `previous_value` / `new_value`，`SessionStats.state_changes` 优先记录工具返回的规范化值；`request_backtrack` 只保留 rebuild/transition 语义，不伪造字段 diff
+- **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集，并把 split plan tools 纳入白名单（如 brief 的 `set_trip_brief` / `add_preferences` / `add_constraints`，lock 的交通住宿锁定工具）；`phase3_step` 由路由推断
 - **Phase 3 状态修复**：`AgentLoop` 会根据 split-write 完成度注入修复提示；`candidate_pool` 和 `shortlist` 都缺失时要求先写入候选全集再写 shortlist，若仅缺 `shortlist` 则只提示补写 shortlist。
 
 ### 工具清单
 
 | 类别 | 工具 |
 |------|------|
-| 状态 | `update_plan_state`（当前公开写入口，含冗余检测，底层复用 `state.plan_writers` 共享写层）、`tools.plan_tools`（统一聚合导出 `PLAN_WRITER_TOOL_NAMES` 与 `make_all_plan_tools(plan)`，运行时批量注册拆分写工具）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.append_tools`（Phase 1/3/5 追加型写工具；追加 preferences/constraints、追加或整体替换 destination_candidates；其中 preferences 兼容 `{key, value}` 与 legacy loose dict 展开语义，并在 wrapper 层做输入类型校验）、`tools.plan_tools.phase3_tools`（已拆出 Category A Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity schema）、`tools.plan_tools.backtrack`（`request_backtrack` 阶段回退写工具，薄封装 `state.plan_writers.execute_backtrack`） |
+| 状态 | `tools.plan_tools`（统一聚合导出 `PLAN_WRITER_TOOL_NAMES` 与 `make_all_plan_tools(plan)`，运行时批量注册 19 个状态写工具）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.append_tools`（Phase 1/3/5 追加型写工具；追加 preferences/constraints、追加或整体替换 destination_candidates；其中 preferences 兼容 `{key, value}` 与 legacy loose dict 展开语义，并在 wrapper 层做输入类型校验）、`tools.plan_tools.phase3_tools`（Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity schema）、`tools.plan_tools.backtrack`（`request_backtrack` 阶段回退写工具，薄封装 `state.plan_writers.execute_backtrack`） |
 | 搜索 | `xiaohongshu_search`、`web_search`、`quick_travel_search` |
 | 交通 | `search_flights`（Amadeus + FlyAI 双源融合）、`search_trains`、`calculate_route` |
 | 住宿 | `search_accommodations` |
 | POI | `get_poi_info`（双源降级）、`check_availability` |
 | 行程 | `assemble_day_plan`、`check_feasibility` |
 | 辅助 | `check_weather`、`generate_summary` |
+
+#### 19 个状态写工具
+
+| 阶段 | 工具 |
+|------|------|
+| Phase 1 / 共用基础 | `update_trip_basics`、`add_preferences`、`add_constraints`、`add_destination_candidate`、`set_destination_candidates` |
+| Phase 3 brief | `set_trip_brief` |
+| Phase 3 candidate | `set_candidate_pool`、`set_shortlist` |
+| Phase 3 skeleton | `set_skeleton_plans`、`select_skeleton` |
+| Phase 3 lock | `set_transport_options`、`select_transport`、`set_accommodation_options`、`set_accommodation`、`set_risks`、`set_alternatives` |
+| Phase 5 | `append_day_plan`、`replace_daily_plans` |
+| 跨阶段 | `request_backtrack` |
 
 ---
 
@@ -332,9 +344,9 @@ DELETE /api/memory/{user_id}/{item_id}      标记 obsolete
 4. **可行性门控 Feasibility Gate** — Phase 1→3 转换时基于目的地查表做规则式判断
 5. **成本与延迟追踪** — `SessionStats` 记录 token 用量与模型定价；`ToolCallRecord` 承载 `state_changes`、`parallel_group`、`validation_errors`、`judge_scores`；`MemoryHitRecord` 记录命中记忆
 
-**最近迁移（Task 14 + follow-up fixes）**：
-- `agent/loop.py`: 4 个 state repair 消息更新为指引 split 工具（`set_trip_brief` / `set_candidate_pool` / `select_skeleton` / `append_day_plan`）；redundancy 检测仅对 `update_plan_state` 生效，新工具直接透传；candidate 阶段 repair hint 现在也对部分写入失败（`candidate_pool` 存在但 `shortlist` 缺失）触发
-- `agent/tool_choice.py`: 简化为恒返 "auto"，依赖 prompt 纪律，不再强制 `update_plan_state`
+**最近迁移（Task 14-15）**：
+- `agent/loop.py`: 4 个 state repair 消息更新为指引 split 工具（`set_trip_brief` / `set_candidate_pool` / `select_skeleton` / `append_day_plan`）；candidate 阶段 repair hint 现在也对部分写入失败（`candidate_pool` 存在但 `shortlist` 缺失）触发
+- `agent/tool_choice.py`: 简化为恒返 "auto"，依赖 prompt 纪律，让模型在 19 个状态写工具中自行选择
 - `agent/reflection.py`: Phase 5 自检末尾更新为 `replace_daily_plans(...)` 优先用于内容修正、`append_day_plan(...)` 仅用于填充缺失天数、`request_backtrack` 保留用于上游重决策
 - `context/manager.py`: 系统提示泛化"状态写入工具"措辞；backtrack 规则更新为 `request_backtrack(to_phase=..., reason="...")`；压缩渲染新增对 `PLAN_WRITER_TOOL_NAMES` 的"决策"行标记
 - `harness/guardrail.py`: `invalid_budget` 规则现在统一处理 `update_trip_basics` 中 dict/string/number 格式的预算，拒绝所有负数或零值（包括 "-500" / "-1万" / -1000 / 0）；`_extract_numeric_budget` 对 dict 格式递归处理 total，支持 `{"total": "-500"}` / `{"total": "10000"}` 等字符串 total 路径

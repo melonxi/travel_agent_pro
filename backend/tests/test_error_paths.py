@@ -218,7 +218,7 @@ async def test_implicit_backtrack_in_chat(app, sessions):
         # chat returns SSE (EventSourceResponse), so status is 200
         assert resp.status_code == 200
         assert '"type": "tool_call"' in resp.text
-        # Now uses request_backtrack instead of update_plan_state with field=backtrack
+        # Backtrack now goes through the dedicated request_backtrack writer.
         assert '"name": "request_backtrack"' in resp.text
         assert '"type": "tool_result"' in resp.text
 

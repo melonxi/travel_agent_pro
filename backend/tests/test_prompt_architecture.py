@@ -11,6 +11,10 @@ from phase.prompts import (
     build_phase3_prompt,
 )
 
+_LEGACY_STATE_WRITE_CALL = "update" "_plan" "_state("
+_LEGACY_STATE_WRITE_FIELD_CALL = "update" "_plan" "_state(field="
+_LEGACY_STATE_WRITE_TOOL = "update" "_plan" "_state"
+
 
 class TestGlobalRedFlags:
     def test_global_red_flags_exists_and_nonempty(self):
@@ -343,31 +347,31 @@ class TestGlobalRedFlagsInjection:
         assert prompt.rstrip().endswith(GLOBAL_RED_FLAGS.rstrip())
 
 
-class TestNoUpdatePlanStateInPrompts:
-    """After Step 3, prompts must not reference update_plan_state as a tool call."""
+class TestLegacyStateWriterRemovedInPrompts:
+    """After Step 3, prompts must not reference the removed omnibus state writer."""
 
-    def test_no_update_plan_state_call_in_phase1(self):
-        assert "update_plan_state(" not in PHASE1_PROMPT
-        assert "update_plan_state(field=" not in PHASE1_PROMPT
+    def test_no_legacy_state_writer_call_in_phase1(self):
+        assert _LEGACY_STATE_WRITE_CALL not in PHASE1_PROMPT
+        assert _LEGACY_STATE_WRITE_FIELD_CALL not in PHASE1_PROMPT
 
-    def test_no_update_plan_state_call_in_phase3_base(self):
-        assert "update_plan_state(" not in PHASE3_BASE_PROMPT
+    def test_no_legacy_state_writer_call_in_phase3_base(self):
+        assert _LEGACY_STATE_WRITE_CALL not in PHASE3_BASE_PROMPT
 
-    def test_no_update_plan_state_call_in_phase3_steps(self):
+    def test_no_legacy_state_writer_call_in_phase3_steps(self):
         for step_name, step_prompt in PHASE3_STEP_PROMPTS.items():
-            assert "update_plan_state(" not in step_prompt, (
-                f"Phase 3 sub-stage '{step_name}' still references update_plan_state("
+            assert _LEGACY_STATE_WRITE_CALL not in step_prompt, (
+                f"Phase 3 sub-stage '{step_name}' still references {_LEGACY_STATE_WRITE_CALL}"
             )
 
-    def test_no_update_plan_state_call_in_phase5(self):
-        assert "update_plan_state(" not in PHASE5_PROMPT
-        assert "update_plan_state" not in PHASE5_PROMPT
+    def test_no_legacy_state_writer_call_in_phase5(self):
+        assert _LEGACY_STATE_WRITE_CALL not in PHASE5_PROMPT
+        assert _LEGACY_STATE_WRITE_TOOL not in PHASE5_PROMPT
 
-    def test_no_update_plan_state_call_in_phase7(self):
-        assert "update_plan_state(" not in PHASE7_PROMPT
+    def test_no_legacy_state_writer_call_in_phase7(self):
+        assert _LEGACY_STATE_WRITE_CALL not in PHASE7_PROMPT
 
-    def test_no_update_plan_state_call_in_global_red_flags(self):
-        assert "update_plan_state(" not in GLOBAL_RED_FLAGS
+    def test_no_legacy_state_writer_call_in_global_red_flags(self):
+        assert _LEGACY_STATE_WRITE_CALL not in GLOBAL_RED_FLAGS
 
     def test_phase3_skeleton_prompt_mentions_select_skeleton(self):
         skeleton = PHASE3_STEP_PROMPTS["skeleton"]

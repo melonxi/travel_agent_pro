@@ -245,7 +245,7 @@ def test_current_default_registered_tools_all_have_human_label():
     plan = TravelPlanState(session_id="s1", phase=1)
     engine = _build_default_tool_engine(plan)
 
-    # Split plan tools replace update_plan_state
+    # Split plan tools replace the legacy omnibus state adapter
     expected_default_names = {
         "update_trip_basics",
         "search_flights",

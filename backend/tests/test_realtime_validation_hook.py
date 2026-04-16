@@ -70,17 +70,27 @@ async def test_plan_tool_injects_realtime_incremental_feedback(app, sessions):
                                 "activities": [
                                     {
                                         "name": "浅草寺",
-                                        "location": "浅草寺",
+                                        "location": {
+                                            "name": "浅草寺",
+                                            "lat": 35.7148,
+                                            "lng": 139.7967,
+                                        },
                                         "start_time": "09:00",
                                         "end_time": "10:00",
                                         "category": "景点",
+                                        "cost": 0,
                                     },
                                     {
                                         "name": "上野公园",
-                                        "location": "上野公园",
+                                        "location": {
+                                            "name": "上野公园",
+                                            "lat": 35.7156,
+                                            "lng": 139.7745,
+                                        },
                                         "start_time": "10:05",
                                         "end_time": "11:00",
                                         "category": "景点",
+                                        "cost": 0,
                                         "transport_duration_min": 20,
                                     },
                                 ],
@@ -110,7 +120,7 @@ async def test_plan_tool_injects_realtime_incremental_feedback(app, sessions):
 
 @pytest.mark.asyncio
 async def test_on_validate_records_state_changes_to_stats(app, sessions):
-    """update_trip_basics should write state_changes to the latest ToolCallRecord."""
+    """update_trip_basics should record normalized state_changes on the latest ToolCallRecord."""
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         create_resp = await client.post("/api/sessions")
@@ -161,5 +171,5 @@ async def test_on_validate_records_state_changes_to_stats(app, sessions):
     assert rec.state_changes is not None
     assert len(rec.state_changes) == 1
     assert rec.state_changes[0]["field"] == "destination"
-    assert rec.state_changes[0]["before"] == "北京"
+    assert rec.state_changes[0]["before"] is None
     assert rec.state_changes[0]["after"] == "东京"

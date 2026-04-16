@@ -293,7 +293,7 @@ async def test_xiaohongshu_search_disabled_short_circuits_before_calling_client(
 
 
 @pytest.mark.asyncio
-async def test_update_trip_basics_invalid_dates_budget_and_travelers_reset_fields_to_none():
+async def test_update_trip_basics_rejects_invalid_dates_budget_and_travelers():
     plan = TravelPlanState(
         session_id="s1",
         dates=DateRange(start="2026-05-01", end="2026-05-05"),
@@ -302,13 +302,16 @@ async def test_update_trip_basics_invalid_dates_budget_and_travelers_reset_field
     )
     tool_fn = make_update_trip_basics_tool(plan)
 
-    await tool_fn(dates="尽快出发")
-    await tool_fn(budget="丰俭由人")
-    await tool_fn(travelers="一家人")
+    with pytest.raises(ToolError, match="无法解析日期"):
+        await tool_fn(dates="尽快出发")
+    with pytest.raises(ToolError, match="无法解析预算"):
+        await tool_fn(budget="丰俭由人")
+    with pytest.raises(ToolError, match="无法解析人数"):
+        await tool_fn(travelers="一家人")
 
-    assert plan.dates is None
-    assert plan.budget is None
-    assert plan.travelers is None
+    assert plan.dates == DateRange(start="2026-05-01", end="2026-05-05")
+    assert plan.budget == Budget(total=5000, currency="CNY")
+    assert plan.travelers == Travelers(adults=2, children=1)
 
 
 @pytest.mark.asyncio
@@ -324,9 +327,9 @@ async def test_destination_candidates_append_or_replace():
     tool_fn = make_set_destination_candidates_tool(plan)
 
     # Replace with single candidate
-    await tool_fn(candidates=[{"name": "Osaka"}])
+    await tool_fn(items=[{"name": "Osaka"}])
     assert plan.destination_candidates == [{"name": "Osaka"}]
 
     # Replace with multiple candidates
-    await tool_fn(candidates=[{"name": "Tokyo"}, {"name": "Kyoto"}])
+    await tool_fn(items=[{"name": "Tokyo"}, {"name": "Kyoto"}])
     assert plan.destination_candidates == [{"name": "Tokyo"}, {"name": "Kyoto"}]

@@ -195,6 +195,23 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
+                        id="tc_skeleton_plans",
+                        name="set_skeleton_plans",
+                        arguments={
+                            "plans": [
+                                {
+                                    "id": "balanced",
+                                    "name": "平衡版",
+                                    "days": [],
+                                    "tradeoffs": {},
+                                }
+                            ]
+                        },
+                    ),
+                )
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
                         id="tc_skeleton",
                         name="select_skeleton",
                         arguments={
