@@ -108,7 +108,7 @@ travel_agent_pro/
 - **完成 Gate**：所有高优先级项解决 → `generate_summary`
 
 ### GLOBAL_RED_FLAGS
-所有阶段 prompt 末尾统一注入跨阶段通用禁令（如"不捏造信息"、"不越阶段边界"等），通过 `PhaseRouter.get_prompt_for_plan()` 和 `build_phase3_prompt()` 自动拼装。**Prompt 已迁移**：所有 `update_plan_state` 引用已替换为"状态写入工具"泛指（第一条规则）、`request_backtrack`（第二条规则）。
+所有阶段 prompt 末尾统一注入跨阶段通用禁令（如"不捏造信息"、"不越阶段边界"等），通过 `PhaseRouter.get_prompt_for_plan()` 和 `build_phase3_prompt()` 自动拼装。**Prompt 已迁移**：所有 `update_plan_state` 引用已替换为"状态写入工具"泛指（第一条规则）、`request_backtrack(to_phase=..., reason=\"...\")`（第二条规则）。
 
 ### 阶段转换机制
 - `PhaseRouter.infer_phase(plan)` 根据字段填充情况推断当前阶段

@@ -34,6 +34,7 @@ def test_build_system_message(ctx_manager):
     assert "当前时区" in msg.content
     assert "必须先调用对应的状态写入工具" in msg.content
     assert "不要重复写入相同值" in msg.content
+    assert 'request_backtrack(to_phase=..., reason="...")' in msg.content
     assert "当前可用工具：update_plan_state, xiaohongshu_search" in msg.content
 
 
