@@ -12,7 +12,6 @@ def _make_plan(phase: int = 5) -> TravelPlanState:
         session_id="test-backtrack",
         phase=phase,
         destination="Tokyo",
-        destination_candidates=[{"name": "Tokyo"}, {"name": "Osaka"}],
         dates=DateRange(start="2025-08-01", end="2025-08-05"),
         phase3_step="lock",
         trip_brief={"goal": "城市漫游"},
@@ -33,7 +32,10 @@ def test_request_backtrack_tool_metadata():
     tool_fn = make_request_backtrack_tool(_make_plan())
 
     assert tool_fn.name == "request_backtrack"
-    assert tool_fn.description == "请求回退到更早的规划阶段。当用户想推翻之前的阶段决策时使用。目标阶段必须小于当前阶段。"
+    assert (
+        tool_fn.description
+        == "请求回退到更早的规划阶段。当用户想推翻之前的阶段决策时使用。目标阶段必须小于当前阶段。"
+    )
     assert tool_fn.phases == [1, 3, 5, 7]
     assert tool_fn.side_effect == "write"
     assert tool_fn.human_label == "请求回退阶段"
@@ -83,7 +85,6 @@ async def test_request_backtrack_success_clears_downstream_and_records_history()
     assert plan.accommodation is None
     assert plan.daily_plans == []
     assert plan.destination == "Tokyo"
-    assert plan.destination_candidates == [{"name": "Tokyo"}, {"name": "Osaka"}]
 
 
 @pytest.mark.asyncio
@@ -98,7 +99,6 @@ async def test_request_backtrack_adjusts_phase_two_to_phase_one():
     assert plan.phase == 1
     assert len(plan.backtrack_history) == 1
     assert plan.destination is None
-    assert plan.destination_candidates == []
 
 
 @pytest.mark.asyncio

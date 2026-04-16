@@ -1,5 +1,6 @@
 # backend/tests/test_error_paths.py
 """Error-path tests: missing sessions, backtrack, budget overrun, time conflicts, tool failures."""
+
 from __future__ import annotations
 
 import pytest
@@ -31,6 +32,7 @@ from main import create_app
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_activity(
     name: str,
     start: str,
@@ -52,6 +54,7 @@ def _make_activity(
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def app(monkeypatch, tmp_path):
@@ -97,6 +100,7 @@ def sessions(app):
 # 1. test_chat_session_not_found
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_chat_session_not_found(app):
     """POST /api/chat to a nonexistent session returns 404."""
@@ -112,6 +116,7 @@ async def test_chat_session_not_found(app):
 # ---------------------------------------------------------------------------
 # 2. test_backtrack_api_success
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_backtrack_api_success(app, sessions):
@@ -148,12 +153,12 @@ async def test_backtrack_api_success(app, sessions):
     assert updated_plan.dates is None
     assert updated_plan.accommodation is None
     assert updated_plan.daily_plans == []
-    assert updated_plan.destination_candidates == []
 
 
 # ---------------------------------------------------------------------------
 # 3. test_backtrack_forward_rejected
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_backtrack_forward_rejected(app, sessions):
@@ -187,6 +192,7 @@ async def test_backtrack_forward_rejected(app, sessions):
 # 4. test_implicit_backtrack_in_chat
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_implicit_backtrack_in_chat(app, sessions):
     """Chat message with backtrack keywords triggers implicit backtrack."""
@@ -210,7 +216,9 @@ async def test_implicit_backtrack_in_chat(app, sessions):
         yield LLMChunk(type=ChunkType.DONE)
 
     with patch.object(AgentLoop, "run", side_effect=fake_run):
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
             resp = await client.post(
                 f"/api/chat/{session_id}",
                 json={"message": "我不想去这里了，换个目的地", "user_id": "u1"},
@@ -263,10 +271,15 @@ async def test_chat_backtrack_restores_new_destination_from_message(app, session
         yield LLMChunk(type=ChunkType.DONE)
 
     with patch("agent.loop.AgentLoop.run", fake_run):
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
             resp = await client.post(
                 f"/api/chat/{session_id}",
-                json={"message": "换个目的地，我不想去东京了，改成大阪", "user_id": "u1"},
+                json={
+                    "message": "换个目的地，我不想去东京了，改成大阪",
+                    "user_id": "u1",
+                },
             )
         assert resp.status_code == 200
 
@@ -281,6 +294,7 @@ async def test_chat_backtrack_restores_new_destination_from_message(app, session
 # ---------------------------------------------------------------------------
 # 5. test_hard_constraint_budget_overrun
 # ---------------------------------------------------------------------------
+
 
 def test_hard_constraint_budget_overrun():
     """Activities costing 8000 with budget 5000 triggers budget error."""
@@ -316,6 +330,7 @@ def test_hard_constraint_budget_overrun():
 # 6. test_hard_constraint_time_conflict
 # ---------------------------------------------------------------------------
 
+
 def test_hard_constraint_time_conflict():
     """Prev ends 14:00, transport 30min, next starts 14:10 → conflict."""
     plan = TravelPlanState(
@@ -348,14 +363,13 @@ def test_hard_constraint_time_conflict():
 # 7. test_hard_constraint_day_count
 # ---------------------------------------------------------------------------
 
+
 def test_hard_constraint_day_count():
     """Dates span 3 days but 5 daily_plans → error."""
     plan = TravelPlanState(
         session_id="s_days",
         dates=DateRange(start="2026-04-10", end="2026-04-13"),  # 3 days
-        daily_plans=[
-            DayPlan(day=i + 1, date=f"2026-04-{10 + i}") for i in range(5)
-        ],
+        daily_plans=[DayPlan(day=i + 1, date=f"2026-04-{10 + i}") for i in range(5)],
     )
     errors = validate_hard_constraints(plan)
     assert len(errors) >= 1
@@ -365,6 +379,7 @@ def test_hard_constraint_day_count():
 # ---------------------------------------------------------------------------
 # 8. test_tool_engine_unknown_tool
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_tool_engine_unknown_tool():
@@ -380,6 +395,7 @@ async def test_tool_engine_unknown_tool():
 # ---------------------------------------------------------------------------
 # 9. test_tool_engine_tool_error
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_tool_engine_tool_error():
