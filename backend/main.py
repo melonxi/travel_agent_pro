@@ -69,7 +69,6 @@ from tools.search_accommodations import make_search_accommodations_tool
 from tools.search_flights import make_search_flights_tool
 from tools.search_trains import make_search_trains_tool
 from tools.ai_travel_search import make_ai_travel_search_tool
-from tools.update_plan_state import make_update_plan_state_tool
 from tools.quick_travel_search import make_quick_travel_search_tool
 from tools.search_travel_services import make_search_travel_services_tool
 from tools.web_search import make_web_search_tool
@@ -252,12 +251,6 @@ def _plan_writer_updates(
     arguments: dict[str, Any],
     result_data: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    if tool_name == "update_plan_state":
-        field = arguments.get("field")
-        if isinstance(field, str):
-            return [{"field": field, "value": arguments.get("value")}]
-        return []
-
     if tool_name == "update_trip_basics":
         updated_fields = result_data.get("updated_fields")
         if not isinstance(updated_fields, list):
@@ -326,8 +319,7 @@ def _plan_writer_state_changes(
 
     updated_field = result_data.get("updated_field")
     if (
-        tool_name != "update_plan_state"
-        and isinstance(updated_field, str)
+        isinstance(updated_field, str)
         and (
             "previous_value" in result_data
             or "new_value" in result_data
@@ -338,15 +330,6 @@ def _plan_writer_state_changes(
                 "field": updated_field,
                 "before": result_data.get("previous_value"),
                 "after": result_data.get("new_value", updates[0]["value"]),
-            }
-        ]
-
-    if tool_name == "update_plan_state":
-        return [
-            {
-                "field": updates[0]["field"],
-                "before": result_data.get("previous_value"),
-                "after": updates[0]["value"],
             }
         ]
 
@@ -544,7 +527,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 api_key=config.flyai.api_key,
             )
 
-        tool_engine.register(make_update_plan_state_tool(plan))
         for plan_tool in make_all_plan_tools(plan):
             tool_engine.register(plan_tool)
         tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
@@ -600,15 +582,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     arguments,
                     result.data,
                 )
-                if tool_name == "update_plan_state":
-                    if result.data.get("updated_field") == "phase3_step":
-                        session["_pending_phase_step_transition"] = {
-                            "from_phase": plan.phase,
-                            "to_phase": plan.phase,
-                            "from_step": result.data.get("previous_value"),
-                            "to_step": result.data.get("new_value"),
-                            "reason": "phase3_step_change",
-                        }
                 errors: list[str] = []
                 for update in updates:
                     field = update["field"]
@@ -1879,21 +1852,18 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 backtrack_target = _detect_backtrack(user_message, plan)
                 if backtrack_target is not None:
                     reason = f"fallback回退：{user_message[:50]}"
-                    tool_call_id = f"fallback.update_plan_state:{plan.version}"
+                    tool_call_id = f"fallback.request_backtrack:{plan.version}"
                     yield json.dumps(
                         {
                             "type": "tool_call",
                             "tool_call": {
                                 "id": tool_call_id,
-                                "name": "update_plan_state",
+                                "name": "request_backtrack",
                                 "arguments": {
-                                    "field": "backtrack",
-                                    "value": {
-                                        "to_phase": backtrack_target,
-                                        "reason": reason,
-                                    },
+                                    "to_phase": backtrack_target,
+                                    "reason": reason,
                                 },
-                                "human_label": "更新旅行计划",
+                                "human_label": "回退到之前阶段",
                             },
                         },
                         ensure_ascii=False,

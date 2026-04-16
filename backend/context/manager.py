@@ -310,8 +310,8 @@ class ContextManager:
 
         - Keep every user message verbatim.
         - Condense each assistant text turn to its first 200 chars.
-        - Render every tool call as one line (``update_plan_state`` shows
-          ``field → value``; other tools show name + status + a short result
+        - Render every tool call as one line (plan-writing tools show
+          ``tool_name args``; other tools show name + status + a short result
           fingerprint).
         - System messages are skipped; they are re-emitted by the new phase's
           system message rebuild path.
@@ -323,8 +323,7 @@ class ContextManager:
 
         lines: list[str] = []
         # Track the assistant message whose tool_calls produced each tool
-        # result, so ``update_plan_state(field=..., value=...)`` can be
-        # rendered as a single decision line.
+        # result, so plan-writing tools can be rendered as a single decision line.
         pending_tool_calls: dict[str, ToolCall] = {}
 
         for message in messages:
@@ -362,21 +361,7 @@ class ContextManager:
     ) -> str:
         name = tool_call.name if tool_call else "tool"
 
-        # update_plan_state is the richest signal — render it as a decision.
-        if tool_call and tool_call.name == "update_plan_state":
-            field = tool_call.arguments.get("field", "?")
-            value = tool_call.arguments.get("value")
-            value_preview = self._short_repr(value)
-            if result.status == "success":
-                return f"决策: update_plan_state {field} = {value_preview}"
-            if result.status == "skipped":
-                return f"跳过: update_plan_state {field}（{result.error_code or 'skipped'}）"
-            return (
-                f"失败: update_plan_state {field} — {result.error_code or ''} "
-                f"{(result.error or '').strip()}"
-            ).strip()
-
-        # New plan-writing tools — render as decisions too
+        # Plan-writing tools — render as decisions
         if tool_call and tool_call.name in _PLAN_WRITER_NAMES:
             args_preview = self._short_repr(tool_call.arguments)
             if result.status == "success":

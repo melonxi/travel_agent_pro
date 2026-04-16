@@ -15,9 +15,12 @@ from tools.check_feasibility import make_check_feasibility_tool
 from tools.engine import ToolEngine
 from tools.quick_travel_search import make_quick_travel_search_tool
 from tools.search_destinations import make_search_destinations_tool
-from tools.update_plan_state import make_update_plan_state_tool
 from tools.web_search import make_web_search_tool
 from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+from tools.plan_tools.trip_basics import make_update_trip_basics_tool
+from tools.plan_tools.append_tools import (
+    make_set_destination_candidates_tool,
+)
 
 
 def _geocode_result(name: str, types: list[str]) -> dict:
@@ -290,18 +293,18 @@ async def test_xiaohongshu_search_disabled_short_circuits_before_calling_client(
 
 
 @pytest.mark.asyncio
-async def test_update_plan_state_invalid_dates_budget_and_travelers_reset_fields_to_none():
+async def test_update_trip_basics_invalid_dates_budget_and_travelers_reset_fields_to_none():
     plan = TravelPlanState(
         session_id="s1",
         dates=DateRange(start="2026-05-01", end="2026-05-05"),
         budget=Budget(total=5000, currency="CNY"),
         travelers=Travelers(adults=2, children=1),
     )
-    tool_fn = make_update_plan_state_tool(plan)
+    tool_fn = make_update_trip_basics_tool(plan)
 
-    await tool_fn(field="dates", value="尽快出发")
-    await tool_fn(field="budget", value="丰俭由人")
-    await tool_fn(field="travelers", value="一家人")
+    await tool_fn(dates="尽快出发")
+    await tool_fn(budget="丰俭由人")
+    await tool_fn(travelers="一家人")
 
     assert plan.dates is None
     assert plan.budget is None
@@ -309,26 +312,21 @@ async def test_update_plan_state_invalid_dates_budget_and_travelers_reset_fields
 
 
 @pytest.mark.asyncio
-async def test_update_plan_state_destination_candidates_append_or_replace_and_backtrack_phase_2_maps_to_1():
+async def test_destination_candidates_append_or_replace():
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="Kyoto",
         destination_candidates=[{"name": "Kyoto"}],
         dates=DateRange(start="2026-05-01", end="2026-05-04"),
         accommodation=Accommodation(area="祇園"),
     )
-    tool_fn = make_update_plan_state_tool(plan)
+    tool_fn = make_set_destination_candidates_tool(plan)
 
-    await tool_fn(field="destination_candidates", value={"name": "Osaka"})
-    assert plan.destination_candidates == [{"name": "Kyoto"}, {"name": "Osaka"}]
+    # Replace with single candidate
+    await tool_fn(candidates=[{"name": "Osaka"}])
+    assert plan.destination_candidates == [{"name": "Osaka"}]
 
-    await tool_fn(field="destination_candidates", value=[{"name": "Tokyo"}])
-    assert plan.destination_candidates == [{"name": "Tokyo"}]
-
-    result = await tool_fn(
-        field="backtrack",
-        value={"to_phase": 2, "reason": "用户想重新选目的地"},
-    )
-    assert result["to_phase"] == 1
-    assert plan.phase == 1
+    # Replace with multiple candidates
+    await tool_fn(candidates=[{"name": "Tokyo"}, {"name": "Kyoto"}])
+    assert plan.destination_candidates == [{"name": "Tokyo"}, {"name": "Kyoto"}]

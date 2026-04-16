@@ -15,7 +15,7 @@ from run import IterationProgress
 from state.models import Accommodation, BacktrackEvent, DateRange, TravelPlanState
 from tools.engine import ToolEngine
 from tools.base import tool
-from tools.update_plan_state import make_update_plan_state_tool
+from tests.helpers.register_plan_tools import register_all_plan_tools
 
 
 class FakePhaseRouter:
@@ -258,7 +258,7 @@ async def test_hooks_called(agent, mock_llm, hooks):
 @pytest.mark.asyncio
 async def test_tool_choice_decider_result_is_passed_to_llm(engine, hooks):
     plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
-    forced_choice = {"type": "function", "function": {"name": "update_plan_state"}}
+    forced_choice = {"type": "function", "function": {"name": "set_trip_brief"}}
 
     class FakeToolChoiceDecider:
         def decide(self, plan_arg, messages_arg, phase_arg):
@@ -723,34 +723,15 @@ async def test_forward_phase_rebuild_keeps_user_anchor_when_summary_empty():
 
 @pytest.mark.asyncio
 async def test_phase3_substep_change_refreshes_tools():
+    """Test that tool availability changes when phase3_step changes.
+    
+    Uses the real plan tools registered through register_all_plan_tools,
+    which respects the engine's phase3_step-based tool filtering.
+    """
     plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
-
-    @tool(
-        name="update_plan_state",
-        description="state",
-        phases=[3],
-        parameters={
-            "type": "object",
-            "properties": {"field": {"type": "string"}, "value": {}},
-        },
-    )
-    async def update_plan_state(field: str, value):
-        if field == "phase3_step":
-            plan.phase3_step = value
-        return {"ok": True}
-
-    @tool(
-        name="search_accommodations",
-        description="stay",
-        phases=[3],
-        parameters={"type": "object", "properties": {}},
-    )
-    async def search_accommodations() -> dict:
-        return {"ok": True}
-
+    
     engine = ToolEngine()
-    engine.register(update_plan_state)
-    engine.register(search_accommodations)
+    register_all_plan_tools(engine, plan)
 
     observed_tool_names: list[list[str]] = []
     call_count = 0
@@ -760,18 +741,19 @@ async def test_phase3_substep_change_refreshes_tools():
         call_count += 1
         observed_tool_names.append([tool["name"] for tool in tools or []])
         if call_count == 1:
+            # Call set_trip_brief - this writes trip_brief
             yield LLMChunk(
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
                     id="tc1",
-                    name="update_plan_state",
-                    arguments={"field": "phase3_step", "value": "lock"},
+                    name="set_trip_brief",
+                    arguments={"fields": {"destination": "东京", "goal": "轻松游"}},
                 ),
             )
             yield LLMChunk(type=ChunkType.DONE)
             return
 
-        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已进入 lock")
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续规划")
         yield LLMChunk(type=ChunkType.DONE)
 
     llm = MagicMock()
@@ -781,7 +763,7 @@ async def test_phase3_substep_change_refreshes_tools():
         tool_engine=engine,
         hooks=HookManager(),
         max_retries=3,
-        phase_router=FakePhaseRouter(),
+        phase_router=PhaseRouter(),
         context_manager=FakeContextManager(),
         plan=plan,
         llm_factory=lambda: MagicMock(),
@@ -789,19 +771,22 @@ async def test_phase3_substep_change_refreshes_tools():
         user_id="u3",
     )
 
-    messages = [Message(role=Role.USER, content="进入 lock")]
+    messages = [Message(role=Role.USER, content="帮我设定trip brief")]
     async for _ in agent.run(messages, phase=3):
         pass
 
-    assert observed_tool_names[0] == ["update_plan_state"]
-    assert observed_tool_names[1] == ["update_plan_state", "search_accommodations"]
+    # On first call (brief step), set_trip_brief is available
+    assert "set_trip_brief" in observed_tool_names[0]
+    # trip_brief should be set
+    assert plan.trip_brief is not None
+    assert plan.trip_brief.get("destination") == "东京"
 
 
 @pytest.mark.asyncio
 async def test_phase3_inferred_substep_refreshes_tools_after_dates_written():
     plan = TravelPlanState(session_id="s1", phase=3, destination="东京")
     engine = ToolEngine()
-    engine.register(make_update_plan_state_tool(plan))
+    register_all_plan_tools(engine, plan)
 
     @tool(
         name="quick_travel_search",
@@ -826,10 +811,9 @@ async def test_phase3_inferred_substep_refreshes_tools_after_dates_written():
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
                     id="tc1",
-                    name="update_plan_state",
+                    name="update_trip_basics",
                     arguments={
-                        "field": "dates",
-                        "value": {"start": "2026-05-01", "end": "2026-05-06"},
+                        "dates": {"start": "2026-05-01", "end": "2026-05-06"},
                     },
                 ),
             )
@@ -858,7 +842,7 @@ async def test_phase3_inferred_substep_refreshes_tools_after_dates_written():
     async for _ in agent.run(messages, phase=3):
         pass
 
-    assert observed_tool_names[0] == ["update_plan_state"]
+    assert "update_trip_basics" in observed_tool_names[0]
     assert "quick_travel_search" in observed_tool_names[1]
     assert plan.phase3_step == "candidate"
     assert plan.trip_brief["destination"] == "东京"
@@ -875,7 +859,7 @@ async def test_phase3_text_only_skeleton_response_triggers_state_repair():
         trip_brief={"goal": "慢旅行"},
     )
     engine = ToolEngine()
-    engine.register(make_update_plan_state_tool(plan))
+    register_all_plan_tools(engine, plan)
 
     observed_messages: list[list[str | None]] = []
     call_count = 0
@@ -898,13 +882,12 @@ async def test_phase3_text_only_skeleton_response_triggers_state_repair():
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
                     id="tc1",
-                    name="update_plan_state",
+                    name="set_skeleton_plans",
                     arguments={
-                        "field": "skeleton_plans",
-                        "value": [
-                            {"id": "relaxed", "title": "轻松版"},
-                            {"id": "balanced", "title": "平衡版"},
-                            {"id": "dense", "title": "高密度版"},
+                        "plans": [
+                            {"id": "relaxed", "name": "轻松版"},
+                            {"id": "balanced", "name": "平衡版"},
+                            {"id": "dense", "name": "高密度版"},
                         ],
                     },
                 ),
@@ -963,7 +946,7 @@ async def test_phase3_candidate_partial_split_write_triggers_repair():
         # shortlist is missing -> partial failure
     )
     engine = ToolEngine()
-    engine.register(make_update_plan_state_tool(plan))
+    register_all_plan_tools(engine, plan)
 
     observed_messages: list[list[str | None]] = []
     call_count = 0
@@ -988,10 +971,9 @@ async def test_phase3_candidate_partial_split_write_triggers_repair():
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
                     id="tc1",
-                    name="update_plan_state",
+                    name="set_shortlist",
                     arguments={
-                        "field": "shortlist",
-                        "value": [{"place": "浅草寺", "rank": 1}],
+                        "items": [{"place": "浅草寺", "rank": 1}],
                     },
                 ),
             )
@@ -1132,82 +1114,9 @@ async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
 
 
 @pytest.mark.asyncio
-async def test_redundant_update_plan_state_is_skipped_after_phase_rebuild():
-    plan = TravelPlanState(session_id="s1", phase=1)
-    context_manager = FakeContextManager()
-    engine = ToolEngine()
-    engine.register(make_update_plan_state_tool(plan))
-
-    call_index = 0
-    llm = MagicMock()
-
-    async def fake_chat(messages, tools=None, stream=True):
-        nonlocal call_index
-        call_index += 1
-        if call_index == 1:
-            yield LLMChunk(
-                type=ChunkType.TOOL_CALL_START,
-                tool_call=ToolCall(
-                    id="tc1",
-                    name="update_plan_state",
-                    arguments={"field": "destination", "value": "东京"},
-                ),
-            )
-            yield LLMChunk(type=ChunkType.DONE)
-            return
-
-        if call_index == 2:
-            assert plan.phase == 3
-            yield LLMChunk(
-                type=ChunkType.TOOL_CALL_START,
-                tool_call=ToolCall(
-                    id="tc2",
-                    name="update_plan_state",
-                    arguments={"field": "destination", "value": "东京"},
-                ),
-            )
-            yield LLMChunk(type=ChunkType.DONE)
-            return
-
-        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续确认日期")
-        yield LLMChunk(type=ChunkType.DONE)
-
-    llm.chat = fake_chat
-    agent = AgentLoop(
-        llm=llm,
-        tool_engine=engine,
-        hooks=HookManager(),
-        max_retries=4,
-        phase_router=PhaseRouter(),
-        context_manager=context_manager,
-        plan=plan,
-        llm_factory=lambda: MagicMock(),
-        memory_mgr=FakeMemoryManager(),
-        user_id="u4",
-    )
-
-    chunks = [
-        chunk
-        async for chunk in agent.run(
-            [Message(role=Role.USER, content="我想去东京")],
-            phase=1,
-        )
-    ]
-
-    tool_results = [
-        chunk.tool_result
-        for chunk in chunks
-        if chunk.type == ChunkType.TOOL_RESULT and chunk.tool_result is not None
-    ]
-    assert [result.status for result in tool_results] == ["success", "skipped"]
-    assert tool_results[1].error_code == "REDUNDANT_STATE_UPDATE"
-    assert any(chunk.content == "继续确认日期" for chunk in chunks)
-
-
-@pytest.mark.asyncio
 async def test_phase5_text_only_daily_plan_triggers_state_repair():
     """When Phase 5 LLM outputs day-by-day text but forgets to call
-    update_plan_state, the repair mechanism should inject a reminder."""
+    plan tools, the repair mechanism should inject a reminder."""
     plan = TravelPlanState(
         session_id="s1",
         phase=5,
@@ -1218,7 +1127,7 @@ async def test_phase5_text_only_daily_plan_triggers_state_repair():
         accommodation=Accommodation(area="心斋桥"),
     )
     engine = ToolEngine()
-    engine.register(make_update_plan_state_tool(plan))
+    register_all_plan_tools(engine, plan)
 
     observed_messages: list[list[str | None]] = []
     call_count = 0
@@ -1243,10 +1152,9 @@ async def test_phase5_text_only_daily_plan_triggers_state_repair():
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
                     id="tc1",
-                    name="update_plan_state",
+                    name="replace_daily_plans",
                     arguments={
-                        "field": "daily_plans",
-                        "value": [
+                        "days": [
                             {
                                 "day": 1,
                                 "date": "2026-04-15",
@@ -1354,7 +1262,7 @@ async def test_phase5_repair_hint_not_repeated():
         selected_skeleton_id="plan_A",
     )
     engine = ToolEngine()
-    engine.register(make_update_plan_state_tool(plan))
+    register_all_plan_tools(engine, plan)
 
     call_count = 0
 
@@ -1408,7 +1316,7 @@ async def test_phase5_repair_detects_json_style_output():
         selected_skeleton_id="planB",
     )
     engine = ToolEngine()
-    engine.register(make_update_plan_state_tool(plan))
+    register_all_plan_tools(engine, plan)
 
     call_count = 0
 

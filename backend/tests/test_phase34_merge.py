@@ -195,17 +195,17 @@ class TestToolPhasesAfterMerge:
         assert 5 in poi_tool.phases
 
     def test_universal_tools_no_phase4(self):
-        """xiaohongshu_search and update_plan_state should not include phase 4."""
+        """xiaohongshu_search and update_trip_basics should not include phase 4."""
         from tools.xiaohongshu_search import make_xiaohongshu_search_tool
-        from tools.update_plan_state import make_update_plan_state_tool
+        from tools.plan_tools.trip_basics import make_update_trip_basics_tool
         from config import XhsConfig
 
         xhs_tool = make_xiaohongshu_search_tool(XhsConfig())
         assert 4 not in xhs_tool.phases
 
         plan = TravelPlanState(session_id="s")
-        ups_tool = make_update_plan_state_tool(plan)
-        assert 4 not in ups_tool.phases
+        utb_tool = make_update_trip_basics_tool(plan)
+        assert 4 not in utb_tool.phases
 
     def test_engine_returns_no_tools_for_phase4(self):
         """ToolEngine.get_tools_for_phase(4) should return empty list."""

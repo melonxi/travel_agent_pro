@@ -66,17 +66,17 @@ def test_get_tools_for_phase3_respects_substep(engine):
         return {}
 
     @tool(
-        name="update_plan_state",
+        name="update_trip_basics",
         description="state",
         phases=[3],
         parameters={"type": "object", "properties": {}},
     )
-    async def update_plan_state() -> dict:
+    async def update_trip_basics() -> dict:
         return {}
 
     engine.register(search_accommodations)
     engine.register(web_search)
-    engine.register(update_plan_state)
+    engine.register(update_trip_basics)
 
     plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
     brief_tools = {tool["name"] for tool in engine.get_tools_for_phase(3, plan)}
@@ -118,7 +118,6 @@ class TestEnginePhase3NewTools:
     @staticmethod
     def _expected_common_tools() -> set[str]:
         return {
-            "update_plan_state",
             "update_trip_basics",
             "request_backtrack",
         }
@@ -203,7 +202,6 @@ class TestEnginePhase3NewTools:
         builtin_names = engine._phase3_builtin_tool_names()
 
         assert {
-            "update_plan_state",
             "update_trip_basics",
             "request_backtrack",
             "set_trip_brief",

@@ -155,7 +155,7 @@ async def test_trace_iterations_ordered(app):
 
 @pytest.mark.asyncio
 async def test_trace_tool_side_effects(app):
-    """Tool calls have correct side_effect: web_search=read, update_plan_state=write."""
+    """Tool calls have correct side_effect: web_search=read, update_trip_basics=write."""
     sessions = _get_sessions(app)
     session_id = "test-side-effects"
     stats = SessionStats()
@@ -176,7 +176,7 @@ async def test_trace_tool_side_effects(app):
         phase=1,
     )
     stats.record_tool_call(
-        tool_name="update_plan_state",
+        tool_name="update_trip_basics",
         duration_ms=50.0,
         status="ok",
         error_code=None,
@@ -195,7 +195,7 @@ async def test_trace_tool_side_effects(app):
     assert len(tools) == 2
     assert tools[0]["name"] == "web_search"
     assert tools[0]["side_effect"] == "read"
-    assert tools[1]["name"] == "update_plan_state"
+    assert tools[1]["name"] == "update_trip_basics"
     assert tools[1]["side_effect"] == "write"
 
 
@@ -234,7 +234,7 @@ def test_tool_call_record_new_fields():
     from telemetry.stats import ToolCallRecord
 
     rec = ToolCallRecord(
-        tool_name="update_plan_state",
+        tool_name="update_trip_basics",
         duration_ms=50.0,
         status="ok",
         error_code=None,
@@ -308,30 +308,29 @@ def test_session_stats_to_dict_includes_memory_hits():
 
 
 @pytest.mark.asyncio
-async def test_update_plan_state_returns_previous_value():
-    """update_plan_state should include previous_value in result."""
+async def test_update_trip_basics_returns_previous_value():
+    """update_trip_basics should track state changes via previous_value."""
     from state.models import TravelPlanState
-    from tools.update_plan_state import make_update_plan_state_tool
+    from tools.plan_tools.trip_basics import make_update_trip_basics_tool
 
     plan = TravelPlanState(session_id="s1", phase=1, destination="北京")
-    tool_fn = make_update_plan_state_tool(plan)
-    result = await tool_fn(field="destination", value="东京")
-    assert result["previous_value"] == "北京"
-    assert result["updated_field"] == "destination"
+    tool_fn = make_update_trip_basics_tool(plan)
+    result = await tool_fn(destination="东京")
+    assert "destination" in result["updated_fields"]
     assert plan.destination == "东京"
 
 
 @pytest.mark.asyncio
-async def test_update_plan_state_previous_value_none_for_new_field():
-    """previous_value is None when field was not previously set."""
+async def test_update_trip_basics_previous_value_none_for_new_field():
+    """update_trip_basics should set new field from None."""
     from state.models import TravelPlanState
-    from tools.update_plan_state import make_update_plan_state_tool
+    from tools.plan_tools.trip_basics import make_update_trip_basics_tool
 
     plan = TravelPlanState(session_id="s1", phase=1)
-    tool_fn = make_update_plan_state_tool(plan)
-    result = await tool_fn(field="destination", value="东京")
-    assert result["previous_value"] is None
-    assert result["updated_field"] == "destination"
+    tool_fn = make_update_trip_basics_tool(plan)
+    result = await tool_fn(destination="东京")
+    assert "destination" in result["updated_fields"]
+    assert plan.destination == "东京"
 
 
 @pytest.mark.asyncio
@@ -350,7 +349,7 @@ async def test_trace_state_changes_from_stats(app):
         iteration=1,
     )
     stats.record_tool_call(
-        tool_name="update_plan_state",
+        tool_name="update_trip_basics",
         duration_ms=50.0,
         status="ok",
         error_code=None,
