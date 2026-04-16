@@ -203,7 +203,9 @@ class Constraint:
 
     @classmethod
     def from_dict(cls, d: dict) -> Constraint:
-        return cls(type=d["type"], description=d["description"], source=d.get("source", ""))
+        return cls(
+            type=d["type"], description=d["description"], source=d.get("source", "")
+        )
 
 
 @dataclass(init=False)
@@ -220,7 +222,9 @@ class Preference:
         category: str | None = None,
         source: str = "",
     ) -> None:
-        self.key = str(key if key is not None else category if category is not None else "")
+        self.key = str(
+            key if key is not None else category if category is not None else ""
+        )
         self.value = value
         self.source = source
 
@@ -275,7 +279,6 @@ class BacktrackEvent:
 _PHASE_DOWNSTREAM: dict[int, list[str]] = {
     1: [
         "destination",
-        "destination_candidates",
         "dates",
         "phase3_step",
         "trip_brief",
@@ -312,7 +315,6 @@ _PHASE_DOWNSTREAM: dict[int, list[str]] = {
 
 _FIELD_DEFAULTS: dict[str, Any] = {
     "destination": None,
-    "destination_candidates": [],
     "dates": None,
     "phase3_step": "brief",
     "trip_brief": {},
@@ -374,7 +376,6 @@ class TravelPlanState:
     trip_id: str | None = None
     phase: int = 1
     destination: str | None = None
-    destination_candidates: list[dict] = field(default_factory=list)
     dates: DateRange | None = None
     phase3_step: str = "brief"
     trip_brief: dict[str, Any] = field(default_factory=dict)
@@ -411,7 +412,6 @@ class TravelPlanState:
             "trip_id": self.trip_id,
             "phase": self.phase,
             "destination": self.destination,
-            "destination_candidates": self.destination_candidates,
             "dates": self.dates.to_dict() if self.dates else None,
             "phase3_step": self.phase3_step,
             "trip_brief": self.trip_brief,
@@ -458,7 +458,6 @@ class TravelPlanState:
             trip_id=d.get("trip_id"),
             phase=phase,
             destination=d.get("destination"),
-            destination_candidates=d.get("destination_candidates", []),
             dates=dates,
             phase3_step=d.get(
                 "phase3_step",
