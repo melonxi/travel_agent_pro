@@ -13,6 +13,7 @@ STRUCTURED_LIST_FIELDS = (
     "accommodation_options",
     "risks",
     "alternatives",
+    "destination_candidates",
     "daily_plans",
 )
 
@@ -50,6 +51,16 @@ async def test_structured_list_fields_reject_non_dict_list_items(tool_fn, field)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("field", STRUCTURED_LIST_FIELDS)
+async def test_structured_list_fields_reject_scalar_values(tool_fn, field):
+    with pytest.raises(ToolError) as excinfo:
+        await tool_fn(field=field, value=123)
+
+    assert excinfo.value.error_code == "INVALID_VALUE"
+    assert field in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", STRUCTURED_LIST_FIELDS)
 async def test_structured_list_fields_reject_malformed_json_strings(tool_fn, field):
     with pytest.raises(ToolError) as excinfo:
         await tool_fn(field=field, value='[{"broken": true}')
@@ -69,6 +80,7 @@ async def test_structured_list_fields_reject_malformed_json_strings(tool_fn, fie
         ("accommodation_options", [{"name": "新宿酒店"}], "新宿酒店"),
         ("risks", [{"type": "weather"}], "weather"),
         ("alternatives", [{"name": "晴天版"}], "晴天版"),
+        ("destination_candidates", [{"name": "东京"}], "东京"),
         ("daily_plans", [{"day": 2, "date": "2026-05-02", "activities": []}], 2),
     ],
 )
@@ -101,6 +113,18 @@ async def test_candidate_pool_single_dict_still_appends(tool_fn, plan):
     await tool_fn(field="candidate_pool", value={"name": "浅草寺"})
 
     assert plan.candidate_pool == [{"name": "东京塔"}, {"name": "浅草寺"}]
+
+
+@pytest.mark.asyncio
+async def test_candidate_pool_single_dict_with_nested_broken_json_string_still_appends(
+    tool_fn, plan
+):
+    await tool_fn(
+        field="candidate_pool",
+        value={"name": "浅草寺", "note": "{broken}"},
+    )
+
+    assert plan.candidate_pool == [{"name": "浅草寺", "note": "{broken}"}]
 
 
 @pytest.mark.asyncio
