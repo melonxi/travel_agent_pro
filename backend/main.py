@@ -74,6 +74,7 @@ from tools.quick_travel_search import make_quick_travel_search_tool
 from tools.search_travel_services import make_search_travel_services_tool
 from tools.web_search import make_web_search_tool
 from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+from tools.plan_tools import make_all_plan_tools
 
 logger = logging.getLogger(__name__)
 
@@ -418,6 +419,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             )
 
         tool_engine.register(make_update_plan_state_tool(plan))
+        for plan_tool in make_all_plan_tools(plan):
+            tool_engine.register(plan_tool)
         tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
         tool_engine.register(make_search_trains_tool(flyai_client))
         tool_engine.register(make_ai_travel_search_tool(flyai_client))

@@ -5,6 +5,7 @@ from agent.types import ToolCall, ToolResult
 from state.models import TravelPlanState
 from tools.base import ToolDef, ToolError, tool
 from tools.engine import ToolEngine
+from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
 
 
 @pytest.fixture
@@ -111,3 +112,131 @@ async def test_execute_unknown_tool(engine):
     result = await engine.execute(call)
     assert result.status == "error"
     assert result.error_code == "UNKNOWN_TOOL"
+
+
+class TestEnginePhase3NewTools:
+    @staticmethod
+    def _expected_common_tools() -> set[str]:
+        return {
+            "update_plan_state",
+            "update_trip_basics",
+            "request_backtrack",
+        }
+
+    def test_brief_whitelist_includes_split_plan_tools(self):
+        engine = ToolEngine()
+
+        assert engine._phase3_tool_names("brief") == {
+            *self._expected_common_tools(),
+            "set_trip_brief",
+            "add_preferences",
+            "add_constraints",
+            "web_search",
+            "xiaohongshu_search",
+        }
+
+    def test_candidate_whitelist_includes_split_plan_tools(self):
+        engine = ToolEngine()
+
+        assert engine._phase3_tool_names("candidate") == {
+            *self._expected_common_tools(),
+            "set_trip_brief",
+            "set_candidate_pool",
+            "set_shortlist",
+            "add_preferences",
+            "add_constraints",
+            "web_search",
+            "xiaohongshu_search",
+            "quick_travel_search",
+            "get_poi_info",
+        }
+
+    def test_skeleton_whitelist_includes_split_plan_tools(self):
+        engine = ToolEngine()
+
+        assert engine._phase3_tool_names("skeleton") == {
+            *self._expected_common_tools(),
+            "set_skeleton_plans",
+            "select_skeleton",
+            "set_candidate_pool",
+            "set_shortlist",
+            "add_preferences",
+            "add_constraints",
+            "web_search",
+            "xiaohongshu_search",
+            "quick_travel_search",
+            "get_poi_info",
+            "calculate_route",
+            "assemble_day_plan",
+            "check_availability",
+        }
+
+    def test_lock_whitelist_includes_split_plan_tools(self):
+        engine = ToolEngine()
+
+        assert engine._phase3_tool_names("lock") == {
+            *self._expected_common_tools(),
+            "set_skeleton_plans",
+            "select_skeleton",
+            "set_transport_options",
+            "select_transport",
+            "set_accommodation_options",
+            "set_accommodation",
+            "set_risks",
+            "set_alternatives",
+            "add_preferences",
+            "add_constraints",
+            "web_search",
+            "xiaohongshu_search",
+            "quick_travel_search",
+            "get_poi_info",
+            "calculate_route",
+            "assemble_day_plan",
+            "check_availability",
+            "search_flights",
+            "search_trains",
+            "search_accommodations",
+        }
+
+    def test_phase3_builtin_names_include_split_plan_tools(self):
+        engine = ToolEngine()
+        builtin_names = engine._phase3_builtin_tool_names()
+
+        assert {
+            "update_plan_state",
+            "update_trip_basics",
+            "request_backtrack",
+            "set_trip_brief",
+            "set_candidate_pool",
+            "set_shortlist",
+            "set_skeleton_plans",
+            "select_skeleton",
+            "set_transport_options",
+            "select_transport",
+            "set_accommodation_options",
+            "set_accommodation",
+            "set_risks",
+            "set_alternatives",
+            "add_preferences",
+            "add_constraints",
+        }.issubset(builtin_names)
+        assert PLAN_WRITER_TOOL_NAMES.issuperset(
+            builtin_names
+            & {
+                "update_trip_basics",
+                "request_backtrack",
+                "set_trip_brief",
+                "set_candidate_pool",
+                "set_shortlist",
+                "set_skeleton_plans",
+                "select_skeleton",
+                "set_transport_options",
+                "select_transport",
+                "set_accommodation_options",
+                "set_accommodation",
+                "set_risks",
+                "set_alternatives",
+                "add_preferences",
+                "add_constraints",
+            }
+        )

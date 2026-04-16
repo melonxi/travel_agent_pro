@@ -26,6 +26,29 @@ from .phase3_tools import (
 )
 from .trip_basics import make_update_trip_basics_tool
 
+PLAN_WRITER_TOOL_NAMES = {
+    "update_plan_state",
+    "update_trip_basics",
+    "set_trip_brief",
+    "set_candidate_pool",
+    "set_shortlist",
+    "set_skeleton_plans",
+    "select_skeleton",
+    "set_transport_options",
+    "select_transport",
+    "set_accommodation_options",
+    "set_accommodation",
+    "set_risks",
+    "set_alternatives",
+    "add_preferences",
+    "add_constraints",
+    "add_destination_candidate",
+    "set_destination_candidates",
+    "append_day_plan",
+    "replace_daily_plans",
+    "request_backtrack",
+}
+
 
 def make_all_plan_tools(plan: TravelPlanState) -> list[ToolDef]:
     return [
@@ -52,6 +75,7 @@ def make_all_plan_tools(plan: TravelPlanState) -> list[ToolDef]:
 
 
 __all__ = [
+    "PLAN_WRITER_TOOL_NAMES",
     "make_all_plan_tools",
     "make_add_constraints_tool",
     "make_add_destination_candidate_tool",
