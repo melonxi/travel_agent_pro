@@ -15,4 +15,4 @@ assertions:
   - type: contains_text
     target: 素食
   - type: tool_called
-    target: update_plan_state
+    target: update_trip_basics
