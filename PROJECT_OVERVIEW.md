@@ -86,7 +86,7 @@ travel_agent_pro/
 - **candidate** → 候选池构建与筛选；"锚定→约束→分组→取舍"思考框架
 - **skeleton** → 骨架方案（非逐小时）；独立锚定大交通时序
 - **lock** → 锁定交通 + 住宿；大交通确认时间后即锁
-- **工具门控**：每个子步骤只暴露该阶段所需的工具子集
+- **工具门控**：每个子步骤只暴露该阶段所需的工具子集；Phase 3 现按 brief/candidate/skeleton/lock 动态放开拆分后的 plan-writing tools（`update_trip_basics`、`set_trip_brief`、`set_candidate_pool`、`set_shortlist`、`set_skeleton_plans`、`select_skeleton`、交通/住宿锁定工具、`add_preferences`、`add_constraints`、`request_backtrack`），并保留 `update_plan_state` 作为过渡适配入口
 - **Prompt 拼装**：`build_phase3_prompt(step)` = `PHASE3_BASE_PROMPT` + `PHASE3_STEP_PROMPTS[step]` + `GLOBAL_RED_FLAGS`
 - 产出：`trip_brief`、`candidate_pool`、`skeleton_plans`、`selected_skeleton_id`、交通/住宿
 
@@ -211,17 +211,17 @@ LLM API 异常
 ## 8. 工具系统
 
 - `@tool` 装饰器声明名称、描述、可用阶段、参数 schema
-- `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM
+- `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM；运行时会先注册兼容层 `update_plan_state`，再通过 `make_all_plan_tools(plan)` 一次性注册拆分后的 plan-writing tools
 - 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM
-- **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（当前对外状态写入口仍以 `update_plan_state` 为主，另有 `assemble_day_plan`、`generate_summary`）顺序执行
+- **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（当前对外状态写入口同时包含过渡层 `update_plan_state` 与拆分后的 plan-writing tools，另有 `assemble_day_plan`、`generate_summary`）顺序执行
 - **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`update_plan_state` 作为严格适配层保留旧签名，对 destination/dates/travelers/budget 的短语容错、部分追加语义和 backtrack 入口做兼容，同时把 trip_brief 与 Phase 3 结构化列表写入委托给共享 writer
-- **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集；`phase3_step` 由路由推断，不再通过 `update_plan_state` 对外暴露
+- **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集，并把 split plan tools 纳入白名单（如 brief 的 `set_trip_brief` / `add_preferences` / `add_constraints`，lock 的交通住宿锁定工具）；`phase3_step` 由路由推断，不再通过 `update_plan_state` 对外暴露
 
 ### 工具清单
 
 | 类别 | 工具 |
 |------|------|
-| 状态 | `update_plan_state`（当前公开写入口，含冗余检测，底层复用 `state.plan_writers` 共享写层）、`tools.plan_tools`（统一聚合导出 `make_all_plan_tools(plan)`）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.append_tools`（Phase 1/3/5 追加型写工具；追加 preferences/constraints、追加或整体替换 destination_candidates；其中 preferences 兼容 `{key, value}` 与 legacy loose dict 展开语义，并在 wrapper 层做输入类型校验）、`tools.plan_tools.phase3_tools`（已拆出 Category A Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity schema）、`tools.plan_tools.backtrack`（`request_backtrack` 阶段回退写工具，薄封装 `state.plan_writers.execute_backtrack`） |
+| 状态 | `update_plan_state`（当前公开写入口，含冗余检测，底层复用 `state.plan_writers` 共享写层）、`tools.plan_tools`（统一聚合导出 `PLAN_WRITER_TOOL_NAMES` 与 `make_all_plan_tools(plan)`，运行时批量注册拆分写工具）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.append_tools`（Phase 1/3/5 追加型写工具；追加 preferences/constraints、追加或整体替换 destination_candidates；其中 preferences 兼容 `{key, value}` 与 legacy loose dict 展开语义，并在 wrapper 层做输入类型校验）、`tools.plan_tools.phase3_tools`（已拆出 Category A Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity schema）、`tools.plan_tools.backtrack`（`request_backtrack` 阶段回退写工具，薄封装 `state.plan_writers.execute_backtrack`） |
 | 搜索 | `xiaohongshu_search`、`web_search`、`quick_travel_search` |
 | 交通 | `search_flights`（Amadeus + FlyAI 双源融合）、`search_trains`、`calculate_route` |
 | 住宿 | `search_accommodations` |
