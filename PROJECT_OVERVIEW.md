@@ -121,7 +121,7 @@ travel_agent_pro/
 | Forced Tool Choice | 关键决策点强制结构化输出 | LLM 调用前 |
 | Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；三路检索按 trip_id 隔离 | 每轮 chat 后后台提取；system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
-| Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估 | 离线/批量评估 |
+| Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
 
 ---
 
@@ -213,6 +213,7 @@ LLM API 异常
 - `@tool` 装饰器声明名称、描述、可用阶段、参数 schema
 - `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM
 - 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM
+- `ToolGuardrail` 在写入前拦截提示注入、空字段、日期回溯与非法预算；`budget.total` 支持数值或可解析的数值字符串，非正数/非数字会被拒绝
 - **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（`update_plan_state`、`assemble_day_plan`、`generate_summary`）顺序执行
 - **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集
 

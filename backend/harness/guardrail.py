@@ -113,6 +113,15 @@ class ToolGuardrail:
             value = tc.arguments.get("value")
             if isinstance(value, dict):
                 total = value.get("total")
+                if isinstance(total, str):
+                    try:
+                        total = float(total)
+                    except ValueError:
+                        return GuardrailResult(
+                            allowed=False,
+                            reason="budget.total 必须是数字",
+                            level="error",
+                        )
                 if isinstance(total, (int, float)) and total <= 0:
                     return GuardrailResult(
                         allowed=False,

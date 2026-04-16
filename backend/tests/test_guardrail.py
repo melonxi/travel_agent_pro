@@ -64,6 +64,27 @@ def test_valid_budget_allowed(guardrail):
     assert result.allowed
 
 
+def test_negative_budget_string_rejected(guardrail):
+    tc = ToolCall(
+        id="1",
+        name="update_plan_state",
+        arguments={"field": "budget", "value": {"total": "-500"}},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_positive_budget_string_allowed(guardrail):
+    tc = ToolCall(
+        id="1",
+        name="update_plan_state",
+        arguments={"field": "budget", "value": {"total": "10000"}},
+    )
+    result = guardrail.validate_input(tc)
+    assert result.allowed
+
+
 def test_prompt_injection_rejected(guardrail):
     tc = ToolCall(
         id="1",
