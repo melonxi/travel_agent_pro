@@ -394,3 +394,18 @@ class TestNoUpdatePlanStateInPrompts:
 
     def test_global_red_flags_mentions_request_backtrack(self):
         assert "request_backtrack" in GLOBAL_RED_FLAGS
+
+    def test_phase1_state_write_mentions_split_constraint_tools(self):
+        """Finding 1: Phase 1 prompt should mention add_preferences/add_constraints for explicit constraints/preferences."""
+        # The prompt should guide users to write explicit constraints/preferences immediately
+        # It currently only mentions update_trip_basics, but should also mention the split tools
+        assert "add_preferences" in PHASE1_PROMPT or "add_constraint" in PHASE1_PROMPT
+
+    def test_phase5_describes_split_apis_correctly(self):
+        """Finding 2: Phase 5 prompt must describe the real split APIs (append_day_plan vs replace_daily_plans)."""
+        # The prompt should describe append_day_plan for single day and replace_daily_plans for batch
+        # It should NOT describe the old dict/list payload model
+        assert "append_day_plan(day=" in PHASE5_PROMPT or "append_day_plan(...)" in PHASE5_PROMPT
+        assert "replace_daily_plans(days=[" in PHASE5_PROMPT or "replace_daily_plans(...)" in PHASE5_PROMPT
+        # Should not have the old model where single dict vs list[dict] determines behavior
+        assert "传单个 dict 表示追加单天；传 list[dict] 表示批量写入" not in PHASE5_PROMPT
