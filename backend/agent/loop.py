@@ -732,19 +732,23 @@ class AgentLoop:
 
         if (
             step == "candidate"
-            and (
-                (not self.plan.candidate_pool and not self.plan.shortlist)
-                or (self.plan.candidate_pool and not self.plan.shortlist)
-            )
+            and not self.plan.shortlist
             and any(
                 token in text for token in ("候选", "推荐", "不建议", "why", "why_not")
             )
         ):
+            if not self.plan.candidate_pool:
+                return (
+                    "[状态同步提醒]\n"
+                    "你刚刚已经给出了候选筛选结果，但 `candidate_pool` 仍为空。"
+                    "请先调用 `set_candidate_pool(pool=[...])` 写入候选全集，"
+                    "再调用 `set_shortlist(items=[...])` 写入第一轮筛选结果。"
+                    "写入 shortlist 后系统会自动推进子阶段。"
+                )
             return (
                 "[状态同步提醒]\n"
-                "你刚刚已经给出了候选筛选结果，但 `candidate_pool` / `shortlist` 仍为空。"
-                "请先调用 `set_candidate_pool(pool=[...])` 写入候选全集，"
-                "再调用 `set_shortlist(items=[...])` 写入第一轮筛选结果。"
+                "你刚刚已经给出了候选筛选结果，但 `shortlist` 仍为空。"
+                "请先调用 `set_shortlist(items=[...])` 写入第一轮筛选结果。"
                 "写入 shortlist 后系统会自动推进子阶段。"
             )
 

@@ -221,6 +221,7 @@ LLM API 异常
 - **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`update_plan_state` 作为严格适配层保留旧签名，对 destination/dates/travelers/budget 的短语容错、部分追加语义和 backtrack 入口做兼容，同时把 trip_brief 与 Phase 3 结构化列表写入委托给共享 writer
 - **运行时写后处理**：`backend/main.py` 把 `PLAN_WRITER_TOOL_NAMES` 统一视作状态写工具；split writers 与 `update_plan_state` 一样会触发 `validate_incremental` / `validate_lock_budget`、SSE `state_update`、accept memory 事件、以及 backtrack rebuild。若工具结果显式返回 `previous_value` / `new_value`，`SessionStats.state_changes` 优先记录工具返回的规范化值；`request_backtrack` 只保留 rebuild/transition 语义，不伪造字段 diff
 - **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集，并把 split plan tools 纳入白名单（如 brief 的 `set_trip_brief` / `add_preferences` / `add_constraints`，lock 的交通住宿锁定工具）；`phase3_step` 由路由推断，不再通过 `update_plan_state` 对外暴露
+- **Phase 3 状态修复**：`AgentLoop` 会根据 split-write 完成度注入修复提示；`candidate_pool` 和 `shortlist` 都缺失时要求先写入候选全集再写 shortlist，若仅缺 `shortlist` 则只提示补写 shortlist。
 
 ### 工具清单
 
