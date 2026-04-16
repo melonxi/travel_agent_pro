@@ -337,7 +337,7 @@ DELETE /api/memory/{user_id}/{item_id}      标记 obsolete
 - `agent/tool_choice.py`: 简化为恒返 "auto"，依赖 prompt 纪律，不再强制 `update_plan_state`
 - `agent/reflection.py`: Phase 5 自检末尾更新为 `replace_daily_plans(...)` 优先用于内容修正、`append_day_plan(...)` 仅用于填充缺失天数、`request_backtrack` 保留用于上游重决策
 - `context/manager.py`: 系统提示泛化"状态写入工具"措辞；backtrack 规则更新为 `request_backtrack(to_phase=..., reason="...")`；压缩渲染新增对 `PLAN_WRITER_TOOL_NAMES` 的"决策"行标记
-- `harness/guardrail.py`: `invalid_budget` 规则现在统一处理 `update_trip_basics` 中 dict/string/number 格式的预算，拒绝所有负数或零值（包括 "-500" / "-1万" / -1000 / 0）
+- `harness/guardrail.py`: `invalid_budget` 规则现在统一处理 `update_trip_basics` 中 dict/string/number 格式的预算，拒绝所有负数或零值（包括 "-500" / "-1万" / -1000 / 0）；`_extract_numeric_budget` 对 dict 格式递归处理 total，支持 `{"total": "-500"}` / `{"total": "10000"}` 等字符串 total 路径
 
 ---
 

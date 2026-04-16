@@ -426,3 +426,61 @@ def test_positive_budget_number_allowed_via_update_trip_basics(guardrail):
     )
     result = guardrail.validate_input(tc)
     assert result.allowed
+
+
+def test_negative_budget_dict_with_string_total_rejected_via_update_trip_basics(guardrail):
+    """Dict budget with negative string total like '-500' should be rejected."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": "-500"}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_negative_budget_dict_with_chinese_string_total_rejected_via_update_trip_basics(guardrail):
+    """Dict budget with negative Chinese string total like '-1万' should be rejected."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": "-1万"}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_zero_budget_dict_with_string_total_rejected_via_update_trip_basics(guardrail):
+    """Dict budget with zero string total '0' should be rejected."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": "0"}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert not result.allowed
+    assert "负" in result.reason or "零" in result.reason
+
+
+def test_positive_budget_dict_with_string_total_allowed_via_update_trip_basics(guardrail):
+    """Dict budget with positive string total like '10000' should pass."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": "10000"}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert result.allowed
+
+
+def test_positive_budget_dict_with_chinese_string_total_allowed_via_update_trip_basics(guardrail):
+    """Dict budget with positive Chinese string total like '1万' should pass."""
+    tc = ToolCall(
+        id="1",
+        name="update_trip_basics",
+        arguments={"budget": {"total": "1万"}, "destination": "东京"},
+    )
+    result = guardrail.validate_input(tc)
+    assert result.allowed
