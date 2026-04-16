@@ -98,5 +98,11 @@ def test_phase5_complete_prompt_uses_new_tools(injector):
     result = injector.check_and_inject(messages=[], plan=plan, prev_step=None)
     assert result is not None
     assert "update_plan_state" not in result
+    # New requirements: replace_daily_plans as primary repair, append_day_plan only for missing days
+    assert "replace_daily_plans" in result
     assert "append_day_plan" in result
     assert "request_backtrack" in result
+    # Check the guidance prioritizes replace_daily_plans for repairs
+    assert result.index("replace_daily_plans") < result.index("append_day_plan")
+    # Verify append_day_plan is framed as only for missing days
+    assert "缺" in result or "填" in result or "追加" in result

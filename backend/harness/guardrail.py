@@ -112,12 +112,12 @@ class ToolGuardrail:
             elif tc.name == "update_trip_basics" and "budget" in tc.arguments:
                 budget_value = tc.arguments.get("budget")
 
-            if isinstance(budget_value, dict):
-                total = budget_value.get("total")
-                if isinstance(total, (int, float)) and total <= 0:
+            if budget_value is not None:
+                numeric_budget = self._extract_numeric_budget(budget_value)
+                if numeric_budget is not None and numeric_budget <= 0:
                     return GuardrailResult(
                         allowed=False,
-                        reason="budget.total 不能为负数或零",
+                        reason="budget 不能为负数或零",
                         level="error",
                     )
 
@@ -186,3 +186,23 @@ class ToolGuardrail:
             for value in obj:
                 values.extend(self._iter_string_values(value))
         return values
+
+    def _extract_numeric_budget(self, budget_value: Any) -> float | None:
+        """Extract numeric budget from dict/string/number format."""
+        if isinstance(budget_value, dict):
+            total = budget_value.get("total")
+            if isinstance(total, (int, float)):
+                return float(total)
+            return None
+        elif isinstance(budget_value, (int, float)):
+            return float(budget_value)
+        elif isinstance(budget_value, str):
+            # Try to parse numeric string, including negative values
+            try:
+                return float(budget_value)
+            except ValueError:
+                # Check for Chinese number patterns with minus sign
+                if budget_value.startswith("-"):
+                    return -1.0  # Signal negative
+                return None
+        return None

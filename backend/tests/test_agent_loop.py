@@ -947,6 +947,90 @@ async def test_phase3_text_only_skeleton_response_triggers_state_repair():
 
 
 @pytest.mark.asyncio
+async def test_phase3_candidate_partial_split_write_triggers_repair():
+    """Test that partial split-write (candidate_pool exists but shortlist missing) triggers repair hint."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="candidate",
+        destination="东京",
+        dates=DateRange(start="2026-05-01", end="2026-05-06"),
+        trip_brief={"goal": "文化之旅"},
+        candidate_pool=[
+            {"place": "浅草寺", "reason": "经典景点"},
+            {"place": "晴空塔", "reason": "现代地标"},
+        ],
+        # shortlist is missing -> partial failure
+    )
+    engine = ToolEngine()
+    engine.register(make_update_plan_state_tool(plan))
+
+    observed_messages: list[list[str | None]] = []
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        observed_messages.append([message.content for message in messages])
+
+        if call_count == 1:
+            # LLM gives candidate analysis text but forgets to call set_shortlist
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content="经过筛选，推荐浅草寺作为首选，晴空塔作为备选。",
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        if call_count == 2:
+            # After repair hint, LLM calls set_shortlist
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="update_plan_state",
+                    arguments={
+                        "field": "shortlist",
+                        "value": [{"place": "浅草寺", "rank": 1}],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="shortlist 已写入")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=4,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u6",
+    )
+
+    messages = [Message(role=Role.USER, content="帮我筛选候选方案")]
+    async for _ in agent.run(messages, phase=3):
+        pass
+
+    # Verify repair hint was injected
+    assert any(
+        content and "shortlist" in content and "状态同步" in content
+        for call_messages in observed_messages[1:]
+        for content in call_messages
+    )
+    # Verify shortlist was eventually written
+    assert plan.shortlist is not None and len(plan.shortlist) > 0
+
+
+@pytest.mark.asyncio
 async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
     plan = TravelPlanState(
         session_id="s1",
