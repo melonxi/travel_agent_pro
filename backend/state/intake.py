@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import date, timedelta
 from typing import Any
@@ -38,6 +39,15 @@ def parse_dates_value(value: Any, *, today: date | None = None) -> DateRange | N
     text = value.strip()
     if not text:
         return None
+
+    # Handle stringified JSON: '{"start":"2026-05-01","end":"2026-05-05"}'
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parse_dates_value(parsed, today=today)
+        except (json.JSONDecodeError, TypeError):
+            pass
 
     today = today or date.today()
     iso_dates = re.findall(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", text)
@@ -106,6 +116,15 @@ def parse_budget_value(value: Any) -> Budget | None:
     if not text:
         return None
 
+    # Handle stringified JSON: '{"total": 10000, "currency": "CNY"}'
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return Budget.from_dict(parsed)
+        except (json.JSONDecodeError, TypeError, KeyError):
+            pass
+
     amount_match = re.search(r"(\d+(?:\.\d+)?)", text)
     if not amount_match:
         return None
@@ -137,27 +156,44 @@ def parse_travelers_value(value: Any) -> Travelers | None:
     if not isinstance(value, str):
         return None
 
-    text = value.strip().lower()
+    text = value.strip()
     if not text:
         return None
 
+    # Handle stringified JSON: '{"adults": 2}' or '{"adults":2,"children":1}'
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return Travelers.from_dict(parsed)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    text_lower = text.lower()
+
     adults_match = re.search(
         r"(\d+)\s*(?:个)?\s*(?:大人|成人|adults?)",
-        text,
+        text_lower,
         re.IGNORECASE,
     )
     children_match = re.search(
         r"(\d+)\s*(?:个)?\s*(?:小孩|儿童|孩子|child|children)",
-        text,
+        text_lower,
         re.IGNORECASE,
     )
-    total_match = re.search(r"(\d+)\s*(?:位|人)", text)
+    total_match = re.search(r"(\d+)\s*(?:位|人)", text_lower)
 
     adults = int(adults_match.group(1)) if adults_match else None
     children = int(children_match.group(1)) if children_match else 0
 
     if adults is None and total_match:
         adults = int(total_match.group(1))
+
+    # Fallback: pure digit string like "2" → treat as adults count
+    if adults is None:
+        digit_match = re.fullmatch(r"\d+", text)
+        if digit_match:
+            adults = int(digit_match.group())
 
     if adults is None:
         return None
@@ -225,7 +261,9 @@ def _extract_destination(message: str) -> str | None:
             continue
 
         candidate = match.group(1)
-        candidate = re.sub(r"(玩|旅游|旅行|出差|待|住|看|逛|过|度假|呆).*$", "", candidate)
+        candidate = re.sub(
+            r"(玩|旅游|旅行|出差|待|住|看|逛|过|度假|呆).*$", "", candidate
+        )
         candidate = re.sub(r"(预算|大概|大约|准备|打算).*$", "", candidate)
         candidate = re.sub(r"\d.*$", "", candidate)
         candidate = candidate.strip(" ，。,.;；:：")
