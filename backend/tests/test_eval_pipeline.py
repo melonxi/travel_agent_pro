@@ -17,6 +17,12 @@ from evals.runner import (
     save_report,
 )
 
+GOLDEN_CASES_DIR = Path(__file__).resolve().parents[1] / "evals/golden_cases"
+
+
+def golden_cases_dir() -> Path:
+    return GOLDEN_CASES_DIR
+
 
 class TestAssertionEvaluation:
     def test_phase_reached_pass(self):
@@ -95,7 +101,7 @@ class TestGoldenCaseLoader:
         assert cases == []
 
     def test_golden_cases_use_registered_tool_names(self):
-        cases = load_golden_cases(Path("evals/golden_cases"))
+        cases = load_golden_cases(golden_cases_dir())
         known_tools = {
             "update_plan_state",
             "search_flights",
