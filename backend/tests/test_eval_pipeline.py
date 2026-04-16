@@ -123,6 +123,26 @@ class TestGoldenCaseLoader:
 
         assert bad_targets == []
 
+    def test_failure_005_protects_constraint_path(self):
+        """Finding 3: failure-005 should protect dietary constraint with correct split tool."""
+        cases = load_golden_cases(Path("evals/golden_cases"))
+        failure_005 = next((c for c in cases if c.id == "failure-005"), None)
+        assert failure_005 is not None, "failure-005 case not found"
+        
+        # Should still assert trip-basics write
+        trip_basics_assertions = [
+            a for a in failure_005.assertions
+            if a.type == AssertionType.TOOL_CALLED and a.target == "update_trip_basics"
+        ]
+        assert len(trip_basics_assertions) == 1, "Should have update_trip_basics assertion"
+        
+        # Should also protect dietary constraint path with the correct split tool
+        constraint_assertions = [
+            a for a in failure_005.assertions
+            if a.type == AssertionType.TOOL_CALLED and a.target in {"add_constraints", "add_constraint"}
+        ]
+        assert len(constraint_assertions) >= 1, "Should have add_constraints assertion for dietary constraint"
+
 
 class TestRunSuiteOffline:
     def test_full_suite_run(self):

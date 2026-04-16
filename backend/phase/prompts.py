@@ -64,7 +64,7 @@ PHASE1_PROMPT = """## 角色
 ## 状态写入契约
 
 - 用户明确拍板目的地后，立即调用 `update_trip_basics(destination="目的地名称")`。
-- 用户在同一条消息里明确给了预算、人数、日期、约束、偏好等，也应先写入状态再继续分析。
+- 用户在同一条消息里明确给了预算、人数、日期等，通过 `update_trip_basics` 写入；明确给了约束，通过 `add_constraints` 写入；明确给了偏好，通过 `add_preferences` 写入。
 - 不要把你推荐出来的候选、分析结论、默认偏好写进状态；只有用户明确表达的信息才写入。
 - 用户已明确拍板目的地时，不要先调 `xiaohongshu_search` 或 `web_search` 做目的地研究，直接写状态。
 
@@ -116,7 +116,7 @@ PHASE1_PROMPT = """## 角色
 场景 E：用户同时给出目的地和大量其他信息
 ```
 用户：五一去东京，3万预算，两个人，想吃好的，不想太累
-正确：先写入 destination，再写入 budget、travelers；preferences 和 constraints 只写用户明确说的（美食偏好、轻松节奏），不要补充你的推断。
+正确：先写入 destination、budget、travelers（用 update_trip_basics）；用户明确说的偏好（美食偏好、轻松节奏）用 add_preferences 写入，不要补充你的推断。
 错误：把"东京美食区域推荐""适合慢游的路线"写入 preferences。
 ```"""
 
@@ -451,9 +451,9 @@ PHASE5_PROMPT = """## 角色
 - 不是每个活动都机械查一遍，优先查关键项、高风险项、会影响整天结构的项
 
 ### 动作 4 — commit（写入状态）
-- 每完成 1-2 天就调用 `append_day_plan(...)` 追加或 `replace_daily_plans(days=[...])` 批量写入
-- 传单个 dict 表示追加单天；传 list[dict] 表示批量写入
-- 先写基础行程，验证发现问题后用完整 list 替换更新
+- 每完成 1-2 天就调用 `append_day_plan(day=..., date=..., activities=...)` 追加单天
+- 或调用 `replace_daily_plans(days=[...])` 批量替换全部已有天数
+- 先写基础行程，验证发现问题后用 `replace_daily_plans` 批量替换更新
 
 ## DayPlan 严格 JSON 结构
 
@@ -505,9 +505,9 @@ PHASE5_PROMPT = """## 角色
 
 ## 状态写入契约
 
-- 行程数据必须通过 `append_day_plan` 或 `replace_daily_plans` 写入，不允许只在正文描述而不写状态。
-- 增量写入：每完成 1-2 天就写入一次，不要攒到最后。
-- 如果用户要求修改已写入的某天，用完整 list 替换 daily_plans。
+- 行程数据必须通过 `append_day_plan(day=..., date=..., activities=...)` 或 `replace_daily_plans(days=[...])` 写入，不允许只在正文描述而不写状态。
+- 增量写入：每完成 1-2 天就用 `append_day_plan` 追加单天，不要攒到最后。
+- 如果用户要求修改已写入的某天，用 `replace_daily_plans(days=[...])` 批量替换全部天数。
 - 如果验证发现骨架不可执行，调用 backtrack 而非强行凑出假行程。
 
 ## 完成 Gate

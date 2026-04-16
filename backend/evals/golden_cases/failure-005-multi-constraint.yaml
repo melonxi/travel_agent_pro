@@ -16,3 +16,5 @@ assertions:
     target: 素食
   - type: tool_called
     target: update_trip_basics
+  - type: tool_called
+    target: add_constraints
