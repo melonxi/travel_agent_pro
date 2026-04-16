@@ -15,6 +15,7 @@ from state.models import (
 from state.plan_writers import (
     append_one_day_plan,
     replace_all_daily_plans,
+    replace_destination_candidates,
     write_accommodation_options,
     write_alternatives,
     write_candidate_pool,
@@ -81,6 +82,7 @@ _STRUCTURED_LIST_FIELDS = {
     "accommodation_options",
     "risks",
     "alternatives",
+    "destination_candidates",
     "daily_plans",
 }
 
@@ -130,7 +132,7 @@ def _coerce_jsonish(value: Any, *, field: str | None = None) -> Any:
         text = value.strip()
         if text and text[0] in "[{" and text[-1] in "]}":
             try:
-                return _coerce_jsonish(json.loads(text), field=field)
+                return _coerce_jsonish(json.loads(text))
             except json.JSONDecodeError:
                 if field in _STRUCTURED_LIST_FIELDS:
                     raise ToolError(
@@ -141,9 +143,9 @@ def _coerce_jsonish(value: Any, *, field: str | None = None) -> Any:
                 return value
         return value
     if isinstance(value, list):
-        return [_coerce_jsonish(item, field=field) for item in value]
+        return [_coerce_jsonish(item) for item in value]
     if isinstance(value, dict):
-        return {key: _coerce_jsonish(item, field=field) for key, item in value.items()}
+        return {key: _coerce_jsonish(item) for key, item in value.items()}
     return value
 
 
@@ -308,12 +310,6 @@ Important:
         value = _coerce_jsonish(value, field=field)
 
         if field in _STRUCTURED_LIST_FIELDS:
-            if isinstance(value, str):
-                raise ToolError(
-                    f"{field} 必须是 list[object]，不要传 string",
-                    error_code="INVALID_VALUE",
-                    suggestion=f"{field} 请直接传 native list[object]；如果是追加单项，请直接传 dict",
-                )
             if isinstance(value, list):
                 for index, item in enumerate(value):
                     if not isinstance(item, dict):
@@ -322,6 +318,12 @@ Important:
                             error_code="INVALID_VALUE",
                             suggestion=f"{field} 必须传 list[object]",
                         )
+            elif not isinstance(value, dict):
+                raise ToolError(
+                    f"{field} 必须是 list[object]；如需追加单项请传 object，实际收到 {type(value).__name__}",
+                    error_code="INVALID_VALUE",
+                    suggestion=f"{field} 请直接传 native list[object]；如果是追加单项，请直接传 dict",
+                )
 
         if field == "destination":
             if isinstance(value, dict):
@@ -429,9 +431,9 @@ Important:
                 write_alternatives(plan, [*plan.alternatives, value])
         elif field == "destination_candidates":
             if isinstance(value, list):
-                plan.destination_candidates = value
+                replace_destination_candidates(plan, value)
             else:
-                plan.destination_candidates.append(value)
+                replace_destination_candidates(plan, [*plan.destination_candidates, value])
         elif field == "daily_plans":
             if isinstance(value, list):
                 replace_all_daily_plans(plan, value)
