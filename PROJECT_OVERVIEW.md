@@ -122,7 +122,7 @@ travel_agent_pro/
 | Evaluator-Optimizer | 阶段转换质量门控：硬约束阻断，软评分低于阈值时注入修正建议 | before_phase_transition hook |
 | Reflection | 被动自省提示，会话级去重 | before_llm_call（步骤切换时） |
 | Parallel Tool Exec | 读写分离并行调度，parallel_group ID 透传到 Stats 层 | 工具批量执行时 |
-| Forced Tool Choice | 关键决策点强制结构化输出 | LLM 调用前 |
+| Tool Choice (always auto) | Phase 切分后总返回 "auto"，依赖提示纪律 | LLM 调用前 |
 | Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；三路检索按 trip_id 隔离 | 每轮 chat 后后台提取；system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
 | Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
@@ -145,7 +145,7 @@ travel_agent_pro/
     │   ├─ ReflectionInjector → 关键阶段自省提示
     │   └─ compact_messages_for_prompt() → token 预算内渐进压缩
     │
-    ├─ [ToolChoiceDecider] → 关键决策点可强制 update_plan_state
+    ├─ [ToolChoiceDecider] → 当前始终返回 "auto"（split 工具后移除强制）
     ├─ [LLMProvider.chat()] → 流式输出 text_delta + tool_calls
     │
     ├─ [ToolGuardrail + ToolEngine.execute/execute_batch] → 顺序/并行调度
@@ -325,11 +325,17 @@ DELETE /api/memory/{user_id}/{item_id}      标记 obsolete
 
 ## 12. 质量守护（Harness）—— 5 层架构
 
-1. **输入护栏 Guardrail** — 中文注入检测、消息长度限制、搜索结果字段分级校验、工具结果异常检测
+1. **输入护栏 Guardrail** — 中文注入检测、消息长度限制、搜索结果字段分级校验、工具结果异常检测；预算负值检测扩展到 `update_trip_basics`
 2. **硬约束验证器 Validator** — 时间冲突/预算超支/天数超限；所有 `PLAN_WRITER_TOOL_NAMES` 成功写入后都会走 `validate_incremental` 注入实时约束反馈；涉及交通/住宿锁定的写入还会触发 `validate_lock_budget` 检查预算占比
 3. **软评分 Judge** — pace / geography / coherence / personalization 四维评分，在 `assemble_day_plan`、`generate_summary` 后触发
 4. **可行性门控 Feasibility Gate** — Phase 1→3 转换时基于目的地查表做规则式判断
 5. **成本与延迟追踪** — `SessionStats` 记录 token 用量与模型定价；`ToolCallRecord` 承载 `state_changes`、`parallel_group`、`validation_errors`、`judge_scores`；`MemoryHitRecord` 记录命中记忆
+
+**最近迁移（Task 14）**：
+- `agent/loop.py`: 4 个 state repair 消息更新为指引 split 工具（`set_trip_brief` / `set_candidate_pool` / `select_skeleton` / `append_day_plan`）；redundancy 检测仅对 `update_plan_state` 生效，新工具直接透传
+- `agent/tool_choice.py`: 简化为恒返 "auto"，依赖 prompt 纪律，不再强制 `update_plan_state`
+- `agent/reflection.py`: Phase 5 自检末尾更新为指引 `append_day_plan` / `replace_daily_plans` / `request_backtrack`
+- `context/manager.py`: 系统提示泛化"状态写入工具"措辞；backtrack 规则更新为 `request_backtrack(to_phase=..., reason="...")`；压缩渲染新增对 `PLAN_WRITER_TOOL_NAMES` 的"决策"行标记
 
 ---
 
@@ -400,7 +406,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 | Evaluator-Optimizer | 硬约束错误阻断；软评分低于阈值注入修改建议；评分器异常不阻断主流程 |
 | Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
 | 并行工具执行 | 读写分离：搜索类并行，状态更新顺序 |
-| Forced Tool Choice | 关键决策点强制工具调用，渐进替代 State Repair |
+| Tool Choice (always auto) | split 工具后移除强制逻辑，全依赖 prompt 纪律与 State Repair |
 | Memory System | 结构化 global/trip 双 scope + episode 归档；policy 全字段 PII 脱敏；按 trip_id 隔离；新行程回退时轮转 trip_id |
 | Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
 | Trace Data Pipeline | "丰富 Stats 层，Trace 只做读取"：钩子 post-hoc 写入 `ToolCallRecord`；`build_trace` 纯读取消费 |
