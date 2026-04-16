@@ -12,7 +12,7 @@ from state.models import TravelPlanState
 from tools.base import tool
 from tools.engine import ToolEngine
 from tools.plan_tools.trip_basics import make_update_trip_basics_tool
-from tools.update_plan_state import make_update_plan_state_tool
+from tests.helpers.register_plan_tools import register_all_plan_tools
 
 
 class _PhaseTransitionContextManager:
@@ -94,7 +94,7 @@ def plan_phase1():
 @pytest.fixture
 def agent_with_router(plan_phase1):
     engine = ToolEngine()
-    engine.register(make_update_plan_state_tool(plan_phase1))
+    register_all_plan_tools(engine, plan_phase1)
 
     llm = MagicMock()
     mock_router = MagicMock()
@@ -111,8 +111,8 @@ def agent_with_router(plan_phase1):
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
                     id="tc1",
-                    name="update_plan_state",
-                    arguments={"field": "destination", "value": "成都"},
+                    name="update_trip_basics",
+                    arguments={"destination": "成都"},
                 ),
             )
             yield LLMChunk(type=ChunkType.DONE)
@@ -459,7 +459,7 @@ async def test_loop_yields_phase_transition_on_explicit_path(
         "to_phase": 3,
         "from_step": "brief",
         "to_step": "brief",
-        "reason": "update_plan_state_direct",
+        "reason": "plan_tool_direct",
     }
 
 

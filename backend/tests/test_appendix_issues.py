@@ -22,7 +22,10 @@ from state.models import (
 )
 from tools.base import ToolError
 from tools.engine import ToolEngine
-from tools.update_plan_state import make_update_plan_state_tool
+from tools.plan_tools.daily_plans import (
+    make_append_day_plan_tool,
+    make_replace_daily_plans_tool,
+)
 
 
 class _PhaseRouter:
@@ -93,13 +96,12 @@ class TestA1PhaseToolNamesInconsistency:
 
 
 # ---------------------------------------------------------------------------
-# A.2  _ALLOWED_FIELDS missing daily_plans — blocks Phase 5→7 transition
+# A.2  daily_plans writing via split tools — validates Phase 5→7 transition
 # ---------------------------------------------------------------------------
 
 
-class TestA2DailyPlansBlocked:
-    """A.2: update_plan_state rejects 'daily_plans' because it is not in
-    _ALLOWED_FIELDS. This blocks the phase 5→7 transition."""
+class TestA2DailyPlansWriting:
+    """A.2: Tests daily_plans writing via append_day_plan and replace_daily_plans."""
 
     @pytest.fixture
     def plan_at_phase5(self):
@@ -115,9 +117,9 @@ class TestA2DailyPlansBlocked:
         )
 
     @pytest.mark.asyncio
-    async def test_daily_plans_update_succeeds(self, plan_at_phase5):
-        """After fix: update_plan_state should accept 'daily_plans' field."""
-        tool_fn = make_update_plan_state_tool(plan_at_phase5)
+    async def test_daily_plans_append_succeeds(self, plan_at_phase5):
+        """append_day_plan should append day plans one by one."""
+        tool_fn = make_append_day_plan_tool(plan_at_phase5)
         day1 = {
             "day": 1,
             "date": "2026-05-01",
@@ -138,7 +140,7 @@ class TestA2DailyPlansBlocked:
             "notes": "Day 1 itinerary",
         }
 
-        result = await tool_fn(field="daily_plans", value=day1)
+        result = await tool_fn(day=day1)
         assert result["updated_field"] == "daily_plans"
         assert len(plan_at_phase5.daily_plans) == 1
         assert plan_at_phase5.daily_plans[0].day == 1
@@ -146,7 +148,7 @@ class TestA2DailyPlansBlocked:
     @pytest.mark.asyncio
     async def test_daily_plans_append_multiple(self, plan_at_phase5):
         """Appending multiple day plans one by one should work."""
-        tool_fn = make_update_plan_state_tool(plan_at_phase5)
+        tool_fn = make_append_day_plan_tool(plan_at_phase5)
 
         for i in range(1, 4):
             day_data = {
@@ -155,21 +157,20 @@ class TestA2DailyPlansBlocked:
                 "activities": [],
                 "notes": f"Day {i}",
             }
-            await tool_fn(field="daily_plans", value=day_data)
+            await tool_fn(day=day_data)
 
         assert len(plan_at_phase5.daily_plans) == 3
 
     @pytest.mark.asyncio
     async def test_phase5_to_7_transition_after_daily_plans(self, plan_at_phase5):
         """With daily_plans writable, phase 5→7 transition should work."""
-        tool_fn = make_update_plan_state_tool(plan_at_phase5)
+        tool_fn = make_append_day_plan_tool(plan_at_phase5)
         router = PhaseRouter()
 
         # The plan has 3 total days (May 1-4, total_days = 3)
         for i in range(1, 4):
             await tool_fn(
-                field="daily_plans",
-                value={"day": i, "date": f"2026-05-0{i}", "activities": []},
+                day={"day": i, "date": f"2026-05-0{i}", "activities": []},
             )
 
         # Now daily_plans count (3) >= dates.total_days (3)
@@ -181,13 +182,13 @@ class TestA2DailyPlansBlocked:
     @pytest.mark.asyncio
     async def test_daily_plans_list_replaces_all(self, plan_at_phase5):
         """Passing a list replaces all daily_plans at once."""
-        tool_fn = make_update_plan_state_tool(plan_at_phase5)
+        tool_fn = make_replace_daily_plans_tool(plan_at_phase5)
         plans_list = [
             {"day": 1, "date": "2026-05-01", "activities": []},
             {"day": 2, "date": "2026-05-02", "activities": []},
             {"day": 3, "date": "2026-05-03", "activities": []},
         ]
-        result = await tool_fn(field="daily_plans", value=plans_list)
+        result = await tool_fn(days=plans_list)
         assert len(plan_at_phase5.daily_plans) == 3
 
 

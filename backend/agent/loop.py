@@ -16,7 +16,6 @@ from llm.types import ChunkType, LLMChunk
 from telemetry.attributes import AGENT_PHASE, AGENT_ITERATION
 from tools.engine import ToolEngine
 from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
-from tools.update_plan_state import is_redundant_update_plan_state
 
 
 class AgentLoop:
@@ -436,7 +435,7 @@ class AgentLoop:
                                 "to_phase": phase_after_batch,
                                 "from_step": phase3_step_before_batch,
                                 "to_step": getattr(self.plan, "phase3_step", None),
-                                "reason": "update_plan_state_direct",
+                                "reason": "plan_tool_direct",
                             },
                         )
                         messages[:] = await self._rebuild_messages_for_phase_change(
@@ -797,7 +796,7 @@ class AgentLoop:
         assistant_text: str,
         repair_hints_used: set[str],
     ) -> str | None:
-        """Detect when Phase 5 LLM outputs itinerary text but forgets to call update_plan_state."""
+        """Detect when Phase 5 LLM outputs itinerary text but forgets to call plan tools."""
         if current_phase != 5 or self.plan is None:
             return None
         if not self.plan.dates:
@@ -863,18 +862,10 @@ class AgentLoop:
         return None
 
     def _should_skip_redundant_update(self, tool_call: ToolCall) -> bool:
-        if self.plan is None:
-            return False
-        # Legacy adapter path
-        if tool_call.name == "update_plan_state":
-            field = tool_call.arguments.get("field")
-            if not isinstance(field, str):
-                return False
-            return is_redundant_update_plan_state(
-                self.plan,
-                field=field,
-                value=tool_call.arguments.get("value"),
-            )
-        # New single-responsibility tools have clear semantics;
-        # redundancy checks are less needed. Skip for now.
+        """Check if a tool call is redundant and should be skipped.
+
+        Split tools have explicit semantics; redundancy checks are not needed.
+        This method is retained for interface compatibility but always returns False.
+        """
+        del tool_call  # unused
         return False

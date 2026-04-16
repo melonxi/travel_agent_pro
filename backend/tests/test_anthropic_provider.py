@@ -85,8 +85,8 @@ async def test_streaming_with_tools_falls_back_to_nonstream_create(provider):
     tool_block = MagicMock()
     tool_block.type = "tool_use"
     tool_block.id = "tool_1"
-    tool_block.name = "update_plan_state"
-    tool_block.input = {"field": "destination", "value": "东京"}
+    tool_block.name = "update_trip_basics"
+    tool_block.input = {"destination": "东京"}
     mock_response.content = [text_block, tool_block]
 
     with patch("llm.anthropic_provider.AsyncAnthropic") as MockClient:
@@ -105,7 +105,7 @@ async def test_streaming_with_tools_falls_back_to_nonstream_create(provider):
                 [Message(role=Role.USER, content="去东京")],
                 tools=[
                     {
-                        "name": "update_plan_state",
+                        "name": "update_trip_basics",
                         "description": "state",
                         "parameters": {"type": "object", "properties": {}},
                     }
@@ -120,7 +120,7 @@ async def test_streaming_with_tools_falls_back_to_nonstream_create(provider):
     assert chunks[0].content == "先记录信息。"
     assert chunks[1].type == ChunkType.TOOL_CALL_START
     assert chunks[1].tool_call is not None
-    assert chunks[1].tool_call.name == "update_plan_state"
+    assert chunks[1].tool_call.name == "update_trip_basics"
     assert chunks[-1].type == ChunkType.DONE
 
 

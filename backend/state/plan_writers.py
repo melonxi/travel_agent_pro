@@ -4,8 +4,8 @@ Every plan-writing operation is a pure function: take plan + data, mutate plan.
 Type validation lives in the tool wrappers (ToolError); this layer performs
 defensive assertions that should never fire in production.
 
-Both the new single-responsibility tools AND the transitional update_plan_state
-adapter call these functions, ensuring identical write behavior.
+All plan-writing tools call these shared functions, ensuring identical
+write behavior across split tools.
 """
 from __future__ import annotations
 

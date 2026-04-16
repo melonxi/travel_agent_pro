@@ -27,7 +27,6 @@ from .phase3_tools import (
 from .trip_basics import make_update_trip_basics_tool
 
 PLAN_WRITER_TOOL_NAMES = {
-    "update_plan_state",
     "update_trip_basics",
     "set_trip_brief",
     "set_candidate_pool",

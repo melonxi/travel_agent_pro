@@ -46,8 +46,8 @@ def test_empty_destination_rejected(guardrail):
 def test_negative_budget_rejected(guardrail):
     tc = ToolCall(
         id="1",
-        name="update_plan_state",
-        arguments={"field": "budget", "value": {"total": -1000}},
+        name="update_trip_basics",
+        arguments={"budget": {"total": -1000}},
     )
     result = guardrail.validate_input(tc)
     assert not result.allowed
@@ -57,8 +57,8 @@ def test_negative_budget_rejected(guardrail):
 def test_valid_budget_allowed(guardrail):
     tc = ToolCall(
         id="1",
-        name="update_plan_state",
-        arguments={"field": "budget", "value": {"total": 10000}},
+        name="update_trip_basics",
+        arguments={"budget": {"total": 10000}},
     )
     result = guardrail.validate_input(tc)
     assert result.allowed

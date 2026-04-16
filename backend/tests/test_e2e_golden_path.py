@@ -97,16 +97,16 @@ async def test_golden_path_tokyo_trip(app, sessions):
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_destination",
-                        name="update_plan_state",
-                        arguments={"field": "destination", "value": "东京"},
+                        name="update_trip_basics",
+                        arguments={"destination": "东京"},
                     ),
                 )
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_budget_skipped",
-                        name="update_plan_state",
-                        arguments={"field": "budget", "value": "2万元"},
+                        name="update_trip_basics",
+                        arguments={"budget": "2万元"},
                     ),
                 )
                 yield LLMChunk(type=ChunkType.DONE)
@@ -120,15 +120,14 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 # and is built deterministically from the prior messages.
                 assert messages[1].role == Role.ASSISTANT
                 assert "进入阶段 3" in messages[1].content
-                assert "决策: update_plan_state destination = 东京" in messages[1].content
+                assert "决策: update_trip_basics" in messages[1].content
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_dates",
-                        name="update_plan_state",
+                        name="update_trip_basics",
                         arguments={
-                            "field": "dates",
-                            "value": {"start": "2026-05-01", "end": "2026-05-06"},
+                            "dates": {"start": "2026-05-01", "end": "2026-05-06"},
                         },
                     ),
                 )
@@ -179,18 +178,17 @@ async def test_golden_path_tokyo_trip(app, sessions):
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_budget",
-                        name="update_plan_state",
-                        arguments={"field": "budget", "value": "2万元"},
+                        name="update_trip_basics",
+                        arguments={"budget": "2万元"},
                     ),
                 )
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_travelers",
-                        name="update_plan_state",
+                        name="update_trip_basics",
                         arguments={
-                            "field": "travelers",
-                            "value": {"adults": 2, "children": 0},
+                            "travelers": {"adults": 2, "children": 0},
                         },
                     ),
                 )
@@ -198,10 +196,9 @@ async def test_golden_path_tokyo_trip(app, sessions):
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_skeleton",
-                        name="update_plan_state",
+                        name="select_skeleton",
                         arguments={
-                            "field": "selected_skeleton_id",
-                            "value": "balanced",
+                            "id": "balanced",
                         },
                     ),
                 )
@@ -209,10 +206,10 @@ async def test_golden_path_tokyo_trip(app, sessions):
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_accommodation",
-                        name="update_plan_state",
+                        name="set_accommodation",
                         arguments={
-                            "field": "accommodation",
-                            "value": {"area": "新宿", "hotel": "新宿华盛顿酒店"},
+                            "area": "新宿",
+                            "hotel": "新宿华盛顿酒店",
                         },
                     ),
                 )
@@ -270,8 +267,8 @@ async def test_golden_path_tokyo_trip(app, sessions):
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_daily_plans",
-                        name="update_plan_state",
-                        arguments={"field": "daily_plans", "value": daily_plans_payload},
+                        name="replace_daily_plans",
+                        arguments={"days": daily_plans_payload},
                     ),
                 )
                 yield LLMChunk(type=ChunkType.DONE)

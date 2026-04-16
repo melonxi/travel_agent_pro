@@ -42,7 +42,6 @@ class ToolEngine:
 
     def _phase3_tool_names(self, step: str) -> set[str]:
         common = {
-            "update_plan_state",
             "update_trip_basics",
             "request_backtrack",
         }
@@ -111,7 +110,6 @@ class ToolEngine:
 
     def _phase3_builtin_tool_names(self) -> set[str]:
         return {
-            "update_plan_state",
             "update_trip_basics",
             "request_backtrack",
             "set_trip_brief",

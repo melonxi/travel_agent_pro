@@ -107,9 +107,7 @@ class ToolGuardrail:
 
         if not self._is_disabled("invalid_budget"):
             budget_value = None
-            if tc.name == "update_plan_state" and tc.arguments.get("field") == "budget":
-                budget_value = tc.arguments.get("value")
-            elif tc.name == "update_trip_basics" and "budget" in tc.arguments:
+            if tc.name == "update_trip_basics" and "budget" in tc.arguments:
                 budget_value = tc.arguments.get("budget")
 
             if budget_value is not None:
