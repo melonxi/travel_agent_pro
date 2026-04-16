@@ -284,14 +284,6 @@ def _plan_writer_updates(
         "set_alternatives": ("alternatives", arguments.get("list")),
         "add_preferences": ("preferences", arguments.get("items")),
         "add_constraints": ("constraints", arguments.get("items")),
-        "add_destination_candidate": (
-            "destination_candidates",
-            arguments.get("item"),
-        ),
-        "set_destination_candidates": (
-            "destination_candidates",
-            arguments.get("items"),
-        ),
         "append_day_plan": (
             "daily_plans",
             {
@@ -318,12 +310,8 @@ def _plan_writer_state_changes(
         return []
 
     updated_field = result_data.get("updated_field")
-    if (
-        isinstance(updated_field, str)
-        and (
-            "previous_value" in result_data
-            or "new_value" in result_data
-        )
+    if isinstance(updated_field, str) and (
+        "previous_value" in result_data or "new_value" in result_data
     ):
         return [
             {
@@ -350,9 +338,7 @@ def _plan_writer_updated_fields(result_data: dict[str, Any]) -> set[str]:
         fields.add(updated_field)
     updated_fields = result_data.get("updated_fields")
     if isinstance(updated_fields, list):
-        fields.update(
-            field for field in updated_fields if isinstance(field, str)
-        )
+        fields.update(field for field in updated_fields if isinstance(field, str))
     return fields
 
 
@@ -552,7 +538,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool_name = kwargs.get("tool_name")
             if tool_name in PLAN_WRITER_TOOL_NAMES:
                 result = kwargs.get("result")
-                if result and isinstance(result.data, dict) and result.data.get("backtracked"):
+                if (
+                    result
+                    and isinstance(result.data, dict)
+                    and result.data.get("backtracked")
+                ):
                     session = sessions.get(plan.session_id)
                     if session:
                         session["needs_rebuild"] = True
