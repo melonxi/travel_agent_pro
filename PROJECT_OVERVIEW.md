@@ -78,6 +78,7 @@ travel_agent_pro/
 - 角色：旅行灵感顾问；目标：用最少轮次收敛到一个目的地
 - **回复纪律**："先查后说"——每条建议须有工具查询结果支撑；回复≤150字；一次只给2-3个选项
 - 工具：`xiaohongshu_search`、`web_search`、`quick_travel_search`、`update_trip_basics`（状态写入）
+- **工具契约**：小红书搜索采用三层操作模型（`search_notes` 导航层 → `read_note` 信息层 → `get_comments` 评价层），强调深度使用而非浅尝辄止；状态写入契约明确何时写 `update_trip_basics`/`add_preferences`/`add_constraints`，禁止把推荐写入状态
 - **Prompt 已迁移**：Phase 1 改为使用 `update_trip_basics` 收口基础行程信息，并在需要时配合 `add_preferences` / `add_constraints`
 - **完成 Gate**：`destination` 非空 → 自动进入 Phase 3
 - 产出：`destination`、可选的 `budget`/`travelers`/`dates`
@@ -87,7 +88,10 @@ travel_agent_pro/
 - **candidate** → 候选池构建与筛选；"锚定→约束→分组→取舍"思考框架
 - **skeleton** → 骨架方案（非逐小时）；独立锚定大交通时序
 - **lock** → 锁定交通 + 住宿；大交通确认时间后即锁
-- **工具门控**：每个子步骤只暴露该阶段所需的工具子集；Phase 3 现按 brief/candidate/skeleton/lock 动态放开对应的 plan-writing tools（`update_trip_basics`、`set_trip_brief`、`set_candidate_pool`、`set_shortlist`、`set_skeleton_plans`、`select_skeleton`、交通/住宿锁定工具、`add_preferences`、`add_constraints`、`request_backtrack`）
+- **输出协议**：每个子阶段 prompt 开头注入 `⚠️ 输出协议`——正面指令（先工具后文字）、必须调用的工具、严禁行为
+- **工具职责对照表**：PHASE3_BASE_PROMPT 中包含 10 行"你想做什么 → 应该调用 → 不要调用"映射表，防止工具混用（如用 `set_trip_brief` 记录骨架选择）
+- **通用工具纪律**：小红书三层操作模型（导航层/信息层/评价层）、即使成熟目的地也不跳过 UGC 搜索
+- **工具门控**：每个子步骤只暴露该阶段所需的工具子集，并向前开放下一阶段写入工具实现"前瞻容错"（如 brief 阶段可前瞻写入 `set_candidate_pool`/`set_shortlist`，candidate 阶段可前瞻写入 `set_skeleton_plans`/`select_skeleton`），防止 LLM 跳阶时工具不可用导致状态丢失
 - **Prompt 已迁移**：brief 用 `set_trip_brief` / `add_preferences` / `add_constraints`，candidate 用 `set_candidate_pool` / `set_shortlist`，skeleton 用 `set_skeleton_plans` / `select_skeleton`，回退用 `request_backtrack`
 - **Prompt 拼装**：`build_phase3_prompt(step)` = `PHASE3_BASE_PROMPT` + `PHASE3_STEP_PROMPTS[step]` + `GLOBAL_RED_FLAGS`
 - 产出：`trip_brief`、`candidate_pool`、`skeleton_plans`、`selected_skeleton_id`、交通/住宿
@@ -221,8 +225,10 @@ LLM API 异常
 - **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（19 个 plan-writing tools，以及 `assemble_day_plan`、`generate_summary`）顺序执行
 - **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`tools.plan_tools.*` 负责参数 schema、输入规范化与错误边界，再委托到共享 writer 完成落盘
 - **运行时写后处理**：`backend/main.py` 把 `PLAN_WRITER_TOOL_NAMES` 统一视作状态写工具；所有 writers 都会触发 `validate_incremental` / `validate_lock_budget`、SSE `state_update`、accept memory 事件、以及 backtrack rebuild。若工具结果显式返回 `previous_value` / `new_value`，`SessionStats.state_changes` 优先记录工具返回的规范化值；`request_backtrack` 只保留 rebuild/transition 语义，不伪造字段 diff
-- **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集，并把 split plan tools 纳入白名单（如 brief 的 `set_trip_brief` / `add_preferences` / `add_constraints`，lock 的交通住宿锁定工具）；`phase3_step` 由路由推断
-- **Phase 3 状态修复**：`AgentLoop` 会根据 split-write 完成度注入修复提示；`candidate_pool` 和 `shortlist` 都缺失时要求先写入候选全集再写 shortlist，若仅缺 `shortlist` 则只提示补写 shortlist。
+- **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集，并把 split plan tools 纳入白名单（如 brief 的 `set_trip_brief` / `add_preferences` / `add_constraints`，lock 的交通住宿锁定工具）；每个子阶段向前开放下一阶段写入工具实现"前瞻容错"（brief 可写 `set_candidate_pool`/`set_shortlist`，candidate 可写 `set_skeleton_plans`/`select_skeleton`）；`phase3_step` 由路由推断
+- **Phase 3 工具描述**：所有 11 个 Phase 3 工具的 `description` 采用四段式结构——功能说明 / 触发条件 / 禁止行为 / 写入后效果，引导 LLM 正确选择工具
+- **Phase 3 状态修复**：`AgentLoop` 覆盖全部 4 个子阶段的状态修复——brief 检测画像描述未写入、candidate 检测候选池/短名单缺失及跳阶信号、skeleton 检测骨架信号词但状态为空、lock 按类别（交通/住宿/风险/备选）独立检测；每个子阶段允许两次修复尝试（首次 + retry）
+- **重复搜索拦截**：`AgentLoop._should_skip_redundant_update` 检测 `web_search`/`xiaohongshu_search`/`quick_travel_search` 的同 query 重复调用（≥2 次），维护最近 20 条搜索记录滑动窗口，跳过时返回 `REDUNDANT_SEARCH` 错误码
 
 ### 工具清单
 
@@ -427,12 +433,17 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 | Trace Data Pipeline | "丰富 Stats 层，Trace 只做读取"：钩子 post-hoc 写入 `ToolCallRecord`；`build_trace` 纯读取消费 |
 | Memory Recall SSE | `memory_recall` 事件透传到前端，驱动 SessionSidebar 高亮与 ChatPanel memory chip |
 | LLM 韧性三层架构 | 错误归一化 → 停止生成（cancel_event + 取消检查点 + RunRecord）→ 安全继续（continuation_context + continue endpoint） |
+| 工具白名单前瞻容错 | 每个 Phase 3 子阶段向前开放下一阶段写入工具，防止 LLM 跳阶时工具不可用导致状态丢失和死循环 |
+| 四段式工具描述 | 功能说明 / 触发条件 / 禁止行为 / 写入后效果结构化模板，引导 LLM 正确选择工具而非混用 |
+| 子阶段输出协议 | 每个 Phase 3 子步骤开头注入"先工具后文字"正面指令，防止 LLM 只在正文描述方案而不写入状态 |
+| 重复搜索拦截 | 同 query 滑动窗口去重，阻断搜索死循环 |
+| 小红书三层操作模型 | search_notes（导航）→ read_note（信息）→ get_comments（评价），鼓励深度使用 UGC 内容 |
 
 ---
 
 ## 17. 测试体系
 
-- **后端单元测试**：覆盖 Agent 循环、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 通道、RunRecord/IterationProgress；plan tools 回归集中位于 `backend/tests/test_plan_tools/`（含 `test_phase3_tools.py`、`test_trip_basics.py` 与 `test_daily_plans.py`），`infer_phase3_step_from_state` 对污染的 `skeleton_plans` 具备 reader-side 过滤防御
+- **后端单元测试**：覆盖 Agent 循环（含白名单前瞻容错、跨阶段状态修复、重复搜索拦截）、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 通道、RunRecord/IterationProgress；plan tools 回归集中位于 `backend/tests/test_plan_tools/`（含 `test_phase3_tools.py`、`test_trip_basics.py` 与 `test_daily_plans.py`），`infer_phase3_step_from_state` 对污染的 `skeleton_plans` 具备 reader-side 过滤防御
 - **评估管线**：golden cases（YAML）+ 断言评估 + 离线 runner；`scripts/eval-stability.py` 生成 pass@k 稳定性报告（JSON + Markdown）；`scripts/failure-analysis/` 对 live backend 执行失败场景并产出分析报告
 - **E2E 测试**：Playwright 三套专项配置——主流程（含 deterministic mock 的阶段切换）、重试体验（继续/重发/停止/不可恢复错误）、等待体验（ThinkingBubble 与工具耗时提示）；demo spec 基于 `demo-scripted-session.json` 稳定回放 Phase 1 → Phase 3 → Phase 5 → backtrack
 - **运行**：`cd backend && pytest` / `npx playwright test`

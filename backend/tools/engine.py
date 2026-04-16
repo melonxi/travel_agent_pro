@@ -9,7 +9,14 @@ from typing import Any
 from opentelemetry import trace
 
 from agent.types import ToolCall, ToolResult
-from telemetry.attributes import TOOL_NAME, TOOL_STATUS, TOOL_ERROR_CODE, EVENT_TOOL_INPUT, EVENT_TOOL_OUTPUT, truncate
+from telemetry.attributes import (
+    TOOL_NAME,
+    TOOL_STATUS,
+    TOOL_ERROR_CODE,
+    EVENT_TOOL_INPUT,
+    EVENT_TOOL_OUTPUT,
+    truncate,
+)
 from tools.base import ToolDef, ToolError
 
 
@@ -27,7 +34,9 @@ class ToolEngine:
     ) -> list[dict[str, Any]]:
         allowed_names = None
         if phase == 3 and plan is not None:
-            allowed_names = self._phase3_tool_names(getattr(plan, "phase3_step", "brief"))
+            allowed_names = self._phase3_tool_names(
+                getattr(plan, "phase3_step", "brief")
+            )
             known_phase3_names = self._phase3_builtin_tool_names()
         return [
             t.to_schema()
@@ -53,6 +62,10 @@ class ToolEngine:
                 "add_constraints",
                 "web_search",
                 "xiaohongshu_search",
+                # Forward-looking: allow candidate write tools so LLM can
+                # self-rescue if it jumps ahead to candidate work.
+                "set_candidate_pool",
+                "set_shortlist",
             },
             "candidate": {
                 *common,
@@ -65,6 +78,10 @@ class ToolEngine:
                 "xiaohongshu_search",
                 "quick_travel_search",
                 "get_poi_info",
+                # Forward-looking: allow skeleton write tools so LLM can
+                # self-rescue if it jumps ahead to skeleton work.
+                "set_skeleton_plans",
+                "select_skeleton",
             },
             "skeleton": {
                 *common,
@@ -140,7 +157,9 @@ class ToolEngine:
     def get_tool(self, name: str) -> ToolDef | None:
         return self._tools.get(name)
 
-    def _internal_error_result(self, call: ToolCall, error: Exception | str) -> ToolResult:
+    def _internal_error_result(
+        self, call: ToolCall, error: Exception | str
+    ) -> ToolResult:
         return ToolResult(
             tool_call_id=call.id,
             status="error",
@@ -152,19 +171,27 @@ class ToolEngine:
     async def execute(self, call: ToolCall) -> ToolResult:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("tool.execute") as span:
-            span.add_event(EVENT_TOOL_INPUT, {
-                "arguments": truncate(json.dumps(call.arguments, ensure_ascii=False)),
-            })
+            span.add_event(
+                EVENT_TOOL_INPUT,
+                {
+                    "arguments": truncate(
+                        json.dumps(call.arguments, ensure_ascii=False)
+                    ),
+                },
+            )
 
             tool_def = self._tools.get(call.name)
             if not tool_def:
                 span.set_attribute(TOOL_NAME, call.name)
                 span.set_attribute(TOOL_STATUS, "error")
                 span.set_attribute(TOOL_ERROR_CODE, "UNKNOWN_TOOL")
-                span.add_event(EVENT_TOOL_OUTPUT, {
-                    "error": f"Unknown tool: {call.name}",
-                    "error_code": "UNKNOWN_TOOL",
-                })
+                span.add_event(
+                    EVENT_TOOL_OUTPUT,
+                    {
+                        "error": f"Unknown tool: {call.name}",
+                        "error_code": "UNKNOWN_TOOL",
+                    },
+                )
                 return ToolResult(
                     tool_call_id=call.id,
                     status="error",
@@ -183,9 +210,12 @@ class ToolEngine:
                     data = payload
                 span.set_attribute(TOOL_NAME, call.name)
                 span.set_attribute(TOOL_STATUS, "success")
-                span.add_event(EVENT_TOOL_OUTPUT, {
-                    "data": truncate(json.dumps(data, ensure_ascii=False)),
-                })
+                span.add_event(
+                    EVENT_TOOL_OUTPUT,
+                    {
+                        "data": truncate(json.dumps(data, ensure_ascii=False)),
+                    },
+                )
                 duration_ms = (time.monotonic() - start_time) * 1000
                 if metadata is None:
                     metadata = {}
@@ -201,10 +231,13 @@ class ToolEngine:
                 span.set_attribute(TOOL_NAME, call.name)
                 span.set_attribute(TOOL_STATUS, "error")
                 span.set_attribute(TOOL_ERROR_CODE, e.error_code)
-                span.add_event(EVENT_TOOL_OUTPUT, {
-                    "error": str(e),
-                    "error_code": e.error_code,
-                })
+                span.add_event(
+                    EVENT_TOOL_OUTPUT,
+                    {
+                        "error": str(e),
+                        "error_code": e.error_code,
+                    },
+                )
                 return ToolResult(
                     tool_call_id=call.id,
                     status="error",
@@ -219,10 +252,13 @@ class ToolEngine:
                 span.set_attribute(TOOL_STATUS, "error")
                 span.set_attribute(TOOL_ERROR_CODE, "INTERNAL_ERROR")
                 span.record_exception(e)
-                span.add_event(EVENT_TOOL_OUTPUT, {
-                    "error": truncate(str(e)),
-                    "error_code": "INTERNAL_ERROR",
-                })
+                span.add_event(
+                    EVENT_TOOL_OUTPUT,
+                    {
+                        "error": truncate(str(e)),
+                        "error_code": "INTERNAL_ERROR",
+                    },
+                )
                 result = self._internal_error_result(call, e)
                 if result.metadata is None:
                     result.metadata = {}

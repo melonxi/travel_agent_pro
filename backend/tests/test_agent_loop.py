@@ -724,12 +724,12 @@ async def test_forward_phase_rebuild_keeps_user_anchor_when_summary_empty():
 @pytest.mark.asyncio
 async def test_phase3_substep_change_refreshes_tools():
     """Test that tool availability changes when phase3_step changes.
-    
+
     Uses the real plan tools registered through register_all_plan_tools,
     which respects the engine's phase3_step-based tool filtering.
     """
     plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
-    
+
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
 
@@ -1012,9 +1012,310 @@ async def test_phase3_candidate_partial_split_write_triggers_repair():
     assert repair_messages
     assert any("set_shortlist" in content for content in repair_messages)
     assert all("set_candidate_pool" not in content for content in repair_messages)
-    assert all("candidate_pool / shortlist 仍为空" not in content for content in repair_messages)
+    assert all(
+        "candidate_pool / shortlist 仍为空" not in content
+        for content in repair_messages
+    )
     # Verify shortlist was eventually written
     assert plan.shortlist is not None and len(plan.shortlist) > 0
+
+
+@pytest.mark.asyncio
+async def test_phase3_candidate_skeleton_leakage_triggers_repair():
+    """When Agent is in candidate step but describes skeleton plans without
+    calling set_skeleton_plans, repair should fire telling it to write
+    skeleton_plans state."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="candidate",
+        destination="四礵列岛",
+        dates=DateRange(start="2026-05-01", end="2026-05-06"),
+        trip_brief={"goal": "海岛探险"},
+        candidate_pool=[
+            {"place": "东礵岛", "reason": "主岛"},
+            {"place": "西礵岛", "reason": "原生态"},
+        ],
+        shortlist=[
+            {"place": "东礵岛", "rank": 1},
+            {"place": "西礵岛", "rank": 2},
+        ],
+        # skeleton_plans intentionally empty
+    )
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+
+    observed_messages: list[list[str | None]] = []
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        observed_messages.append([message.content for message in messages])
+
+        if call_count == 1:
+            # Agent describes skeleton plans in text without calling tool
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content="方案A：轻松版——以东礵岛为主\n方案B：深度版——跳岛游览",
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        if call_count == 2:
+            # After repair hint, Agent calls set_skeleton_plans
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="set_skeleton_plans",
+                    arguments={
+                        "plans": [
+                            {"id": "plan_A", "name": "轻松版"},
+                            {"id": "plan_B", "name": "深度版"},
+                        ],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="骨架方案已写入")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=4,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u_skel_leak",
+    )
+
+    messages = [Message(role=Role.USER, content="帮我设计骨架方案")]
+    async for _ in agent.run(messages, phase=3):
+        pass
+
+    # Verify repair hint was injected mentioning set_skeleton_plans
+    repair_messages = [
+        content
+        for call_messages in observed_messages[1:]
+        for content in call_messages
+        if content and "状态同步" in content
+    ]
+    assert repair_messages, "Should have injected a repair hint"
+    assert any("set_skeleton_plans" in m for m in repair_messages)
+    # Verify skeleton_plans was eventually written
+    assert len(plan.skeleton_plans) == 2
+
+
+@pytest.mark.asyncio
+async def test_phase3_lock_repair_triggers_per_field():
+    """Lock repair should fire when any individual field is missing,
+    not require all 4 fields to be empty simultaneously."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="lock",
+        destination="京都",
+        dates=DateRange(start="2026-05-01", end="2026-05-06"),
+        trip_brief={"goal": "文化之旅"},
+        skeleton_plans=[{"id": "plan_A", "name": "经典京都"}],
+        selected_skeleton_id="plan_A",
+        # transport_options already filled
+        transport_options=[{"type": "新干线", "price": 1200}],
+        # accommodation_options intentionally empty
+    )
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+
+    observed_messages: list[list[str | None]] = []
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        observed_messages.append([message.content for message in messages])
+
+        if call_count == 1:
+            # Agent describes accommodation without writing state
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content="推荐住宿：京都祗园附近的民宿，价格约 800 元/晚。",
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="好的")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=4,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u_lock_field",
+    )
+
+    messages = [Message(role=Role.USER, content="帮我锁定住宿")]
+    async for _ in agent.run(messages, phase=3):
+        pass
+
+    # Verify repair was injected mentioning accommodation
+    repair_messages = [
+        content
+        for call_messages in observed_messages[1:]
+        for content in call_messages
+        if content and "状态同步" in content
+    ]
+    assert repair_messages, "Should trigger repair for missing accommodation"
+    assert any(
+        "set_accommodation_options" in m or "set_accommodation" in m
+        for m in repair_messages
+    )
+    # Should NOT mention transport since it's already filled
+    assert all("set_transport_options" not in m for m in repair_messages)
+
+
+@pytest.mark.asyncio
+async def test_phase3_repair_retry_fires_twice_then_stops():
+    """Repair should fire twice (original + retry) for the same step,
+    then stop on the third consecutive text-only response."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="skeleton",
+        destination="东京",
+        dates=DateRange(start="2026-05-01", end="2026-05-06"),
+        trip_brief={"goal": "文化之旅"},
+    )
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        # Always output skeleton text without calling tools
+        yield LLMChunk(
+            type=ChunkType.TEXT_DELTA,
+            content="方案A：轻松版\n方案B：平衡版\n方案C：高密度版",
+        )
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=5,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u_retry",
+    )
+
+    messages = [Message(role=Role.USER, content="给我骨架方案")]
+    async for _ in agent.run(messages, phase=3):
+        pass
+
+    # call 1: text → repair fires (p3_skeleton)
+    # call 2: text → retry repair fires (p3_skeleton_retry)
+    # call 3: text → both keys exhausted → no repair → loop ends
+    assert call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_redundant_search_skipped_after_two_identical_queries():
+    """After the same search query is used twice, the third identical
+    search call should be skipped with a helpful message."""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="candidate",
+        destination="东京",
+        dates=DateRange(start="2026-05-01", end="2026-05-06"),
+        trip_brief={"goal": "文化之旅"},
+    )
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+
+    call_count = 0
+    skipped_results: list[ToolResult] = []
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+
+        if call_count <= 3:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id=f"tc{call_count}",
+                    name="web_search",
+                    arguments={"query": "东京 文化景点 推荐"},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="搜索完成")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=5,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u_dup_search",
+    )
+
+    messages = [Message(role=Role.USER, content="搜索景点")]
+    chunks = []
+    async for chunk in agent.run(messages, phase=3):
+        chunks.append(chunk)
+
+    # The third search call (call_count==3) should have been skipped
+    # because the same query appeared 2 times before.
+    # After skip, LLM gets error result and makes call 4 → final text.
+    tool_result_chunks = [c for c in chunks if c.type == ChunkType.TOOL_RESULT]
+    skipped = [
+        c
+        for c in tool_result_chunks
+        if hasattr(c, "tool_result")
+        and c.tool_result
+        and c.tool_result.status == "skipped"
+    ]
+    # At minimum, the third call should have been skipped
+    assert any(
+        c.tool_result.error_code == "REDUNDANT_SEARCH"
+        for c in chunks
+        if c.type == ChunkType.TOOL_RESULT and c.tool_result
+    ), "Third identical search should be skipped with REDUNDANT_SEARCH"
 
 
 @pytest.mark.asyncio
