@@ -191,9 +191,8 @@ class ToolGuardrail:
         """Extract numeric budget from dict/string/number format."""
         if isinstance(budget_value, dict):
             total = budget_value.get("total")
-            if isinstance(total, (int, float)):
-                return float(total)
-            return None
+            # Recursively extract from total (handles string/number totals)
+            return self._extract_numeric_budget(total)
         elif isinstance(budget_value, (int, float)):
             return float(budget_value)
         elif isinstance(budget_value, str):
