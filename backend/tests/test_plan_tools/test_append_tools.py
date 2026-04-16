@@ -6,9 +6,7 @@ from state.models import Preference, TravelPlanState
 from tools.base import ToolError
 from tools.plan_tools.append_tools import (
     make_add_constraints_tool,
-    make_add_destination_candidate_tool,
     make_add_preferences_tool,
-    make_set_destination_candidates_tool,
 )
 
 
@@ -47,24 +45,6 @@ def _make_plan(phase: int = 1) -> TravelPlanState:
             ["items"],
             "items",
         ),
-        (
-            make_add_destination_candidate_tool,
-            "add_destination_candidate",
-            "追加一个目的地候选到列表末尾。",
-            "追加目的地候选",
-            [1],
-            ["item"],
-            "item",
-        ),
-        (
-            make_set_destination_candidates_tool,
-            "set_destination_candidates",
-            "整体替换目的地候选列表。",
-            "整体替换候选列表",
-            [1],
-            ["items"],
-            "items",
-        ),
     ],
 )
 def test_append_tool_metadata(
@@ -93,7 +73,10 @@ class TestAddPreferencesTool:
         tool_fn = make_add_preferences_tool(_make_plan())
 
         item_schema = tool_fn.parameters["properties"]["items"]["items"]
-        assert {option["type"] for option in item_schema["anyOf"]} == {"string", "object"}
+        assert {option["type"] for option in item_schema["anyOf"]} == {
+            "string",
+            "object",
+        }
 
     @pytest.mark.asyncio
     async def test_appends_string_items_and_dict_items(self):
@@ -164,14 +147,19 @@ class TestAddConstraintsTool:
         tool_fn = make_add_constraints_tool(_make_plan())
 
         item_schema = tool_fn.parameters["properties"]["items"]["items"]
-        assert {option["type"] for option in item_schema["anyOf"]} == {"string", "object"}
+        assert {option["type"] for option in item_schema["anyOf"]} == {
+            "string",
+            "object",
+        }
 
     @pytest.mark.asyncio
     async def test_appends_string_items_and_dict_items(self):
         plan = _make_plan()
         tool_fn = make_add_constraints_tool(plan)
 
-        result = await tool_fn(items=["不赶早班机", {"type": "hard", "description": "不坐红眼航班"}])
+        result = await tool_fn(
+            items=["不赶早班机", {"type": "hard", "description": "不坐红眼航班"}]
+        )
 
         assert result == {
             "updated_field": "constraints",
@@ -179,7 +167,10 @@ class TestAddConstraintsTool:
             "total_count": 2,
             "previous_count": 0,
         }
-        assert [item.description for item in plan.constraints] == ["不赶早班机", "不坐红眼航班"]
+        assert [item.description for item in plan.constraints] == [
+            "不赶早班机",
+            "不坐红眼航班",
+        ]
         assert plan.constraints[1].type == "hard"
 
     @pytest.mark.asyncio
@@ -197,79 +188,5 @@ class TestAddConstraintsTool:
 
         with pytest.raises(ToolError, match=r"items\[0\]") as exc_info:
             await tool_fn(items=[1])
-
-        assert exc_info.value.error_code == "INVALID_VALUE"
-
-
-class TestAddDestinationCandidateTool:
-    def test_schema_requires_item_object(self):
-        tool_fn = make_add_destination_candidate_tool(_make_plan())
-
-        assert tool_fn.parameters["properties"]["item"]["type"] == "object"
-
-    @pytest.mark.asyncio
-    async def test_appends_one_candidate(self):
-        plan = _make_plan()
-        tool_fn = make_add_destination_candidate_tool(plan)
-
-        result = await tool_fn(item={"name": "东京", "score": 0.9})
-
-        assert result == {
-            "updated_field": "destination_candidates",
-            "action": "append",
-            "total_count": 1,
-            "previous_count": 0,
-        }
-        assert plan.destination_candidates == [{"name": "东京", "score": 0.9}]
-
-    @pytest.mark.asyncio
-    async def test_rejects_non_dict_item(self):
-        tool_fn = make_add_destination_candidate_tool(_make_plan())
-
-        with pytest.raises(ToolError, match="item") as exc_info:
-            await tool_fn(item="东京")
-
-        assert exc_info.value.error_code == "INVALID_VALUE"
-
-
-class TestSetDestinationCandidatesTool:
-    def test_schema_requires_items_array(self):
-        tool_fn = make_set_destination_candidates_tool(_make_plan())
-
-        items_schema = tool_fn.parameters["properties"]["items"]
-        assert items_schema["type"] == "array"
-        assert items_schema["items"]["type"] == "object"
-
-    @pytest.mark.asyncio
-    async def test_replaces_candidates(self):
-        plan = _make_plan()
-        plan.destination_candidates = [{"name": "旧候选"}]
-        tool_fn = make_set_destination_candidates_tool(plan)
-
-        result = await tool_fn(items=[{"name": "东京"}, {"name": "大阪"}])
-
-        assert result == {
-            "updated_field": "destination_candidates",
-            "action": "replace",
-            "total_count": 2,
-            "previous_count": 1,
-        }
-        assert plan.destination_candidates == [{"name": "东京"}, {"name": "大阪"}]
-
-    @pytest.mark.asyncio
-    async def test_rejects_non_list_items(self):
-        tool_fn = make_set_destination_candidates_tool(_make_plan())
-
-        with pytest.raises(ToolError, match="items") as exc_info:
-            await tool_fn(items={"name": "东京"})
-
-        assert exc_info.value.error_code == "INVALID_VALUE"
-
-    @pytest.mark.asyncio
-    async def test_rejects_non_dict_item_with_indexed_error(self):
-        tool_fn = make_set_destination_candidates_tool(_make_plan())
-
-        with pytest.raises(ToolError, match=r"items\[0\]") as exc_info:
-            await tool_fn(items=["东京"])
 
         assert exc_info.value.error_code == "INVALID_VALUE"
