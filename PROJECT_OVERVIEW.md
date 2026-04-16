@@ -211,10 +211,11 @@ LLM API 异常
 ## 8. 工具系统
 
 - `@tool` 装饰器声明名称、描述、可用阶段、参数 schema
-- `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM；运行时会先注册兼容层 `update_plan_state`，再通过 `make_all_plan_tools(plan)` 一次性注册拆分后的 plan-writing tools
+- `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM；运行时会先注册兼容层 `update_plan_state`，再通过 `make_all_plan_tools(plan)` 一次性注册拆分后的 plan-writing tools；`PLAN_WRITER_TOOL_NAMES` 同时驱动 `AgentLoop` 的 state-write 判定，确保 split writers 也会触发 `check_and_apply_transition`
 - 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM
 - **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（当前对外状态写入口同时包含过渡层 `update_plan_state` 与拆分后的 plan-writing tools，另有 `assemble_day_plan`、`generate_summary`）顺序执行
 - **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`update_plan_state` 作为严格适配层保留旧签名，对 destination/dates/travelers/budget 的短语容错、部分追加语义和 backtrack 入口做兼容，同时把 trip_brief 与 Phase 3 结构化列表写入委托给共享 writer
+- **运行时写后处理**：`backend/main.py` 把 `PLAN_WRITER_TOOL_NAMES` 统一视作状态写工具；split writers 与 `update_plan_state` 一样会触发 `validate_incremental` / `validate_lock_budget`、SSE `state_update`、accept memory 事件、以及 backtrack rebuild。若工具结果显式返回 `previous_value` / `new_value`，`SessionStats.state_changes` 优先记录工具返回的规范化值；`request_backtrack` 只保留 rebuild/transition 语义，不伪造字段 diff
 - **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集，并把 split plan tools 纳入白名单（如 brief 的 `set_trip_brief` / `add_preferences` / `add_constraints`，lock 的交通住宿锁定工具）；`phase3_step` 由路由推断，不再通过 `update_plan_state` 对外暴露
 
 ### 工具清单
@@ -321,7 +322,7 @@ DELETE /api/memory/{user_id}/{item_id}      标记 obsolete
 ## 12. 质量守护（Harness）—— 5 层架构
 
 1. **输入护栏 Guardrail** — 中文注入检测、消息长度限制、搜索结果字段分级校验、工具结果异常检测
-2. **硬约束验证器 Validator** — 时间冲突/预算超支/天数超限；`update_plan_state` 后 `validate_incremental` 注入实时约束反馈；Phase 3 lock 写入后 `validate_lock_budget` 检查预算占比
+2. **硬约束验证器 Validator** — 时间冲突/预算超支/天数超限；所有 `PLAN_WRITER_TOOL_NAMES` 成功写入后都会走 `validate_incremental` 注入实时约束反馈；涉及交通/住宿锁定的写入还会触发 `validate_lock_budget` 检查预算占比
 3. **软评分 Judge** — pace / geography / coherence / personalization 四维评分，在 `assemble_day_plan`、`generate_summary` 后触发
 4. **可行性门控 Feasibility Gate** — Phase 1→3 转换时基于目的地查表做规则式判断
 5. **成本与延迟追踪** — `SessionStats` 记录 token 用量与模型定价；`ToolCallRecord` 承载 `state_changes`、`parallel_group`、`validation_errors`、`judge_scores`；`MemoryHitRecord` 记录命中记忆

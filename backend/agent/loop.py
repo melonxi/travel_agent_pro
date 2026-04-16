@@ -15,6 +15,7 @@ from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from telemetry.attributes import AGENT_PHASE, AGENT_ITERATION
 from tools.engine import ToolEngine
+from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
 from tools.update_plan_state import is_redundant_update_plan_state
 
 
@@ -286,7 +287,7 @@ class AgentLoop:
                                     batch_result,
                                 )
                                 if (
-                                    batch_tc.name == "update_plan_state"
+                                    batch_tc.name in PLAN_WRITER_TOOL_NAMES
                                     and result.status == "success"
                                 ):
                                     saw_state_update = True
@@ -332,7 +333,7 @@ class AgentLoop:
                             result = await self.tool_engine.execute(tc)
                             result = self._validate_tool_output(tc, result)
                         if (
-                            tc.name == "update_plan_state"
+                            tc.name in PLAN_WRITER_TOOL_NAMES
                             and result.status == "success"
                         ):
                             saw_state_update = True
