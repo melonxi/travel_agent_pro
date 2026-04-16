@@ -16,6 +16,7 @@ from evals.runner import (
     run_suite_offline,
     save_report,
 )
+from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
 
 
 class TestAssertionEvaluation:
@@ -96,8 +97,7 @@ class TestGoldenCaseLoader:
 
     def test_golden_cases_use_registered_tool_names(self):
         cases = load_golden_cases(Path("evals/golden_cases"))
-        known_tools = {
-            "update_plan_state",
+        known_tools = PLAN_WRITER_TOOL_NAMES | {
             "search_flights",
             "search_trains",
             "ai_travel_search",

@@ -77,9 +77,10 @@ travel_agent_pro/
 ### Phase 1 — 灵感与目的地收敛（skill-card）
 - 角色：旅行灵感顾问；目标：用最少轮次收敛到一个目的地
 - **回复纪律**："先查后说"——每条建议须有工具查询结果支撑；回复≤150字；一次只给2-3个选项
-- 工具：`xiaohongshu_search`、`web_search`、`quick_travel_search`
+- 工具：`xiaohongshu_search`、`web_search`、`quick_travel_search`、`update_trip_basics`（状态写入）
+- **Prompt 已迁移**：所有 `update_plan_state` 引用已替换为 `update_trip_basics`
 - **完成 Gate**：`destination` 非空 → 自动进入 Phase 3
-- 产出：`destination`
+- 产出：`destination`、可选的 `budget`/`travelers`/`dates`
 
 ### Phase 3 — 框架规划（4 个子步骤，按子步骤动态拼装 prompt）
 - **brief** → 建立旅行画像（目标/节奏/约束/必做-避免）；收敛压力：≤2轮完成
@@ -87,24 +88,27 @@ travel_agent_pro/
 - **skeleton** → 骨架方案（非逐小时）；独立锚定大交通时序
 - **lock** → 锁定交通 + 住宿；大交通确认时间后即锁
 - **工具门控**：每个子步骤只暴露该阶段所需的工具子集；Phase 3 现按 brief/candidate/skeleton/lock 动态放开拆分后的 plan-writing tools（`update_trip_basics`、`set_trip_brief`、`set_candidate_pool`、`set_shortlist`、`set_skeleton_plans`、`select_skeleton`、交通/住宿锁定工具、`add_preferences`、`add_constraints`、`request_backtrack`），并保留 `update_plan_state` 作为过渡适配入口
+- **Prompt 已迁移**：所有 `update_plan_state` 引用已替换为子步骤对应工具（brief 用 `set_trip_brief`，skeleton 用 `select_skeleton`，回退用 `request_backtrack`）
 - **Prompt 拼装**：`build_phase3_prompt(step)` = `PHASE3_BASE_PROMPT` + `PHASE3_STEP_PROMPTS[step]` + `GLOBAL_RED_FLAGS`
 - 产出：`trip_brief`、`candidate_pool`、`skeleton_plans`、`selected_skeleton_id`、交通/住宿
 
 ### Phase 5 — 日程详排（skill-card，路径规划定位）
 - 核心定位：路径规划优化问题——最小化无效移动，最大化体验密度
 - **增量生成策略**：按1-2天增量调用 `assemble_day_plan`，非一次性全量
+- **Prompt 已迁移**：所有 `update_plan_state` 引用已替换为 `append_day_plan` / `replace_daily_plans`（状态写入）、`request_backtrack`（回退）
 - 流程：expand（骨架→日期）→ assemble（活动+时间）→ validate（开放/距离/天气/预算）→ commit
 - 产出：`daily_plans[]`，每天含完整 Activity 列表
 - 运行时上下文必须注入骨架内容、`trip_brief` 字段、偏好和约束
 
 ### Phase 7 — 出发前查漏（skill-card）
 - 角色：出发前查漏官；扫描全计划，生成带优先级的检查清单
-- 工具：`check_weather`、`check_availability`、`web_search`
+- 工具：`check_weather`、`check_availability`、`web_search`、`request_backtrack`（仅在发现严重问题需回退时使用）
+- **Prompt 已迁移**：所有 `update_plan_state` 引用已替换为 `request_backtrack`
 - 扫描维度：证件签证、天气、预订确认、交通接驳、应急预案
 - **完成 Gate**：所有高优先级项解决 → `generate_summary`
 
 ### GLOBAL_RED_FLAGS
-所有阶段 prompt 末尾统一注入跨阶段通用禁令（如"不捏造信息"、"不越阶段边界"等），通过 `PhaseRouter.get_prompt_for_plan()` 和 `build_phase3_prompt()` 自动拼装。
+所有阶段 prompt 末尾统一注入跨阶段通用禁令（如"不捏造信息"、"不越阶段边界"等），通过 `PhaseRouter.get_prompt_for_plan()` 和 `build_phase3_prompt()` 自动拼装。**Prompt 已迁移**：所有 `update_plan_state` 引用已替换为"状态写入工具"泛指（第一条规则）、`request_backtrack`（第二条规则）。
 
 ### 阶段转换机制
 - `PhaseRouter.infer_phase(plan)` 根据字段填充情况推断当前阶段
