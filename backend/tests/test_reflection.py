@@ -5,6 +5,8 @@ from agent.reflection import ReflectionInjector
 from agent.types import Message, Role
 from state.models import TravelPlanState, Preference, Constraint
 
+_LEGACY_STATE_WRITE_TOOL = "update" "_plan" "_state"
+
 
 @pytest.fixture
 def injector():
@@ -97,7 +99,7 @@ def test_phase5_complete_prompt_uses_new_tools(injector):
     )
     result = injector.check_and_inject(messages=[], plan=plan, prev_step=None)
     assert result is not None
-    assert "update_plan_state" not in result
+    assert _LEGACY_STATE_WRITE_TOOL not in result
     # New requirements: replace_daily_plans as primary repair, append_day_plan only for missing days
     assert "replace_daily_plans" in result
     assert "append_day_plan" in result

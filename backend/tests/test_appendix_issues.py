@@ -120,10 +120,10 @@ class TestA2DailyPlansWriting:
     async def test_daily_plans_append_succeeds(self, plan_at_phase5):
         """append_day_plan should append day plans one by one."""
         tool_fn = make_append_day_plan_tool(plan_at_phase5)
-        day1 = {
-            "day": 1,
-            "date": "2026-05-01",
-            "activities": [
+        result = await tool_fn(
+            day=1,
+            date="2026-05-01",
+            activities=[
                 {
                     "name": "Meiji Shrine",
                     "location": {
@@ -137,10 +137,7 @@ class TestA2DailyPlansWriting:
                     "cost": 0,
                 }
             ],
-            "notes": "Day 1 itinerary",
-        }
-
-        result = await tool_fn(day=day1)
+        )
         assert result["updated_field"] == "daily_plans"
         assert len(plan_at_phase5.daily_plans) == 1
         assert plan_at_phase5.daily_plans[0].day == 1
@@ -151,13 +148,7 @@ class TestA2DailyPlansWriting:
         tool_fn = make_append_day_plan_tool(plan_at_phase5)
 
         for i in range(1, 4):
-            day_data = {
-                "day": i,
-                "date": f"2026-05-0{i}",
-                "activities": [],
-                "notes": f"Day {i}",
-            }
-            await tool_fn(day=day_data)
+            await tool_fn(day=i, date=f"2026-05-0{i}", activities=[])
 
         assert len(plan_at_phase5.daily_plans) == 3
 
@@ -169,9 +160,7 @@ class TestA2DailyPlansWriting:
 
         # The plan has 3 total days (May 1-4, total_days = 3)
         for i in range(1, 4):
-            await tool_fn(
-                day={"day": i, "date": f"2026-05-0{i}", "activities": []},
-            )
+            await tool_fn(day=i, date=f"2026-05-0{i}", activities=[])
 
         # Now daily_plans count (3) >= dates.total_days (3)
         assert len(plan_at_phase5.daily_plans) >= plan_at_phase5.dates.total_days

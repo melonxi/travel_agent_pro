@@ -3,6 +3,10 @@
 **日期**: 2026-04-04
 **状态**: 已确认
 
+> **Superseded（2026-04-15）**
+> 本方案已被 `docs/superpowers/specs/2026-04-15-split-update-plan-state-design.md` 取代。
+> 回退写入不再依赖单体状态写工具，当前实现统一使用 `request_backtrack`。
+
 ## 背景
 
 当前 phase 回退由两层机制处理：
