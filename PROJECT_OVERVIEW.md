@@ -331,11 +331,12 @@ DELETE /api/memory/{user_id}/{item_id}      标记 obsolete
 4. **可行性门控 Feasibility Gate** — Phase 1→3 转换时基于目的地查表做规则式判断
 5. **成本与延迟追踪** — `SessionStats` 记录 token 用量与模型定价；`ToolCallRecord` 承载 `state_changes`、`parallel_group`、`validation_errors`、`judge_scores`；`MemoryHitRecord` 记录命中记忆
 
-**最近迁移（Task 14）**：
-- `agent/loop.py`: 4 个 state repair 消息更新为指引 split 工具（`set_trip_brief` / `set_candidate_pool` / `select_skeleton` / `append_day_plan`）；redundancy 检测仅对 `update_plan_state` 生效，新工具直接透传
+**最近迁移（Task 14 + follow-up fixes）**：
+- `agent/loop.py`: 4 个 state repair 消息更新为指引 split 工具（`set_trip_brief` / `set_candidate_pool` / `select_skeleton` / `append_day_plan`）；redundancy 检测仅对 `update_plan_state` 生效，新工具直接透传；candidate 阶段 repair hint 现在也对部分写入失败（`candidate_pool` 存在但 `shortlist` 缺失）触发
 - `agent/tool_choice.py`: 简化为恒返 "auto"，依赖 prompt 纪律，不再强制 `update_plan_state`
-- `agent/reflection.py`: Phase 5 自检末尾更新为指引 `append_day_plan` / `replace_daily_plans` / `request_backtrack`
+- `agent/reflection.py`: Phase 5 自检末尾更新为 `replace_daily_plans(...)` 优先用于内容修正、`append_day_plan(...)` 仅用于填充缺失天数、`request_backtrack` 保留用于上游重决策
 - `context/manager.py`: 系统提示泛化"状态写入工具"措辞；backtrack 规则更新为 `request_backtrack(to_phase=..., reason="...")`；压缩渲染新增对 `PLAN_WRITER_TOOL_NAMES` 的"决策"行标记
+- `harness/guardrail.py`: `invalid_budget` 规则现在统一处理 `update_trip_basics` 中 dict/string/number 格式的预算，拒绝所有负数或零值（包括 "-500" / "-1万" / -1000 / 0）
 
 ---
 

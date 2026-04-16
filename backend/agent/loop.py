@@ -732,8 +732,10 @@ class AgentLoop:
 
         if (
             step == "candidate"
-            and not self.plan.candidate_pool
-            and not self.plan.shortlist
+            and (
+                (not self.plan.candidate_pool and not self.plan.shortlist)
+                or (self.plan.candidate_pool and not self.plan.shortlist)
+            )
             and any(
                 token in text for token in ("候选", "推荐", "不建议", "why", "why_not")
             )
