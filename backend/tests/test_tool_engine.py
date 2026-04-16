@@ -132,6 +132,9 @@ class TestEnginePhase3NewTools:
             "add_constraints",
             "web_search",
             "xiaohongshu_search",
+            # Forward-looking rescue tools
+            "set_candidate_pool",
+            "set_shortlist",
         }
 
     def test_candidate_whitelist_includes_split_plan_tools(self):
@@ -148,6 +151,9 @@ class TestEnginePhase3NewTools:
             "xiaohongshu_search",
             "quick_travel_search",
             "get_poi_info",
+            # Forward-looking rescue tools
+            "set_skeleton_plans",
+            "select_skeleton",
         }
 
     def test_skeleton_whitelist_includes_split_plan_tools(self):

@@ -3,6 +3,7 @@
 These tools receive structured list[dict] or nested dict. Their JSON Schemas
 forbid strings; this is where stringification is eradicated.
 """
+
 from __future__ import annotations
 
 from state.models import TravelPlanState
@@ -49,7 +50,9 @@ _SET_SKELETON_PLANS_PARAMS = {
 }
 
 
-def _validated_skeleton_id_map(skeleton_plans: list[object]) -> tuple[dict[str, str], set[str]]:
+def _validated_skeleton_id_map(
+    skeleton_plans: list[object],
+) -> tuple[dict[str, str], set[str]]:
     valid_ids: dict[str, str] = {}
     colliding_ids: set[str] = set()
     for item in skeleton_plans:
@@ -84,12 +87,20 @@ def _reconcile_selected_skeleton_after_rewrite(
             continue
         previous_id = item.get("id")
         previous_name = item.get("name")
-        if isinstance(previous_id, str) and previous_id.strip() == normalized_selected_id:
+        if (
+            isinstance(previous_id, str)
+            and previous_id.strip() == normalized_selected_id
+        ):
             matched_previous_id_indexes.add(index)
-        if isinstance(previous_name, str) and previous_name.strip() == normalized_selected_id:
+        if (
+            isinstance(previous_name, str)
+            and previous_name.strip() == normalized_selected_id
+        ):
             matched_previous_name_indexes.add(index)
 
-    matched_previous_indexes = matched_previous_id_indexes | matched_previous_name_indexes
+    matched_previous_indexes = (
+        matched_previous_id_indexes | matched_previous_name_indexes
+    )
     if len(matched_previous_indexes) != 1:
         clear_selected_skeleton_id(plan)
         return
@@ -105,7 +116,8 @@ def _reconcile_selected_skeleton_after_rewrite(
         matching_indexes = {
             index
             for index, skeleton_plan in enumerate(normalized_plans)
-            if skeleton_plan.get("id") == candidate or skeleton_plan.get("name") == candidate
+            if skeleton_plan.get("id") == candidate
+            or skeleton_plan.get("name") == candidate
         }
         if len(matching_indexes) == 1:
             write_selected_skeleton_id(plan, candidate)
@@ -115,7 +127,10 @@ def _reconcile_selected_skeleton_after_rewrite(
     if matched_previous_index in matched_previous_id_indexes:
         if normalized_selected_id in seen_ids:
             write_if_uniquely_resolved(normalized_selected_id)
-        elif matched_previous_index in matched_previous_name_indexes and len(matched_ids) == 1:
+        elif (
+            matched_previous_index in matched_previous_name_indexes
+            and len(matched_ids) == 1
+        ):
             write_if_uniquely_resolved(matched_ids[0])
         else:
             clear_selected_skeleton_id(plan)
@@ -130,7 +145,12 @@ def _reconcile_selected_skeleton_after_rewrite(
 def make_set_skeleton_plans_tool(plan: TravelPlanState):
     @tool(
         name="set_skeleton_plans",
-        description="写入骨架方案列表（整体替换）。每个方案必须包含 id 和 name。",
+        description=(
+            "写入骨架方案列表（整体替换）。每个方案必须包含 id 和 name。\n"
+            "触发条件：完成 2-3 套骨架方案设计后必须立即调用，不允许只在正文描述方案而不写入状态。\n"
+            "禁止行为：不要在回复正文中完整列出骨架方案却不调用此工具——右侧工作台和后续阶段依赖此状态字段。\n"
+            "写入后效果：skeleton_plans 整体替换；如果之前已有 selected_skeleton_id，系统会自动检查其是否仍然有效。"
+        ),
         phases=[3],
         parameters=_SET_SKELETON_PLANS_PARAMS,
         side_effect="write",
@@ -228,7 +248,13 @@ _SELECT_SKELETON_PARAMS = {
 def make_select_skeleton_tool(plan: TravelPlanState):
     @tool(
         name="select_skeleton",
-        description="锁定一套骨架方案。id 必须匹配已写入 skeleton_plans 中的某个方案 id。",
+        description=(
+            "锁定一套骨架方案。id 必须匹配已写入 skeleton_plans 中的某个方案 id。\n"
+            "触发条件：用户明确选择了某套骨架方案后必须立即调用。\n"
+            "前置条件：skeleton_plans 必须已写入且不为空。\n"
+            "禁止行为：不要用 set_trip_brief 来记录用户的骨架选择——set_trip_brief 只用于旅行画像，骨架选择必须用本工具。\n"
+            "写入后效果：selected_skeleton_id 写入后，系统会自动推进到 lock 子阶段。"
+        ),
         phases=[3],
         parameters=_SELECT_SKELETON_PARAMS,
         side_effect="write",
@@ -250,7 +276,11 @@ def make_select_skeleton_tool(plan: TravelPlanState):
                 suggestion="请先清理重复的骨架 id 后再选择",
             )
         if normalized_id not in existing_id_map:
-            selectable_ids = [existing_id for existing_id in existing_id_map if existing_id not in colliding_ids]
+            selectable_ids = [
+                existing_id
+                for existing_id in existing_id_map
+                if existing_id not in colliding_ids
+            ]
             raise ToolError(
                 f"未找到 id={normalized_id!r} 的骨架方案",
                 error_code="INVALID_VALUE",
@@ -288,7 +318,12 @@ _SET_CANDIDATE_POOL_PARAMS = {
 def make_set_candidate_pool_tool(plan: TravelPlanState):
     @tool(
         name="set_candidate_pool",
-        description="写入候选池（整体替换）。每个候选项必须是 JSON 对象。",
+        description=(
+            "写入候选池（整体替换）。每个候选项必须是 JSON 对象。\n"
+            "触发条件：完成候选景点/活动/区域的收集后必须立即调用，不允许只在正文列出候选而不写入状态。\n"
+            "禁止行为：不要把筛选后的短名单写入 candidate_pool——全集用 set_candidate_pool，筛选结果用 set_shortlist。\n"
+            "写入后效果：candidate_pool 整体替换，右侧工作台会展示候选全集。"
+        ),
         phases=[3],
         parameters=_SET_CANDIDATE_POOL_PARAMS,
         side_effect="write",
@@ -339,7 +374,13 @@ _SET_SHORTLIST_PARAMS = {
 def make_set_shortlist_tool(plan: TravelPlanState):
     @tool(
         name="set_shortlist",
-        description="写入候选短名单（整体替换）。",
+        description=(
+            "写入候选短名单（整体替换）。\n"
+            "触发条件：完成候选筛选后必须立即调用，通常与 set_candidate_pool 在同一轮使用。\n"
+            "前置条件：应先写入 candidate_pool，再写入 shortlist。\n"
+            "禁止行为：不要把未筛选的全集写入 shortlist——全集用 set_candidate_pool。\n"
+            "写入后效果：shortlist 写入后，系统会自动推进到 skeleton 子阶段。"
+        ),
         phases=[3],
         parameters=_SET_SHORTLIST_PARAMS,
         side_effect="write",
@@ -390,7 +431,12 @@ _SET_TRANSPORT_OPTIONS_PARAMS = {
 def make_set_transport_options_tool(plan: TravelPlanState):
     @tool(
         name="set_transport_options",
-        description="写入交通候选列表（整体替换）。",
+        description=(
+            "写入交通候选列表（整体替换）。\n"
+            "触发条件：搜索到大交通方案（航班、火车等）后必须立即调用，不允许只在正文描述交通方案而不写入状态。\n"
+            "禁止行为：不要把用户最终选中的交通方案写入此字段——选中结果用 select_transport。\n"
+            "写入后效果：transport_options 整体替换，右侧工作台会展示交通候选列表。"
+        ),
         phases=[3],
         parameters=_SET_TRANSPORT_OPTIONS_PARAMS,
         side_effect="write",
@@ -440,7 +486,13 @@ _SELECT_TRANSPORT_PARAMS = {
 def make_select_transport_tool(plan: TravelPlanState):
     @tool(
         name="select_transport",
-        description="锁定交通方案。传入选中的交通对象。",
+        description=(
+            "锁定交通方案。传入选中的交通对象。\n"
+            "触发条件：用户明确选择了某个交通方案后必须立即调用。\n"
+            "前置条件：transport_options 应已写入。\n"
+            "禁止行为：不要在用户未明确确认时擅自调用此工具。\n"
+            "写入后效果：selected_transport 写入，锁定大交通选择。"
+        ),
         phases=[3],
         parameters=_SELECT_TRANSPORT_PARAMS,
         side_effect="write",
@@ -484,7 +536,12 @@ _SET_ACCOMMODATION_OPTIONS_PARAMS = {
 def make_set_accommodation_options_tool(plan: TravelPlanState):
     @tool(
         name="set_accommodation_options",
-        description="写入住宿候选列表（整体替换）。",
+        description=(
+            "写入住宿候选列表（整体替换）。\n"
+            "触发条件：搜索到住宿方案后必须立即调用，不允许只在正文描述住宿选项而不写入状态。\n"
+            "禁止行为：不要把用户最终确认的住宿写入此字段——确认结果用 set_accommodation。\n"
+            "写入后效果：accommodation_options 整体替换，右侧工作台会展示住宿候选列表。"
+        ),
         phases=[3],
         parameters=_SET_ACCOMMODATION_OPTIONS_PARAMS,
         side_effect="write",
@@ -538,7 +595,13 @@ _SET_ACCOMMODATION_PARAMS = {
 def make_set_accommodation_tool(plan: TravelPlanState):
     @tool(
         name="set_accommodation",
-        description="锁定住宿区域和酒店。",
+        description=(
+            "锁定住宿区域和酒店。\n"
+            "触发条件：用户明确确认住宿区域或酒店后必须立即调用。\n"
+            "前置条件：accommodation_options 应已写入，或用户直接指定了住宿。\n"
+            "禁止行为：不要在用户未明确确认时擅自调用此工具。\n"
+            "写入后效果：accommodation 写入，是 Phase 3 完成的必要条件之一。"
+        ),
         phases=[3, 5],
         parameters=_SET_ACCOMMODATION_PARAMS,
         side_effect="write",
@@ -582,7 +645,11 @@ _SET_RISKS_PARAMS = {
 def make_set_risks_tool(plan: TravelPlanState):
     @tool(
         name="set_risks",
-        description="写入风险点列表（整体替换）。",
+        description=(
+            "写入风险点列表（整体替换）。\n"
+            "触发条件：识别到行程中的风险点（天气、交通、时间冲突、安全等）后应调用。\n"
+            "写入后效果：risks 整体替换，前端会在行程旁展示风险提示。"
+        ),
         phases=[3, 5],
         parameters=_SET_RISKS_PARAMS,
         side_effect="write",
@@ -634,7 +701,11 @@ _SET_ALTERNATIVES_PARAMS = {
 def make_set_alternatives_tool(plan: TravelPlanState):
     @tool(
         name="set_alternatives",
-        description="写入备选方案列表（整体替换）。",
+        description=(
+            "写入备选方案列表（整体替换）。\n"
+            "触发条件：为行程中的高风险环节准备了雨天备案或替代方案后应调用。\n"
+            "写入后效果：alternatives 整体替换，前端会在行程旁展示备选方案。"
+        ),
         phases=[3, 5],
         parameters=_SET_ALTERNATIVES_PARAMS,
         side_effect="write",
@@ -685,7 +756,12 @@ _SET_TRIP_BRIEF_PARAMS = {
 def make_set_trip_brief_tool(plan: TravelPlanState):
     @tool(
         name="set_trip_brief",
-        description="更新旅行画像（增量合并到现有 trip_brief）。",
+        description=(
+            "更新旅行画像（增量合并到现有 trip_brief）。\n"
+            "触发条件：收集到用户的旅行目标、节奏偏好、出发城市、必去/不去等画像信息后必须立即调用。\n"
+            "禁止行为：此工具只用于写旅行画像，不要用它记录骨架选择（应用 select_skeleton）、候选池（应用 set_candidate_pool）或其他非画像信息。\n"
+            "写入后效果：trip_brief 增量合并，brief 子阶段完成的必要条件。"
+        ),
         phases=[3],
         parameters=_SET_TRIP_BRIEF_PARAMS,
         side_effect="write",

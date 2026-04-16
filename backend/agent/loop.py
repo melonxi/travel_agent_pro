@@ -61,6 +61,7 @@ class AgentLoop:
         self._prev_phase3_step: str | None = None
         self.cancel_event = cancel_event
         self._progress: IterationProgress = IterationProgress.NO_OUTPUT
+        self._recent_search_queries: list[str] = []
 
     @property
     def progress(self) -> IterationProgress:
@@ -218,12 +219,8 @@ class AgentLoop:
                             messages.append(
                                 Message(role=Role.SYSTEM, content=repair_message)
                             )
-                            if current_phase == 5:
-                                repair_hints_used.add("p5_daily")
-                            else:
-                                repair_hints_used.add(
-                                    f"p{current_phase}_{getattr(self.plan, 'phase3_step', '')}"
-                                )
+                            # repair_hints_used is now managed inside the
+                            # repair builder methods themselves.
                             continue
                         yield LLMChunk(type=ChunkType.DONE)
                         return
@@ -634,11 +631,16 @@ class AgentLoop:
 
     def _pre_execution_skip_result(self, tool_call: ToolCall) -> ToolResult | None:
         if self._should_skip_redundant_update(tool_call):
+            query = (tool_call.arguments or {}).get("query", "")
             return self._build_skipped_tool_result(
                 tool_call.id,
-                error="Skipped redundant state update",
-                error_code="REDUNDANT_STATE_UPDATE",
-                suggestion="This value is already reflected in the current plan state.",
+                error=f'相同查询 "{query}" 已搜索过多次且未得到新结果。',
+                error_code="REDUNDANT_SEARCH",
+                suggestion=(
+                    "请不要重复搜索相同内容。"
+                    "如果搜索没有找到需要的信息，请换一个查询方向，"
+                    "或直接根据已有信息推进规划（调用状态写入工具写入产物）。"
+                ),
             )
 
         if self.guardrail is None:
@@ -710,7 +712,17 @@ class AgentLoop:
         step = getattr(self.plan, "phase3_step", "")
         repair_key = f"p3_{step}"
         if repair_key in repair_hints_used:
-            return None
+            # Allow a second attempt with a stronger key if the LLM
+            # ignored the first repair hint and still hasn't written state.
+            stronger_key = f"p3_{step}_retry"
+            if stronger_key in repair_hints_used:
+                return None
+            repair_key = stronger_key
+
+        _SKELETON_SIGNALS = ("骨架", "轻松版", "平衡版", "高密度版", "深度版", "跳岛")
+        _has_skeleton_signals = any(
+            token in text for token in _SKELETON_SIGNALS
+        ) or bool(re.search(r"方案\s*[A-C1-3]", text))
 
         if (
             step == "brief"
@@ -720,6 +732,7 @@ class AgentLoop:
                 for token in ("画像", "偏好", "约束", "预算", "日期", "旅行")
             )
         ):
+            repair_hints_used.add(repair_key)
             return (
                 "[状态同步提醒]\n"
                 "你刚刚已经完成了旅行画像说明，但 `trip_brief` 仍为空。"
@@ -729,37 +742,45 @@ class AgentLoop:
                 "写完后再继续，不要重复整段面向用户解释。"
             )
 
-        if (
-            step == "candidate"
-            and not self.plan.shortlist
-            and any(
+        if step == "candidate":
+            # Case 1: shortlist 为空，Agent 描述了候选筛选
+            if not self.plan.shortlist and any(
                 token in text for token in ("候选", "推荐", "不建议", "why", "why_not")
-            )
-        ):
-            if not self.plan.candidate_pool:
+            ):
+                repair_hints_used.add(repair_key)
+                if not self.plan.candidate_pool:
+                    return (
+                        "[状态同步提醒]\n"
+                        "你刚刚已经给出了候选筛选结果，但 `candidate_pool` 仍为空。"
+                        "请先调用 `set_candidate_pool(pool=[...])` 写入候选全集，"
+                        "再调用 `set_shortlist(items=[...])` 写入第一轮筛选结果。"
+                        "写入 shortlist 后系统会自动推进子阶段。"
+                    )
                 return (
                     "[状态同步提醒]\n"
-                    "你刚刚已经给出了候选筛选结果，但 `candidate_pool` 仍为空。"
-                    "请先调用 `set_candidate_pool(pool=[...])` 写入候选全集，"
-                    "再调用 `set_shortlist(items=[...])` 写入第一轮筛选结果。"
+                    "你刚刚已经给出了候选筛选结果，但 `shortlist` 仍为空。"
+                    "请先调用 `set_shortlist(items=[...])` 写入第一轮筛选结果。"
                     "写入 shortlist 后系统会自动推进子阶段。"
                 )
-            return (
-                "[状态同步提醒]\n"
-                "你刚刚已经给出了候选筛选结果，但 `shortlist` 仍为空。"
-                "请先调用 `set_shortlist(items=[...])` 写入第一轮筛选结果。"
-                "写入 shortlist 后系统会自动推进子阶段。"
-            )
+
+            # Case 2: Agent 在 candidate 阶段跳阶描述了骨架方案
+            if not self.plan.skeleton_plans and _has_skeleton_signals:
+                repair_hints_used.add(repair_key)
+                return (
+                    "[状态同步提醒]\n"
+                    "你刚刚已经给出了骨架方案，但 `skeleton_plans` 仍为空。"
+                    "请先调用 `set_skeleton_plans(plans=[...])`"
+                    " 写入结构化骨架方案列表（每个方案必须包含 `id` 和 `name`）。"
+                    '如果用户已经明确选中某套方案，再调用 `select_skeleton(id="...")`。'
+                    "写入后系统会自动推进子阶段。"
+                )
 
         if (
             step == "skeleton"
             and not self.plan.skeleton_plans
-            and (
-                "骨架" in text
-                or re.search(r"方案\s*[A-C1-3]", text)
-                or any(token in text for token in ("轻松版", "平衡版", "高密度版"))
-            )
+            and _has_skeleton_signals
         ):
+            repair_hints_used.add(repair_key)
             return (
                 "[状态同步提醒]\n"
                 "你刚刚已经给出了 2-3 套骨架方案，但 `skeleton_plans` 仍为空。"
@@ -769,23 +790,35 @@ class AgentLoop:
                 "系统会自动推进到 lock 子阶段。"
             )
 
-        if (
-            step == "lock"
-            and not self.plan.transport_options
-            and not self.plan.accommodation_options
-            and not self.plan.risks
-            and not self.plan.alternatives
-            and self.plan.accommodation is None
-            and any(
-                token in text
-                for token in ("住宿", "酒店", "航班", "火车", "交通", "风险", "备选")
-            )
-        ):
-            return (
-                "[状态同步提醒]\n"
-                "你刚刚已经给出了锁定阶段建议，但 `transport_options` / `accommodation_options` / `risks` / `alternatives` 仍未写入。"
-                "请先把结构化结果写入对应字段；只有用户明确选中了交通或住宿时，才写 `selected_transport` 或 `accommodation`。"
-            )
+        if step == "lock":
+            # Relaxed condition: check each category independently
+            missing_fields: list[str] = []
+            if not self.plan.transport_options and any(
+                t in text for t in ("航班", "火车", "高铁", "交通")
+            ):
+                missing_fields.append("`set_transport_options(options=[...])`")
+            if (
+                not self.plan.accommodation_options
+                and not self.plan.accommodation
+                and any(t in text for t in ("住宿", "酒店", "民宿", "旅馆"))
+            ):
+                missing_fields.append(
+                    "`set_accommodation_options(options=[...])` 或 `set_accommodation(area=...)`"
+                )
+            if not self.plan.risks and any(t in text for t in ("风险", "注意", "天气")):
+                missing_fields.append("`set_risks(list=[...])`")
+            if not self.plan.alternatives and any(
+                t in text for t in ("备选", "替代", "雨天")
+            ):
+                missing_fields.append("`set_alternatives(list=[...])`")
+            if missing_fields:
+                repair_hints_used.add(repair_key)
+                fields_str = "、".join(missing_fields)
+                return (
+                    "[状态同步提醒]\n"
+                    f"你刚刚已经给出了锁定阶段建议，但以下字段仍未写入：{fields_str}。"
+                    "请先把结构化结果写入对应字段；只有用户明确选中了交通或住宿时，才写 `selected_transport` 或 `accommodation`。"
+                )
 
         return None
 
@@ -850,6 +883,7 @@ class AgentLoop:
             or has_json_markers
             or (has_date_patterns and has_activity_markers)
         ):
+            repair_hints_used.add(repair_key)
             remaining = total_days - planned_count
             return (
                 "[状态同步提醒]\n"
@@ -862,10 +896,27 @@ class AgentLoop:
         return None
 
     def _should_skip_redundant_update(self, tool_call: ToolCall) -> bool:
-        """Check if a tool call is redundant and should be skipped.
+        """Detect and skip repeated search queries.
 
-        Split tools have explicit semantics; redundancy checks are not needed.
-        This method is retained for interface compatibility but always returns False.
+        If the same search query has been used >= 2 times recently within this
+        agent run, skip the call and return a helpful message to the LLM.
         """
-        del tool_call  # unused
-        return False
+        _SEARCH_TOOLS = {"web_search", "xiaohongshu_search", "quick_travel_search"}
+        if tool_call.name not in _SEARCH_TOOLS:
+            return False
+
+        query = (tool_call.arguments or {}).get("query", "")
+        if not isinstance(query, str) or not query.strip():
+            return False
+
+        normalized = query.strip().lower()
+
+        # Count how many times this exact query has been seen
+        count = sum(1 for q in self._recent_search_queries if q == normalized)
+        # Record current call
+        self._recent_search_queries.append(normalized)
+        # Keep list bounded
+        if len(self._recent_search_queries) > 20:
+            self._recent_search_queries = self._recent_search_queries[-20:]
+
+        return count >= 2
