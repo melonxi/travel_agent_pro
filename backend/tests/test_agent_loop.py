@@ -1020,12 +1020,17 @@ async def test_phase3_candidate_partial_split_write_triggers_repair():
     async for _ in agent.run(messages, phase=3):
         pass
 
-    # Verify repair hint was injected
-    assert any(
-        content and "shortlist" in content and "状态同步" in content
+    # Verify repair hint was injected and only asks for shortlist repair.
+    repair_messages = [
+        content
         for call_messages in observed_messages[1:]
         for content in call_messages
-    )
+        if content and "状态同步" in content
+    ]
+    assert repair_messages
+    assert any("set_shortlist" in content for content in repair_messages)
+    assert all("set_candidate_pool" not in content for content in repair_messages)
+    assert all("candidate_pool / shortlist 仍为空" not in content for content in repair_messages)
     # Verify shortlist was eventually written
     assert plan.shortlist is not None and len(plan.shortlist) > 0
 
