@@ -125,7 +125,7 @@ travel_agent_pro/
 | Forced Tool Choice | 关键决策点强制结构化输出 | LLM 调用前 |
 | Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；三路检索按 trip_id 隔离 | 每轮 chat 后后台提取；system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
-| Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估 | 离线/批量评估 |
+| Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
 
 ---
 

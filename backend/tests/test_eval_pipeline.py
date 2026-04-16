@@ -18,6 +18,12 @@ from evals.runner import (
 )
 from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
 
+GOLDEN_CASES_DIR = Path(__file__).resolve().parents[1] / "evals/golden_cases"
+
+
+def golden_cases_dir() -> Path:
+    return GOLDEN_CASES_DIR
+
 
 class TestAssertionEvaluation:
     def test_phase_reached_pass(self):
@@ -96,7 +102,7 @@ class TestGoldenCaseLoader:
         assert cases == []
 
     def test_golden_cases_use_registered_tool_names(self):
-        cases = load_golden_cases(Path("evals/golden_cases"))
+        cases = load_golden_cases(golden_cases_dir())
         known_tools = PLAN_WRITER_TOOL_NAMES | {
             "search_flights",
             "search_trains",
@@ -125,7 +131,7 @@ class TestGoldenCaseLoader:
 
     def test_failure_005_protects_constraint_path(self):
         """Finding 3: failure-005 should protect dietary constraint with correct split tool."""
-        cases = load_golden_cases(Path("evals/golden_cases"))
+        cases = load_golden_cases(golden_cases_dir())
         failure_005 = next((c for c in cases if c.id == "failure-005"), None)
         assert failure_005 is not None, "failure-005 case not found"
         
