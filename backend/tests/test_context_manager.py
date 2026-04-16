@@ -24,7 +24,7 @@ def test_build_system_message(ctx_manager):
         plan,
         phase_prompt="你是灵感顾问",
         user_summary="",
-        available_tools=["update_plan_state", "xiaohongshu_search"],
+        available_tools=["update_trip_basics", "xiaohongshu_search"],
     )
     assert msg.role == Role.SYSTEM
     assert "旅行规划 Agent" in msg.content  # from SOUL
@@ -32,9 +32,10 @@ def test_build_system_message(ctx_manager):
     assert "## 当前时间" in msg.content
     assert "当前本地日期" in msg.content
     assert "当前时区" in msg.content
-    assert "必须先调用 `update_plan_state`" in msg.content
-    assert "不要重复调用 `update_plan_state` 写入相同值" in msg.content
-    assert "当前可用工具：update_plan_state, xiaohongshu_search" in msg.content
+    assert "必须先调用对应的状态写入工具" in msg.content
+    assert "不要重复写入相同值" in msg.content
+    assert 'request_backtrack(to_phase=..., reason="...")' in msg.content
+    assert "当前可用工具：update_trip_basics, xiaohongshu_search" in msg.content
 
 
 def test_build_system_message_marks_memory_as_untrusted_data(ctx_manager):
@@ -61,12 +62,12 @@ def test_build_runtime_context(ctx_manager):
     )
     ctx = ctx_manager.build_runtime_context(
         plan,
-        available_tools=["update_plan_state", "web_search"],
+        available_tools=["update_trip_basics", "web_search"],
     )
     assert "Kyoto" in ctx
     assert "15000" in ctx
     assert "阶段：3" in ctx or "阶段: 3" in ctx
-    assert "当前可用工具：update_plan_state, web_search" in ctx
+    assert "当前可用工具：update_trip_basics, web_search" in ctx
 
 
 def test_should_compress_false(ctx_manager):
@@ -129,8 +130,8 @@ async def test_compress_for_transition_is_rule_based(ctx_manager):
             tool_calls=[
                 ToolCall(
                     id="tc1",
-                    name="update_plan_state",
-                    arguments={"field": "destination", "value": "东京"},
+                    name="update_trip_basics",
+                    arguments={"destination": "东京"},
                 )
             ],
         ),
@@ -139,7 +140,7 @@ async def test_compress_for_transition_is_rule_based(ctx_manager):
             tool_result=ToolResult(
                 tool_call_id="tc1",
                 status="success",
-                data={"updated_field": "destination", "new_value": "东京"},
+                data={"updated_fields": ["destination"]},
             ),
         ),
     ]
@@ -158,8 +159,8 @@ async def test_compress_for_transition_is_rule_based(ctx_manager):
     assert "用户: 我想去东京" in summary
     # Assistant text is kept (truncated at 200 chars; this one is short).
     assert "助手: 好的，先确认日期" in summary
-    # update_plan_state rendered as a "决策" line referring to the tc arguments.
-    assert "决策: update_plan_state destination = 东京" in summary
+    # plan-writer tool rendered as a "决策" line.
+    assert "决策: update_trip_basics" in summary
 
 
 @pytest.mark.asyncio

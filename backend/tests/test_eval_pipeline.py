@@ -16,6 +16,13 @@ from evals.runner import (
     run_suite_offline,
     save_report,
 )
+from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
+
+GOLDEN_CASES_DIR = Path(__file__).resolve().parents[1] / "evals/golden_cases"
+
+
+def golden_cases_dir() -> Path:
+    return GOLDEN_CASES_DIR
 
 GOLDEN_CASES_DIR = Path(__file__).resolve().parents[1] / "evals/golden_cases"
 
@@ -102,8 +109,7 @@ class TestGoldenCaseLoader:
 
     def test_golden_cases_use_registered_tool_names(self):
         cases = load_golden_cases(golden_cases_dir())
-        known_tools = {
-            "update_plan_state",
+        known_tools = PLAN_WRITER_TOOL_NAMES | {
             "search_flights",
             "search_trains",
             "ai_travel_search",
@@ -128,6 +134,26 @@ class TestGoldenCaseLoader:
         ]
 
         assert bad_targets == []
+
+    def test_failure_005_protects_constraint_path(self):
+        """Finding 3: failure-005 should protect dietary constraint with correct split tool."""
+        cases = load_golden_cases(golden_cases_dir())
+        failure_005 = next((c for c in cases if c.id == "failure-005"), None)
+        assert failure_005 is not None, "failure-005 case not found"
+        
+        # Should still assert trip-basics write
+        trip_basics_assertions = [
+            a for a in failure_005.assertions
+            if a.type == AssertionType.TOOL_CALLED and a.target == "update_trip_basics"
+        ]
+        assert len(trip_basics_assertions) == 1, "Should have update_trip_basics assertion"
+        
+        # Should also protect dietary constraint path with the correct split tool
+        constraint_assertions = [
+            a for a in failure_005.assertions
+            if a.type == AssertionType.TOOL_CALLED and a.target in {"add_constraints", "add_constraint"}
+        ]
+        assert len(constraint_assertions) >= 1, "Should have add_constraints assertion for dietary constraint"
 
 
 class TestRunSuiteOffline:

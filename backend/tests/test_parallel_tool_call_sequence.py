@@ -2,7 +2,7 @@
 
 Regression for the 2026-04-15 Hong Kong session bug where on_validate
 appended [实时约束检查] between the 1st and 2nd tool responses of a
-parallel update_plan_state batch, causing Xunfei gateway to return 400.
+parallel plan-writing tool batch, causing Xunfei gateway to return 400.
 """
 
 import pytest
@@ -70,10 +70,10 @@ def sessions(app):
 
 
 @pytest.mark.asyncio
-async def test_parallel_update_plan_state_with_constraints_flushes_after_group(
+async def test_parallel_plan_tools_with_constraints_flushes_after_group(
     app, sessions
 ):
-    """When LLM issues 3 parallel update_plan_state that trigger constraint
+    """When LLM issues 3 parallel plan-writing tools that trigger constraint
     errors, the [实时约束检查] SYSTEM message must appear AFTER the full
     tool group, never between tool responses."""
     transport = httpx.ASGITransport(app=app)
@@ -96,22 +96,31 @@ async def test_parallel_update_plan_state_with_constraints_flushes_after_group(
             captured_messages.append([m for m in messages])
             call_count += 1
             if call_count == 1:
-                # Return 3 parallel update_plan_state tool_calls
-                for i, (field, value) in enumerate(
-                    [
-                        ("dates", {"start": "2026-05-06", "end": "2026-05-07"}),
-                        ("travelers", 1),
-                        ("constraints", ["住深圳"]),
-                    ]
-                ):
-                    yield LLMChunk(
-                        type=ChunkType.TOOL_CALL_START,
-                        tool_call=ToolCall(
-                            id=f"call_{i}",
-                            name="update_plan_state",
-                            arguments={"field": field, "value": value},
-                        ),
-                    )
+                # Return 3 parallel plan-writing tool_calls
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="call_0",
+                        name="update_trip_basics",
+                        arguments={"dates": {"start": "2026-05-06", "end": "2026-05-07"}},
+                    ),
+                )
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="call_1",
+                        name="update_trip_basics",
+                        arguments={"travelers": 1},
+                    ),
+                )
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="call_2",
+                        name="add_constraints",
+                        arguments={"constraints": ["住深圳"]},
+                    ),
+                )
                 yield LLMChunk(type=ChunkType.DONE)
             else:
                 # Second call: finish with plain text so we stop looping
@@ -172,8 +181,8 @@ async def test_parallel_tool_calls_without_constraints_have_no_inject(app, sessi
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="call_only",
-                        name="update_plan_state",
-                        arguments={"field": "destination", "value": "东京"},
+                        name="update_trip_basics",
+                        arguments={"destination": "东京"},
                     ),
                 )
                 yield LLMChunk(type=ChunkType.DONE)
@@ -226,10 +235,9 @@ async def test_pending_buffer_cleared_between_rounds(app, sessions):
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="c1",
-                        name="update_plan_state",
+                        name="update_trip_basics",
                         arguments={
-                            "field": "dates",
-                            "value": {"start": "2026-05-06", "end": "2026-05-07"},
+                            "dates": {"start": "2026-05-06", "end": "2026-05-07"},
                         },
                     ),
                 )

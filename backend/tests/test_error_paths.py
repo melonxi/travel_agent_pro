@@ -218,7 +218,8 @@ async def test_implicit_backtrack_in_chat(app, sessions):
         # chat returns SSE (EventSourceResponse), so status is 200
         assert resp.status_code == 200
         assert '"type": "tool_call"' in resp.text
-        assert '"field": "backtrack"' in resp.text
+        # Backtrack now goes through the dedicated request_backtrack writer.
+        assert '"name": "request_backtrack"' in resp.text
         assert '"type": "tool_result"' in resp.text
 
     # "换个目的地" / "不想去这里" now maps back to the merged destination stage (phase 1)
@@ -249,13 +250,10 @@ async def test_chat_backtrack_restores_new_destination_from_message(app, session
     async def fake_run(self, messages, phase, tools_override=None):
         call = ToolCall(
             id="tc_backtrack_1",
-            name="update_plan_state",
+            name="request_backtrack",
             arguments={
-                "field": "backtrack",
-                "value": {
-                    "to_phase": 1,
-                    "reason": "用户想要更换目的地，从东京改为大阪",
-                },
+                "to_phase": 1,
+                "reason": "用户想要更换目的地，从东京改为大阪",
             },
         )
         yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=call)

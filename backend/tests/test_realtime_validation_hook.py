@@ -40,7 +40,7 @@ def sessions(app):
 
 
 @pytest.mark.asyncio
-async def test_update_plan_state_injects_realtime_incremental_feedback(app, sessions):
+async def test_plan_tool_injects_realtime_incremental_feedback(app, sessions):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         create_resp = await client.post("/api/sessions")
@@ -61,27 +61,36 @@ async def test_update_plan_state_injects_realtime_incremental_feedback(app, sess
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
                     id="tc_conflict",
-                    name="update_plan_state",
+                    name="replace_daily_plans",
                     arguments={
-                        "field": "daily_plans",
-                        "value": [
+                        "days": [
                             {
                                 "day": 1,
                                 "date": "2026-05-01",
                                 "activities": [
                                     {
                                         "name": "浅草寺",
-                                        "location": "浅草寺",
+                                        "location": {
+                                            "name": "浅草寺",
+                                            "lat": 35.7148,
+                                            "lng": 139.7967,
+                                        },
                                         "start_time": "09:00",
                                         "end_time": "10:00",
                                         "category": "景点",
+                                        "cost": 0,
                                     },
                                     {
                                         "name": "上野公园",
-                                        "location": "上野公园",
+                                        "location": {
+                                            "name": "上野公园",
+                                            "lat": 35.7156,
+                                            "lng": 139.7745,
+                                        },
                                         "start_time": "10:05",
                                         "end_time": "11:00",
                                         "category": "景点",
+                                        "cost": 0,
                                         "transport_duration_min": 20,
                                     },
                                 ],
@@ -111,7 +120,7 @@ async def test_update_plan_state_injects_realtime_incremental_feedback(app, sess
 
 @pytest.mark.asyncio
 async def test_on_validate_records_state_changes_to_stats(app, sessions):
-    """update_plan_state should write state_changes to the latest ToolCallRecord."""
+    """update_trip_basics should record normalized state_changes on the latest ToolCallRecord."""
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         create_resp = await client.post("/api/sessions")
@@ -134,8 +143,8 @@ async def test_on_validate_records_state_changes_to_stats(app, sessions):
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_dest",
-                        name="update_plan_state",
-                        arguments={"field": "destination", "value": "东京"},
+                        name="update_trip_basics",
+                        arguments={"destination": "东京"},
                     ),
                 )
                 yield LLMChunk(type=ChunkType.DONE)
@@ -152,15 +161,15 @@ async def test_on_validate_records_state_changes_to_stats(app, sessions):
 
     assert resp.status_code == 200
     stats = session["stats"]
-    ups_records = [
+    utb_records = [
         r
         for r in stats.tool_calls
-        if r.tool_name == "update_plan_state" and r.status == "success"
+        if r.tool_name == "update_trip_basics" and r.status == "success"
     ]
-    assert len(ups_records) >= 1
-    rec = ups_records[-1]
+    assert len(utb_records) >= 1
+    rec = utb_records[-1]
     assert rec.state_changes is not None
     assert len(rec.state_changes) == 1
     assert rec.state_changes[0]["field"] == "destination"
-    assert rec.state_changes[0]["before"] == "北京"
+    assert rec.state_changes[0]["before"] is None
     assert rec.state_changes[0]["after"] == "东京"

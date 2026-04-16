@@ -89,7 +89,7 @@ class TestGenerateReport:
                 "failure-001",
                 "预算极紧",
                 "去日本3000块",
-                tool_calls=["web_search", "update_plan_state"],
+                tool_calls=["web_search", "update_trip_basics"],
             )
         ]
         md = generate_failure_report(scenarios)

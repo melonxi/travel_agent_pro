@@ -11,6 +11,10 @@ from phase.prompts import (
     build_phase3_prompt,
 )
 
+_LEGACY_STATE_WRITE_CALL = "update" "_plan" "_state("
+_LEGACY_STATE_WRITE_FIELD_CALL = "update" "_plan" "_state(field="
+_LEGACY_STATE_WRITE_TOOL = "update" "_plan" "_state"
+
 
 class TestGlobalRedFlags:
     def test_global_red_flags_exists_and_nonempty(self):
@@ -341,3 +345,71 @@ class TestGlobalRedFlagsInjection:
         plan.phase = 1
         prompt = router.get_prompt_for_plan(plan)
         assert prompt.rstrip().endswith(GLOBAL_RED_FLAGS.rstrip())
+
+
+class TestLegacyStateWriterRemovedInPrompts:
+    """After Step 3, prompts must not reference the removed omnibus state writer."""
+
+    def test_no_legacy_state_writer_call_in_phase1(self):
+        assert _LEGACY_STATE_WRITE_CALL not in PHASE1_PROMPT
+        assert _LEGACY_STATE_WRITE_FIELD_CALL not in PHASE1_PROMPT
+
+    def test_no_legacy_state_writer_call_in_phase3_base(self):
+        assert _LEGACY_STATE_WRITE_CALL not in PHASE3_BASE_PROMPT
+
+    def test_no_legacy_state_writer_call_in_phase3_steps(self):
+        for step_name, step_prompt in PHASE3_STEP_PROMPTS.items():
+            assert _LEGACY_STATE_WRITE_CALL not in step_prompt, (
+                f"Phase 3 sub-stage '{step_name}' still references {_LEGACY_STATE_WRITE_CALL}"
+            )
+
+    def test_no_legacy_state_writer_call_in_phase5(self):
+        assert _LEGACY_STATE_WRITE_CALL not in PHASE5_PROMPT
+        assert _LEGACY_STATE_WRITE_TOOL not in PHASE5_PROMPT
+
+    def test_no_legacy_state_writer_call_in_phase7(self):
+        assert _LEGACY_STATE_WRITE_CALL not in PHASE7_PROMPT
+
+    def test_no_legacy_state_writer_call_in_global_red_flags(self):
+        assert _LEGACY_STATE_WRITE_CALL not in GLOBAL_RED_FLAGS
+
+    def test_phase3_skeleton_prompt_mentions_select_skeleton(self):
+        skeleton = PHASE3_STEP_PROMPTS["skeleton"]
+        assert "select_skeleton" in skeleton
+
+    def test_phase3_brief_prompt_mentions_set_trip_brief(self):
+        brief = PHASE3_STEP_PROMPTS["brief"]
+        assert "set_trip_brief" in brief
+
+    def test_phase5_mentions_append_day_plan(self):
+        assert "append_day_plan" in PHASE5_PROMPT
+
+    def test_phase5_mentions_replace_daily_plans(self):
+        assert "replace_daily_plans" in PHASE5_PROMPT
+
+    def test_phase5_mentions_request_backtrack(self):
+        assert "request_backtrack" in PHASE5_PROMPT
+
+    def test_phase7_mentions_request_backtrack(self):
+        assert "request_backtrack" in PHASE7_PROMPT
+
+    def test_phase1_mentions_update_trip_basics(self):
+        assert "update_trip_basics" in PHASE1_PROMPT
+
+    def test_global_red_flags_mentions_request_backtrack(self):
+        assert "request_backtrack" in GLOBAL_RED_FLAGS
+
+    def test_phase1_state_write_mentions_split_constraint_tools(self):
+        """Finding 1: Phase 1 prompt should mention add_preferences/add_constraints for explicit constraints/preferences."""
+        # The prompt should guide users to write explicit constraints/preferences immediately
+        # It currently only mentions update_trip_basics, but should also mention the split tools
+        assert "add_preferences" in PHASE1_PROMPT or "add_constraint" in PHASE1_PROMPT
+
+    def test_phase5_describes_split_apis_correctly(self):
+        """Finding 2: Phase 5 prompt must describe the real split APIs (append_day_plan vs replace_daily_plans)."""
+        # The prompt should describe append_day_plan for single day and replace_daily_plans for batch
+        # It should NOT describe the old dict/list payload model
+        assert "append_day_plan(day=" in PHASE5_PROMPT or "append_day_plan(...)" in PHASE5_PROMPT
+        assert "replace_daily_plans(days=[" in PHASE5_PROMPT or "replace_daily_plans(...)" in PHASE5_PROMPT
+        # Should not have the old model where single dict vs list[dict] determines behavior
+        assert "传单个 dict 表示追加单天；传 list[dict] 表示批量写入" not in PHASE5_PROMPT

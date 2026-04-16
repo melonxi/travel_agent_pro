@@ -137,16 +137,16 @@ _OPENWEATHER_RESPONSE = {
 async def test_phase1_destination_search(app):
     """
     Phase 1: user has preferences set, agent completes destination selection and
-    records the chosen destination via update_plan_state.
+    records the chosen destination via update_trip_basics.
     Verify plan state has destination set and phase advances past 1.
     """
 
     async def fake_run(self, messages, phase, tools_override=None):
         # Step 1: agent decides on destination and records it
         tc_update = ToolCall(
-            id="tc_ups_1",
-            name="update_plan_state",
-            arguments={"field": "destination", "value": "巴厘岛"},
+            id="tc_utb_1",
+            name="update_trip_basics",
+            arguments={"destination": "巴厘岛"},
         )
         yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=tc_update)
         result = await self.tool_engine.execute(tc_update)
@@ -200,7 +200,7 @@ async def test_phase1_destination_search(app):
 async def test_phase4_accommodation_search(app):
     """
     Phase 3 (merged): destination and dates are set but no accommodation.
-    Agent calls search_accommodations, then update_plan_state to set accommodation.
+    Agent calls search_accommodations, then set_accommodation to set accommodation.
     Verify accommodation is set in plan state.
     """
 
@@ -222,11 +222,11 @@ async def test_phase4_accommodation_search(app):
 
         # Step 2: agent updates plan state with chosen accommodation
         tc_update = ToolCall(
-            id="tc_ups_2",
-            name="update_plan_state",
+            id="tc_sa_2",
+            name="set_accommodation",
             arguments={
-                "field": "accommodation",
-                "value": {"area": "祇園", "hotel": "祇園白川旅館"},
+                "area": "祇園",
+                "hotel": "祇園白川旅館",
             },
         )
         yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=tc_update)
@@ -289,11 +289,7 @@ async def test_phase5_day_plan_assembly(app):
     """
     Phase 5: destination+dates+accommodation set, daily_plans incomplete.
     Agent calls assemble_day_plan (a local tool, no external API).
-    Since daily_plans is not an allowed field for update_plan_state, the agent
-    would normally coordinate multi-turn to fill them.  Here we simulate the
-    tool call, execute assemble_day_plan through the engine, and then directly
-    populate daily_plans on the plan to reflect what the full agent loop would
-    produce.
+    Then calls replace_daily_plans to write the plans.
     """
 
     async def fake_run(self, messages, phase, tools_override=None):
@@ -317,12 +313,18 @@ async def test_phase5_day_plan_assembly(app):
         assert result.data["total_distance_km"] > 0
         ordered_pois = result.data["ordered_pois"]
 
-        # In a real agent loop, the agent would repeat this for each day and
-        # ultimately build DayPlan objects.  We simulate that coordination by
-        # directly populating the plan's daily_plans from tool results.
-        # The plan is the same object the update_plan_state tool is bound to.
-        # Locate it via the tool engine's update_plan_state closure.
-        _populate_daily_plans_from_results(self, ordered_pois)
+        # Build daily_plans from ordered_pois
+        daily_plans_payload = _build_daily_plans_from_pois(ordered_pois)
+        
+        # Step 2: agent calls replace_daily_plans to write the plans
+        tc_daily = ToolCall(
+            id="tc_rdp_1",
+            name="replace_daily_plans",
+            arguments={"days": daily_plans_payload},
+        )
+        yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=tc_daily)
+        result = await self.tool_engine.execute(tc_daily)
+        assert result.status == "success"
 
         # Final text
         yield LLMChunk(
@@ -366,53 +368,31 @@ async def test_phase5_day_plan_assembly(app):
     assert plan_data["phase"] >= 5
 
 
-def _populate_daily_plans_from_results(agent_self, ordered_pois: list[dict]):
-    """Helper: populate daily_plans on the plan bound to update_plan_state.
-
-    The update_plan_state tool is created via make_update_plan_state_tool(plan),
-    which binds the plan in a closure.  We retrieve that same plan object through
-    the tool engine and write daily_plans directly, mimicking what a real multi-
-    turn agent loop would do.
-    """
-    tool_def = agent_self.tool_engine.get_tool("update_plan_state")
-    if tool_def is None:
-        return
-    # The tool function's closure contains the plan object.
-    # ToolDef stores the callable as _fn (private field).
-    fn = tool_def._fn
-    closure_vars = fn.__code__.co_freevars
-    closure_cells = fn.__closure__ or ()
-    plan = None
-    for name, cell in zip(closure_vars, closure_cells):
-        if name == "plan":
-            plan = cell.cell_contents
-            break
-    if plan is None:
-        return
-
-    # Build 5 day plans (one per day of the trip)
+def _build_daily_plans_from_pois(ordered_pois: list[dict]) -> list[dict]:
+    """Build daily_plans payload from ordered_pois for replace_daily_plans tool."""
+    daily_plans = []
     for day_idx in range(5):
         activities = []
         for poi in ordered_pois:
-            activities.append(
-                Activity(
-                    name=poi["name"],
-                    location=Location(
-                        lat=poi["lat"], lng=poi["lng"], name=poi["name"]
-                    ),
-                    start_time="09:00",
-                    end_time="12:00",
-                    category="sightseeing",
-                )
-            )
-        plan.daily_plans.append(
-            DayPlan(
-                day=day_idx + 1,
-                date=f"2026-04-{10 + day_idx}",
-                activities=activities,
-                notes=f"第{day_idx + 1}天行程",
-            )
-        )
+            activities.append({
+                "name": poi["name"],
+                "location": {
+                    "lat": poi["lat"],
+                    "lng": poi["lng"],
+                    "name": poi["name"],
+                },
+                "start_time": "09:00",
+                "end_time": "12:00",
+                "category": "sightseeing",
+                "cost": 0,
+            })
+        daily_plans.append({
+            "day": day_idx + 1,
+            "date": f"2026-04-{10 + day_idx}",
+            "activities": activities,
+            "notes": f"第{day_idx + 1}天行程",
+        })
+    return daily_plans
 
 
 # ---------------------------------------------------------------------------
@@ -449,16 +429,16 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_dest",
-                        name="update_plan_state",
-                        arguments={"field": "destination", "value": "巴厘岛"},
+                        name="update_trip_basics",
+                        arguments={"destination": "巴厘岛"},
                     ),
                 )
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_budget_skipped",
-                        name="update_plan_state",
-                        arguments={"field": "budget", "value": "30000"},
+                        name="update_trip_basics",
+                        arguments={"budget": "30000"},
                     ),
                 )
                 yield LLMChunk(type=ChunkType.DONE)
@@ -469,16 +449,15 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
                 assert "- 阶段：3" in messages[0].content
                 assert messages[1].role == Role.ASSISTANT
                 assert "进入阶段 3" in messages[1].content
-                assert "决策: update_plan_state destination = 巴厘岛" in messages[1].content
-                assert [tool["name"] for tool in tools or []].count("update_plan_state") == 1
+                assert "决策: update_trip_basics" in messages[1].content
+                assert [tool["name"] for tool in tools or []].count("update_trip_basics") == 1
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_dates",
-                        name="update_plan_state",
+                        name="update_trip_basics",
                         arguments={
-                            "field": "dates",
-                            "value": {"start": "2026-04-10", "end": "2026-04-15"},
+                            "dates": {"start": "2026-04-10", "end": "2026-04-15"},
                         },
                     ),
                 )
@@ -541,10 +520,10 @@ async def test_backtrack_rebuild_uses_hard_boundary_context(app):
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_backtrack",
-                        name="update_plan_state",
+                        name="request_backtrack",
                         arguments={
-                            "field": "backtrack",
-                            "value": {"to_phase": 1, "reason": "用户想换目的地"},
+                            "to_phase": 1,
+                            "reason": "用户想换目的地",
                         },
                     ),
                 )
