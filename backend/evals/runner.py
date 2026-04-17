@@ -96,6 +96,13 @@ def evaluate_assertion(
             return True, ""
         return False, f"text '{text}' not found in responses"
 
+    if t == AssertionType.NOT_CONTAINS_TEXT:
+        text = assertion.target
+        offenders = [r for r in responses if text in r]
+        if not offenders:
+            return True, ""
+        return False, f"text '{text}' unexpectedly appeared in response(s)"
+
     if t == AssertionType.BUDGET_WITHIN:
         total_cost = state.get("total_cost", 0)
         budget = state.get("budget_total", 0)
