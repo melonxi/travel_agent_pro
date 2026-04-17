@@ -4,7 +4,17 @@ from unittest.mock import MagicMock
 
 from agent.types import Message, Role, ToolCall, ToolResult
 from context.manager import ContextManager
-from state.models import TravelPlanState, DateRange, Budget, Accommodation, Preference, Constraint, DayPlan, Activity, Location
+from state.models import (
+    TravelPlanState,
+    DateRange,
+    Budget,
+    Accommodation,
+    Preference,
+    Constraint,
+    DayPlan,
+    Activity,
+    Location,
+)
 from llm.types import ChunkType, LLMChunk
 
 
@@ -70,6 +80,54 @@ def test_build_runtime_context(ctx_manager):
     assert "当前可用工具：update_trip_basics, web_search" in ctx
 
 
+def test_build_phase_handoff_note_for_phase5(ctx_manager):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="若尔盖",
+        dates=DateRange(start="2026-06-06", end="2026-06-10"),
+        trip_brief={"goal": "第一次去草原", "pace": "intensive"},
+        skeleton_plans=[{"id": "A", "days": ["D1", "D2"]}],
+        selected_skeleton_id="A",
+        accommodation=Accommodation(area="松潘+若尔盖", hotel="朵兰达+维也纳"),
+        selected_transport={"outbound": "3U6992"},
+    )
+
+    note = ctx_manager.build_phase_handoff_note(
+        plan=plan,
+        from_phase=3,
+        to_phase=5,
+    )
+
+    assert "[阶段交接]" in note
+    assert "当前阶段：Phase 5" in note
+    assert "已完成事项：" in note
+    assert "目的地" in note
+    assert "日期" in note
+    assert "旅行画像" in note
+    assert "已选骨架" in note
+    assert "交通" in note
+    assert "住宿" in note
+    assert (
+        "当前唯一目标：基于已选骨架与住宿，生成覆盖全部出行日期的 daily_plans。" in note
+    )
+    assert "不要重新锁交通" in note
+    assert "request_backtrack(to_phase=3" in note
+
+
+def test_build_phase_handoff_note_falls_back_when_no_completion_items(ctx_manager):
+    plan = TravelPlanState(session_id="s1", phase=3)
+
+    note = ctx_manager.build_phase_handoff_note(
+        plan=plan,
+        from_phase=1,
+        to_phase=3,
+    )
+
+    assert "当前阶段：Phase 3" in note
+    assert "系统已按当前规划状态切换到新阶段" in note
+
+
 def test_should_compress_false(ctx_manager):
     messages = [Message(role=Role.USER, content="hello")]
     assert not ctx_manager.should_compress(messages, max_tokens=100000)
@@ -100,7 +158,10 @@ def test_should_compress_counts_tool_result_payload_and_tools(ctx_manager):
         {
             "name": "web_search",
             "description": "d" * 600,
-            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+            },
         }
     ]
     assert ctx_manager.should_compress(messages, max_tokens=100, tools=tools)
@@ -164,7 +225,9 @@ async def test_compress_for_transition_is_rule_based(ctx_manager):
 
 
 @pytest.mark.asyncio
-async def test_compress_for_transition_never_calls_llm_even_for_long_context(ctx_manager):
+async def test_compress_for_transition_never_calls_llm_even_for_long_context(
+    ctx_manager,
+):
     """Regression: older design spun up an LLM for 4+ messages. The new
     implementation must stay deterministic regardless of length."""
 
@@ -346,12 +409,19 @@ def test_phase5_runtime_context_shows_daily_plans_progress(ctx_manager):
         selected_skeleton_id="A",
         accommodation=Accommodation(area="新宿"),
         daily_plans=[
-            DayPlan(day=1, date="2026-05-01", activities=[
-                Activity(
-                    name="明治神宫", location=Location(lat=35.67, lng=139.69, name="明治神宫"),
-                    start_time="09:00", end_time="11:00", category="shrine",
-                )
-            ]),
+            DayPlan(
+                day=1,
+                date="2026-05-01",
+                activities=[
+                    Activity(
+                        name="明治神宫",
+                        location=Location(lat=35.67, lng=139.69, name="明治神宫"),
+                        start_time="09:00",
+                        end_time="11:00",
+                        category="shrine",
+                    )
+                ],
+            ),
         ],
     )
     ctx = ctx_manager.build_runtime_context(plan)
@@ -506,6 +576,7 @@ def test_phase3_lock_stage_shows_selected_skeleton(ctx_manager):
 def test_phase3_skeleton_stage_shows_preferences(ctx_manager):
     """Phase 3 skeleton+ stages should inject preferences content."""
     from state.models import Preference
+
     plan = TravelPlanState(
         session_id="s1",
         phase=3,
