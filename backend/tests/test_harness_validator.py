@@ -95,10 +95,10 @@ def test_budget_exceeded():
 def test_too_many_days():
     plan = TravelPlanState(
         session_id="s1",
-        dates=DateRange(start="2026-04-10", end="2026-04-12"),  # 2 days
+        dates=DateRange(start="2026-04-10", end="2026-04-12"),  # 3 days (inclusive)
         daily_plans=[
             DayPlan(day=i, date=f"2026-04-{10 + i}")
-            for i in range(3)  # 3 plans
+            for i in range(4)  # 4 plans > 3 days
         ],
     )
     errors = validate_hard_constraints(plan)
@@ -129,17 +129,20 @@ def test_validate_no_crash_when_dates_is_none():
 
 def test_time_to_minutes_valid():
     from harness.validator import _time_to_minutes
+
     assert _time_to_minutes("09:30") == 570
     assert _time_to_minutes("14:00") == 840
 
 
 def test_time_to_minutes_malformed_returns_none():
     from harness.validator import _time_to_minutes
+
     result = _time_to_minutes("invalid")
     assert result is None
 
 
 def test_time_to_minutes_empty_returns_none():
     from harness.validator import _time_to_minutes
+
     result = _time_to_minutes("")
     assert result is None
