@@ -187,14 +187,16 @@ class ContextManager:
                 parts.append(f"- shortlist：{len(plan.shortlist)} 项")
 
         # Phase 5+: inject selected skeleton full content
-        # Phase 3 lock: also inject selected skeleton content
+        # Phase 3 lock: inject selected skeleton full content
+        # Phase 3 skeleton: inject compact summary (id / name / tradeoffs / day themes)
         if plan.skeleton_plans:
-            inject_skeleton = (plan.phase >= 5 and plan.selected_skeleton_id) or (
+            inject_full_selected = (plan.phase >= 5 and plan.selected_skeleton_id) or (
                 plan.phase == 3
                 and plan.phase3_step == "lock"
                 and plan.selected_skeleton_id
             )
-            if inject_skeleton:
+            show_summary_list = plan.phase == 3 and plan.phase3_step == "skeleton"
+            if inject_full_selected:
                 selected = self._find_selected_skeleton(plan)
                 if selected:
                     parts.append(f"- 已选骨架方案（{plan.selected_skeleton_id}）：")
@@ -205,6 +207,27 @@ class ContextManager:
                 else:
                     parts.append(f"- 骨架方案：{len(plan.skeleton_plans)} 套")
                     parts.append(f"- 已选骨架：{plan.selected_skeleton_id}")
+            elif show_summary_list:
+                parts.append(f"- 骨架方案：{len(plan.skeleton_plans)} 套")
+                for sk in plan.skeleton_plans:
+                    if not isinstance(sk, dict):
+                        continue
+                    sid = sk.get("id") or sk.get("name") or "?"
+                    name = sk.get("name") or sk.get("title") or ""
+                    tradeoffs = sk.get("tradeoffs") or sk.get("tradeoff") or ""
+                    header_parts = [f"[id={sid}]"]
+                    if name:
+                        header_parts.append(f"名称：{name}")
+                    if tradeoffs:
+                        header_parts.append(f"权衡：{tradeoffs}")
+                    parts.append("  - " + " | ".join(header_parts))
+                    days = sk.get("days") or []
+                    if isinstance(days, list):
+                        for idx, day in enumerate(days, start=1):
+                            if not isinstance(day, dict):
+                                continue
+                            theme = day.get("theme") or day.get("title") or f"第{idx}天"
+                            parts.append(f"    - D{idx}: {theme}")
             else:
                 parts.append(f"- 骨架方案：{len(plan.skeleton_plans)} 套")
                 if plan.selected_skeleton_id:
@@ -224,18 +247,12 @@ class ContextManager:
             if plan.accommodation.hotel:
                 parts.append(f"- 住宿酒店：{plan.accommodation.hotel}")
 
-        # Phase 3 later sub-stages & Phase 5+: inject preferences and constraints
-        if plan.preferences and (
-            plan.phase >= 5
-            or (plan.phase == 3 and plan.phase3_step in ("skeleton", "lock"))
-        ):
+        # Preferences / constraints 一律注入（任何阶段都有价值，体积小）
+        if plan.preferences:
             pref_strs = [f"{p.key}: {p.value}" for p in plan.preferences if p.key]
             if pref_strs:
                 parts.append(f"- 用户偏好：{'; '.join(pref_strs)}")
-        if plan.constraints and (
-            plan.phase >= 5
-            or (plan.phase == 3 and plan.phase3_step in ("skeleton", "lock"))
-        ):
+        if plan.constraints:
             cons_strs = [f"[{c.type}] {c.description}" for c in plan.constraints]
             if cons_strs:
                 parts.append(f"- 用户约束：{'; '.join(cons_strs)}")
@@ -244,7 +261,7 @@ class ContextManager:
         if plan.daily_plans:
             total_days = plan.dates.total_days if plan.dates else "?"
             parts.append(f"- 已规划 {len(plan.daily_plans)}/{total_days} 天")
-            if plan.phase == 5:
+            if plan.phase in (5, 7):
                 for dp in plan.daily_plans:
                     act_names = [a.name for a in dp.activities[:5]]
                     act_summary = "、".join(act_names) if act_names else "无活动"

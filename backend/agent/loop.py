@@ -500,6 +500,12 @@ class AgentLoop:
                     )
                     if phase3_step_after_batch != phase3_step_before_batch:
                         phase_changed_in_prev_iteration = True
+                        messages[
+                            :
+                        ] = await self._rebuild_messages_for_phase3_step_change(
+                            messages=messages,
+                            original_user_message=original_user_message,
+                        )
                         tools = self.tool_engine.get_tools_for_phase(
                             current_phase,
                             self.plan,
@@ -585,6 +591,38 @@ class AgentLoop:
         if to_phase < from_phase:
             rebuilt.append(self._copy_message(original_user_message))
         return rebuilt
+
+    async def _rebuild_messages_for_phase3_step_change(
+        self,
+        messages: list[Message],
+        original_user_message: Message,
+    ) -> list[Message]:
+        """Phase 3 子阶段变化时重建 system message（不含 handoff / backtrack note）。"""
+        if (
+            self.phase_router is None
+            or self.context_manager is None
+            or self.plan is None
+            or self.memory_mgr is None
+        ):
+            raise RuntimeError(
+                "Phase3 step rebuild requires router/context/plan/memory"
+            )
+
+        phase_prompt = self.phase_router.get_prompt_for_plan(self.plan)
+        memory_context, _recalled_ids, *_ = (
+            await self.memory_mgr.generate_context(self.user_id, self.plan)
+            if self.memory_enabled
+            else ("暂无相关用户记忆", [], 0, 0, 0)
+        )
+        return [
+            self.context_manager.build_system_message(
+                self.plan,
+                phase_prompt,
+                memory_context,
+                available_tools=self._current_tool_names(self.plan.phase),
+            ),
+            self._copy_message(original_user_message),
+        ]
 
     def _build_backtrack_notice(
         self, from_phase: int, to_phase: int, result: ToolResult
