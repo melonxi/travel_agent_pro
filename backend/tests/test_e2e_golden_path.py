@@ -3,6 +3,7 @@
 Golden-path end-to-end test: simulates a complete conversation
 from "五一去东京" through all phases to summary generation.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,7 +28,7 @@ async def _collect_sse(response: httpx.Response) -> list[dict]:
         line = line.strip()
         if not line.startswith("data:"):
             continue
-        payload = line[len("data:"):].strip()
+        payload = line[len("data:") :].strip()
         if payload:
             events.append(json.loads(payload))
     return events
@@ -139,7 +140,9 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 assert plan.budget is not None
                 assert plan.budget.total == 20000.0
                 assert "- 阶段：3" in messages[0].content
-                for chunk in _text_chunks("好的，已记录东京和日期。", "接下来我先给你几套行程骨架方案。"):
+                for chunk in _text_chunks(
+                    "好的，已记录东京和日期。", "接下来我先给你几套行程骨架方案。"
+                ):
                     yield chunk
                 return
 
@@ -160,11 +163,11 @@ async def test_golden_path_tokyo_trip(app, sessions):
         assert plan.dates is not None
         assert plan.dates.start == "2026-05-01"
         assert plan.dates.end == "2026-05-06"
-        assert plan.dates.total_days == 5
+        assert plan.dates.total_days == 6
         assert plan.budget is not None
         assert plan.budget.total == 20000.0
         assert plan.trip_brief["destination"] == "东京"
-        assert plan.trip_brief["total_days"] == 5
+        assert plan.trip_brief["total_days"] == 6
         assert plan.phase3_step == "candidate"
         assert plan.phase == 3
 
@@ -235,7 +238,9 @@ async def test_golden_path_tokyo_trip(app, sessions):
 
             assert plan.phase == 5
             assert "- 阶段：5" in messages[0].content
-            for chunk in _text_chunks("已锁定平衡版骨架和新宿住宿。", "接下来开始逐天安排行程。"):
+            for chunk in _text_chunks(
+                "已锁定平衡版骨架和新宿住宿。", "接下来开始逐天安排行程。"
+            ):
                 yield chunk
 
         agent.llm.chat = phase3_accom_chat

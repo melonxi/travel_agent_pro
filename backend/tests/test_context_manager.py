@@ -425,7 +425,7 @@ def test_phase5_runtime_context_shows_daily_plans_progress(ctx_manager):
         ],
     )
     ctx = ctx_manager.build_runtime_context(plan)
-    assert "已规划 1/3 天" in ctx
+    assert "已规划 1/4 天" in ctx
     assert "第1天" in ctx
     assert "明治神宫" in ctx
     assert "待规划天数" in ctx

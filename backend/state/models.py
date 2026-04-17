@@ -44,11 +44,12 @@ class DateRange:
 
     @property
     def total_days(self) -> int:
+        """覆盖 start 到 end 的自然日数量（inclusive 两端）。"""
         from datetime import date as dt_date
 
         s = dt_date.fromisoformat(self.start)
         e = dt_date.fromisoformat(self.end)
-        return (e - s).days
+        return (e - s).days + 1
 
     def to_dict(self) -> dict:
         return {"start": self.start, "end": self.end}
