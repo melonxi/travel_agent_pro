@@ -103,6 +103,7 @@ travel_agent_pro/
 - **Prompt 已迁移**：Phase 5 改为使用 `append_day_plan` / `replace_daily_plans`（状态写入）与 `request_backtrack`（回退）
 - 流程：expand（骨架→日期）→ assemble（活动+时间）→ validate（开放/距离/天气/预算）→ commit
 - 产出：`daily_plans[]`，每天含完整 Activity 列表
+- Phase 5+ 上下文中 trip_brief 注入时排除 `dates`/`total_days`（已由 `plan.dates` 权威提供），避免重复信号
 - 运行时上下文必须注入骨架内容、`trip_brief` 字段、偏好和约束
 
 ### Phase 7 — 出发前查漏（skill-card）
@@ -117,6 +118,8 @@ travel_agent_pro/
 
 ### 阶段转换机制
 - `PhaseRouter.infer_phase(plan)` 根据字段填充情况推断当前阶段
+- **Phase 3→5 门控**：`_skeleton_days_match()` 校验已选骨架天数与 `dates.total_days`（inclusive 自然日语义）一致，不一致时拒绝进入 Phase 5
+- `_hydrate_phase3_brief()` 中 `dates`/`total_days` 使用强制覆盖（非 `setdefault`），防止用户修改日期后 trip_brief 中残留 stale 值
 - 自动转换 + 遥测事件记录
 - 支持 Backtrack（回退至早期阶段，清除下游数据，轮转 trip_id）
 
@@ -227,7 +230,7 @@ LLM API 异常
 
 - `@tool` 装饰器声明名称、描述、可用阶段、参数 schema
 - `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM；运行时通过 `make_all_plan_tools(plan)` 一次性注册 17 个 plan-writing tools；`PLAN_WRITER_TOOL_NAMES` 同时驱动 `AgentLoop` 的 state-write 判定，确保所有 writer 都会触发 `check_and_apply_transition`
-- 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM
+- 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM；`ToolEngine.execute()` 识别参数缺失的 `TypeError` 并返回 `INVALID_ARGUMENTS`（而非泛化 `INTERNAL_ERROR`），帮助模型从缺参错误中恢复
 - `ToolGuardrail` 在写入前拦截提示注入、空字段、日期回溯与非法预算；`update_trip_basics.budget` 支持数值、对象与可解析的数值字符串，非正数/非数字会被拒绝
 - **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（17 个 plan-writing tools，以及 `assemble_day_plan`、`generate_summary`）顺序执行
 - **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`tools.plan_tools.*` 负责参数 schema、输入规范化与错误边界，再委托到共享 writer 完成落盘
@@ -445,6 +448,10 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 | 子阶段输出协议 | 每个 Phase 3 子步骤开头注入"先工具后文字"正面指令，防止 LLM 只在正文描述方案而不写入状态 |
 | 重复搜索拦截 | 同 query 滑动窗口去重，阻断搜索死循环 |
 | 小红书三层操作模型 | search_notes（导航）→ read_note（信息）→ get_comments（评价），鼓励深度使用 UGC 内容 |
+| `DateRange.total_days` inclusive 语义 | 覆盖 start 到 end 的自然日数量（+1），与骨架生成器语义一致 |
+| Phase 3→5 骨架天数门控 | 已选骨架天数必须与 total_days 一致才允许进入 Phase 5 |
+| trip_brief 权威字段强制覆盖 | dates/total_days 在 hydrate 时直接赋值，防止 stale |
+| plan_writer 增量持久化 | 每次 plan_writer 工具成功后立即 `state_mgr.save(plan)`，finally 保底保存，防止 SSE 中断丢失状态 |
 
 ---
 

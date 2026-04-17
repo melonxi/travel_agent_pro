@@ -248,18 +248,34 @@ class ToolEngine:
                 )
             except Exception as e:
                 duration_ms = (time.monotonic() - start_time) * 1000
+                # 识别参数相关的 TypeError（缺参、类型不匹配）
+                is_arg_error = isinstance(e, TypeError) and (
+                    "argument" in str(e) or "required" in str(e)
+                )
+                error_code = "INVALID_ARGUMENTS" if is_arg_error else "INTERNAL_ERROR"
+                suggestion = (
+                    f"请检查 {call.name} 的参数是否完整且类型正确"
+                    if is_arg_error
+                    else "An unexpected error occurred"
+                )
                 span.set_attribute(TOOL_NAME, call.name)
                 span.set_attribute(TOOL_STATUS, "error")
-                span.set_attribute(TOOL_ERROR_CODE, "INTERNAL_ERROR")
+                span.set_attribute(TOOL_ERROR_CODE, error_code)
                 span.record_exception(e)
                 span.add_event(
                     EVENT_TOOL_OUTPUT,
                     {
                         "error": truncate(str(e)),
-                        "error_code": "INTERNAL_ERROR",
+                        "error_code": error_code,
                     },
                 )
-                result = self._internal_error_result(call, e)
+                result = ToolResult(
+                    tool_call_id=call.id,
+                    status="error",
+                    error=str(e),
+                    error_code=error_code,
+                    suggestion=suggestion,
+                )
                 if result.metadata is None:
                     result.metadata = {}
                 result.metadata["duration_ms"] = round(duration_ms, 1)
