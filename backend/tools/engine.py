@@ -201,6 +201,29 @@ class ToolEngine:
                 )
 
             try:
+                # --- 预校验 required 参数 ---
+                params_schema = tool_def.parameters or {}
+                required_params = params_schema.get("required", [])
+                if required_params:
+                    missing = [p for p in required_params if p not in call.arguments]
+                    if missing:
+                        span.set_attribute(TOOL_NAME, call.name)
+                        span.set_attribute(TOOL_STATUS, "error")
+                        span.set_attribute(TOOL_ERROR_CODE, "INVALID_ARGUMENTS")
+                        error_msg = f"缺少必填参数: {', '.join(missing)}"
+                        suggestion = f"请提供以下参数: {', '.join(missing)}"
+                        span.add_event(
+                            EVENT_TOOL_OUTPUT,
+                            {"error": error_msg, "error_code": "INVALID_ARGUMENTS"},
+                        )
+                        return ToolResult(
+                            tool_call_id=call.id,
+                            status="error",
+                            error=error_msg,
+                            error_code="INVALID_ARGUMENTS",
+                            suggestion=suggestion,
+                        )
+
                 start_time = time.monotonic()
                 data = await tool_def(**call.arguments)
                 metadata = None

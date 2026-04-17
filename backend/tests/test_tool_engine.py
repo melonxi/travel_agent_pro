@@ -271,3 +271,75 @@ async def test_execute_missing_args_returns_invalid_arguments():
     assert result.status == "error"
     assert result.error_code == "INVALID_ARGUMENTS"
     assert "x" in result.error or "argument" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_execute_missing_required_param_returns_invalid_arguments():
+    """缺少 required 参数时，预校验直接返回 INVALID_ARGUMENTS，不进入函数调用。"""
+    engine = ToolEngine()
+
+    @tool(
+        name="needs_param",
+        description="test",
+        phases=[1],
+        parameters={
+            "type": "object",
+            "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+            "required": ["name", "age"],
+        },
+    )
+    async def needs_param(name: str, age: int) -> dict:
+        return {"ok": True}
+
+    engine.register(needs_param)
+    call = ToolCall(id="c1", name="needs_param", arguments={"name": "Alice"})
+    result = await engine.execute(call)
+    assert result.status == "error"
+    assert result.error_code == "INVALID_ARGUMENTS"
+    assert "age" in result.error
+
+
+@pytest.mark.asyncio
+async def test_execute_empty_args_returns_invalid_arguments():
+    """空参数 {} 时，预校验返回 INVALID_ARGUMENTS。"""
+    engine = ToolEngine()
+
+    @tool(
+        name="needs_days",
+        description="test",
+        phases=[1],
+        parameters={
+            "type": "object",
+            "properties": {"days": {"type": "array"}},
+            "required": ["days"],
+        },
+    )
+    async def needs_days(days: list) -> dict:
+        return {"ok": True}
+
+    engine.register(needs_days)
+    call = ToolCall(id="c2", name="needs_days", arguments={})
+    result = await engine.execute(call)
+    assert result.status == "error"
+    assert result.error_code == "INVALID_ARGUMENTS"
+    assert "days" in result.error
+
+
+@pytest.mark.asyncio
+async def test_execute_no_required_field_skips_prevalidation():
+    """schema 无 required 字段时，不做预校验，正常执行。"""
+    engine = ToolEngine()
+
+    @tool(
+        name="optional_tool",
+        description="test",
+        phases=[1],
+        parameters={"type": "object", "properties": {"x": {"type": "integer"}}},
+    )
+    async def optional_tool(x: int = 0) -> dict:
+        return {"x": x}
+
+    engine.register(optional_tool)
+    call = ToolCall(id="c3", name="optional_tool", arguments={})
+    result = await engine.execute(call)
+    assert result.status == "success"
