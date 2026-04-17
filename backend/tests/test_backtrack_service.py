@@ -18,7 +18,6 @@ def _make_plan(phase: int = 5) -> TravelPlanState:
         session_id="test-session",
         phase=phase,
         destination="Tokyo",
-        destination_candidates=[{"name": "Tokyo"}, {"name": "Osaka"}],
         dates=DateRange(start="2025-08-01", end="2025-08-05"),
         phase3_step="lock",
         trip_brief={"goal": "城市漫游"},
@@ -62,9 +61,8 @@ class TestBacktrackService:
         assert plan.accommodation is None
         assert plan.daily_plans == []
 
-        # destination 和 destination_candidates 保留
+        # destination 保留
         assert plan.destination == "Tokyo"
-        assert len(plan.destination_candidates) == 2
 
     def test_illegal_backtrack_same_phase(self) -> None:
         """非法回退：to_phase == plan.phase 抛出 ValueError。"""
@@ -95,7 +93,6 @@ class TestBacktrackService:
         assert plan.trip_brief == {}
         assert plan.accommodation is None
         assert plan.daily_plans == []
-        assert plan.destination_candidates == []
 
     def test_backtrack_to_phase_1_clears_all(self) -> None:
         """回退到 phase 1 时所有下游字段被清除。"""
@@ -106,7 +103,6 @@ class TestBacktrackService:
 
         assert plan.phase == 1
         assert plan.destination is None
-        assert plan.destination_candidates == []
         assert plan.dates is None
         assert plan.selected_skeleton_id is None
         assert plan.accommodation is None
@@ -126,4 +122,3 @@ class TestBacktrackService:
 
         # preserved
         assert plan.destination == "Tokyo"
-        assert len(plan.destination_candidates) == 2

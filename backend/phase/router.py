@@ -6,7 +6,12 @@ from typing import Any
 from opentelemetry import trace
 
 from phase.backtrack import BacktrackService
-from phase.prompts import GLOBAL_RED_FLAGS, PHASE_CONTROL_MODE, PHASE_PROMPTS, build_phase3_prompt
+from phase.prompts import (
+    GLOBAL_RED_FLAGS,
+    PHASE_CONTROL_MODE,
+    PHASE_PROMPTS,
+    build_phase3_prompt,
+)
 from state.models import TravelPlanState, infer_phase3_step_from_state
 from telemetry.attributes import EVENT_PHASE_PLAN_SNAPSHOT, PHASE_FROM, PHASE_TO
 
@@ -23,6 +28,7 @@ class PhaseRouter:
         brief.setdefault("destination", plan.destination)
         if plan.dates:
             brief.setdefault("dates", plan.dates.to_dict())
+            # 视图聚合：权威来源是 dates.total_days，此处仅为 LLM 上下文便利注入
             brief.setdefault("total_days", plan.dates.total_days)
         if plan.travelers:
             brief.setdefault("travelers", plan.travelers.to_dict())
@@ -108,9 +114,7 @@ class PhaseRouter:
                 {
                     "destination": plan.destination or "",
                     "dates": (
-                        f"{plan.dates.start} ~ {plan.dates.end}"
-                        if plan.dates
-                        else ""
+                        f"{plan.dates.start} ~ {plan.dates.end}" if plan.dates else ""
                     ),
                     "daily_plans_count": len(plan.daily_plans),
                 },

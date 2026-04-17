@@ -11,6 +11,7 @@ Each test:
    is updated through the real tool layer
 4. Verifies via GET /api/plan/{session_id} that state was updated correctly
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -36,6 +37,7 @@ from state.models import (
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def app(monkeypatch, tmp_path):
@@ -133,6 +135,7 @@ _OPENWEATHER_RESPONSE = {
 # Test: Phase 1 — Destination Search
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_phase1_destination_search(app):
     """
@@ -196,6 +199,7 @@ async def test_phase1_destination_search(app):
 # Test: Phase 3 — Accommodation Search (merged from former Phase 4)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_phase4_accommodation_search(app):
     """
@@ -244,7 +248,9 @@ async def test_phase4_accommodation_search(app):
         respx.mock(assert_all_called=False) as mock_http,
         patch("agent.loop.AgentLoop.run", fake_run),
     ):
-        mock_http.get("https://maps.googleapis.com/maps/api/place/textsearch/json").mock(
+        mock_http.get(
+            "https://maps.googleapis.com/maps/api/place/textsearch/json"
+        ).mock(
             return_value=Response(200, json=_GOOGLE_PLACES_RESPONSE),
         )
 
@@ -284,6 +290,7 @@ async def test_phase4_accommodation_search(app):
 # Test: Phase 5 — Day Plan Assembly
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_phase5_day_plan_assembly(app):
     """
@@ -299,9 +306,24 @@ async def test_phase5_day_plan_assembly(app):
             name="assemble_day_plan",
             arguments={
                 "pois": [
-                    {"name": "金閣寺", "lat": 35.0394, "lng": 135.7292, "duration_hours": 1.5},
-                    {"name": "龍安寺", "lat": 35.0345, "lng": 135.7185, "duration_hours": 1.0},
-                    {"name": "嵐山竹林", "lat": 35.0170, "lng": 135.6713, "duration_hours": 2.0},
+                    {
+                        "name": "金閣寺",
+                        "lat": 35.0394,
+                        "lng": 135.7292,
+                        "duration_hours": 1.5,
+                    },
+                    {
+                        "name": "龍安寺",
+                        "lat": 35.0345,
+                        "lng": 135.7185,
+                        "duration_hours": 1.0,
+                    },
+                    {
+                        "name": "嵐山竹林",
+                        "lat": 35.0170,
+                        "lng": 135.6713,
+                        "duration_hours": 2.0,
+                    },
                 ],
                 "start_time": "09:00",
                 "end_time": "18:00",
@@ -315,7 +337,7 @@ async def test_phase5_day_plan_assembly(app):
 
         # Build daily_plans from ordered_pois
         daily_plans_payload = _build_daily_plans_from_pois(ordered_pois)
-        
+
         # Step 2: agent calls replace_daily_plans to write the plans
         tc_daily = ToolCall(
             id="tc_rdp_1",
@@ -374,30 +396,35 @@ def _build_daily_plans_from_pois(ordered_pois: list[dict]) -> list[dict]:
     for day_idx in range(5):
         activities = []
         for poi in ordered_pois:
-            activities.append({
-                "name": poi["name"],
-                "location": {
-                    "lat": poi["lat"],
-                    "lng": poi["lng"],
+            activities.append(
+                {
                     "name": poi["name"],
-                },
-                "start_time": "09:00",
-                "end_time": "12:00",
-                "category": "sightseeing",
-                "cost": 0,
-            })
-        daily_plans.append({
-            "day": day_idx + 1,
-            "date": f"2026-04-{10 + day_idx}",
-            "activities": activities,
-            "notes": f"第{day_idx + 1}天行程",
-        })
+                    "location": {
+                        "lat": poi["lat"],
+                        "lng": poi["lng"],
+                        "name": poi["name"],
+                    },
+                    "start_time": "09:00",
+                    "end_time": "12:00",
+                    "category": "sightseeing",
+                    "cost": 0,
+                }
+            )
+        daily_plans.append(
+            {
+                "day": day_idx + 1,
+                "date": f"2026-04-{10 + day_idx}",
+                "activities": activities,
+                "notes": f"第{day_idx + 1}天行程",
+            }
+        )
     return daily_plans
 
 
 # ---------------------------------------------------------------------------
 # Test: In-loop phase rebuild after tool-triggered transition
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_phase_change_rebuilds_context_inside_same_chat(app):
@@ -448,9 +475,15 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
                 assert plan.phase == 3
                 assert "- 阶段：3" in messages[0].content
                 assert messages[1].role == Role.ASSISTANT
-                assert "进入阶段 3" in messages[1].content
-                assert "决策: update_trip_basics" in messages[1].content
-                assert [tool["name"] for tool in tools or []].count("update_trip_basics") == 1
+                assert "[阶段交接]" in messages[1].content
+                assert "当前阶段：Phase 3" in messages[1].content
+                assert (
+                    "当前唯一目标：围绕已确认目的地完成旅行画像、候选筛选、骨架方案与锁定项。"
+                    in messages[1].content
+                )
+                assert [tool["name"] for tool in tools or []].count(
+                    "update_trip_basics"
+                ) == 1
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
@@ -490,6 +523,7 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
 # ---------------------------------------------------------------------------
 # Test: Backtrack uses hard context boundary in same chat
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_backtrack_rebuild_uses_hard_boundary_context(app):
@@ -531,11 +565,16 @@ async def test_backtrack_rebuild_uses_hard_boundary_context(app):
                 return
 
             assert plan.phase == 1
-            assert messages[1].content == "[阶段回退]\n用户从 phase 5 回退到 phase 1，原因：用户想换目的地"
+            assert (
+                messages[1].content
+                == "[阶段回退]\n用户从 phase 5 回退到 phase 1，原因：用户想换目的地"
+            )
             assert messages[2].content == "不想去京都了，换个目的地"
             assert "祇園白川旅館" not in messages[0].content
             assert "2026-04-10" not in messages[1].content
-            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="我给您重新推荐几个目的地。")
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA, content="我给您重新推荐几个目的地。"
+            )
             yield LLMChunk(type=ChunkType.DONE)
 
         agent.llm.chat = fake_chat
@@ -552,7 +591,6 @@ async def test_backtrack_rebuild_uses_hard_boundary_context(app):
     assert call_count == 2
     assert plan_data["phase"] == 1
     assert plan_data["destination"] is None
-    assert plan_data["destination_candidates"] == []
     assert plan_data["dates"] is None
     assert plan_data["accommodation"] is None
     assert plan_data["preferences"] == [{"key": "style", "value": "quiet"}]
@@ -561,6 +599,7 @@ async def test_backtrack_rebuild_uses_hard_boundary_context(app):
 # ---------------------------------------------------------------------------
 # Test: Phase 7 — Summary Generation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_phase7_summary_generation(app):

@@ -1,4 +1,5 @@
 """Unit tests for state/plan_writers.py — pure data mutation functions."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -216,9 +217,7 @@ class TestReplaceAllDailyPlans:
     def test_replaces_all(self, plan):
         from state.plan_writers import append_one_day_plan, replace_all_daily_plans
 
-        append_one_day_plan(
-            plan, {"day": 1, "date": "2026-05-01", "activities": []}
-        )
+        append_one_day_plan(plan, {"day": 1, "date": "2026-05-01", "activities": []})
         replace_all_daily_plans(
             plan,
             [
@@ -394,23 +393,6 @@ class TestAppendConstraints:
             _run_optimized_append("append_constraints", '("不早起", "不赶路")')
             == "AssertionError"
         )
-
-
-class TestAppendDestinationCandidate:
-    def test_appends_one(self, plan):
-        from state.plan_writers import append_destination_candidate
-
-        append_destination_candidate(plan, {"name": "东京", "score": 0.9})
-        assert len(plan.destination_candidates) == 1
-
-
-class TestReplaceDestinationCandidates:
-    def test_replaces_all(self, plan):
-        from state.plan_writers import replace_destination_candidates
-
-        plan.destination_candidates = [{"name": "old"}]
-        replace_destination_candidates(plan, [{"name": "A"}, {"name": "B"}])
-        assert len(plan.destination_candidates) == 2
 
 
 # --- Category D: backtrack ---

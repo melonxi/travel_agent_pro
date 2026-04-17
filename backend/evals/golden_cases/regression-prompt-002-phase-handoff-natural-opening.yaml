@@ -1,0 +1,26 @@
+id: regression-prompt-002
+name: 阶段切换首句应自然化，不用机器感 checklist
+description: |
+  回归用例，对应 backend/context/manager.py 中新增的 _handoff_opening_protocol。
+  验证：用户从 Phase 1 推进到 Phase 3 后，模型的第一次回复不得以
+  "[Phase 3 启动]"、"前置条件检查："、"已完成事项：" 这类机器感 checklist
+  开场。
+difficulty: medium
+tags: [regression, phase-handoff, tone]
+messages:
+  - role: user
+    content: 我想五一去东京，预算 3 万，两个人，节奏轻松一点
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: destination
+    value: 东京
+  # Q3 核心断言：不得用机器感 checklist 开场。
+  - type: not_contains_text
+    target: "[Phase 3 启动]"
+  - type: not_contains_text
+    target: "前置条件检查"
+  - type: not_contains_text
+    target: "已完成事项："

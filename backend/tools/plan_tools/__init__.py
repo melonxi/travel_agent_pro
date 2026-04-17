@@ -5,9 +5,7 @@ from tools.base import ToolDef
 
 from .append_tools import (
     make_add_constraints_tool,
-    make_add_destination_candidate_tool,
     make_add_preferences_tool,
-    make_set_destination_candidates_tool,
 )
 from .backtrack import make_request_backtrack_tool
 from .daily_plans import make_append_day_plan_tool, make_replace_daily_plans_tool
@@ -41,8 +39,6 @@ PLAN_WRITER_TOOL_NAMES = {
     "set_alternatives",
     "add_preferences",
     "add_constraints",
-    "add_destination_candidate",
-    "set_destination_candidates",
     "append_day_plan",
     "replace_daily_plans",
     "request_backtrack",
@@ -52,9 +48,7 @@ PLAN_WRITER_TOOL_NAMES = {
 def make_all_plan_tools(plan: TravelPlanState) -> list[ToolDef]:
     return [
         make_add_constraints_tool(plan),
-        make_add_destination_candidate_tool(plan),
         make_add_preferences_tool(plan),
-        make_set_destination_candidates_tool(plan),
         make_request_backtrack_tool(plan),
         make_append_day_plan_tool(plan),
         make_replace_daily_plans_tool(plan),
@@ -77,9 +71,7 @@ __all__ = [
     "PLAN_WRITER_TOOL_NAMES",
     "make_all_plan_tools",
     "make_add_constraints_tool",
-    "make_add_destination_candidate_tool",
     "make_add_preferences_tool",
-    "make_set_destination_candidates_tool",
     "make_request_backtrack_tool",
     "make_append_day_plan_tool",
     "make_replace_daily_plans_tool",

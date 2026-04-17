@@ -8,9 +8,7 @@ from tests.helpers.register_plan_tools import register_all_plan_tools
 
 EXPECTED_TOOL_NAMES = [
     "add_constraints",
-    "add_destination_candidate",
     "add_preferences",
-    "set_destination_candidates",
     "request_backtrack",
     "append_day_plan",
     "replace_daily_plans",
@@ -36,9 +34,9 @@ def _make_plan() -> TravelPlanState:
 def test_make_all_plan_tools_returns_expected_tools():
     tools = make_all_plan_tools(_make_plan())
 
-    assert len(tools) == 19
+    assert len(tools) == 17
     assert [tool.name for tool in tools] == EXPECTED_TOOL_NAMES
-    assert len({tool.name for tool in tools}) == 19
+    assert len({tool.name for tool in tools}) == 17
     assert {tool.name for tool in tools} == set(EXPECTED_TOOL_NAMES)
     assert all(tool.human_label for tool in tools)
     assert all(tool.side_effect == "write" for tool in tools)

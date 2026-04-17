@@ -11,6 +11,7 @@ class AssertionType(Enum):
     TOOL_CALLED = "tool_called"
     TOOL_NOT_CALLED = "tool_not_called"
     CONTAINS_TEXT = "contains_text"
+    NOT_CONTAINS_TEXT = "not_contains_text"
     BUDGET_WITHIN = "budget_within"
 
 
