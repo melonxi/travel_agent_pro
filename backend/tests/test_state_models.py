@@ -26,7 +26,7 @@ def test_create_empty_plan():
 
 def test_date_range():
     dr = DateRange(start="2026-04-10", end="2026-04-15")
-    assert dr.total_days == 5
+    assert dr.total_days == 6
 
 
 def test_activity():

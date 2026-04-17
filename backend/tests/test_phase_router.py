@@ -62,7 +62,7 @@ def test_infer_phase_plans_complete(router):
         dates=DateRange(start="2026-04-10", end="2026-04-15"),
         selected_skeleton_id="balanced",
         accommodation=Accommodation(area="祇園"),
-        daily_plans=[DayPlan(day=i, date=f"2026-04-{10 + i}") for i in range(5)],
+        daily_plans=[DayPlan(day=i + 1, date=f"2026-04-{10 + i}") for i in range(6)],
     )
     assert router.infer_phase(plan) == 7
 
@@ -101,7 +101,7 @@ def test_sync_phase_state_hydrates_minimal_trip_brief_from_explicit_state(router
     )
     router.sync_phase_state(plan)
     assert plan.trip_brief["destination"] == "Kyoto"
-    assert plan.trip_brief["total_days"] == 5
+    assert plan.trip_brief["total_days"] == 6
     assert plan.phase3_step == "candidate"
 
 
@@ -162,6 +162,7 @@ def test_phase3_prompt_prioritizes_brief_sync_before_external_search(router):
 
 def test_phase3_candidate_prompt_limits_search_and_forbids_search_narration(router):
     from phase.prompts import build_phase3_prompt
+
     prompt = build_phase3_prompt("candidate")
     assert "先写状态，再按需补充验证" in prompt
     assert "优先控制在 1 次 `xiaohongshu_search` 加 0-1 次 `web_search`" in prompt
