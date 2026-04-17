@@ -146,3 +146,63 @@ def test_time_to_minutes_empty_returns_none():
 
     result = _time_to_minutes("")
     assert result is None
+
+
+def test_validate_day_conflicts_filters_by_day():
+    """validate_day_conflicts 只返回指定天数的时间冲突。"""
+    from harness.validator import validate_day_conflicts
+
+    plan = TravelPlanState(
+        session_id="s1",
+        dates=DateRange(start="2026-05-01", end="2026-05-02"),
+        daily_plans=[
+            DayPlan(
+                day=1,
+                date="2026-05-01",
+                activities=[
+                    _make_activity("A", "09:00", "12:00", cost=0),
+                    _make_activity("B", "11:00", "13:00", cost=0),  # 冲突
+                ],
+            ),
+            DayPlan(
+                day=2,
+                date="2026-05-02",
+                activities=[
+                    _make_activity("C", "09:00", "10:00", cost=0),
+                    _make_activity("D", "11:00", "12:00", cost=0),  # 无冲突
+                ],
+            ),
+        ],
+    )
+    # 只查 day 1
+    result = validate_day_conflicts(plan, [1])
+    assert len(result["conflicts"]) == 1
+    assert "Day 1" in result["conflicts"][0]
+    assert result["has_severe_conflicts"] is True
+
+    # 只查 day 2
+    result2 = validate_day_conflicts(plan, [2])
+    assert len(result2["conflicts"]) == 0
+    assert result2["has_severe_conflicts"] is False
+
+
+def test_validate_day_conflicts_detects_zero_gap():
+    """零间隔：transport=0 且 prev_end == curr_start 时不算冲突。"""
+    from harness.validator import validate_day_conflicts
+
+    plan = TravelPlanState(
+        session_id="s1",
+        daily_plans=[
+            DayPlan(
+                day=1,
+                date="2026-05-01",
+                activities=[
+                    _make_activity("A", "09:00", "10:00", cost=0),
+                    _make_activity("B", "10:00", "11:00", cost=0),
+                ],
+            ),
+        ],
+    )
+    result = validate_day_conflicts(plan, [1])
+    # transport_duration_min 默认 0，10:00 + 0 = 10:00，不 > 10:00
+    assert result["has_severe_conflicts"] is False

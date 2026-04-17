@@ -26,7 +26,9 @@ def _coerce_budget(value: Any) -> Budget | None:
         return value
     if isinstance(value, dict) and "total" in value:
         try:
-            return Budget(total=float(value["total"]), currency=value.get("currency", "CNY"))
+            return Budget(
+                total=float(value["total"]), currency=value.get("currency", "CNY")
+            )
         except (TypeError, ValueError):
             return None
     return None
@@ -134,7 +136,9 @@ def _validate_time_conflicts(plan: TravelPlanState) -> list[str]:
             if prev_end is None or curr_start is None:
                 logger.warning(
                     "Day %s: skipping time check for %s→%s (bad time format)",
-                    day.day, prev.name, curr.name,
+                    day.day,
+                    prev.name,
+                    curr.name,
                 )
                 continue
             travel = curr.transport_duration_min
@@ -230,13 +234,25 @@ def validate_lock_budget(plan: TravelPlanState) -> list[str]:
     remaining = plan.budget.total - locked_total
 
     if ratio > 1:
-        return [
-            f"交通+住宿已占预算的 {percent}%，超过预算 ¥{abs(remaining):.0f}"
-        ]
+        return [f"交通+住宿已占预算的 {percent}%，超过预算 ¥{abs(remaining):.0f}"]
 
     if ratio >= _LOCK_BUDGET_RATIO:
-        return [
-            f"交通+住宿已占预算的 {percent}%，仅剩 ¥{remaining:.0f} 用于活动和餐饮"
-        ]
+        return [f"交通+住宿已占预算的 {percent}%，仅剩 ¥{remaining:.0f} 用于活动和餐饮"]
 
     return []
+
+
+def validate_day_conflicts(plan: TravelPlanState, day_numbers: list[int]) -> dict:
+    """检查指定天数的时间冲突。
+
+    Returns:
+        {"conflicts": list[str], "has_severe_conflicts": bool}
+        严重冲突定义：相邻活动间隔为负（前一个结束+交通 > 后一个开始）。
+    """
+    all_errors = _validate_time_conflicts(plan)
+    day_set = set(day_numbers)
+    relevant = [e for e in all_errors if any(f"Day {d}:" in e for d in day_set)]
+    return {
+        "conflicts": relevant,
+        "has_severe_conflicts": len(relevant) > 0,
+    }
