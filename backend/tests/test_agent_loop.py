@@ -1809,3 +1809,114 @@ async def test_progress_tracks_partial_text():
     async for _ in loop.run(messages, phase=1):
         pass
     assert loop.progress == IterationProgress.PARTIAL_TEXT
+
+
+@pytest.mark.asyncio
+async def test_phase3_step_change_rebuilds_system_message():
+    """子阶段从 brief 推进到 candidate 时，system message 必须被重建。"""
+    plan = TravelPlanState(session_id="s1", phase=3, destination="东京")
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+
+    observed_system_contents: list[str] = []
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        for m in messages:
+            if m.role == Role.SYSTEM:
+                observed_system_contents.append(m.content)
+                break
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="update_trip_basics",
+                    arguments={"dates": {"start": "2026-05-01", "end": "2026-05-05"}},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=3,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u-step",
+    )
+
+    messages = [Message(role=Role.USER, content="五一去东京玩5天")]
+    async for _ in agent.run(messages, phase=3):
+        pass
+
+    assert plan.phase3_step == "candidate"
+    # 修复前：phase3_step 变化不重建 → 观察不到任何 SYSTEM
+    # 修复后：phase3_step 变化触发重建 → 第二轮 messages 至少含一条 SYSTEM
+    assert len(observed_system_contents) >= 1, "phase3_step 推进后未重建 system message"
+    assert "phase=3" in observed_system_contents[-1]
+    assert "已完成 Phase" not in observed_system_contents[-1]
+    assert "handoff" not in observed_system_contents[-1]
+
+
+@pytest.mark.asyncio
+async def test_phase3_step_change_no_handoff_note():
+    """phase3_step 变化重建时不得注入跨 phase handoff assistant note。"""
+    plan = TravelPlanState(session_id="s1", phase=3, destination="东京")
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+
+    observed_messages: list[list[Message]] = []
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        observed_messages.append(list(messages))
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="update_trip_basics",
+                    arguments={"dates": {"start": "2026-05-01", "end": "2026-05-05"}},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="ok")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=3,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u-step2",
+    )
+    async for _ in agent.run([Message(role=Role.USER, content="定档")], phase=3):
+        pass
+
+    second_round = observed_messages[1]
+    for m in second_round:
+        if m.role == Role.ASSISTANT and m.content:
+            assert "handoff" not in m.content
+            assert "已完成 Phase" not in m.content
