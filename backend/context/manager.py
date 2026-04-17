@@ -159,8 +159,12 @@ class ContextManager:
                 plan.phase == 3
                 and plan.phase3_step in ("candidate", "skeleton", "lock")
             ):
+                # Phase 5+: 排除 dates/total_days，它们已由 plan.dates 权威提供
+                skip_keys = {"dates", "total_days"} if plan.phase >= 5 else set()
                 parts.append("- 旅行画像：")
                 for key, val in plan.trip_brief.items():
+                    if key in skip_keys:
+                        continue
                     parts.append(f"  - {key}: {val}")
             else:
                 parts.append(f"- 已生成旅行画像：{len(plan.trip_brief)} 项")
@@ -330,7 +334,7 @@ class ContextManager:
             "开场白协议：进入新阶段后的第一次回复，必须先用 1-2 句自然、温和的中文承上启下——"
             "向用户简要回顾刚刚一起完成了哪些关键决定，再说明接下来这一步要帮 TA 完成什么；"
             "然后再进入工具调用或结构化产出。禁止用"
-            "\"[Phase N 启动]\"、\"前置条件检查：✓...\"、\"已完成事项：...\" "
+            '"[Phase N 启动]"、"前置条件检查：✓..."、"已完成事项：..." '
             "这类机器感强的 checklist 开场。"
         )
 
