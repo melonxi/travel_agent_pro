@@ -320,7 +320,18 @@ class ContextManager:
                 completed_text,
                 self._handoff_goal_line(to_phase),
                 self._handoff_guardrail_line(to_phase),
+                self._handoff_opening_protocol(to_phase),
             ]
+        )
+
+    def _handoff_opening_protocol(self, to_phase: int) -> str:
+        del to_phase
+        return (
+            "开场白协议：进入新阶段后的第一次回复，必须先用 1-2 句自然、温和的中文承上启下——"
+            "向用户简要回顾刚刚一起完成了哪些关键决定，再说明接下来这一步要帮 TA 完成什么；"
+            "然后再进入工具调用或结构化产出。禁止用"
+            "\"[Phase N 启动]\"、\"前置条件检查：✓...\"、\"已完成事项：...\" "
+            "这类机器感强的 checklist 开场。"
         )
 
     def _phase_display_name(self, phase: int) -> str:

@@ -181,7 +181,7 @@ travel_agent_pro/
 
 ### 两层压缩策略
 1. **before_llm_call 预压缩**：按 `context_window - max_output_tokens` 预留出预算，超出部分按渐进阈值压缩——先压工具结果（信息密度低），最后才对历史做摘要。
-2. **阶段转换交接**：前进切换时不再注入历史摘要，而是注入一条确定性的 handoff note，交代当前阶段、已完成事项、当前唯一目标和禁止重复事项；回退切换仍保留 backtrack notice + 原始用户消息。
+2. **阶段转换交接**：前进切换时不再注入历史摘要，而是注入一条确定性的 handoff note，交代当前阶段、已完成事项、当前唯一目标、禁止重复事项，以及"开场白协议"（要求下一次回复先用 1-2 句自然语言承上启下，禁止 `[Phase N 启动]`/`前置条件检查：✓` 式机器感 checklist 开场）；回退切换仍保留 backtrack notice + 原始用户消息。
 3. **Phase 3 子阶段切换**（brief→candidate→skeleton→lock）：也会触发 system message 重建（无 handoff note / backtrack notice），确保 runtime context 随子阶段即时刷新。Runtime context 中：Phase 7 展开 daily_plans 每日活动（出发前查漏需要），Phase 3 skeleton 子阶段展开骨架紧凑摘要（id/name/tradeoffs/每天 theme），preferences/constraints 自 Phase 1 起即注入。
 
 ### 工具结果特定压缩
@@ -451,8 +451,8 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 ## 17. 测试体系
 
 - **后端单元测试**：覆盖 Agent 循环（含白名单前瞻容错、跨阶段状态修复、重复搜索拦截）、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 通道、RunRecord/IterationProgress；plan tools 回归集中位于 `backend/tests/test_plan_tools/`（含 `test_phase3_tools.py`、`test_trip_basics.py` 与 `test_daily_plans.py`），`infer_phase3_step_from_state` 对污染的 `skeleton_plans` 具备 reader-side 过滤防御
-- **评估管线**：golden cases（YAML）+ 断言评估 + 离线 runner；`scripts/eval-stability.py` 生成 pass@k 稳定性报告（JSON + Markdown）；`scripts/failure-analysis/` 对 live backend 执行失败场景并产出分析报告
-- **E2E 测试**：Playwright 三套专项配置——主流程（含 deterministic mock 的阶段切换）、重试体验（继续/重发/停止/不可恢复错误）、等待体验（ThinkingBubble 与工具耗时提示）；demo spec 基于 `demo-scripted-session.json` 稳定回放 Phase 1 → Phase 3 → Phase 5 → backtrack
+- **评估管线**：golden cases（YAML）+ 断言评估 + 离线 runner；断言类型包含 `phase_reached`/`state_field_set`/`tool_called`/`tool_not_called`/`contains_text`/`not_contains_text`/`budget_within`（其中 `not_contains_text` 用于回归"机器感 checklist"类文案违规）；`scripts/eval-stability.py` 生成 pass@k 稳定性报告（JSON + Markdown）；`scripts/failure-analysis/` 对 live backend 执行失败场景并产出分析报告
+- **E2E 测试**：Playwright 三套专项配置——主流程（含 deterministic mock 的阶段切换）、重试体验（继续/重发/停止/不可恢复错误）、等待体验（ThinkingBubble 与工具耗时提示）；demo spec 基于 `demo-scripted-session.json` 稳定回放 Phase 1 → Phase 3 → Phase 5 → backtrack；Prompt 行为回归集中于 `e2e-phase1-no-offtopic.spec.ts`（验证 Phase 1 不主动追问非目的地字段）
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
 ---
