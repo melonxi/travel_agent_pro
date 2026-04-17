@@ -244,3 +244,30 @@ class TestEnginePhase3NewTools:
                 "add_constraints",
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_execute_missing_args_returns_invalid_arguments():
+    """缺少必填参数时应返回 INVALID_ARGUMENTS 而非 INTERNAL_ERROR。"""
+
+    @tool(
+        name="need_args",
+        description="Needs args",
+        phases=[1],
+        parameters={
+            "type": "object",
+            "properties": {"x": {"type": "integer"}},
+            "required": ["x"],
+        },
+    )
+    async def need_args(x: int) -> dict:
+        return {"x": x}
+
+    eng = ToolEngine()
+    eng.register(need_args)
+
+    call = ToolCall(id="tc_missing", name="need_args", arguments={})
+    result = await eng.execute(call)
+    assert result.status == "error"
+    assert result.error_code == "INVALID_ARGUMENTS"
+    assert "x" in result.error or "argument" in result.error.lower()
