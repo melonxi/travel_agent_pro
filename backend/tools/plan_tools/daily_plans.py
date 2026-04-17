@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from harness.validator import validate_day_conflicts
 from state.models import TravelPlanState
 from state.plan_writers import append_one_day_plan, replace_all_daily_plans
 from tools.base import ToolError, tool
@@ -148,7 +149,9 @@ def _validate_activities(activities: Any) -> None:
                 suggestion="location.name 应为地点名称字符串",
             )
         for axis in ("lat", "lng"):
-            if isinstance(location[axis], bool) or not isinstance(location[axis], (int, float)):
+            if isinstance(location[axis], bool) or not isinstance(
+                location[axis], (int, float)
+            ):
                 raise ToolError(
                     f"activities[{index}].location.{axis} 必须是数字",
                     error_code="INVALID_VALUE",
@@ -195,6 +198,7 @@ def make_append_day_plan_tool(plan: TravelPlanState):
             plan,
             {"day": day, "date": date, "activities": activities},
         )
+        conflict_info = validate_day_conflicts(plan, [day])
         return {
             "updated_field": "daily_plans",
             "action": "append",
@@ -203,6 +207,7 @@ def make_append_day_plan_tool(plan: TravelPlanState):
             "activity_count": len(activities),
             "total_days": len(plan.daily_plans),
             "previous_days": previous_count,
+            **conflict_info,
         }
 
     return append_day_plan
@@ -249,11 +254,14 @@ def make_replace_daily_plans_tool(plan: TravelPlanState):
         )
         previous_count = len(plan.daily_plans)
         replace_all_daily_plans(plan, days)
+        replaced_days = [dp["day"] for dp in days]
+        conflict_info = validate_day_conflicts(plan, replaced_days)
         return {
             "updated_field": "daily_plans",
             "action": "replace",
             "total_days": len(plan.daily_plans),
             "previous_days": previous_count,
+            **conflict_info,
         }
 
     return replace_daily_plans
