@@ -1745,6 +1745,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                                 object_type="hotel",
                                 object_payload=chunk.tool_result.data or {},
                             )
+                        # 增量持久化：工具写入成功后立即保存，防止 SSE 中断丢失状态
+                        await state_mgr.save(plan)
                         yield json.dumps(
                             {"type": "state_update", "plan": plan.to_dict()},
                             ensure_ascii=False,
@@ -1958,6 +1960,19 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             )
 
         finally:
+            # 保底持久化：即使流异常中断，也尝试保存当前状态
+            try:
+                await state_mgr.save(plan)
+                await session_store.update(
+                    plan.session_id,
+                    phase=plan.phase,
+                    title=_generate_title(plan),
+                    last_run_id=run.run_id,
+                    last_run_status=run.status,
+                    last_run_error=run.error_code,
+                )
+            except Exception:
+                pass  # 保底保存失败不应阻塞清理
             keepalive_task.cancel()
             session.pop("_cancel_event", None)
             # 当 run 可以继续时，保留 _current_run 以供 continue endpoint 使用
