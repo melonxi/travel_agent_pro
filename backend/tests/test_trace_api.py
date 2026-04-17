@@ -267,6 +267,7 @@ def test_tool_call_record_defaults_none():
     assert rec.parallel_group is None
     assert rec.validation_errors is None
     assert rec.judge_scores is None
+    assert rec.suggestion is None
 
 
 def test_memory_hit_record():
@@ -510,3 +511,64 @@ async def test_trace_memory_hits(app):
     assert hits is not None
     assert hits["item_ids"] == ["m1", "m2"]
     assert hits["core"] == 1
+
+
+def test_trace_includes_error_code_and_suggestion():
+    """Error 状态的 tool call 在 trace 中包含 error_code 和 suggestion。"""
+    from api.trace import build_trace
+    from telemetry.stats import SessionStats
+
+    stats = SessionStats()
+    stats.record_llm_call(
+        provider="test",
+        model="test",
+        input_tokens=10,
+        output_tokens=5,
+        duration_ms=100,
+        phase=5,
+        iteration=1,
+    )
+    stats.record_tool_call(
+        tool_name="replace_daily_plans",
+        duration_ms=5.0,
+        status="error",
+        error_code="INVALID_ARGUMENTS",
+        phase=5,
+        arguments_preview="{}",
+        result_preview="ERROR: 缺少必填参数: days",
+        suggestion="请提供以下参数: days",
+    )
+
+    result = build_trace("test_session", {"stats": stats})
+    tc = result["iterations"][0]["tool_calls"][0]
+    assert tc["error_code"] == "INVALID_ARGUMENTS"
+    assert tc["suggestion"] == "请提供以下参数: days"
+
+
+def test_trace_success_tool_has_null_error_code():
+    """成功的 tool call 的 error_code 和 suggestion 为 None。"""
+    from api.trace import build_trace
+    from telemetry.stats import SessionStats
+
+    stats = SessionStats()
+    stats.record_llm_call(
+        provider="test",
+        model="test",
+        input_tokens=10,
+        output_tokens=5,
+        duration_ms=100,
+        phase=5,
+        iteration=1,
+    )
+    stats.record_tool_call(
+        tool_name="append_day_plan",
+        duration_ms=10.0,
+        status="success",
+        error_code=None,
+        phase=5,
+    )
+
+    result = build_trace("test_session", {"stats": stats})
+    tc = result["iterations"][0]["tool_calls"][0]
+    assert tc["error_code"] is None
+    assert tc["suggestion"] is None

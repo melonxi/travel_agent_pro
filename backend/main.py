@@ -377,6 +377,7 @@ def _record_tool_result_stats(
         parallel_group=parallel_group,
         arguments_preview=arguments_preview,
         result_preview=result_preview,
+        suggestion=getattr(result, "suggestion", None),
     )
 
 
