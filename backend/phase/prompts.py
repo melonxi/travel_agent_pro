@@ -662,6 +662,21 @@ PHASE5_PROMPT = """## 角色
 - 如果用户要求修改已写入的某天，用 `replace_daily_plans(days=[...])` 批量替换全部天数。
 - 如果验证发现骨架不可执行，调用 backtrack 而非强行凑出假行程。
 
+## 时间冲突处理
+
+append_day_plan / replace_daily_plans 返回结果中可能包含 `conflicts` 和 `has_severe_conflicts` 字段。
+
+- 如果 `has_severe_conflicts` 为 true：**必须立即**使用 replace_daily_plans 修复该天的时间安排，确保相邻活动之间留有合理的交通缓冲时间（至少等于 transport_duration_min）。不要继续追加后续天数。
+- 如果有 `conflicts` 但 `has_severe_conflicts` 为 false：记录在心，可继续追加，在全部天数写完后统一用 replace_daily_plans 优化。
+- 没有 conflicts：正常继续。
+
+常见冲突原因：
+1. 前一个活动的 end_time + transport_duration_min > 下一个活动的 start_time
+2. 跨城交通后直接安排活动，没留缓冲
+3. 两个活动时间重叠
+
+修复方法：调整 start_time/end_time，增加活动间的时间间隔，或删除不必要的活动。
+
 ## 完成 Gate
 
 - daily_plans 覆盖全部出行天数
