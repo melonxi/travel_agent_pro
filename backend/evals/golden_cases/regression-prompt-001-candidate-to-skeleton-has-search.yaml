@@ -1,0 +1,24 @@
+id: regression-prompt-001
+name: 候选→骨架衔接必须先搜攻略
+description: |
+  回归用例，对应 backend/phase/prompts.py 中 candidate 子阶段"跨子阶段禁令"
+  与 skeleton 子阶段"首轮硬规则"。验证：用户在 Phase 3 推动一次到 skeleton
+  子阶段时，模型在产出 skeleton_plans 之前必须至少调用过一次
+  xiaohongshu_search（做攻略经验采集），而不是直接从 shortlist 一口气写出
+  skeleton_plans。
+difficulty: medium
+tags: [regression, phase3, skeleton, tool-discipline]
+messages:
+  - role: user
+    content: |
+      想去京都玩 5 天，2 个人，预算 20000。已经锁定这 3 个候选地：
+      伏见稻荷、清水寺、岚山。帮我排一版骨架。
+assertions:
+  - type: phase_reached
+    target: ""
+    value: 3
+  - type: state_field_set
+    target: skeleton_plans
+  # Q2 核心断言：生成骨架之前必须先搜攻略。若模型跳过搜索直接出骨架，此条会失败。
+  - type: tool_called
+    target: xiaohongshu_search

@@ -500,6 +500,12 @@ class AgentLoop:
                     )
                     if phase3_step_after_batch != phase3_step_before_batch:
                         phase_changed_in_prev_iteration = True
+                        messages[
+                            :
+                        ] = await self._rebuild_messages_for_phase3_step_change(
+                            messages=messages,
+                            original_user_message=original_user_message,
+                        )
                         tools = self.tool_engine.get_tools_for_phase(
                             current_phase,
                             self.plan,
@@ -571,30 +577,52 @@ class AgentLoop:
                 )
             )
         else:
-            summary = await self.context_manager.compress_for_transition(
-                messages=messages,
-                from_phase=from_phase,
-                to_phase=to_phase,
-                llm_factory=self.llm_factory,
-            )
-            if summary:
-                rebuilt.append(
-                    Message(
-                        role=Role.ASSISTANT,
-                        content=(
-                            f"以下是阶段 {from_phase} 的对话与工具调用回顾，"
-                            f"现在进入阶段 {to_phase}。\n{summary}"
-                        ),
-                    )
+            rebuilt.append(
+                Message(
+                    role=Role.ASSISTANT,
+                    content=self.context_manager.build_phase_handoff_note(
+                        plan=self.plan,
+                        from_phase=from_phase,
+                        to_phase=to_phase,
+                    ),
                 )
-            # Keep the user's current request as a non-system anchor for the next
-            # phase. Some Anthropic-compatible gateways reject payloads whose
-            # messages array is empty even when a system prompt is present.
-            rebuilt.append(self._copy_message(original_user_message))
+            )
 
         if to_phase < from_phase:
             rebuilt.append(self._copy_message(original_user_message))
         return rebuilt
+
+    async def _rebuild_messages_for_phase3_step_change(
+        self,
+        messages: list[Message],
+        original_user_message: Message,
+    ) -> list[Message]:
+        """Phase 3 子阶段变化时重建 system message（不含 handoff / backtrack note）。"""
+        if (
+            self.phase_router is None
+            or self.context_manager is None
+            or self.plan is None
+            or self.memory_mgr is None
+        ):
+            raise RuntimeError(
+                "Phase3 step rebuild requires router/context/plan/memory"
+            )
+
+        phase_prompt = self.phase_router.get_prompt_for_plan(self.plan)
+        memory_context, _recalled_ids, *_ = (
+            await self.memory_mgr.generate_context(self.user_id, self.plan)
+            if self.memory_enabled
+            else ("暂无相关用户记忆", [], 0, 0, 0)
+        )
+        return [
+            self.context_manager.build_system_message(
+                self.plan,
+                phase_prompt,
+                memory_context,
+                available_tools=self._current_tool_names(self.plan.phase),
+            ),
+            self._copy_message(original_user_message),
+        ]
 
     def _build_backtrack_notice(
         self, from_phase: int, to_phase: int, result: ToolResult
@@ -736,9 +764,9 @@ class AgentLoop:
             return (
                 "[状态同步提醒]\n"
                 "你刚刚已经完成了旅行画像说明，但 `trip_brief` 仍为空。"
-                "请先调用 `set_trip_brief(fields={...})`"
-                " 写入结构化 brief；如果日期、预算、人数、偏好、约束是用户明确说过的，"
-                "也要用 `update_trip_basics` 和 `add_preferences` / `add_constraints` 补写。"
+                "请先调用 `set_trip_brief(fields={goal, pace, departure_city})`"
+                " 写入画像核心字段；must_do 用 `add_preferences` 写入，"
+                "avoid 用 `add_constraints` 写入，预算用 `update_trip_basics` 写入。"
                 "写完后再继续，不要重复整段面向用户解释。"
             )
 

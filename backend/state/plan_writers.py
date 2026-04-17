@@ -7,6 +7,7 @@ defensive assertions that should never fire in production.
 All plan-writing tools call these shared functions, ensuring identical
 write behavior across split tools.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -223,18 +224,6 @@ def append_constraints(plan: TravelPlanState, items: Any) -> None:
             )
         else:
             plan.constraints.append(Constraint(type="soft", description=str(item)))
-
-
-def append_destination_candidate(plan: TravelPlanState, item: dict) -> None:
-    """Append a single destination candidate."""
-    assert isinstance(item, dict), f"Expected dict, got {type(item).__name__}"
-    plan.destination_candidates.append(item)
-
-
-def replace_destination_candidates(plan: TravelPlanState, items: list[dict]) -> None:
-    """Replace the entire destination_candidates list."""
-    assert isinstance(items, list), f"Expected list, got {type(items).__name__}"
-    plan.destination_candidates = items
 
 
 # ---------------------------------------------------------------------------

@@ -18,9 +18,6 @@ from tools.search_destinations import make_search_destinations_tool
 from tools.web_search import make_web_search_tool
 from tools.xiaohongshu_search import make_xiaohongshu_search_tool
 from tools.plan_tools.trip_basics import make_update_trip_basics_tool
-from tools.plan_tools.append_tools import (
-    make_set_destination_candidates_tool,
-)
 
 
 def _geocode_result(name: str, types: list[str]) -> dict:
@@ -46,7 +43,9 @@ async def test_search_destinations_filters_non_destination_types_deduplicates_an
                     "status": "OK",
                     "results": [
                         _geocode_result("Tokyo", ["locality", "political"]),
-                        _geocode_result("Tokyo Tower", ["tourist_attraction", "establishment"]),
+                        _geocode_result(
+                            "Tokyo Tower", ["tourist_attraction", "establishment"]
+                        ),
                         _geocode_result("Kyoto", ["locality", "political"]),
                         _geocode_result("Osaka", ["locality", "political"]),
                     ],
@@ -64,7 +63,9 @@ async def test_search_destinations_filters_non_destination_types_deduplicates_an
                 200,
                 json={
                     "status": "OK",
-                    "results": [_geocode_result(seed_map[address], ["locality", "political"])],
+                    "results": [
+                        _geocode_result(seed_map[address], ["locality", "political"])
+                    ],
                 },
             )
         return Response(200, json={"status": "ZERO_RESULTS", "results": []})
@@ -80,13 +81,17 @@ async def test_search_destinations_filters_non_destination_types_deduplicates_an
         "Kyoto",
         "Osaka",
     ]
-    assert all("establishment" not in item["place_types"] for item in result["destinations"])
+    assert all(
+        "establishment" not in item["place_types"] for item in result["destinations"]
+    )
     assert len(result["destinations"]) == 3
 
 
 def test_search_destinations_is_not_exposed_in_phase1():
     engine = ToolEngine()
-    engine.register(make_search_destinations_tool(ApiKeysConfig(google_maps="test_key")))
+    engine.register(
+        make_search_destinations_tool(ApiKeysConfig(google_maps="test_key"))
+    )
 
     phase1_tool_names = [tool["name"] for tool in engine.get_tools_for_phase(1)]
     phase2_tool_names = [tool["name"] for tool in engine.get_tools_for_phase(2)]
@@ -312,24 +317,3 @@ async def test_update_trip_basics_rejects_invalid_dates_budget_and_travelers():
     assert plan.dates == DateRange(start="2026-05-01", end="2026-05-05")
     assert plan.budget == Budget(total=5000, currency="CNY")
     assert plan.travelers == Travelers(adults=2, children=1)
-
-
-@pytest.mark.asyncio
-async def test_destination_candidates_append_or_replace():
-    plan = TravelPlanState(
-        session_id="s1",
-        phase=3,
-        destination="Kyoto",
-        destination_candidates=[{"name": "Kyoto"}],
-        dates=DateRange(start="2026-05-01", end="2026-05-04"),
-        accommodation=Accommodation(area="祇園"),
-    )
-    tool_fn = make_set_destination_candidates_tool(plan)
-
-    # Replace with single candidate
-    await tool_fn(items=[{"name": "Osaka"}])
-    assert plan.destination_candidates == [{"name": "Osaka"}]
-
-    # Replace with multiple candidates
-    await tool_fn(items=[{"name": "Tokyo"}, {"name": "Kyoto"}])
-    assert plan.destination_candidates == [{"name": "Tokyo"}, {"name": "Kyoto"}]
