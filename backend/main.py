@@ -1748,6 +1748,19 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             )
                         # 增量持久化：工具写入成功后立即保存，防止 SSE 中断丢失状态
                         await state_mgr.save(plan)
+                        # 同步更新 session meta，确保 plan 文件与数据库一致
+                        try:
+                            await session_store.update(
+                                plan.session_id,
+                                phase=plan.phase,
+                                title=_generate_title(plan),
+                            )
+                        except Exception:
+                            logger.warning(
+                                "增量 session meta 更新失败 session=%s",
+                                plan.session_id,
+                                exc_info=True,
+                            )
                         yield json.dumps(
                             {"type": "state_update", "plan": plan.to_dict()},
                             ensure_ascii=False,
@@ -1973,7 +1986,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     last_run_error=run.error_code,
                 )
             except Exception:
-                pass  # 保底保存失败不应阻塞清理
+                logger.warning(
+                    "保底持久化失败 session=%s",
+                    plan.session_id,
+                    exc_info=True,
+                )
             keepalive_task.cancel()
             session.pop("_cancel_event", None)
             # 当 run 可以继续时，保留 _current_run 以供 continue endpoint 使用
