@@ -56,7 +56,7 @@ travel_agent_pro/
 │   │   └── styles/             # "Solstice" 暗色玻璃设计系统
 │   └── vite.config.ts          # /api → localhost:8000 代理
 │
-├── docs/                       # 架构文档与学习笔记
+├── docs/                       # 架构文档、问题修复记录、事故复盘与学习笔记
 ├── scripts/                    # dev.sh / dev-stop.sh / eval-stability.py / failure-analysis / demo
 ├── backend/data/               # 本地持久化：sessions.db / sessions/ / users/
 ├── config.yaml                 # 运行时配置（LLM / API / 智能层开关 / 阈值）
@@ -169,6 +169,11 @@ travel_agent_pro/
 
 ### Pending system notes
 工具执行阶段产生的 SYSTEM 消息（如实时约束检查）不会立刻 append 到消息历史，而是缓存到 session 级缓冲区，在下一次 LLM 调用前统一 flush。目的是保证 `assistant.tool_calls → 全部 tool 答复` 的协议序列原子性；并行 tool_calls 期间任何 SYSTEM 都落在整组 tool 之后、下一次 assistant 之前。缓冲区不落盘。
+
+### 文档沉淀约定
+- `docs/phase*.md`、`docs/*fix*.md`：专题修复记录与设计说明
+- `docs/postmortems/`：事故复盘，记录用户可见故障、根因链路、放大因素与后续动作
+- `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划
 
 ---
 
