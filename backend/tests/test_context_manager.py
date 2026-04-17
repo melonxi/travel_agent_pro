@@ -764,3 +764,54 @@ def test_runtime_context_skeleton_lock_still_shows_selected_full(ctx_manager):
     assert "已选骨架方案" in text
     assert "extra_field" in text
     assert "detail_value" in text
+
+
+def test_phase5_context_excludes_trip_brief_dates_and_total_days(ctx_manager):
+    """Phase 5 上下文注入 trip_brief 时应排除 dates 和 total_days（已由 plan.dates 提供）。"""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=5,
+        destination="成都",
+        dates=DateRange(start="2026-05-24", end="2026-05-30"),
+        selected_skeleton_id="plan_a",
+        accommodation=Accommodation(area="春熙路"),
+        trip_brief={
+            "destination": "成都",
+            "dates": {"start": "2026-05-24", "end": "2026-05-30"},
+            "total_days": 7,
+            "goal": "休闲度假",
+        },
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    # "旅行画像" 区域内不应出现 dates 和 total_days
+    lines = ctx.split("\n")
+    brief_section = False
+    for line in lines:
+        if "旅行画像" in line:
+            brief_section = True
+            continue
+        if brief_section and line.startswith("- ") and not line.startswith("  -"):
+            brief_section = False
+        if brief_section:
+            key_part = line.split(":")[0].strip().lstrip("- ")
+            assert key_part != "dates", f"trip_brief 不应包含 dates: {line}"
+            assert key_part != "total_days", f"trip_brief 不应包含 total_days: {line}"
+    # 但 goal 应该保留
+    assert "goal" in ctx
+    assert "休闲度假" in ctx
+
+
+def test_phase3_candidate_context_keeps_trip_brief_dates(ctx_manager):
+    """Phase 3 candidate 阶段的 trip_brief 应保留 dates（仅 Phase 5+ 过滤）。"""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="candidate",
+        trip_brief={
+            "dates": {"start": "2026-05-24", "end": "2026-05-30"},
+            "total_days": 7,
+            "goal": "休闲度假",
+        },
+    )
+    ctx = ctx_manager.build_runtime_context(plan)
+    assert "total_days" in ctx
