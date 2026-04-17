@@ -636,3 +636,131 @@ def test_infer_phase3_step_valid_skeleton_id_by_id():
         accommodation=None,
     )
     assert step == "lock"
+
+
+def test_runtime_context_phase7_expands_daily_plans(ctx_manager):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=7,
+        dates=DateRange(start="2026-05-01", end="2026-05-02"),
+        daily_plans=[
+            DayPlan(
+                day=1,
+                date="2026-05-01",
+                activities=[
+                    Activity(
+                        name="浅草寺",
+                        start_time="09:00",
+                        end_time="11:00",
+                        location=Location(lat=35.71, lng=139.79, name="浅草寺"),
+                        category="shrine",
+                        cost=0,
+                    )
+                ],
+            ),
+            DayPlan(
+                day=2,
+                date="2026-05-02",
+                activities=[
+                    Activity(
+                        name="台场",
+                        start_time="10:00",
+                        end_time="12:00",
+                        location=Location(lat=35.62, lng=139.77, name="台场"),
+                        category="sightseeing",
+                        cost=0,
+                    )
+                ],
+            ),
+        ],
+    )
+    text = ctx_manager.build_runtime_context(plan)
+    assert "第1天" in text
+    assert "浅草寺" in text
+    assert "第2天" in text
+    assert "台场" in text
+
+
+def test_runtime_context_preferences_injected_phase1(ctx_manager):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=1,
+        preferences=[Preference(key="饮食", value="素食")],
+    )
+    text = ctx_manager.build_runtime_context(plan)
+    assert "用户偏好" in text
+    assert "饮食: 素食" in text
+
+
+def test_runtime_context_constraints_injected_phase1(ctx_manager):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=1,
+        constraints=[Constraint(type="health", description="低血糖，需规律进食")],
+    )
+    text = ctx_manager.build_runtime_context(plan)
+    assert "用户约束" in text
+    assert "低血糖" in text
+
+
+def test_runtime_context_skeleton_step_shows_summary(ctx_manager):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="skeleton",
+        skeleton_plans=[
+            {
+                "id": "skeleton_01",
+                "name": "经典版",
+                "tradeoffs": "稳妥，适合首访",
+                "days": [
+                    {"theme": "老城徒步"},
+                    {"theme": "峡谷日游"},
+                ],
+            },
+            {
+                "id": "skeleton_02",
+                "name": "深度版",
+                "tradeoffs": "节奏慢，可深挖",
+                "days": [
+                    {"theme": "美术馆"},
+                    {"theme": "郊外温泉"},
+                ],
+            },
+        ],
+    )
+    text = ctx_manager.build_runtime_context(plan)
+    assert "skeleton_01" in text
+    assert "经典版" in text
+    assert "稳妥" in text
+    assert "老城徒步" in text
+    assert "skeleton_02" in text
+    assert "美术馆" in text
+
+
+def test_runtime_context_skeleton_lock_still_shows_selected_full(ctx_manager):
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="lock",
+        selected_skeleton_id="skeleton_01",
+        skeleton_plans=[
+            {
+                "id": "skeleton_01",
+                "name": "经典版",
+                "tradeoffs": "稳妥",
+                "days": [{"theme": "老城徒步"}],
+                "extra_field": "detail_value",
+            },
+            {
+                "id": "skeleton_02",
+                "name": "深度版",
+                "tradeoffs": "慢",
+                "days": [{"theme": "美术馆"}],
+            },
+        ],
+    )
+    text = ctx_manager.build_runtime_context(plan)
+    assert "已选骨架方案" in text
+    assert "extra_field" in text
+    assert "detail_value" in text
