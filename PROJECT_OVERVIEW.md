@@ -230,7 +230,7 @@ LLM API 异常
 
 - `@tool` 装饰器声明名称、描述、可用阶段、参数 schema
 - `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM；运行时通过 `make_all_plan_tools(plan)` 一次性注册 17 个 plan-writing tools；`PLAN_WRITER_TOOL_NAMES` 同时驱动 `AgentLoop` 的 state-write 判定，确保所有 writer 都会触发 `check_and_apply_transition`
-- 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM；`ToolEngine.execute()` 识别参数缺失的 `TypeError` 并返回 `INVALID_ARGUMENTS`（而非泛化 `INTERNAL_ERROR`），帮助模型从缺参错误中恢复
+- 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM；`ToolEngine.execute()` 在函数调用前基于 schema `required` 字段做预校验，缺参直接返回 `INVALID_ARGUMENTS`（而非走 Python TypeError 路径），确保空参数调用被拦截
 - `ToolGuardrail` 在写入前拦截提示注入、空字段、日期回溯与非法预算；`update_trip_basics.budget` 支持数值、对象与可解析的数值字符串，非正数/非数字会被拒绝
 - **读写分类**：`side_effect="read"`（搜索/查询）并行执行；`side_effect="write"`（17 个 plan-writing tools，以及 `assemble_day_plan`、`generate_summary`）顺序执行
 - **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`tools.plan_tools.*` 负责参数 schema、输入规范化与错误边界，再委托到共享 writer 完成落盘
@@ -244,7 +244,7 @@ LLM API 异常
 
 | 类别 | 工具 |
 |------|------|
-| 状态 | `tools.plan_tools`（统一聚合导出 `PLAN_WRITER_TOOL_NAMES` 与 `make_all_plan_tools(plan)`，运行时批量注册 17 个状态写工具）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.append_tools`（Phase 1/3/5 追加型写工具；追加 preferences/constraints；其中 preferences 兼容 `{key, value}` 与 legacy loose dict 展开语义，并在 wrapper 层做输入类型校验）、`tools.plan_tools.phase3_tools`（Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity schema）、`tools.plan_tools.backtrack`（`request_backtrack` 阶段回退写工具，薄封装 `state.plan_writers.execute_backtrack`） |
+| 状态 | `tools.plan_tools`（统一聚合导出 `PLAN_WRITER_TOOL_NAMES` 与 `make_all_plan_tools(plan)`，运行时批量注册 17 个状态写工具）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.append_tools`（Phase 1/3/5 追加型写工具；追加 preferences/constraints；其中 preferences 兼容 `{key, value}` 与 legacy loose dict 展开语义，并在 wrapper 层做输入类型校验）、`tools.plan_tools.phase3_tools`（Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity schema；写入后即时调用 `validate_day_conflicts` 检测时间冲突，在返回 dict 中包含 `conflicts` 和 `has_severe_conflicts` 字段，形成模型自修复闭环）、`tools.plan_tools.backtrack`（`request_backtrack` 阶段回退写工具，薄封装 `state.plan_writers.execute_backtrack`） |
 | 搜索 | `xiaohongshu_search`、`web_search`、`quick_travel_search` |
 | 交通 | `search_flights`（Amadeus + FlyAI 双源融合）、`search_trains`、`calculate_route` |
 | 住宿 | `search_accommodations` |
@@ -359,7 +359,7 @@ DELETE /api/memory/{user_id}/{item_id}      标记 obsolete
 2. **硬约束验证器 Validator** — 时间冲突/预算超支/天数超限；所有 `PLAN_WRITER_TOOL_NAMES` 成功写入后都会走 `validate_incremental` 注入实时约束反馈；涉及交通/住宿锁定的写入还会触发 `validate_lock_budget` 检查预算占比
 3. **软评分 Judge** — pace / geography / coherence / personalization 四维评分，在 `assemble_day_plan`、`generate_summary` 后触发
 4. **可行性门控 Feasibility Gate** — Phase 1→3 转换时基于目的地查表做规则式判断
-5. **成本与延迟追踪** — `SessionStats` 记录 token 用量与模型定价；`ToolCallRecord` 承载 `state_changes`、`parallel_group`、`validation_errors`、`judge_scores`；`MemoryHitRecord` 记录命中记忆
+5. **成本与延迟追踪** — `SessionStats` 记录 token 用量与模型定价；`ToolCallRecord` 承载 `state_changes`、`parallel_group`、`validation_errors`、`judge_scores`、`suggestion`；`MemoryHitRecord` 记录命中记忆；Trace 视图输出 `error_code` 和 `suggestion` 字段用于错误诊断
 
 **最近迁移（Task 14-15）**：
 - `agent/loop.py`: 4 个 state repair 消息更新为指引 split 工具（`set_trip_brief` / `set_candidate_pool` / `select_skeleton` / `append_day_plan`）；candidate 阶段 repair hint 现在也对部分写入失败（`candidate_pool` 存在但 `shortlist` 缺失）触发
@@ -451,7 +451,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 | `DateRange.total_days` inclusive 语义 | 覆盖 start 到 end 的自然日数量（+1），与骨架生成器语义一致 |
 | Phase 3→5 骨架天数门控 | 已选骨架天数必须与 total_days 一致才允许进入 Phase 5 |
 | trip_brief 权威字段强制覆盖 | dates/total_days 在 hydrate 时直接赋值，防止 stale |
-| plan_writer 增量持久化 | 每次 plan_writer 工具成功后立即 `state_mgr.save(plan)`，finally 保底保存，防止 SSE 中断丢失状态 |
+| plan_writer 增量持久化 | 每次 plan_writer 工具成功后立即 `state_mgr.save(plan)` 并同步更新 session meta（phase/title），finally 保底保存（含 logger.warning 日志），防止 SSE 中断丢失状态或三源不一致 |
 
 ---
 
