@@ -62,7 +62,7 @@ def test_infer_phase_plans_complete(router):
         dates=DateRange(start="2026-04-10", end="2026-04-15"),
         selected_skeleton_id="balanced",
         accommodation=Accommodation(area="祇園"),
-        daily_plans=[DayPlan(day=i, date=f"2026-04-{10 + i}") for i in range(5)],
+        daily_plans=[DayPlan(day=i + 1, date=f"2026-04-{10 + i}") for i in range(6)],
     )
     assert router.infer_phase(plan) == 7
 
@@ -101,7 +101,7 @@ def test_sync_phase_state_hydrates_minimal_trip_brief_from_explicit_state(router
     )
     router.sync_phase_state(plan)
     assert plan.trip_brief["destination"] == "Kyoto"
-    assert plan.trip_brief["total_days"] == 5
+    assert plan.trip_brief["total_days"] == 6
     assert plan.phase3_step == "candidate"
 
 
@@ -162,6 +162,7 @@ def test_phase3_prompt_prioritizes_brief_sync_before_external_search(router):
 
 def test_phase3_candidate_prompt_limits_search_and_forbids_search_narration(router):
     from phase.prompts import build_phase3_prompt
+
     prompt = build_phase3_prompt("candidate")
     assert "先写状态，再按需补充验证" in prompt
     assert "优先控制在 1 次 `xiaohongshu_search` 加 0-1 次 `web_search`" in prompt
@@ -208,3 +209,51 @@ def test_prepare_backtrack(router, tmp_path):
     assert plan.destination == "Kyoto"  # preserved
     assert len(plan.backtrack_history) == 1
     assert plan.backtrack_history[0].reason == "预算超限"
+
+
+def test_infer_phase_blocks_phase5_when_skeleton_days_mismatch(router):
+    """骨架天数与 total_days 不一致时，不应进入 Phase 5。"""
+    plan = TravelPlanState(
+        session_id="s1",
+        destination="Kyoto",
+        dates=DateRange(start="2026-04-10", end="2026-04-15"),  # 6 天 (inclusive)
+        selected_skeleton_id="plan_a",
+        skeleton_plans=[
+            {"id": "plan_a", "days": [{"day": i} for i in range(1, 8)]}
+        ],  # 7 天
+        accommodation=Accommodation(area="祇園"),
+    )
+    assert router.infer_phase(plan) == 3  # 不进入 5
+
+
+def test_infer_phase_allows_phase5_when_skeleton_days_match(router):
+    """骨架天数与 total_days 一致时，正常进入 Phase 5。"""
+    plan = TravelPlanState(
+        session_id="s1",
+        destination="Kyoto",
+        dates=DateRange(start="2026-04-10", end="2026-04-15"),  # 6 天 (inclusive)
+        selected_skeleton_id="plan_a",
+        skeleton_plans=[
+            {"id": "plan_a", "days": [{"day": i} for i in range(1, 7)]}
+        ],  # 6 天
+        accommodation=Accommodation(area="祇園"),
+    )
+    assert router.infer_phase(plan) == 5
+
+
+def test_hydrate_phase3_brief_overwrites_stale_dates(router):
+    """trip_brief 中的旧日期应被权威 plan.dates 覆盖。"""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        destination="Kyoto",
+        dates=DateRange(start="2026-05-24", end="2026-05-30"),
+        trip_brief={
+            "destination": "Kyoto",
+            "dates": {"start": "2026-05-10", "end": "2026-05-16"},
+            "total_days": 6,
+        },
+    )
+    router.sync_phase_state(plan)
+    assert plan.trip_brief["dates"] == {"start": "2026-05-24", "end": "2026-05-30"}
+    assert plan.trip_brief["total_days"] == 7  # inclusive: 24-30

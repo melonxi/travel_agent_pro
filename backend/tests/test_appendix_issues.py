@@ -34,10 +34,14 @@ class _PhaseRouter:
 
 
 class _ContextManager:
-    def build_system_message(self, plan, phase_prompt, user_summary="", available_tools=None):
+    def build_system_message(
+        self, plan, phase_prompt, user_summary="", available_tools=None
+    ):
         return Message(role=Role.SYSTEM, content=phase_prompt)
 
-    async def compress_for_transition(self, messages, from_phase, to_phase, llm_factory):
+    async def compress_for_transition(
+        self, messages, from_phase, to_phase, llm_factory
+    ):
         return "summary"
 
 
@@ -158,11 +162,11 @@ class TestA2DailyPlansWriting:
         tool_fn = make_append_day_plan_tool(plan_at_phase5)
         router = PhaseRouter()
 
-        # The plan has 3 total days (May 1-4, total_days = 3)
-        for i in range(1, 4):
+        # The plan has 4 total days (May 1-4, total_days = 4)
+        for i in range(1, 5):
             await tool_fn(day=i, date=f"2026-05-0{i}", activities=[])
 
-        # Now daily_plans count (3) >= dates.total_days (3)
+        # Now daily_plans count (4) >= dates.total_days (4)
         assert len(plan_at_phase5.daily_plans) >= plan_at_phase5.dates.total_days
         changed = await router.check_and_apply_transition(plan_at_phase5)
         assert changed is True

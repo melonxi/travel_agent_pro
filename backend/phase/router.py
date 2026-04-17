@@ -27,9 +27,9 @@ class PhaseRouter:
         brief = dict(plan.trip_brief)
         brief.setdefault("destination", plan.destination)
         if plan.dates:
-            brief.setdefault("dates", plan.dates.to_dict())
-            # 视图聚合：权威来源是 dates.total_days，此处仅为 LLM 上下文便利注入
-            brief.setdefault("total_days", plan.dates.total_days)
+            # 权威字段：强制覆盖，防止 stale 值误导模型
+            brief["dates"] = plan.dates.to_dict()
+            brief["total_days"] = plan.dates.total_days
         if plan.travelers:
             brief.setdefault("travelers", plan.travelers.to_dict())
         if plan.budget:
@@ -61,11 +61,31 @@ class PhaseRouter:
             accommodation=plan.accommodation,
         )
 
+    def _skeleton_days_match(self, plan: TravelPlanState) -> bool:
+        """检查已选骨架的天数是否与 plan.dates.total_days 一致。"""
+        if not plan.selected_skeleton_id or not plan.skeleton_plans or not plan.dates:
+            return True  # 无法校验时放行，由其他条件控制
+        for skeleton in plan.skeleton_plans:
+            if not isinstance(skeleton, dict):
+                continue
+            if (
+                skeleton.get("id") == plan.selected_skeleton_id
+                or skeleton.get("name") == plan.selected_skeleton_id
+            ):
+                days = skeleton.get("days")
+                if isinstance(days, list):
+                    return len(days) == plan.dates.total_days
+                return True  # 骨架没有 days 字段时放行
+        return True  # 未找到匹配骨架时放行
+
     def infer_phase(self, plan: TravelPlanState) -> int:
         self.sync_phase_state(plan)
         if not plan.destination:
             return 1
         if not plan.dates or not plan.selected_skeleton_id or not plan.accommodation:
+            return 3
+        # 门控：骨架天数必须与权威 total_days 一致才能进入 Phase 5
+        if not self._skeleton_days_match(plan):
             return 3
         if len(plan.daily_plans) < plan.dates.total_days:
             return 5

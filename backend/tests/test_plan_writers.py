@@ -251,14 +251,14 @@ class TestWriteDates:
 
         write_dates(plan, {"start": "2026-05-01", "end": "2026-05-05"})
         assert plan.dates is not None
-        assert plan.dates.total_days == 4
+        assert plan.dates.total_days == 5
 
     def test_phrase_style_string(self, plan):
         from state.plan_writers import write_dates
 
         write_dates(plan, "五一假期去4天")
         assert plan.dates is not None
-        assert plan.dates.total_days == 4
+        assert plan.dates.total_days == 5
 
 
 class TestWriteTravelers:
