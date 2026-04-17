@@ -64,6 +64,7 @@ class ToolCallRecord:
     parallel_group: int | None = None
     validation_errors: list[str] | None = None
     judge_scores: dict | None = None
+    suggestion: str | None = None
 
 
 @dataclass
@@ -115,6 +116,7 @@ class SessionStats:
         parallel_group: int | None = None,
         arguments_preview: str = "",
         result_preview: str = "",
+        suggestion: str | None = None,
     ) -> None:
         self.tool_calls.append(
             ToolCallRecord(
@@ -126,6 +128,7 @@ class SessionStats:
                 arguments_preview=arguments_preview,
                 result_preview=result_preview,
                 parallel_group=parallel_group,
+                suggestion=suggestion,
             )
         )
 
