@@ -571,26 +571,16 @@ class AgentLoop:
                 )
             )
         else:
-            summary = await self.context_manager.compress_for_transition(
-                messages=messages,
-                from_phase=from_phase,
-                to_phase=to_phase,
-                llm_factory=self.llm_factory,
-            )
-            if summary:
-                rebuilt.append(
-                    Message(
-                        role=Role.ASSISTANT,
-                        content=(
-                            f"以下是阶段 {from_phase} 的对话与工具调用回顾，"
-                            f"现在进入阶段 {to_phase}。\n{summary}"
-                        ),
-                    )
+            rebuilt.append(
+                Message(
+                    role=Role.ASSISTANT,
+                    content=self.context_manager.build_phase_handoff_note(
+                        plan=self.plan,
+                        from_phase=from_phase,
+                        to_phase=to_phase,
+                    ),
                 )
-            # Keep the user's current request as a non-system anchor for the next
-            # phase. Some Anthropic-compatible gateways reject payloads whose
-            # messages array is empty even when a system prompt is present.
-            rebuilt.append(self._copy_message(original_user_message))
+            )
 
         if to_phase < from_phase:
             rebuilt.append(self._copy_message(original_user_message))

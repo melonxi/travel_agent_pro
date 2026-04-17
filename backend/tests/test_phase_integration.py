@@ -475,8 +475,12 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
                 assert plan.phase == 3
                 assert "- 阶段：3" in messages[0].content
                 assert messages[1].role == Role.ASSISTANT
-                assert "进入阶段 3" in messages[1].content
-                assert "决策: update_trip_basics" in messages[1].content
+                assert "[阶段交接]" in messages[1].content
+                assert "当前阶段：Phase 3" in messages[1].content
+                assert (
+                    "当前唯一目标：围绕已确认目的地完成旅行画像、候选筛选、骨架方案与锁定项。"
+                    in messages[1].content
+                )
                 assert [tool["name"] for tool in tools or []].count(
                     "update_trip_basics"
                 ) == 1

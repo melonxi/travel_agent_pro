@@ -40,6 +40,9 @@ class _PhaseTransitionContextManager:
     ) -> str:
         return f"summary {from_phase}->{to_phase}"
 
+    def build_phase_handoff_note(self, *, plan, from_phase, to_phase) -> str:
+        return f"handoff {from_phase}->{to_phase} phase={plan.phase}"
+
 
 class _PhaseTransitionMemoryManager:
     async def generate_context(
@@ -353,9 +356,7 @@ async def test_sse_emits_phase_transition_event(app, sessions, session_id):
 
 
 @pytest.mark.asyncio
-async def test_sse_emits_state_update_for_set_skeleton_plans(
-    app, sessions, session_id
-):
+async def test_sse_emits_state_update_for_set_skeleton_plans(app, sessions, session_id):
     session = sessions[session_id]
     session["plan"].phase = 3
     agent = session["agent"]
@@ -397,7 +398,9 @@ async def test_sse_emits_state_update_for_set_skeleton_plans(
         for line in resp.text.splitlines()
         if line.startswith("data:") and line[len("data:") :].strip()
     ]
-    state_update = next(event for event in events if event.get("type") == "state_update")
+    state_update = next(
+        event for event in events if event.get("type") == "state_update"
+    )
 
     assert state_update["plan"]["phase"] == 3
     assert state_update["plan"]["skeleton_plans"] == [
@@ -643,7 +646,8 @@ async def test_sse_emits_state_update_for_update_trip_basics(app, sessions, sess
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            f"/api/chat/{session_id}", json={"message": "去东京，预算一万", "user_id": "u1"}
+            f"/api/chat/{session_id}",
+            json={"message": "去东京，预算一万", "user_id": "u1"},
         )
 
     events = [
@@ -651,7 +655,9 @@ async def test_sse_emits_state_update_for_update_trip_basics(app, sessions, sess
         for line in resp.text.splitlines()
         if line.startswith("data:") and line[len("data:") :].strip()
     ]
-    state_update = next(event for event in events if event.get("type") == "state_update")
+    state_update = next(
+        event for event in events if event.get("type") == "state_update"
+    )
 
     assert state_update["plan"]["destination"] == "东京"
     assert state_update["plan"]["budget"]["total"] == 10000.0
@@ -692,7 +698,9 @@ async def test_sse_emits_agent_status_event(app, sessions, session_id):
 
 
 @pytest.mark.asyncio
-async def test_sse_emits_phase_transition_event_with_empty_payload(app, sessions, session_id):
+async def test_sse_emits_phase_transition_event_with_empty_payload(
+    app, sessions, session_id
+):
     async def fake_agent_run(*args, **kwargs):
         yield LLMChunk(type=ChunkType.PHASE_TRANSITION, phase_info={})
         yield LLMChunk(type=ChunkType.DONE)
@@ -714,7 +722,9 @@ async def test_sse_emits_phase_transition_event_with_empty_payload(app, sessions
 
 
 @pytest.mark.asyncio
-async def test_sse_emits_agent_status_event_with_empty_payload(app, sessions, session_id):
+async def test_sse_emits_agent_status_event_with_empty_payload(
+    app, sessions, session_id
+):
     async def fake_agent_run(*args, **kwargs):
         yield LLMChunk(type=ChunkType.AGENT_STATUS, agent_status={})
         yield LLMChunk(type=ChunkType.DONE)
