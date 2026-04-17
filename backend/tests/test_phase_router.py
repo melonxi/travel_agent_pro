@@ -209,3 +209,33 @@ def test_prepare_backtrack(router, tmp_path):
     assert plan.destination == "Kyoto"  # preserved
     assert len(plan.backtrack_history) == 1
     assert plan.backtrack_history[0].reason == "预算超限"
+
+
+def test_infer_phase_blocks_phase5_when_skeleton_days_mismatch(router):
+    """骨架天数与 total_days 不一致时，不应进入 Phase 5。"""
+    plan = TravelPlanState(
+        session_id="s1",
+        destination="Kyoto",
+        dates=DateRange(start="2026-04-10", end="2026-04-15"),  # 6 天 (inclusive)
+        selected_skeleton_id="plan_a",
+        skeleton_plans=[
+            {"id": "plan_a", "days": [{"day": i} for i in range(1, 8)]}
+        ],  # 7 天
+        accommodation=Accommodation(area="祇園"),
+    )
+    assert router.infer_phase(plan) == 3  # 不进入 5
+
+
+def test_infer_phase_allows_phase5_when_skeleton_days_match(router):
+    """骨架天数与 total_days 一致时，正常进入 Phase 5。"""
+    plan = TravelPlanState(
+        session_id="s1",
+        destination="Kyoto",
+        dates=DateRange(start="2026-04-10", end="2026-04-15"),  # 6 天 (inclusive)
+        selected_skeleton_id="plan_a",
+        skeleton_plans=[
+            {"id": "plan_a", "days": [{"day": i} for i in range(1, 7)]}
+        ],  # 6 天
+        accommodation=Accommodation(area="祇園"),
+    )
+    assert router.infer_phase(plan) == 5
