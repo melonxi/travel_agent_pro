@@ -83,7 +83,7 @@ class ContextManager:
             "- 如果用户只说了“玩5天”“3万预算”“3个人”，只能记录天数/预算/人数这一层信息；没有明确年月日时，不要擅自写入具体出发和返回日期。\n"
             "- `preferences` 只用于记录用户明确表达的偏好，例如“节奏轻松”“想住海边”“喜欢美食”；不要把你总结出来的必去景点、推荐区域、住宿分析、行程建议写进 `preferences`。\n"
             "- `constraints` 只用于用户明确提出的硬/软约束；不要把你为方便规划而脑补的需求写进 `constraints`。\n"
-            "- 当用户要求推翻之前的阶段决策时，必须使用 `request_backtrack(to_phase=..., reason=\"...\")`。\n"
+            '- 当用户要求推翻之前的阶段决策时，必须使用 `request_backtrack(to_phase=..., reason="...")`。\n'
             "- 如果用户问“你现在在哪个阶段 / 当前有哪些工具 / 现在能不能查航班或酒店”，必须严格按照“当前规划状态”和本轮提供的工具列表回答，不要凭记忆猜测。\n"
             "- 完成必要的状态写入后，再继续提问、解释或给建议。",
             "",
@@ -115,7 +115,9 @@ class ContextManager:
         tz_name = now.tzname() or "local"
         tz_offset = now.strftime("%z")
         tz_offset = (
-            f"{tz_offset[:3]}:{tz_offset[3:]}" if tz_offset and len(tz_offset) == 5 else tz_offset
+            f"{tz_offset[:3]}:{tz_offset[3:]}"
+            if tz_offset and len(tz_offset) == 5
+            else tz_offset
         )
         return (
             f"- 当前本地日期：{now.strftime('%Y-%m-%d')}\n"
@@ -144,12 +146,19 @@ class ContextManager:
         if plan.travelers:
             parts.append(
                 f"- 出行人数：{plan.travelers.adults} 成人"
-                + (f"、{plan.travelers.children} 儿童" if plan.travelers.children else "")
+                + (
+                    f"、{plan.travelers.children} 儿童"
+                    if plan.travelers.children
+                    else ""
+                )
             )
 
         # Phase 3 later sub-stages & Phase 5+: inject trip_brief content
         if plan.trip_brief:
-            if plan.phase >= 5 or (plan.phase == 3 and plan.phase3_step in ("candidate", "skeleton", "lock")):
+            if plan.phase >= 5 or (
+                plan.phase == 3
+                and plan.phase3_step in ("candidate", "skeleton", "lock")
+            ):
                 parts.append("- 旅行画像：")
                 for key, val in plan.trip_brief.items():
                     parts.append(f"  - {key}: {val}")
@@ -159,11 +168,20 @@ class ContextManager:
         if plan.candidate_pool:
             parts.append(f"- 候选池：{len(plan.candidate_pool)} 项")
             # Phase 3 skeleton+: show shortlist item summaries
-            if plan.phase == 3 and plan.phase3_step in ("skeleton", "lock") and plan.shortlist:
+            if (
+                plan.phase == 3
+                and plan.phase3_step in ("skeleton", "lock")
+                and plan.shortlist
+            ):
                 parts.append(f"- shortlist（{len(plan.shortlist)} 项）：")
                 for item in plan.shortlist[:8]:
                     if isinstance(item, dict):
-                        label = item.get("name") or item.get("title") or item.get("area") or str(item)[:60]
+                        label = (
+                            item.get("name")
+                            or item.get("title")
+                            or item.get("area")
+                            or str(item)[:60]
+                        )
                         parts.append(f"  - {label}")
             elif plan.shortlist:
                 parts.append(f"- shortlist：{len(plan.shortlist)} 项")
@@ -171,8 +189,11 @@ class ContextManager:
         # Phase 5+: inject selected skeleton full content
         # Phase 3 lock: also inject selected skeleton content
         if plan.skeleton_plans:
-            inject_skeleton = (plan.phase >= 5 and plan.selected_skeleton_id) or \
-                              (plan.phase == 3 and plan.phase3_step == "lock" and plan.selected_skeleton_id)
+            inject_skeleton = (plan.phase >= 5 and plan.selected_skeleton_id) or (
+                plan.phase == 3
+                and plan.phase3_step == "lock"
+                and plan.selected_skeleton_id
+            )
             if inject_skeleton:
                 selected = self._find_selected_skeleton(plan)
                 if selected:
@@ -204,11 +225,17 @@ class ContextManager:
                 parts.append(f"- 住宿酒店：{plan.accommodation.hotel}")
 
         # Phase 3 later sub-stages & Phase 5+: inject preferences and constraints
-        if plan.preferences and (plan.phase >= 5 or (plan.phase == 3 and plan.phase3_step in ("skeleton", "lock"))):
+        if plan.preferences and (
+            plan.phase >= 5
+            or (plan.phase == 3 and plan.phase3_step in ("skeleton", "lock"))
+        ):
             pref_strs = [f"{p.key}: {p.value}" for p in plan.preferences if p.key]
             if pref_strs:
                 parts.append(f"- 用户偏好：{'; '.join(pref_strs)}")
-        if plan.constraints and (plan.phase >= 5 or (plan.phase == 3 and plan.phase3_step in ("skeleton", "lock"))):
+        if plan.constraints and (
+            plan.phase >= 5
+            or (plan.phase == 3 and plan.phase3_step in ("skeleton", "lock"))
+        ):
             cons_strs = [f"[{c.type}] {c.description}" for c in plan.constraints]
             if cons_strs:
                 parts.append(f"- 用户约束：{'; '.join(cons_strs)}")
@@ -225,7 +252,8 @@ class ContextManager:
                 if plan.dates:
                     planned_days = {dp.day for dp in plan.daily_plans}
                     missing = [
-                        d for d in range(1, plan.dates.total_days + 1)
+                        d
+                        for d in range(1, plan.dates.total_days + 1)
                         if d not in planned_days
                     ]
                     if missing:
@@ -252,6 +280,77 @@ class ContextManager:
         if len(valid) == 1:
             return valid[0]
         return None
+
+    def build_phase_handoff_note(
+        self,
+        *,
+        plan: TravelPlanState,
+        from_phase: int,
+        to_phase: int,
+    ) -> str:
+        del from_phase  # handoff content is derived from destination phase + state
+        phase_name = self._phase_display_name(to_phase)
+        completed = self._handoff_completed_items(plan)
+        completed_text = (
+            f"已完成事项：{'、'.join(completed)}均已确认。"
+            if completed
+            else "已完成事项：系统已按当前规划状态切换到新阶段。"
+        )
+        return "\n".join(
+            [
+                "[阶段交接]",
+                f"当前阶段：Phase {to_phase}（{phase_name}）。",
+                completed_text,
+                self._handoff_goal_line(to_phase),
+                self._handoff_guardrail_line(to_phase),
+            ]
+        )
+
+    def _phase_display_name(self, phase: int) -> str:
+        names = {
+            1: "目的地收敛",
+            3: "行程框架规划",
+            5: "逐日行程落地",
+            7: "出发前查漏",
+        }
+        return names.get(phase, "阶段切换")
+
+    def _handoff_completed_items(self, plan: TravelPlanState) -> list[str]:
+        items: list[str] = []
+        if plan.destination:
+            items.append("目的地")
+        if plan.dates:
+            items.append("日期")
+        if plan.trip_brief:
+            items.append("旅行画像")
+        if plan.shortlist:
+            items.append("候选筛选")
+        if plan.selected_skeleton_id:
+            items.append("已选骨架")
+        if plan.selected_transport:
+            items.append("交通")
+        if plan.accommodation:
+            items.append("住宿")
+        if plan.daily_plans:
+            items.append("部分逐日行程")
+        return items
+
+    def _handoff_goal_line(self, phase: int) -> str:
+        mapping = {
+            1: "当前唯一目标：帮助用户确认目的地，不进入交通、住宿或逐日行程。",
+            3: "当前唯一目标：围绕已确认目的地完成旅行画像、候选筛选、骨架方案与锁定项。",
+            5: "当前唯一目标：基于已选骨架与住宿，生成覆盖全部出行日期的 daily_plans。",
+            7: "当前唯一目标：基于已确认行程做出发前查漏与准备清单，不重做规划。",
+        }
+        return mapping.get(phase, "当前唯一目标：按当前阶段职责继续推进。")
+
+    def _handoff_guardrail_line(self, phase: int) -> str:
+        mapping = {
+            3: "禁止重复：不要回到目的地发散；若用户要求推翻前序决策，使用 `request_backtrack(...)`。",
+            5: '禁止重复：不要重新锁交通、不要重新锁住宿、不要重选骨架；若前置状态不足或骨架不可执行，调用 `request_backtrack(to_phase=3, reason="...")`。',
+            7: "禁止重复：不要修改 `daily_plans`、不要重新选择交通或住宿；若发现严重问题，使用 `request_backtrack(...)`。",
+        }
+        return mapping.get(phase, "禁止重复：仅在当前阶段职责内行动。")
 
     def should_compress(
         self,
@@ -303,6 +402,10 @@ class ContextManager:
         llm_factory: Callable[[], Any] | None = None,
     ) -> str:
         """Produce a rule-based, deterministic summary of prior-phase context.
+
+        Note: as of 2026-04-17, this function is no longer used by the primary
+        phase handoff path. Phase transitions now rely on
+        ``build_phase_handoff_note()`` plus the normal runtime context.
 
         This used to spin up an extra LLM call per phase transition. That cost
         real latency and money, and the summarizer could silently drop details.
