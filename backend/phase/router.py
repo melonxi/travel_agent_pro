@@ -27,9 +27,9 @@ class PhaseRouter:
         brief = dict(plan.trip_brief)
         brief.setdefault("destination", plan.destination)
         if plan.dates:
-            brief.setdefault("dates", plan.dates.to_dict())
-            # 视图聚合：权威来源是 dates.total_days，此处仅为 LLM 上下文便利注入
-            brief.setdefault("total_days", plan.dates.total_days)
+            # 权威字段：强制覆盖，防止 stale 值误导模型
+            brief["dates"] = plan.dates.to_dict()
+            brief["total_days"] = plan.dates.total_days
         if plan.travelers:
             brief.setdefault("travelers", plan.travelers.to_dict())
         if plan.budget:

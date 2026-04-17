@@ -239,3 +239,21 @@ def test_infer_phase_allows_phase5_when_skeleton_days_match(router):
         accommodation=Accommodation(area="祇園"),
     )
     assert router.infer_phase(plan) == 5
+
+
+def test_hydrate_phase3_brief_overwrites_stale_dates(router):
+    """trip_brief 中的旧日期应被权威 plan.dates 覆盖。"""
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        destination="Kyoto",
+        dates=DateRange(start="2026-05-24", end="2026-05-30"),
+        trip_brief={
+            "destination": "Kyoto",
+            "dates": {"start": "2026-05-10", "end": "2026-05-16"},
+            "total_days": 6,
+        },
+    )
+    router.sync_phase_state(plan)
+    assert plan.trip_brief["dates"] == {"start": "2026-05-24", "end": "2026-05-30"}
+    assert plan.trip_brief["total_days"] == 7  # inclusive: 24-30
