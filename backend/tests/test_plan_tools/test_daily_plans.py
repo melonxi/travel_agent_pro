@@ -27,6 +27,17 @@ def _sample_activity() -> dict:
     }
 
 
+def _activity(name: str, start: str, end: str, cost: float = 0) -> dict:
+    return {
+        "name": name,
+        "location": {"name": name, "lat": 30.0, "lng": 104.0},
+        "start_time": start,
+        "end_time": end,
+        "category": "activity",
+        "cost": cost,
+    }
+
+
 @pytest.mark.parametrize(
     (
         "factory",
@@ -88,6 +99,8 @@ class TestAppendDayPlan:
             "activity_count": 1,
             "total_days": 1,
             "previous_days": 0,
+            "conflicts": [],
+            "has_severe_conflicts": False,
         }
         assert len(plan.daily_plans) == 1
         assert plan.daily_plans[0].day == 1
@@ -207,6 +220,8 @@ class TestReplaceDailyPlans:
             "action": "replace",
             "total_days": 2,
             "previous_days": 0,
+            "conflicts": [],
+            "has_severe_conflicts": False,
         }
         assert len(plan.daily_plans) == 2
         assert [day.day for day in plan.daily_plans] == [1, 2]
@@ -386,3 +401,63 @@ class TestReplaceDailyPlans:
             )
 
         assert exc_info.value.error_code == "INVALID_VALUE"
+
+
+class TestConflictDetection:
+    @pytest.mark.asyncio
+    async def test_append_day_plan_returns_conflicts_on_time_overlap(self):
+        """append_day_plan 写入有时间冲突的活动时，返回 conflicts 字段。"""
+        plan = _make_plan()
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-02")
+        tool_fn = make_append_day_plan_tool(plan)
+        result = await tool_fn(
+            day=1,
+            date="2026-05-01",
+            activities=[
+                _activity("A", "09:00", "12:00"),
+                _activity("B", "11:00", "13:00"),  # 冲突：12:00 > 11:00
+            ],
+        )
+        assert result["action"] == "append"
+        assert "conflicts" in result
+        assert len(result["conflicts"]) > 0
+        assert result["has_severe_conflicts"] is True
+
+    @pytest.mark.asyncio
+    async def test_append_day_plan_no_conflicts_when_valid(self):
+        """append_day_plan 写入无冲突的活动时，conflicts 为空。"""
+        plan = _make_plan()
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-02")
+        tool_fn = make_append_day_plan_tool(plan)
+        result = await tool_fn(
+            day=1,
+            date="2026-05-01",
+            activities=[
+                _activity("A", "09:00", "10:00"),
+                _activity("B", "11:00", "12:00"),
+            ],
+        )
+        assert result["conflicts"] == []
+        assert result["has_severe_conflicts"] is False
+
+    @pytest.mark.asyncio
+    async def test_replace_daily_plans_returns_conflicts(self):
+        """replace_daily_plans 写入后也返回冲突信息。"""
+        plan = _make_plan()
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-02")
+        tool_fn = make_replace_daily_plans_tool(plan)
+        result = await tool_fn(
+            days=[
+                {
+                    "day": 1,
+                    "date": "2026-05-01",
+                    "activities": [
+                        _activity("A", "09:00", "12:00"),
+                        _activity("B", "11:00", "13:00"),  # 冲突
+                    ],
+                },
+            ],
+        )
+        assert "conflicts" in result
+        assert len(result["conflicts"]) > 0
+        assert result["has_severe_conflicts"] is True
