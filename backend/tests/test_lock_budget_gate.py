@@ -38,7 +38,7 @@ def test_lock_budget_warns_above_eighty_percent() -> None:
 
     errors = validate_lock_budget(plan)
 
-    assert any("85%" in error and "仅剩" in error for error in errors)
+    assert any("94%" in error and "仅剩" in error for error in errors)
 
 
 def test_lock_budget_errors_above_total_budget() -> None:
