@@ -4,6 +4,7 @@ import PhaseIndicator from './components/PhaseIndicator'
 import MapView from './components/MapView'
 import Timeline from './components/Timeline'
 import BudgetChart from './components/BudgetChart'
+import DeliverablesCard from './components/DeliverablesCard'
 import Phase3Workbench from './components/Phase3Workbench'
 import SessionSidebar from './components/SessionSidebar'
 import TraceViewer from './components/TraceViewer'
@@ -323,6 +324,14 @@ export default function App() {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+              {plan?.deliverables && (
+                <div className="sidebar-section">
+                  <DeliverablesCard
+                    sessionId={sessionId}
+                    deliverables={plan.deliverables}
+                  />
                 </div>
               )}
               {plan && (
