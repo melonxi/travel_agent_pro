@@ -519,6 +519,20 @@ async def test_download_deliverable_rejects_unknown_filename(app):
 
 
 @pytest.mark.asyncio
+async def test_download_deliverable_returns_404_for_missing_whitelisted_file(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/api/sessions")
+        session_id = resp.json()["session_id"]
+        missing = await client.get(
+            f"/api/sessions/{session_id}/deliverables/travel_plan.md"
+        )
+
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_chat_persists_messages_when_stream_is_cancelled(app):
     async def fake_run(self, messages, phase, tools_override=None):
         call = ToolCall(

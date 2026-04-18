@@ -1585,8 +1585,16 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         travel_md = str(result_data["travel_plan_markdown"])
         checklist_md = str(result_data["checklist_markdown"])
 
-        await state_mgr.save_deliverable(plan.session_id, "travel_plan.md", travel_md)
-        await state_mgr.save_deliverable(plan.session_id, "checklist.md", checklist_md)
+        try:
+            await state_mgr.save_deliverable(
+                plan.session_id, "travel_plan.md", travel_md
+            )
+            await state_mgr.save_deliverable(
+                plan.session_id, "checklist.md", checklist_md
+            )
+        except Exception:
+            await state_mgr.clear_deliverables(plan.session_id)
+            raise
 
         plan.deliverables = {
             "travel_plan_md": "travel_plan.md",
