@@ -11,6 +11,7 @@ from pathlib import Path
 from state.models import TravelPlanState
 
 _SESSION_ID_RE = re.compile(r"^sess_[a-f0-9]{12}$")
+ALLOWED_DELIVERABLE_NAMES = {"travel_plan.md", "checklist.md"}
 
 
 def _default_trip_id(session_id: str) -> str:
@@ -76,3 +77,34 @@ class StateManager:
         path = results_dir / f"{tool_name}-{time.time_ns()}.json"
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         return str(path)
+
+    def _deliverables_dir(self, session_id: str) -> Path:
+        return self._session_dir(session_id) / "deliverables"
+
+    def _validate_deliverable_name(self, filename: str) -> None:
+        if filename not in ALLOWED_DELIVERABLE_NAMES:
+            raise ValueError(f"Invalid deliverable filename: {filename}")
+
+    async def save_deliverable(
+        self, session_id: str, filename: str, content: str
+    ) -> str:
+        self._validate_deliverable_name(filename)
+        deliverables_dir = self._deliverables_dir(session_id)
+        deliverables_dir.mkdir(parents=True, exist_ok=True)
+        path = deliverables_dir / filename
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    async def read_deliverable(self, session_id: str, filename: str) -> str:
+        self._validate_deliverable_name(filename)
+        path = self._deliverables_dir(session_id) / filename
+        return path.read_text(encoding="utf-8")
+
+    async def clear_deliverables(self, session_id: str) -> None:
+        deliverables_dir = self._deliverables_dir(session_id)
+        if not deliverables_dir.exists():
+            return
+        for filename in ALLOWED_DELIVERABLE_NAMES:
+            path = deliverables_dir / filename
+            if path.exists():
+                path.unlink()

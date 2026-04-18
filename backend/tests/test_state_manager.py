@@ -78,3 +78,43 @@ async def test_save_tool_result(manager):
     path = await manager.save_tool_result(plan.session_id, "flight-search", data)
     assert Path(path).exists()
     assert json.loads(Path(path).read_text()) == data
+
+
+@pytest.mark.asyncio
+async def test_save_and_read_deliverable(manager):
+    plan = await manager.create_session()
+    path = await manager.save_deliverable(
+        plan.session_id,
+        "travel_plan.md",
+        "# 东京 5 日旅行计划\n",
+    )
+
+    assert Path(path).exists()
+    assert await manager.read_deliverable(plan.session_id, "travel_plan.md") == (
+        "# 东京 5 日旅行计划\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_deliverable_rejects_non_whitelisted_name(manager):
+    plan = await manager.create_session()
+
+    with pytest.raises(ValueError):
+        await manager.save_deliverable(plan.session_id, "../etc/passwd", "x")
+
+    with pytest.raises(ValueError):
+        await manager.read_deliverable(plan.session_id, "notes.txt")
+
+
+@pytest.mark.asyncio
+async def test_clear_deliverables_is_idempotent(manager):
+    plan = await manager.create_session()
+    await manager.save_deliverable(plan.session_id, "travel_plan.md", "# plan\n")
+    await manager.save_deliverable(plan.session_id, "checklist.md", "# list\n")
+
+    await manager.clear_deliverables(plan.session_id)
+    await manager.clear_deliverables(plan.session_id)
+
+    deliverables_dir = Path(manager._session_dir(plan.session_id)) / "deliverables"
+    assert not (deliverables_dir / "travel_plan.md").exists()
+    assert not (deliverables_dir / "checklist.md").exists()

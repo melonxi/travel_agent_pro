@@ -163,3 +163,37 @@ def test_plan_clear_downstream_from_phase_3():
     assert plan.daily_plans == []
     assert plan.destination == "Kyoto"
     assert len(plan.constraints) == 1
+
+
+def test_plan_serialization_roundtrips_deliverables():
+    plan = TravelPlanState(
+        session_id="sess_001",
+        deliverables={
+            "travel_plan_md": "travel_plan.md",
+            "checklist_md": "checklist.md",
+            "generated_at": "2026-04-18T22:30:00+08:00",
+        },
+    )
+
+    data = plan.to_dict()
+    assert data["deliverables"]["travel_plan_md"] == "travel_plan.md"
+
+    restored = TravelPlanState.from_dict(data)
+    assert restored.deliverables == plan.deliverables
+
+
+def test_clear_downstream_from_phase_5_clears_deliverables():
+    plan = TravelPlanState(
+        session_id="sess_001",
+        phase=7,
+        deliverables={
+            "travel_plan_md": "travel_plan.md",
+            "checklist_md": "checklist.md",
+            "generated_at": "2026-04-18T22:30:00+08:00",
+        },
+        daily_plans=[DayPlan(day=1, date="2026-04-10", activities=[])],
+    )
+
+    plan.clear_downstream(from_phase=5)
+    assert plan.daily_plans == []
+    assert plan.deliverables is None
