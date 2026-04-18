@@ -95,6 +95,12 @@ export interface BacktrackEvent {
   timestamp: string
 }
 
+export interface Deliverables {
+  travel_plan_md: string
+  checklist_md: string
+  generated_at: string
+}
+
 export interface TravelPlanState {
   session_id: string
   phase: number
@@ -116,6 +122,7 @@ export interface TravelPlanState {
   preferences?: Preference[]
   risks?: PlanRisk[]
   alternatives?: Array<Record<string, unknown>>
+  deliverables?: Deliverables | null
   daily_plans: DayPlan[]
   backtrack_history: BacktrackEvent[]
 }
