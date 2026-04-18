@@ -545,10 +545,11 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
     assert observed_second_call["messages"] == [
         "system phase=3 prompt=phase-3-prompt user=memory:u1 tools=phase3_only",
         "handoff 1->3 phase=3",
+        "帮我继续规划",
     ]
     observed_roles = observed_second_call.get("roles")
     if observed_roles is not None:
-        assert observed_roles == [Role.SYSTEM, Role.ASSISTANT]
+        assert observed_roles == [Role.SYSTEM, Role.ASSISTANT, Role.USER]
     assert any(chunk.content == "phase 3 ready" for chunk in chunks)
 
 
@@ -610,9 +611,9 @@ async def test_rebuild_messages_for_forward_phase_change_uses_handoff_note_not_s
         result=ToolResult(tool_call_id="", status="success"),
     )
 
-    assert [m.role for m in rebuilt] == [Role.SYSTEM, Role.ASSISTANT]
+    assert [m.role for m in rebuilt] == [Role.SYSTEM, Role.ASSISTANT, Role.USER]
     assert rebuilt[1].content == "handoff 3->5 phase=5"
-    assert all(m.content != "航班 ok 的，住宿就朵兰达+维也纳" for m in rebuilt)
+    assert rebuilt[2].content == "航班 ok 的，住宿就朵兰达+维也纳"
 
 
 @pytest.mark.asyncio
@@ -793,6 +794,7 @@ async def test_forward_phase_rebuild_uses_handoff_note_when_summary_helper_is_em
     assert observed_second_call["messages"] == [
         "system phase=3 prompt=phase-3-prompt user=memory:u-empty",
         "handoff 1->3 phase=3",
+        "帮我继续规划",
     ]
 
 

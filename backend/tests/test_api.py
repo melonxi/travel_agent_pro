@@ -6,7 +6,7 @@ from datetime import date
 from unittest.mock import patch
 from httpx import AsyncClient, ASGITransport
 
-from agent.types import ToolCall, ToolResult
+from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from main import _apply_message_fallbacks, create_app
 from phase.router import PhaseRouter
@@ -439,8 +439,12 @@ async def test_chat_stream_emits_incremental_state_update_after_successful_plan_
             name="update_trip_basics",
             arguments={"destination": "东京"},
         )
+        messages.append(Message(role=Role.ASSISTANT, tool_calls=[call]))
         yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=call)
         result = await self.tool_engine.execute(call)
+        messages.append(
+            Message(role=Role.TOOL, tool_result=result, name=result.tool_call_id)
+        )
         yield LLMChunk(type=ChunkType.TOOL_RESULT, tool_result=result)
         yield LLMChunk(type=ChunkType.DONE)
 
@@ -459,6 +463,52 @@ async def test_chat_stream_emits_incremental_state_update_after_successful_plan_
     assert resp.status_code == 200
     assert resp.text.count('"type": "state_update"') >= 2
     assert '"destination": "东京"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_persists_messages_when_stream_is_cancelled(app):
+    async def fake_run(self, messages, phase, tools_override=None):
+        call = ToolCall(
+            id="tc_cancel_1",
+            name="update_trip_basics",
+            arguments={"destination": "东京"},
+        )
+        messages.append(Message(role=Role.ASSISTANT, tool_calls=[call]))
+        yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=call)
+        result = await self.tool_engine.execute(call)
+        messages.append(
+            Message(role=Role.TOOL, tool_result=result, name=result.tool_call_id)
+        )
+        yield LLMChunk(type=ChunkType.TOOL_RESULT, tool_result=result)
+        self.cancel_event.set()
+        raise asyncio.CancelledError()
+
+    with patch("agent.loop.AgentLoop.run", fake_run):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+
+            with pytest.raises((asyncio.CancelledError, AssertionError)):
+                await client.post(
+                    f"/api/chat/{session_id}",
+                    json={"message": "去东京"},
+                )
+
+            messages_resp = await client.get(f"/api/messages/{session_id}")
+
+    assert messages_resp.status_code == 200
+    persisted = messages_resp.json()
+    assert any(
+        message["role"] == "user" and message["content"] == "去东京"
+        for message in persisted
+    )
+    assert any(
+        message["role"] == "tool"
+        and message["tool_call_id"] == "tc_cancel_1"
+        for message in persisted
+    )
 
 
 @pytest.mark.asyncio

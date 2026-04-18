@@ -124,6 +124,22 @@ async def test_streaming_with_tools_falls_back_to_nonstream_create(provider):
     assert chunks[-1].type == ChunkType.DONE
 
 
+def test_split_system_and_convert_keeps_forward_handoff_and_user_request(provider):
+    system, converted = provider._split_system_and_convert(
+        [
+            Message(role=Role.SYSTEM, content="system prompt"),
+            Message(role=Role.ASSISTANT, content="handoff to phase 5"),
+            Message(role=Role.USER, content="请继续生成最终逐日行程"),
+        ]
+    )
+
+    assert system == "system prompt"
+    assert converted == [
+        {"role": "assistant", "content": "handoff to phase 5"},
+        {"role": "user", "content": "请继续生成最终逐日行程"},
+    ]
+
+
 @pytest.mark.asyncio
 async def test_chat_converts_tool_choice_when_tools_are_present(provider):
     mock_response = MagicMock()

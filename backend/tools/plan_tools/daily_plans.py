@@ -23,6 +23,10 @@ _APPEND_DAY_PLAN_PARAMETERS = {
     "properties": {
         "day": {"type": "integer", "description": "第几天（从1开始）"},
         "date": {"type": "string", "description": "日期，格式 YYYY-MM-DD"},
+        "notes": {
+            "type": "string",
+            "description": "当天的补充说明，可选",
+        },
         "activities": {
             "type": "array",
             "items": {"type": "object"},
@@ -45,6 +49,7 @@ _REPLACE_DAILY_PLANS_PARAMETERS = {
                 "properties": {
                     "day": {"type": "integer"},
                     "date": {"type": "string", "description": "格式 YYYY-MM-DD"},
+                    "notes": {"type": "string", "description": "当天的补充说明，可选"},
                     "activities": {"type": "array", "items": {"type": "object"}},
                 },
                 "required": ["day", "date", "activities"],
@@ -183,7 +188,12 @@ def make_append_day_plan_tool(plan: TravelPlanState):
         side_effect="write",
         human_label="追加一天行程",
     )
-    async def append_day_plan(day: int, date: str, activities: list) -> dict:
+    async def append_day_plan(
+        day: int,
+        date: str,
+        activities: list,
+        notes: str = "",
+    ) -> dict:
         _validate_day(day, "day")
         _validate_day_in_range(plan, day, "day")
         _validate_unique_day_numbers(
@@ -196,7 +206,12 @@ def make_append_day_plan_tool(plan: TravelPlanState):
         previous_count = len(plan.daily_plans)
         append_one_day_plan(
             plan,
-            {"day": day, "date": date, "activities": activities},
+            {
+                "day": day,
+                "date": date,
+                "notes": str(notes or ""),
+                "activities": activities,
+            },
         )
         conflict_info = validate_day_conflicts(plan, [day])
         return {

@@ -184,7 +184,7 @@ travel_agent_pro/
 
 ### 两层压缩策略
 1. **before_llm_call 预压缩**：按 `context_window - max_output_tokens` 预留出预算，超出部分按渐进阈值压缩——先压工具结果（信息密度低），最后才对历史做摘要。
-2. **阶段转换交接**：前进切换时不再注入历史摘要，而是注入一条确定性的 handoff note，交代当前阶段、已完成事项、当前唯一目标、禁止重复事项，以及"开场白协议"（要求下一次回复先用 1-2 句自然语言承上启下，禁止 `[Phase N 启动]`/`前置条件检查：✓` 式机器感 checklist 开场）；回退切换仍保留 backtrack notice + 原始用户消息。
+2. **阶段转换交接**：前进切换时不再注入历史摘要，而是注入一条确定性的 handoff note，交代当前阶段、已完成事项、当前唯一目标、禁止重复事项，以及"开场白协议"（要求下一次回复先用 1-2 句自然语言承上启下，禁止 `[Phase N 启动]`/`前置条件检查：✓` 式机器感 checklist 开场）；前进与回退都会保留触发转换的原始用户消息，避免新阶段变成 assistant-only 历史并丢失当前任务。
 3. **Phase 3 子阶段切换**（brief→candidate→skeleton→lock）：也会触发 system message 重建（无 handoff note / backtrack notice），确保 runtime context 随子阶段即时刷新。Runtime context 中：Phase 7 展开 daily_plans 每日活动（出发前查漏需要），Phase 3 skeleton 子阶段展开骨架紧凑摘要（id/name/tradeoffs/每天 theme），preferences/constraints 自 Phase 1 起即注入。
 
 ### 工具结果特定压缩
@@ -244,7 +244,7 @@ LLM API 异常
 
 | 类别 | 工具 |
 |------|------|
-| 状态 | `tools.plan_tools`（统一聚合导出 `PLAN_WRITER_TOOL_NAMES` 与 `make_all_plan_tools(plan)`，运行时批量注册 17 个状态写工具）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.append_tools`（Phase 1/3/5 追加型写工具；追加 preferences/constraints；其中 preferences 兼容 `{key, value}` 与 legacy loose dict 展开语义，并在 wrapper 层做输入类型校验）、`tools.plan_tools.phase3_tools`（Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity schema；写入后即时调用 `validate_day_conflicts` 检测时间冲突，在返回 dict 中包含 `conflicts` 和 `has_severe_conflicts` 字段，形成模型自修复闭环）、`tools.plan_tools.backtrack`（`request_backtrack` 阶段回退写工具，薄封装 `state.plan_writers.execute_backtrack`） |
+| 状态 | `tools.plan_tools`（统一聚合导出 `PLAN_WRITER_TOOL_NAMES` 与 `make_all_plan_tools(plan)`，运行时批量注册 17 个状态写工具）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.append_tools`（Phase 1/3/5 追加型写工具；追加 preferences/constraints；其中 preferences 兼容 `{key, value}` 与 legacy loose dict 展开语义，并在 wrapper 层做输入类型校验）、`tools.plan_tools.phase3_tools`（Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity/notes schema；写入后即时调用 `validate_day_conflicts` 检测时间冲突，在返回 dict 中包含 `conflicts` 和 `has_severe_conflicts` 字段，形成模型自修复闭环）、`tools.plan_tools.backtrack`（`request_backtrack` 阶段回退写工具，薄封装 `state.plan_writers.execute_backtrack`） |
 | 搜索 | `xiaohongshu_search`、`web_search`、`quick_travel_search` |
 | 交通 | `search_flights`（Amadeus + FlyAI 双源融合）、`search_trains`、`calculate_route` |
 | 住宿 | `search_accommodations` |
@@ -447,11 +447,11 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 | 四段式工具描述 | 功能说明 / 触发条件 / 禁止行为 / 写入后效果结构化模板，引导 LLM 正确选择工具而非混用 |
 | 子阶段输出协议 | 每个 Phase 3 子步骤开头注入"先工具后文字"正面指令，防止 LLM 只在正文描述方案而不写入状态 |
 | 重复搜索拦截 | 同 query 滑动窗口去重，阻断搜索死循环 |
-| 小红书三层操作模型 | search_notes（导航）→ read_note（信息）→ get_comments（评价），鼓励深度使用 UGC 内容 |
+| 小红书三层操作模型 | search_notes（导航）→ read_note（信息）→ get_comments（评价），鼓励深度使用 UGC 内容；当前兼容省略 `operation` 时按 search_notes 执行 |
 | `DateRange.total_days` inclusive 语义 | 覆盖 start 到 end 的自然日数量（+1），与骨架生成器语义一致 |
 | Phase 3→5 骨架天数门控 | 已选骨架天数必须与 total_days 一致才允许进入 Phase 5 |
 | trip_brief 权威字段强制覆盖 | dates/total_days 在 hydrate 时直接赋值，防止 stale |
-| plan_writer 增量持久化 | 每次 plan_writer 工具成功后立即 `state_mgr.save(plan)` 并同步更新 session meta（phase/title），finally 保底保存（含 logger.warning 日志），防止 SSE 中断丢失状态或三源不一致 |
+| plan_writer 增量持久化 | 每次 plan_writer 工具成功后立即 `state_mgr.save(plan)` 并同步更新 session meta（phase/title），finally 保底保存 plan 与 messages（含 logger.warning 日志），并把仍处于 running 的 run 标记为 cancelled，防止 SSE 中断丢失状态、消息或三源不一致 |
 
 ---
 

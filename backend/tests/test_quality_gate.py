@@ -87,12 +87,20 @@ async def test_no_transition_when_phase_unchanged():
 
 
 def test_phase1_to_phase3_feasibility_gate_handles_daterange():
-    """The gate's date helper must accept the real DateRange model fields."""
+    """The gate's date helper must preserve DateRange's inclusive day semantics."""
     from main import _days_count_from_dates
 
     dates = DateRange(start="2026-06-01", end="2026-06-06")
 
-    assert _days_count_from_dates(dates) == 5
+    assert _days_count_from_dates(dates) == 6
+
+
+def test_phase1_to_phase3_feasibility_gate_counts_two_day_trip_inclusively():
+    from main import _days_count_from_dates
+
+    dates = DateRange(start="2026-05-24", end="2026-05-25")
+
+    assert _days_count_from_dates(dates) == 2
 
 
 def test_record_tool_result_stats_records_duration():
