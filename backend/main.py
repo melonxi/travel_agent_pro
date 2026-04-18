@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -534,7 +534,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         tool_engine.register(make_optimize_day_route_tool())
         tool_engine.register(make_check_availability_tool(config.api_keys))
         tool_engine.register(make_check_weather_tool(config.api_keys))
-        tool_engine.register(make_generate_summary_tool())
+        tool_engine.register(make_generate_summary_tool(plan))
         tool_engine.register(make_quick_travel_search_tool(flyai_client))
         tool_engine.register(make_search_travel_services_tool(flyai_client))
         tool_engine.register(make_web_search_tool(config.api_keys))
@@ -1538,6 +1538,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         phase_router.prepare_backtrack(
             plan, req.to_phase, req.reason or "用户主动回退", snapshot_path
         )
+        await state_mgr.clear_deliverables(session_id)
         await _rotate_trip_on_reset_backtrack(
             user_id=session.get("user_id", "default_user"),
             plan=plan,
@@ -1574,6 +1575,33 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
     def _user_friendly_message(exc: LLMError) -> str:
         return _LLM_ERROR_MESSAGES.get(exc.code, "系统内部错误，请稍后重试。")
+
+    async def _persist_phase7_deliverables(
+        plan: TravelPlanState,
+        result_data: dict,
+    ) -> None:
+        if plan.deliverables:
+            raise RuntimeError("deliverables already frozen")
+
+        travel_md = str(result_data["travel_plan_markdown"])
+        checklist_md = str(result_data["checklist_markdown"])
+
+        try:
+            await state_mgr.save_deliverable(
+                plan.session_id, "travel_plan.md", travel_md
+            )
+            await state_mgr.save_deliverable(
+                plan.session_id, "checklist.md", checklist_md
+            )
+        except Exception:
+            await state_mgr.clear_deliverables(plan.session_id)
+            raise
+
+        plan.deliverables = {
+            "travel_plan_md": "travel_plan.md",
+            "checklist_md": "checklist.md",
+            "generated_at": _now_iso(),
+        }
 
     async def _run_agent_stream(
         session,
@@ -1716,11 +1744,18 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     while not keepalive_queue.empty():
                         yield keepalive_queue.get_nowait()
                     yield json.dumps(event_data, ensure_ascii=False)
+                    tool_name = (
+                        tool_call_names.get(chunk.tool_result.tool_call_id)
+                        if chunk.tool_result
+                        else None
+                    )
                     if (
                         chunk.tool_result
                         and chunk.tool_result.status == "success"
-                        and tool_call_names.get(chunk.tool_result.tool_call_id)
-                        in PLAN_WRITER_TOOL_NAMES
+                        and (
+                            tool_name in PLAN_WRITER_TOOL_NAMES
+                            or tool_name == "generate_summary"
+                        )
                     ):
                         result_data = (
                             chunk.tool_result.data
@@ -1728,7 +1763,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             else {}
                         )
                         updated_fields = _plan_writer_updated_fields(result_data)
-                        if result_data.get("backtracked"):
+                        if tool_name == "generate_summary":
+                            await _persist_phase7_deliverables(plan, result_data)
+                        elif result_data.get("backtracked"):
+                            await state_mgr.clear_deliverables(plan.session_id)
                             await _rotate_trip_on_reset_backtrack(
                                 user_id=session["user_id"],
                                 plan=plan,
@@ -1895,6 +1933,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         reason,
                         snapshot_path,
                     )
+                    await state_mgr.clear_deliverables(plan.session_id)
                     await _rotate_trip_on_reset_backtrack(
                         user_id=session["user_id"],
                         plan=plan,
@@ -2225,6 +2264,28 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         agent = session.get("agent")
         engine = getattr(agent, "tool_engine", None) if agent else None
         return build_trace(session_id, session, tool_engine=engine)
+
+    @app.get("/api/sessions/{session_id}/deliverables/{filename}")
+    async def download_deliverable(session_id: str, filename: str):
+        await _ensure_storage_ready()
+        meta = await session_store.load(session_id)
+        if meta is None or meta["status"] == "deleted":
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        try:
+            content = await state_mgr.read_deliverable(session_id, filename)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Deliverable not found")
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Deliverable not found")
+
+        return Response(
+            content=content,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
 
     return app
 

@@ -92,7 +92,7 @@ def _build_default_tool_engine(plan: TravelPlanState) -> ToolEngine:
     engine.register(make_optimize_day_route_tool())
     engine.register(make_check_availability_tool(api_keys))
     engine.register(make_check_weather_tool(api_keys))
-    engine.register(make_generate_summary_tool())
+    engine.register(make_generate_summary_tool(plan))
     engine.register(make_quick_travel_search_tool(flyai_client))
     engine.register(make_search_travel_services_tool(flyai_client))
     engine.register(make_web_search_tool(api_keys))
