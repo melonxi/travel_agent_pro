@@ -9,9 +9,6 @@ from state.models import (
     Travelers,
     Accommodation,
     Budget,
-    DayPlan,
-    Activity,
-    Location,
 )
 
 
@@ -133,3 +130,16 @@ class TestGlobalValidation:
         issues = orch._global_validate(dayplans)
         budget_issues = [i for i in issues if i.issue_type == "budget_overrun"]
         assert len(budget_issues) >= 1
+
+    def test_detects_coverage_gap(self):
+        plan = _make_plan_with_skeleton()
+        # Only provide 2 of 3 expected days
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [self._make_activity("A", 5000)]),
+            self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C", 5000)]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        gap_issues = [i for i in issues if i.issue_type == "coverage_gap"]
+        assert len(gap_issues) == 1
+        assert 2 in gap_issues[0].affected_days
