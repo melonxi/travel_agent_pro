@@ -23,8 +23,8 @@ from state.models import (
 from tools.base import ToolError
 from tools.engine import ToolEngine
 from tools.plan_tools.daily_plans import (
-    make_append_day_plan_tool,
-    make_replace_daily_plans_tool,
+    make_replace_all_day_plans_tool,
+    make_save_day_plan_tool,
 )
 
 
@@ -105,7 +105,7 @@ class TestA1PhaseToolNamesInconsistency:
 
 
 class TestA2DailyPlansWriting:
-    """A.2: Tests daily_plans writing via append_day_plan and replace_daily_plans."""
+    """A.2: Tests daily_plans writing via save_day_plan and replace_all_day_plans."""
 
     @pytest.fixture
     def plan_at_phase5(self):
@@ -122,9 +122,10 @@ class TestA2DailyPlansWriting:
 
     @pytest.mark.asyncio
     async def test_daily_plans_append_succeeds(self, plan_at_phase5):
-        """append_day_plan should append day plans one by one."""
-        tool_fn = make_append_day_plan_tool(plan_at_phase5)
+        """save_day_plan should save a single day plan."""
+        tool_fn = make_save_day_plan_tool(plan_at_phase5)
         result = await tool_fn(
+            mode="create",
             day=1,
             date="2026-05-01",
             activities=[
@@ -148,23 +149,23 @@ class TestA2DailyPlansWriting:
 
     @pytest.mark.asyncio
     async def test_daily_plans_append_multiple(self, plan_at_phase5):
-        """Appending multiple day plans one by one should work."""
-        tool_fn = make_append_day_plan_tool(plan_at_phase5)
+        """Saving multiple day plans one by one should work."""
+        tool_fn = make_save_day_plan_tool(plan_at_phase5)
 
         for i in range(1, 4):
-            await tool_fn(day=i, date=f"2026-05-0{i}", activities=[])
+            await tool_fn(mode="create", day=i, date=f"2026-05-0{i}", activities=[])
 
         assert len(plan_at_phase5.daily_plans) == 3
 
     @pytest.mark.asyncio
     async def test_phase5_to_7_transition_after_daily_plans(self, plan_at_phase5):
         """With daily_plans writable, phase 5→7 transition should work."""
-        tool_fn = make_append_day_plan_tool(plan_at_phase5)
+        tool_fn = make_save_day_plan_tool(plan_at_phase5)
         router = PhaseRouter()
 
         # The plan has 4 total days (May 1-4, total_days = 4)
         for i in range(1, 5):
-            await tool_fn(day=i, date=f"2026-05-0{i}", activities=[])
+            await tool_fn(mode="create", day=i, date=f"2026-05-0{i}", activities=[])
 
         # Now daily_plans count (4) >= dates.total_days (4)
         assert len(plan_at_phase5.daily_plans) >= plan_at_phase5.dates.total_days
@@ -175,14 +176,15 @@ class TestA2DailyPlansWriting:
     @pytest.mark.asyncio
     async def test_daily_plans_list_replaces_all(self, plan_at_phase5):
         """Passing a list replaces all daily_plans at once."""
-        tool_fn = make_replace_daily_plans_tool(plan_at_phase5)
+        tool_fn = make_replace_all_day_plans_tool(plan_at_phase5)
         plans_list = [
             {"day": 1, "date": "2026-05-01", "activities": []},
             {"day": 2, "date": "2026-05-02", "activities": []},
             {"day": 3, "date": "2026-05-03", "activities": []},
+            {"day": 4, "date": "2026-05-04", "activities": []},
         ]
         result = await tool_fn(days=plans_list)
-        assert len(plan_at_phase5.daily_plans) == 3
+        assert len(plan_at_phase5.daily_plans) == 4
 
 
 # ---------------------------------------------------------------------------

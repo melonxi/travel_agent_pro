@@ -60,6 +60,7 @@ from state.models import TravelPlanState
 from state.manager import StateManager
 from tools.engine import ToolEngine
 from tools.assemble_day_plan import make_assemble_day_plan_tool
+from tools.optimize_day_route import make_optimize_day_route_tool
 from tools.calculate_route import make_calculate_route_tool
 from tools.check_availability import make_check_availability_tool
 from tools.check_weather import make_check_weather_tool
@@ -288,15 +289,16 @@ def _plan_writer_updates(
         "set_alternatives": ("alternatives", arguments.get("list")),
         "add_preferences": ("preferences", arguments.get("items")),
         "add_constraints": ("constraints", arguments.get("items")),
-        "append_day_plan": (
+        "save_day_plan": (
             "daily_plans",
             {
+                "mode": arguments.get("mode"),
                 "day": arguments.get("day"),
                 "date": arguments.get("date"),
                 "activities": arguments.get("activities"),
             },
         ),
-        "replace_daily_plans": ("daily_plans", arguments.get("days")),
+        "replace_all_day_plans": ("daily_plans", arguments.get("days")),
     }
     if tool_name not in mapping:
         return []
@@ -529,6 +531,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         tool_engine.register(make_get_poi_info_tool(config.api_keys, flyai_client))
         tool_engine.register(make_calculate_route_tool(config.api_keys))
         tool_engine.register(make_assemble_day_plan_tool())
+        tool_engine.register(make_optimize_day_route_tool())
         tool_engine.register(make_check_availability_tool(config.api_keys))
         tool_engine.register(make_check_weather_tool(config.api_keys))
         tool_engine.register(make_generate_summary_tool())
@@ -717,7 +720,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         async def on_soft_judge(**kwargs):
             tool_name = kwargs.get("tool_name")
-            if tool_name not in ("assemble_day_plan", "generate_summary"):
+            if tool_name not in (
+                "save_day_plan",
+                "replace_all_day_plans",
+                "generate_summary",
+            ):
                 return
             if not plan.daily_plans:
                 return

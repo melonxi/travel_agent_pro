@@ -1,5 +1,6 @@
 # backend/tests/test_prompt_architecture.py
 """Tests for prompt skill-card architecture upgrade."""
+
 from phase.prompts import (
     GLOBAL_RED_FLAGS,
     PHASE1_PROMPT,
@@ -11,9 +12,9 @@ from phase.prompts import (
     build_phase3_prompt,
 )
 
-_LEGACY_STATE_WRITE_CALL = "update" "_plan" "_state("
-_LEGACY_STATE_WRITE_FIELD_CALL = "update" "_plan" "_state(field="
-_LEGACY_STATE_WRITE_TOOL = "update" "_plan" "_state"
+_LEGACY_STATE_WRITE_CALL = "update_plan_state("
+_LEGACY_STATE_WRITE_FIELD_CALL = "update_plan_state(field="
+_LEGACY_STATE_WRITE_TOOL = "update_plan_state"
 
 
 class TestGlobalRedFlags:
@@ -81,10 +82,17 @@ class TestPhase3Split:
         assert "## 角色" in PHASE3_BASE_PROMPT
 
     def test_base_prompt_has_state_write_discipline(self):
-        assert "状态写入纪律" in PHASE3_BASE_PROMPT or "状态写入契约" in PHASE3_BASE_PROMPT
+        assert (
+            "状态写入纪律" in PHASE3_BASE_PROMPT or "状态写入契约" in PHASE3_BASE_PROMPT
+        )
 
     def test_step_prompts_cover_all_steps(self):
-        assert set(PHASE3_STEP_PROMPTS.keys()) == {"brief", "candidate", "skeleton", "lock"}
+        assert set(PHASE3_STEP_PROMPTS.keys()) == {
+            "brief",
+            "candidate",
+            "skeleton",
+            "lock",
+        }
 
     def test_each_step_has_goal(self):
         for step, prompt in PHASE3_STEP_PROMPTS.items():
@@ -96,19 +104,29 @@ class TestPhase3Split:
 
     def test_each_step_has_completion_gate(self):
         for step, prompt in PHASE3_STEP_PROMPTS.items():
-            assert "完成 Gate" in prompt or "完成标志" in prompt, f"step {step} missing completion gate"
+            assert "完成 Gate" in prompt or "完成标志" in prompt, (
+                f"step {step} missing completion gate"
+            )
 
     def test_each_step_has_red_flags(self):
         for step, prompt in PHASE3_STEP_PROMPTS.items():
-            assert "Red Flags" in prompt or "red flag" in prompt.lower(), f"step {step} missing Red Flags"
+            assert "Red Flags" in prompt or "red flag" in prompt.lower(), (
+                f"step {step} missing Red Flags"
+            )
 
     def test_brief_has_convergence_pressure(self):
         """Brief must have convergence pressure — the fix for Question 8."""
-        assert "轮" in PHASE3_STEP_PROMPTS["brief"] or "收敛" in PHASE3_STEP_PROMPTS["brief"]
+        assert (
+            "轮" in PHASE3_STEP_PROMPTS["brief"]
+            or "收敛" in PHASE3_STEP_PROMPTS["brief"]
+        )
 
     def test_skeleton_has_thinking_framework(self):
         """Skeleton must have structured thinking — the fix for Question 4."""
-        assert "锚点" in PHASE3_STEP_PROMPTS["skeleton"] or "锚定" in PHASE3_STEP_PROMPTS["skeleton"]
+        assert (
+            "锚点" in PHASE3_STEP_PROMPTS["skeleton"]
+            or "锚定" in PHASE3_STEP_PROMPTS["skeleton"]
+        )
 
     def test_lock_mentions_transport_timing(self):
         """Lock must address transport timing — the fix for Question 2."""
@@ -218,11 +236,19 @@ class TestPhase5SkillCard:
 
     def test_phase5_has_incremental_strategy(self):
         """Phase 5 must use incremental generation — fix for Question 3."""
-        assert "增量" in PHASE5_PROMPT or "逐天" in PHASE5_PROMPT or "按天" in PHASE5_PROMPT
+        assert (
+            "增量" in PHASE5_PROMPT
+            or "逐天" in PHASE5_PROMPT
+            or "按天" in PHASE5_PROMPT
+        )
 
     def test_phase5_has_route_planning_framing(self):
         """Phase 5 must frame as route optimization — fix for Question 5."""
-        assert "路径" in PHASE5_PROMPT or "动线" in PHASE5_PROMPT or "路线" in PHASE5_PROMPT
+        assert (
+            "路径" in PHASE5_PROMPT
+            or "动线" in PHASE5_PROMPT
+            or "路线" in PHASE5_PROMPT
+        )
 
     def test_phase5_no_batch_all_days_instruction(self):
         """Must NOT instruct to batch all days at once — the old anti-pattern."""
@@ -232,13 +258,17 @@ class TestPhase5SkillCard:
         assert PHASE_PROMPTS[5] == PHASE5_PROMPT
 
     def test_phase5_has_input_gate(self):
-        assert "输入 Gate" in PHASE5_PROMPT or "输入检查" in PHASE5_PROMPT or "接手" in PHASE5_PROMPT
+        assert (
+            "输入 Gate" in PHASE5_PROMPT
+            or "输入检查" in PHASE5_PROMPT
+            or "接手" in PHASE5_PROMPT
+        )
 
     def test_phase5_has_tool_contract(self):
         assert "工具契约" in PHASE5_PROMPT or "工具策略" in PHASE5_PROMPT
 
-    def test_phase5_mentions_assemble_day_plan(self):
-        assert "assemble_day_plan" in PHASE5_PROMPT
+    def test_phase5_mentions_optimize_day_route_in_workflow(self):
+        assert "optimize_day_route" in PHASE5_PROMPT
 
     def test_phase5_mentions_calculate_route(self):
         assert "calculate_route" in PHASE5_PROMPT
@@ -263,7 +293,11 @@ class TestPhase7SkillCard:
         assert "## 硬法则" in PHASE7_PROMPT
 
     def test_phase7_has_input_gate(self):
-        assert "输入 Gate" in PHASE7_PROMPT or "输入检查" in PHASE7_PROMPT or "接手" in PHASE7_PROMPT
+        assert (
+            "输入 Gate" in PHASE7_PROMPT
+            or "输入检查" in PHASE7_PROMPT
+            or "接手" in PHASE7_PROMPT
+        )
 
     def test_phase7_has_completion_gate(self):
         assert "## 完成 Gate" in PHASE7_PROMPT
@@ -297,6 +331,7 @@ class TestGlobalRedFlagsInjection:
     def test_phase1_includes_global_red_flags(self):
         from phase.router import PhaseRouter
         from state.models import TravelPlanState
+
         router = PhaseRouter()
         plan = TravelPlanState(session_id="test")
         plan.phase = 1
@@ -306,6 +341,7 @@ class TestGlobalRedFlagsInjection:
     def test_phase3_includes_global_red_flags(self):
         from phase.router import PhaseRouter
         from state.models import TravelPlanState
+
         router = PhaseRouter()
         plan = TravelPlanState(session_id="test")
         plan.phase = 3
@@ -321,6 +357,7 @@ class TestGlobalRedFlagsInjection:
     def test_phase5_includes_global_red_flags(self):
         from phase.router import PhaseRouter
         from state.models import TravelPlanState
+
         router = PhaseRouter()
         plan = TravelPlanState(session_id="test")
         plan.phase = 5
@@ -330,6 +367,7 @@ class TestGlobalRedFlagsInjection:
     def test_phase7_includes_global_red_flags(self):
         from phase.router import PhaseRouter
         from state.models import TravelPlanState
+
         router = PhaseRouter()
         plan = TravelPlanState(session_id="test")
         plan.phase = 7
@@ -340,6 +378,7 @@ class TestGlobalRedFlagsInjection:
         """GLOBAL_RED_FLAGS should be appended at the end."""
         from phase.router import PhaseRouter
         from state.models import TravelPlanState
+
         router = PhaseRouter()
         plan = TravelPlanState(session_id="test")
         plan.phase = 1
@@ -381,11 +420,19 @@ class TestLegacyStateWriterRemovedInPrompts:
         brief = PHASE3_STEP_PROMPTS["brief"]
         assert "set_trip_brief" in brief
 
-    def test_phase5_mentions_append_day_plan(self):
-        assert "append_day_plan" in PHASE5_PROMPT
+    def test_phase5_mentions_optimize_day_route(self):
+        assert "optimize_day_route" in PHASE5_PROMPT
 
-    def test_phase5_mentions_replace_daily_plans(self):
-        assert "replace_daily_plans" in PHASE5_PROMPT
+    def test_phase5_mentions_save_day_plan(self):
+        assert "save_day_plan" in PHASE5_PROMPT
+
+    def test_phase5_mentions_replace_all_day_plans(self):
+        assert "replace_all_day_plans" in PHASE5_PROMPT
+
+    def test_phase5_does_not_mention_legacy_plan_tools(self):
+        assert "append_day_plan" not in PHASE5_PROMPT
+        assert "replace_daily_plans" not in PHASE5_PROMPT
+        assert "assemble_day_plan" not in PHASE5_PROMPT
 
     def test_phase5_mentions_request_backtrack(self):
         assert "request_backtrack" in PHASE5_PROMPT
@@ -406,10 +453,7 @@ class TestLegacyStateWriterRemovedInPrompts:
         assert "add_preferences" in PHASE1_PROMPT or "add_constraint" in PHASE1_PROMPT
 
     def test_phase5_describes_split_apis_correctly(self):
-        """Finding 2: Phase 5 prompt must describe the real split APIs (append_day_plan vs replace_daily_plans)."""
-        # The prompt should describe append_day_plan for single day and replace_daily_plans for batch
-        # It should NOT describe the old dict/list payload model
-        assert "append_day_plan(day=" in PHASE5_PROMPT or "append_day_plan(...)" in PHASE5_PROMPT
-        assert "replace_daily_plans(days=[" in PHASE5_PROMPT or "replace_daily_plans(...)" in PHASE5_PROMPT
-        # Should not have the old model where single dict vs list[dict] determines behavior
-        assert "传单个 dict 表示追加单天；传 list[dict] 表示批量写入" not in PHASE5_PROMPT
+        assert 'save_day_plan(mode="create"' in PHASE5_PROMPT
+        assert 'save_day_plan(mode="replace_existing"' in PHASE5_PROMPT
+        assert "replace_all_day_plans(days=[" in PHASE5_PROMPT
+        assert "optimize_day_route 只是路线辅助" in PHASE5_PROMPT

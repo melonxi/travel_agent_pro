@@ -120,15 +120,22 @@ def test_phase5_prompt_mentions_daily_plan_commit_and_backtrack(router):
 def test_phase5_prompt_mentions_actual_phase5_tools(router):
     prompt = router.get_prompt(5)
     for tool_name in [
-        "assemble_day_plan",
+        "optimize_day_route",
         "get_poi_info",
         "calculate_route",
         "check_availability",
         "check_weather",
         "xiaohongshu_search_notes",
-        "append_day_plan",
+        "save_day_plan",
+        "replace_all_day_plans",
     ]:
         assert tool_name in prompt
+
+
+def test_phase5_prompt_does_not_mention_legacy_phase5_plan_tools(router):
+    prompt = router.get_prompt(5)
+    for tool_name in ["append_day_plan", "replace_daily_plans", "assemble_day_plan"]:
+        assert tool_name not in prompt
 
 
 def test_phase5_prompt_avoids_unavailable_phase5_tools(router):
@@ -164,9 +171,11 @@ def test_phase3_candidate_prompt_limits_search_and_forbids_search_narration(rout
     from phase.prompts import build_phase3_prompt
 
     prompt = build_phase3_prompt("candidate")
-    assert "获取到足够信息后应立即写入 `set_candidate_pool` 和 `set_shortlist`" in prompt
-    assert "不要为了\"查全\"而反复搜索延迟写入" in prompt
-    assert "不要在正文里反复说\"我先搜一下\"" in prompt
+    assert (
+        "获取到足够信息后应立即写入 `set_candidate_pool` 和 `set_shortlist`" in prompt
+    )
+    assert '不要为了"查全"而反复搜索延迟写入' in prompt
+    assert '不要在正文里反复说"我先搜一下"' in prompt
 
 
 def test_get_prompt_for_all_phases(router):

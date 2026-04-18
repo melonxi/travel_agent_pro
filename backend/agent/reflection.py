@@ -56,8 +56,9 @@ class ReflectionInjector:
             '1. 用户最初提到的所有"必去"景点是否都安排了？\n'
             f"2. 每天的节奏是否符合用户偏好（{pace_preference}）？\n"
             "3. 有没有连续两天重复相似类型的活动？\n"
-            "如果发现内容问题，优先调用 `replace_daily_plans(...)` 修正；"
-            "如果只是缺少某几天，调用 `append_day_plan(...)` 填充；"
+            "如果发现跨多天的全局结构问题，优先调用 `replace_all_day_plans(days=完整天数列表)` 修正；"
+            '如果只是缺少某几天，调用 `save_day_plan(mode="create", day=缺失天数, date=对应日期, activities=活动列表)` 填充；'
+            '如果是修改已有某一天，调用 `save_day_plan(mode="replace_existing", day=目标天数, date=对应日期, activities=活动列表)`；'
             "如果问题需要回到上游重新决策，调用 `request_backtrack`。"
             "如果没有问题，继续。"
         )
@@ -67,19 +68,27 @@ class ReflectionInjector:
             return "暂无明确偏好"
         items = []
         for preference in preferences[:5]:
-            label = getattr(preference, "category", None) or getattr(preference, "key", "")
+            label = getattr(preference, "category", None) or getattr(
+                preference, "key", ""
+            )
             items.append(f"{label}={preference.value}")
         return "、".join(items) if items else "暂无明确偏好"
 
     def _summarize_constraints(self, constraints: list[Constraint]) -> str:
         if not constraints:
             return "暂无明确约束"
-        items = [constraint.description for constraint in constraints[:5] if constraint.description]
+        items = [
+            constraint.description
+            for constraint in constraints[:5]
+            if constraint.description
+        ]
         return "、".join(items) if items else "暂无明确约束"
 
     def _extract_pace_preference(self, preferences: list[Preference]) -> str:
         for preference in preferences:
-            label = (getattr(preference, "category", None) or getattr(preference, "key", "")).lower()
+            label = (
+                getattr(preference, "category", None) or getattr(preference, "key", "")
+            ).lower()
             if "节奏" in label or "pace" in label:
                 return preference.value or "未指定"
         return "未指定"

@@ -1,4 +1,5 @@
 """Tests for eval pipeline models and runner."""
+
 from __future__ import annotations
 import json
 from pathlib import Path
@@ -6,7 +7,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from evals.models import Assertion, AssertionType, EvalExecution, GoldenCase, SuiteResult
+from evals.models import (
+    Assertion,
+    AssertionType,
+    EvalExecution,
+    GoldenCase,
+    SuiteResult,
+)
 from evals.runner import (
     evaluate_assertion,
     load_golden_cases,
@@ -23,6 +30,7 @@ GOLDEN_CASES_DIR = Path(__file__).resolve().parents[1] / "evals/golden_cases"
 
 def golden_cases_dir() -> Path:
     return GOLDEN_CASES_DIR
+
 
 GOLDEN_CASES_DIR = Path(__file__).resolve().parents[1] / "evals/golden_cases"
 
@@ -44,17 +52,23 @@ class TestAssertionEvaluation:
         assert "phase" in reason
 
     def test_state_field_set_pass(self):
-        a = Assertion(type=AssertionType.STATE_FIELD_SET, target="destination", value=None)
+        a = Assertion(
+            type=AssertionType.STATE_FIELD_SET, target="destination", value=None
+        )
         ok, _ = evaluate_assertion(a, {"destination": "东京"}, [], [])
         assert ok
 
     def test_state_field_set_fail(self):
-        a = Assertion(type=AssertionType.STATE_FIELD_SET, target="destination", value=None)
+        a = Assertion(
+            type=AssertionType.STATE_FIELD_SET, target="destination", value=None
+        )
         ok, _ = evaluate_assertion(a, {}, [], [])
         assert not ok
 
     def test_state_field_value_match(self):
-        a = Assertion(type=AssertionType.STATE_FIELD_SET, target="destination", value="东京")
+        a = Assertion(
+            type=AssertionType.STATE_FIELD_SET, target="destination", value="东京"
+        )
         ok, _ = evaluate_assertion(a, {"destination": "东京"}, [], [])
         assert ok
 
@@ -75,7 +89,9 @@ class TestAssertionEvaluation:
 
     def test_budget_within_pass(self):
         a = Assertion(type=AssertionType.BUDGET_WITHIN, target="", value=1.1)
-        ok, _ = evaluate_assertion(a, {"total_cost": 9000, "budget_total": 10000}, [], [])
+        ok, _ = evaluate_assertion(
+            a, {"total_cost": 9000, "budget_total": 10000}, [], []
+        )
         assert ok
 
 
@@ -117,6 +133,7 @@ class TestGoldenCaseLoader:
             "get_poi_info",
             "calculate_route",
             "assemble_day_plan",
+            "optimize_day_route",
             "check_availability",
             "check_weather",
             "generate_summary",
@@ -131,7 +148,8 @@ class TestGoldenCaseLoader:
             (case.id, assertion.target)
             for case in cases
             for assertion in case.assertions
-            if assertion.type in {AssertionType.TOOL_CALLED, AssertionType.TOOL_NOT_CALLED}
+            if assertion.type
+            in {AssertionType.TOOL_CALLED, AssertionType.TOOL_NOT_CALLED}
             and assertion.target not in known_tools
         ]
 
@@ -142,20 +160,27 @@ class TestGoldenCaseLoader:
         cases = load_golden_cases(golden_cases_dir())
         failure_005 = next((c for c in cases if c.id == "failure-005"), None)
         assert failure_005 is not None, "failure-005 case not found"
-        
+
         # Should still assert trip-basics write
         trip_basics_assertions = [
-            a for a in failure_005.assertions
+            a
+            for a in failure_005.assertions
             if a.type == AssertionType.TOOL_CALLED and a.target == "update_trip_basics"
         ]
-        assert len(trip_basics_assertions) == 1, "Should have update_trip_basics assertion"
-        
+        assert len(trip_basics_assertions) == 1, (
+            "Should have update_trip_basics assertion"
+        )
+
         # Should also protect dietary constraint path with the correct split tool
         constraint_assertions = [
-            a for a in failure_005.assertions
-            if a.type == AssertionType.TOOL_CALLED and a.target in {"add_constraints", "add_constraint"}
+            a
+            for a in failure_005.assertions
+            if a.type == AssertionType.TOOL_CALLED
+            and a.target in {"add_constraints", "add_constraint"}
         ]
-        assert len(constraint_assertions) >= 1, "Should have add_constraints assertion for dietary constraint"
+        assert len(constraint_assertions) >= 1, (
+            "Should have add_constraints assertion for dietary constraint"
+        )
 
 
 class TestRunSuiteOffline:
@@ -212,7 +237,11 @@ class TestExecutableRunner:
                 {"role": "user", "content": "预算15000"},
             ],
             assertions=[
-                Assertion(type=AssertionType.STATE_FIELD_SET, target="destination", value="东京"),
+                Assertion(
+                    type=AssertionType.STATE_FIELD_SET,
+                    target="destination",
+                    value="东京",
+                ),
                 Assertion(type=AssertionType.TOOL_CALLED, target="search_flights"),
             ],
         )
@@ -242,7 +271,9 @@ class TestExecutableRunner:
                 description="",
                 difficulty="easy",
                 messages=[],
-                assertions=[Assertion(type=AssertionType.STATE_FIELD_SET, target="destination")],
+                assertions=[
+                    Assertion(type=AssertionType.STATE_FIELD_SET, target="destination")
+                ],
             ),
             GoldenCase(
                 id="infeasible-fail",
@@ -300,7 +331,9 @@ class TestExecutableRunner:
             ),
         )
 
-        report_path = save_report(suite, output_dir=tmp_path, timestamp="20260412-120000")
+        report_path = save_report(
+            suite, output_dir=tmp_path, timestamp="20260412-120000"
+        )
 
         assert report_path == tmp_path / "eval-20260412-120000.json"
         data = json.loads(report_path.read_text(encoding="utf-8"))

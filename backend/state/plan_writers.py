@@ -106,16 +106,33 @@ def write_trip_brief(plan: TravelPlanState, fields: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _sort_daily_plans(plan: TravelPlanState) -> None:
+    plan.daily_plans.sort(key=lambda day: day.day)
+
+
 def append_one_day_plan(plan: TravelPlanState, day_dict: dict) -> None:
     """Append a single day to daily_plans."""
     assert isinstance(day_dict, dict), f"Expected dict, got {type(day_dict).__name__}"
     plan.daily_plans.append(DayPlan.from_dict(day_dict))
+    _sort_daily_plans(plan)
 
 
 def replace_all_daily_plans(plan: TravelPlanState, days: list[dict]) -> None:
     """Replace the entire daily_plans list."""
     assert isinstance(days, list), f"Expected list, got {type(days).__name__}"
     plan.daily_plans = [DayPlan.from_dict(day) for day in days]
+    _sort_daily_plans(plan)
+
+
+def replace_one_day_plan(plan: TravelPlanState, day_dict: dict) -> None:
+    """Replace an existing day in daily_plans."""
+    assert isinstance(day_dict, dict), f"Expected dict, got {type(day_dict).__name__}"
+    day_number = day_dict["day"]
+    plan.daily_plans = [
+        DayPlan.from_dict(day_dict) if existing.day == day_number else existing
+        for existing in plan.daily_plans
+    ]
+    _sort_daily_plans(plan)
 
 
 # ---------------------------------------------------------------------------

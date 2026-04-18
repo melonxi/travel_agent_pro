@@ -289,7 +289,7 @@ async def test_golden_path_tokyo_trip(app, sessions):
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
                         id="tc_daily_plans",
-                        name="replace_daily_plans",
+                        name="replace_all_day_plans",
                         arguments={"days": daily_plans_payload},
                     ),
                 )

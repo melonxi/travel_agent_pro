@@ -28,7 +28,7 @@ class TestClassifySignificance:
         iteration = {
             "tool_calls": [
                 {
-                    "name": "replace_daily_plans",
+                    "name": "replace_all_day_plans",
                     "side_effect": "write",
                     "validation_errors": ["時間冲突"],
                     "judge_scores": None,
@@ -44,7 +44,7 @@ class TestClassifySignificance:
         iteration = {
             "tool_calls": [
                 {
-                    "name": "assemble_day_plan",
+                    "name": "save_day_plan",
                     "side_effect": "write",
                     "validation_errors": None,
                     "judge_scores": {"pace": 4},

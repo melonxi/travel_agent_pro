@@ -14,6 +14,26 @@ def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
 
+    # Mock create_llm_provider used by on_soft_judge so it doesn't call real LLM
+    async def _fake_judge_chat(messages, tools=None, stream=True, **kw):
+        yield LLMChunk(
+            type=ChunkType.TEXT_DELTA,
+            content='{"overall":4.0,"pace":4,"geography":4,"coherence":4,"personalization":4,"suggestions":[]}',
+        )
+        yield LLMChunk(type=ChunkType.DONE)
+
+    class _FakeJudgeLLM:
+        async def chat(self, messages, **kw):
+            async for chunk in _fake_judge_chat(messages, **kw):
+                yield chunk
+
+    import main as main_mod
+
+    def _patched_create(config):
+        return _FakeJudgeLLM()
+
+    monkeypatch.setattr(main_mod, "create_llm_provider", _patched_create)
+
 
 @pytest.fixture
 def app():
@@ -61,40 +81,37 @@ async def test_plan_tool_injects_realtime_incremental_feedback(app, sessions):
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
                     id="tc_conflict",
-                    name="replace_daily_plans",
+                    name="save_day_plan",
                     arguments={
-                        "days": [
+                        "mode": "create",
+                        "day": 1,
+                        "date": "2026-05-01",
+                        "activities": [
                             {
-                                "day": 1,
-                                "date": "2026-05-01",
-                                "activities": [
-                                    {
-                                        "name": "浅草寺",
-                                        "location": {
-                                            "name": "浅草寺",
-                                            "lat": 35.7148,
-                                            "lng": 139.7967,
-                                        },
-                                        "start_time": "09:00",
-                                        "end_time": "10:00",
-                                        "category": "景点",
-                                        "cost": 0,
-                                    },
-                                    {
-                                        "name": "上野公园",
-                                        "location": {
-                                            "name": "上野公园",
-                                            "lat": 35.7156,
-                                            "lng": 139.7745,
-                                        },
-                                        "start_time": "10:05",
-                                        "end_time": "11:00",
-                                        "category": "景点",
-                                        "cost": 0,
-                                        "transport_duration_min": 20,
-                                    },
-                                ],
-                            }
+                                "name": "浅草寺",
+                                "location": {
+                                    "name": "浅草寺",
+                                    "lat": 35.7148,
+                                    "lng": 139.7967,
+                                },
+                                "start_time": "09:00",
+                                "end_time": "10:00",
+                                "category": "景点",
+                                "cost": 0,
+                            },
+                            {
+                                "name": "上野公园",
+                                "location": {
+                                    "name": "上野公园",
+                                    "lat": 35.7156,
+                                    "lng": 139.7745,
+                                },
+                                "start_time": "10:05",
+                                "end_time": "11:00",
+                                "category": "景点",
+                                "cost": 0,
+                                "transport_duration_min": 20,
+                            },
                         ],
                     },
                 ),

@@ -14,6 +14,7 @@ from main import create_app
 from state.models import TravelPlanState
 from tools.ai_travel_search import make_ai_travel_search_tool
 from tools.assemble_day_plan import make_assemble_day_plan_tool
+from tools.optimize_day_route import make_optimize_day_route_tool
 from tools.base import ToolDef, tool
 from tools.calculate_route import make_calculate_route_tool
 from tools.check_availability import make_check_availability_tool
@@ -88,6 +89,7 @@ def _build_default_tool_engine(plan: TravelPlanState) -> ToolEngine:
     engine.register(make_get_poi_info_tool(api_keys, flyai_client))
     engine.register(make_calculate_route_tool(api_keys))
     engine.register(make_assemble_day_plan_tool())
+    engine.register(make_optimize_day_route_tool())
     engine.register(make_check_availability_tool(api_keys))
     engine.register(make_check_weather_tool(api_keys))
     engine.register(make_generate_summary_tool())
@@ -99,9 +101,7 @@ def _build_default_tool_engine(plan: TravelPlanState) -> ToolEngine:
     engine.register(
         make_xiaohongshu_search_notes_tool(xhs_config, xhs_client=xhs_client)
     )
-    engine.register(
-        make_xiaohongshu_read_note_tool(xhs_config, xhs_client=xhs_client)
-    )
+    engine.register(make_xiaohongshu_read_note_tool(xhs_config, xhs_client=xhs_client))
     engine.register(
         make_xiaohongshu_get_comments_tool(xhs_config, xhs_client=xhs_client)
     )
@@ -264,6 +264,7 @@ def test_current_default_registered_tools_all_have_human_label():
         "get_poi_info",
         "calculate_route",
         "assemble_day_plan",
+        "optimize_day_route",
         "check_availability",
         "check_weather",
         "generate_summary",
