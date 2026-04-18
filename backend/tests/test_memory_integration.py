@@ -401,39 +401,53 @@ async def test_chat_stream_dedupes_pending_memory_per_session(monkeypatch, app):
 @pytest.mark.asyncio
 async def test_append_trip_episode_once_is_idempotent(app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
-    append_once = _get_closure_value(app, "_append_trip_episode_once")
-    await memory_mgr.store.upsert_item(
-        _make_item(
-            id="same-session",
-            status="active",
-            session_id="s1",
-            trip_id=None,
-        )
-    )
-    await memory_mgr.store.upsert_item(
-        _make_item(
-            id="unrelated-global",
-            status="active",
-            session_id="other-session",
-            trip_id=None,
-            value="should-not-enter-episode",
-        )
-    )
-    plan = TravelPlanState(
-        session_id="s1",
-        trip_id=None,
-        phase=7,
-        destination="Tokyo",
-    )
+    sessions = _get_closure_value(app, "sessions")
 
-    first = await append_once(user_id="u1", session_id="s1", plan=plan)
-    second = await append_once(user_id="u1", session_id="s1", plan=plan)
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        plan = sessions[session_id]["plan"]
+        plan.phase = 7
+        plan.destination = "Tokyo"
+        await memory_mgr.store.upsert_item(
+            _make_item(
+                id="same-session",
+                status="active",
+                session_id=session_id,
+                trip_id=None,
+            )
+        )
+        await memory_mgr.store.upsert_item(
+            _make_item(
+                id="unrelated-global",
+                status="active",
+                session_id="other-session",
+                trip_id=None,
+                value="should-not-enter-episode",
+            )
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("agent.loop.AgentLoop.run", fake_run)
+            first = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "完成规划", "user_id": "u1"},
+            )
+            second = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "再次确认", "user_id": "u1"},
+            )
 
     episodes = await memory_mgr.store.list_episodes("u1")
-    assert first is True
-    assert second is False
+    assert first.status_code == 200
+    assert second.status_code == 200
     assert len(episodes) == 1
-    assert episodes[0].session_id == "s1"
+    assert episodes[0].session_id == session_id
     accepted_ids = {item["id"] for item in episodes[0].accepted_items}
     assert accepted_ids == {"same-session"}
 
@@ -565,31 +579,60 @@ async def test_tool_backtrack_reset_rotates_trip_memory(monkeypatch, app):
 
 @pytest.mark.asyncio
 async def test_memory_extraction_queues_latest_turn_when_task_running(app):
-    schedule = _get_closure_value(app, "_schedule_memory_extraction")
-    tasks = _get_function_closure_value(schedule, "memory_extraction_tasks")
-    pending = _get_function_closure_value(schedule, "memory_extraction_pending")
-    plan = TravelPlanState(session_id="s1", trip_id="trip1")
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    seen_prompts: list[str] = []
 
-    schedule(
-        session_id="s1",
-        user_id="u1",
-        messages_snapshot=[Message(role=Role.USER, content="第一轮")],
-        plan_snapshot=plan,
-    )
-    schedule(
-        session_id="s1",
-        user_id="u1",
-        messages_snapshot=[Message(role=Role.USER, content="第二轮")],
-        plan_snapshot=plan,
-    )
+    class ExtractionProvider:
+        async def chat(self, messages, tools=None, stream=True):
+            prompt = messages[0].content
+            seen_prompts.append(prompt)
+            if "第一轮" in prompt:
+                first_started.set()
+                await release_first.wait()
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content="first")
+            elif "第二轮" in prompt:
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content="second")
+            yield LLMChunk(type=ChunkType.DONE)
 
-    try:
-        assert "s1" in pending
-        assert pending["s1"][1][0].content == "第二轮"
-    finally:
-        for task in list(tasks.values()):
-            task.cancel()
-        for task in list(tasks.values()):
-            with suppress(asyncio.CancelledError):
-                await task
-        pending.clear()
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    def fake_parse(payload: str):
+        return []
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("agent.loop.AgentLoop.run", fake_run)
+        mp.setattr("main.create_llm_provider", lambda _config: ExtractionProvider())
+        mp.setattr("main.parse_candidate_extraction_response", fake_parse)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            first = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "第一轮", "user_id": "u1"},
+            )
+            await asyncio.wait_for(first_started.wait(), timeout=1)
+
+            second = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "第二轮", "user_id": "u1"},
+            )
+            await asyncio.sleep(0.05)
+            assert len(seen_prompts) == 1
+
+            release_first.set()
+            await asyncio.wait_for(_wait_for_prompt_count(seen_prompts, 2), timeout=1)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert "第一轮" in seen_prompts[0]
+    assert "第二轮" in seen_prompts[1]
+
+
+async def _wait_for_prompt_count(prompts: list[str], expected: int) -> None:
+    while len(prompts) < expected:
+        await asyncio.sleep(0.01)
