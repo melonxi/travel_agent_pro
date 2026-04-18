@@ -534,7 +534,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         tool_engine.register(make_optimize_day_route_tool())
         tool_engine.register(make_check_availability_tool(config.api_keys))
         tool_engine.register(make_check_weather_tool(config.api_keys))
-        tool_engine.register(make_generate_summary_tool())
+        tool_engine.register(make_generate_summary_tool(plan))
         tool_engine.register(make_quick_travel_search_tool(flyai_client))
         tool_engine.register(make_search_travel_services_tool(flyai_client))
         tool_engine.register(make_web_search_tool(config.api_keys))

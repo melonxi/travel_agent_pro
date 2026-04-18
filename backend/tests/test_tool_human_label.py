@@ -229,15 +229,7 @@ guardrails:
     app = create_app(str(config_file))
     transport = ASGITransport(app=app)
 
-    with (
-        patch("agent.loop.AgentLoop.run", fake_run),
-        patch(
-            "main.make_generate_summary_tool",
-            lambda: make_generate_summary_tool(
-                TravelPlanState(session_id="sse_test_plan", phase=7)
-            ),
-        ),
-    ):
+    with patch("agent.loop.AgentLoop.run", fake_run):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             session_resp = await client.post("/api/sessions")
             session_id = session_resp.json()["session_id"]
