@@ -533,6 +533,43 @@ async def test_download_deliverable_returns_404_for_missing_whitelisted_file(app
 
 
 @pytest.mark.asyncio
+async def test_backtrack_endpoint_clears_deliverables_and_files(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/api/sessions")
+        session_id = resp.json()["session_id"]
+
+    sessions = _get_sessions(app)
+    state_mgr = _get_state_manager(app)
+    plan = sessions[session_id]["plan"]
+    plan.phase = 7
+    plan.deliverables = {
+        "travel_plan_md": "travel_plan.md",
+        "checklist_md": "checklist.md",
+        "generated_at": "2026-04-18T22:30:00+08:00",
+    }
+    await state_mgr.save_deliverable(session_id, "travel_plan.md", "# plan\n")
+    await state_mgr.save_deliverable(session_id, "checklist.md", "# list\n")
+    await state_mgr.save(plan)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        backtrack = await client.post(
+            f"/api/backtrack/{session_id}",
+            json={"to_phase": 5, "reason": "重新生成交付物"},
+        )
+        missing = await client.get(
+            f"/api/sessions/{session_id}/deliverables/travel_plan.md"
+        )
+
+    assert backtrack.status_code == 200
+    assert backtrack.json()["plan"]["deliverables"] is None
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_chat_persists_messages_when_stream_is_cancelled(app):
     async def fake_run(self, messages, phase, tools_override=None):
         call = ToolCall(
