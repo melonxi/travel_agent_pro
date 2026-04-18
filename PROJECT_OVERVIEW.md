@@ -7,7 +7,7 @@
 
 ## 1. 一句话定位
 
-**Travel Agent Pro** 是一个基于 LLM 的智能旅行规划 Agent 系统，生产主路径采用 Phase 1/3/5/7 认知决策流（模糊意图 → 方案设计 → 日程组装 → 出发前清单），通过 FastAPI + React 全栈实现，支持 SSE 流式交互、多 LLM 供应商切换、上下文压缩、评估报告和可观测性追踪。
+**Travel Agent Pro** 是一个基于 LLM 的智能旅行规划 Agent 系统，生产主路径采用 Phase 1/3/5/7 认知决策流（模糊意图 → 方案设计 → 日程组装 → 出发前清单），通过 FastAPI + React 全栈实现，支持 SSE 流式交互、多 LLM 供应商切换、上下文压缩、评估报告和可观测性追踪；Phase 7 结束时冻结 `travel_plan.md` 和 `checklist.md` 两个 markdown 交付物。
 
 ---
 
@@ -108,10 +108,10 @@ travel_agent_pro/
 
 ### Phase 7 — 出发前查漏（skill-card）
 - 角色：出发前查漏官；扫描全计划，生成带优先级的检查清单
-- 工具：`check_weather`、`check_availability`、`web_search`、`request_backtrack`（仅在发现严重问题需回退时使用）
-- **Prompt 已迁移**：Phase 7 改为直接使用 `request_backtrack`
+- 工具：`check_weather`、`check_availability`、`search_travel_services`、`web_search`、`request_backtrack`（仅在发现严重问题需回退时使用）
+- **Prompt 已迁移**：Phase 7 直接使用 `request_backtrack`，并在收口时调用 `generate_summary(plan_data, travel_plan_markdown, checklist_markdown)`
 - 扫描维度：证件签证、天气、预订确认、交通接驳、应急预案
-- **完成 Gate**：所有高优先级项解决 → `generate_summary`
+- **完成 Gate**：所有高优先级项解决 → `generate_summary` 冻结双 markdown 交付物
 
 ### GLOBAL_RED_FLAGS
 所有阶段 prompt 末尾统一注入跨阶段通用禁令（如"不捏造信息"、"不越阶段边界"等），通过 `PhaseRouter.get_prompt_for_plan()` 和 `build_phase3_prompt()` 自动拼装。**Prompt 已迁移**：通用规则改为引用"状态写入工具"泛指（第一条规则）与 `request_backtrack(to_phase=..., reason=\"...\")`（第二条规则）。
@@ -233,7 +233,7 @@ LLM API 异常
 - `ToolEngine` 按阶段/子步骤过滤可用工具后传给 LLM；运行时通过 `make_all_plan_tools(plan)` 一次性注册 17 个 plan-writing tools；`PLAN_WRITER_TOOL_NAMES` 同时驱动 `AgentLoop` 的 state-write 判定，确保所有 writer 都会触发 `check_and_apply_transition`
 - 错误处理：`ToolError` 带 `error_code` + `suggestion` 反馈给 LLM；`ToolEngine.execute()` 在函数调用前基于 schema `required` 字段做预校验，缺参直接返回 `INVALID_ARGUMENTS`（而非走 Python TypeError 路径），确保空参数调用被拦截
 - `ToolGuardrail` 在写入前拦截提示注入、空字段、日期回溯与非法预算；`update_trip_basics.budget` 支持数值、对象与可解析的数值字符串，非正数/非数字会被拒绝
-- **读写分类**：`side_effect="read"`（搜索/查询、`optimize_day_route` 等）并行执行；`side_effect="write"`（17 个 plan-writing tools，以及 `generate_summary`）顺序执行
+- **读写分类**：`side_effect="read"`（搜索/查询、`search_travel_services`、`optimize_day_route` 等）并行执行；`side_effect="write"`（17 个 plan-writing tools，以及 `generate_summary`）顺序执行
 - **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`tools.plan_tools.*` 负责参数 schema、输入规范化与错误边界，再委托到共享 writer 完成落盘
 - **运行时写后处理**：`backend/main.py` 把 `PLAN_WRITER_TOOL_NAMES` 统一视作状态写工具；所有 writers 都会触发 `validate_incremental` / `validate_lock_budget`、SSE `state_update`、accept memory 事件、以及 backtrack rebuild。若工具结果显式返回 `previous_value` / `new_value`，`SessionStats.state_changes` 优先记录工具返回的规范化值；`request_backtrack` 只保留 rebuild/transition 语义，不伪造字段 diff
 - **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集，并把 split plan tools 纳入白名单（如 brief 的 `set_trip_brief` / `add_preferences` / `add_constraints`，lock 的交通住宿锁定工具）；每个子阶段向前开放下一阶段写入工具实现"前瞻容错"（brief 可写 `set_candidate_pool`/`set_shortlist`，candidate 可写 `set_skeleton_plans`/`select_skeleton`）；`phase3_step` 由路由推断
@@ -251,7 +251,7 @@ LLM API 异常
 | 住宿 | `search_accommodations` |
 | POI | `get_poi_info`（双源降级）、`check_availability` |
 | 行程 | `assemble_day_plan`、`check_feasibility` |
-| 辅助 | `check_weather`、`generate_summary` |
+| 辅助 | `check_weather`、`search_travel_services`、`generate_summary` |
 
 #### 17 个状态写工具
 
@@ -286,7 +286,7 @@ LLM API 异常
 | `tool_call` / `tool_result` | 工具调用与结果 |
 | `phase_transition` | 阶段/Phase 3 子步骤切换信号（可先于 `state_update` 到达） |
 | `agent_status` | ThinkingBubble 状态（thinking/summarizing/compacting + hint 旁白） |
-| `state_update` | 完整 TravelPlanState |
+| `state_update` | 完整 TravelPlanState（含 `deliverables` 冻结元数据） |
 | `context_compression` | 压缩通知 |
 | `memory_recall` | 本轮命中的记忆 ID 列表 |
 | `error` | LLM 错误（含 retryable / can_continue） |
@@ -318,11 +318,13 @@ plan_snapshots → id, session_id, phase, plan_json, created_at
 archives       → id, session_id, plan_json, summary, created_at
 ```
 
+`TravelPlanState.deliverables` 保存 Phase 7 冻结后的元数据，指向 `travel_plan.md` 与 `checklist.md` 的文件名。
+
 ### 文件系统
 ```
 backend/data/
 ├── sessions.db
-├── sessions/sess_*/          # plan.json + snapshots/ + tool_results/
+├── sessions/sess_*/          # plan.json + snapshots/ + tool_results/ + deliverables/
 └── users/{user_id}/          # memory.json + memory_events.jsonl + trip_episodes.jsonl
 ```
 
@@ -340,6 +342,7 @@ POST   /api/chat/{id}                       发送消息（SSE）
 POST   /api/chat/{id}/cancel                取消生成
 POST   /api/chat/{id}/continue              安全继续
 GET    /api/sessions/{id}/plan              获取方案
+GET    /api/sessions/{session_id}/deliverables/{filename}  下载 frozen markdown 交付物
 GET    /api/messages/{id}                   消息历史
 POST   /api/backtrack/{id}                  回退阶段
 GET    /api/sessions/{id}/trace             Trace 视图
@@ -358,7 +361,7 @@ DELETE /api/memory/{user_id}/{item_id}      标记 obsolete
 
 1. **输入护栏 Guardrail** — 中文注入检测、消息长度限制、搜索结果字段分级校验、工具结果异常检测；预算负值检测扩展到 `update_trip_basics`
 2. **硬约束验证器 Validator** — 时间冲突/预算超支/天数超限；所有 `PLAN_WRITER_TOOL_NAMES` 成功写入后都会走 `validate_incremental` 注入实时约束反馈；涉及交通/住宿锁定的写入还会触发 `validate_lock_budget` 检查预算占比
-3. **软评分 Judge** — pace / geography / coherence / personalization 四维评分，在 `assemble_day_plan`、`generate_summary` 后触发
+3. **软评分 Judge** — pace / geography / coherence / personalization 四维评分，在 `assemble_day_plan`、`generate_summary` 后触发；`generate_summary` 由 Phase 7 以 `travel_plan_markdown` 和 `checklist_markdown` 提交最终交付物
 4. **可行性门控 Feasibility Gate** — Phase 1→3 转换时基于目的地查表做规则式判断
 5. **成本与延迟追踪** — `SessionStats` 记录 token 用量与模型定价；`ToolCallRecord` 承载 `state_changes`、`parallel_group`、`validation_errors`、`judge_scores`、`suggestion`；`MemoryHitRecord` 记录命中记忆；Trace 视图输出 `error_code` 和 `suggestion` 字段用于错误诊断
 
