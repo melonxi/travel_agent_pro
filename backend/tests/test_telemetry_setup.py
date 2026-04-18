@@ -79,3 +79,20 @@ def test_setup_telemetry_sets_service_name():
     if isinstance(provider, SdkTP):
         resource_attrs = dict(provider.resource.attributes)
         assert resource_attrs.get("service.name") == "test-service"
+
+
+# --- 以下测试迁移自 test_telemetry_integration.py（原文件已删除）---
+
+
+def test_create_app_calls_setup_telemetry():
+    """create_app 应调用 setup_telemetry。"""
+    with patch("main.setup_telemetry") as mock_setup:
+        from main import create_app
+
+        app = create_app()
+        mock_setup.assert_called_once()
+        call_args = mock_setup.call_args
+        # 第一个参数是 FastAPI app
+        assert call_args[0][0] is app
+        # 第二个参数是 TelemetryConfig
+        assert isinstance(call_args[0][1], TelemetryConfig)

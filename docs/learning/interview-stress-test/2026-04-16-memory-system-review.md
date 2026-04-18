@@ -2,6 +2,12 @@
 
 本文基于当前代码实现，对项目记忆系统做面试式高压审视。
 
+补充说明（2026-04-18 复核）：
+
+- 本文大部分核心判断仍然成立。
+- 当前系统已经补上了记忆命中的可观测性：`generate_context()` 会返回命中 item id/计数，`backend/main.py` 会记录 `memory_hits`，并在 SSE 中发出 `memory_recall`。
+- 但这属于“看见命中了什么”，不是“扩大了召回的知识来源”。`TripEpisode` 仍未进入主召回闭环，这也是本文的核心批评点之一。
+
 评审原则：
 
 - 先讲项目里现在是怎么做的，不默认读者了解本项目
@@ -30,13 +36,15 @@
 - `append_episode(...)` 负责把 episode 追加到 `trip_episodes.jsonl`
 - `list_episodes(...)` 负责把历史 episode 读出来
 
-但在真正给 LLM 构造记忆上下文时，主链路调用的是 `MemoryManager.generate_context(...)`，实现位于 `backend/memory/manager.py:97-110`。这条链路只做了三类召回：
+但在真正给 LLM 构造记忆上下文时，主链路调用的是 `MemoryManager.generate_context(...)`，实现位于 `backend/memory/manager.py`。这条链路只做了三类召回：
 
 - `retrieve_core_profile(items)`
 - `retrieve_trip_memory(items, plan)`
 - `retrieve_phase_relevant(items, plan, plan.phase)`
 
 这里的输入全部都是 `MemoryItem`，没有把 `TripEpisode` 纳入召回结果，也没有把 episode 格式化后注入到 system prompt。
+
+需要补一句当前新变化：`generate_context(...)` 现在会额外返回命中的 item id 和分组计数，`backend/main.py` 用它们记录 telemetry，并通过 SSE 发出 `memory_recall`。但这没有改变召回源仍然只来自 `MemoryItem` 的事实。
 
 ### b. 当前存在的具体问题
 
@@ -152,7 +160,7 @@
 
 ### a. 项目中相关功能/模块的具体实现
 
-记忆提取主链路在 `backend/main.py:918-1011`。
+记忆提取主链路在 `backend/main.py` 的 `_extract_memory_candidates(...) / _do_extract_memory_candidates(...)`。
 
 大致流程是：
 
@@ -164,9 +172,9 @@
 
 其中最关键的输入筛选逻辑是：
 
-- `backend/main.py:930-938`
 - 只保留 `message.role == Role.USER`
 - 默认只取最近 `max_user_messages` 条，配置在 `backend/config.py`，默认是 8 条
+- 然后再附带当前 `plan_facts` 和已有 `memory_items`
 
 这意味着 assistant 回复、工具调用结果、工具反馈、用户对候选方案的接受或否定方式，都不会直接进入提取 prompt。
 
@@ -520,10 +528,10 @@ PII 相关逻辑主要集中在 `backend/memory/policy.py`。
 - 取 SHA1
 - 截断前 16 位作为 ID
 
-另外，事件日志 `memory_events.jsonl` 目前只有追加写入接口：
+另外，事件日志 `memory_events.jsonl` 当前仍以追加写入为主：
 
-- `backend/memory/store.py:212-219` 负责 `append_event(...)`
-- API 层提供了追加事件接口，但当前主业务链路中没有形成完整读侧分析能力
+- `backend/memory/store.py` 负责 `append_event(...)`
+- API 层提供了追加事件接口，主业务链路也会写入事件，但当前仍没有形成完整读侧分析能力
 
 ### b. 当前存在的具体问题
 
@@ -562,6 +570,7 @@ PII 相关逻辑主要集中在 `backend/memory/policy.py`。
 
 - 方向对：已经具备结构化记忆、候选提取、风险分类、待确认、trip/global scope、episode 归档这些关键构件
 - 主短板清晰：episode 没进主召回闭环、召回缺少语义能力、提取输入过窄、生命周期治理未落地
+- 新增但不改变结论的进展：记忆命中现在已经能被前端和 telemetry 看见，但“看得见命中”不等于“召回机制本身更强”
 - 工程阶段真实：当前更像一套认真做过设计的记忆系统原型，而不是已经完成生产化的记忆基础设施
 
 如果按投入产出比排序，最值得优先补的不是“大重构”，而是三件事：
