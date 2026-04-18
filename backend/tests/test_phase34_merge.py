@@ -195,13 +195,21 @@ class TestToolPhasesAfterMerge:
         assert 5 in poi_tool.phases
 
     def test_universal_tools_no_phase4(self):
-        """xiaohongshu_search and update_trip_basics should not include phase 4."""
-        from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+        """Xiaohongshu tools and update_trip_basics should not include phase 4."""
+        from tools.xiaohongshu_search import (
+            make_xiaohongshu_get_comments_tool,
+            make_xiaohongshu_read_note_tool,
+            make_xiaohongshu_search_notes_tool,
+        )
         from tools.plan_tools.trip_basics import make_update_trip_basics_tool
         from config import XhsConfig
 
-        xhs_tool = make_xiaohongshu_search_tool(XhsConfig())
-        assert 4 not in xhs_tool.phases
+        for xhs_tool in [
+            make_xiaohongshu_search_notes_tool(XhsConfig()),
+            make_xiaohongshu_read_note_tool(XhsConfig()),
+            make_xiaohongshu_get_comments_tool(XhsConfig()),
+        ]:
+            assert 4 not in xhs_tool.phases
 
         plan = TravelPlanState(session_id="s")
         utb_tool = make_update_trip_basics_tool(plan)

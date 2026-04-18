@@ -250,7 +250,7 @@ Important:
                 error_code="NO_RESULTS",
                 suggestion=(
                     "Broaden the theme, add concrete preferences, or use web_search/"
-                    "xiaohongshu_search for fresh inspiration and trend signals."
+                    "xiaohongshu_search_notes for fresh inspiration and trend signals."
                 ),
             )
 

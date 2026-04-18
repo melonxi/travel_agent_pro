@@ -931,11 +931,19 @@ class AgentLoop:
         If the same search query has been used >= 2 times recently within this
         agent run, skip the call and return a helpful message to the LLM.
         """
-        _SEARCH_TOOLS = {"web_search", "xiaohongshu_search", "quick_travel_search"}
+        _SEARCH_TOOLS = {
+            "web_search",
+            "xiaohongshu_search",
+            "xiaohongshu_search_notes",
+            "quick_travel_search",
+        }
         if tool_call.name not in _SEARCH_TOOLS:
             return False
 
-        query = (tool_call.arguments or {}).get("query", "")
+        argument_name = (
+            "keyword" if tool_call.name == "xiaohongshu_search_notes" else "query"
+        )
+        query = (tool_call.arguments or {}).get(argument_name, "")
         if not isinstance(query, str) or not query.strip():
             return False
 

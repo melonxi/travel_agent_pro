@@ -7,194 +7,242 @@ from config import XhsConfig
 from tools.base import ToolError, tool
 from tools.xiaohongshu_cli import XiaohongshuCliClient, extract_xsec_token
 
-_OPERATIONS = [
-    "search_notes",
-    "read_note",
-    "get_comments",
-]
-
-_PARAMETERS = {
+_SEARCH_NOTES_PARAMETERS = {
     "type": "object",
     "properties": {
-        "operation": {
-            "type": "string",
-            "enum": _OPERATIONS,
-            "description": "要执行的小红书操作。只支持 search_notes、read_note、get_comments 三种。省略时默认 search_notes。",
-        },
         "keyword": {
             "type": "string",
-            "description": (
-                "仅在 search_notes 时使用。搜索关键词应尽量具体，"
-                "可用于目的地、景点、餐厅、酒店、交通、购物、玩法、季节、排队、避坑等主题。"
-                "也适合直接搜索推荐型需求，如 '东南亚 海岛 亲子 推荐'、'日本 文化体验 旅行地 推荐'、"
-                "'求推荐旅行目的地'、'五一 去哪玩 求推荐'。"
-                "为降低风控风险，优先使用精确关键词而不是宽泛高频搜索。"
-                "推荐优先使用“目的地/主题 + 约束 + 推荐”这类搜索词。"
-            ),
+            "description": "搜索关键词。应尽量具体，可用于目的地、景点、餐厅、酒店、交通、购物、玩法、季节、排队、避坑等主题。",
         },
+        "sort": {
+            "type": "string",
+            "enum": ["general", "popular", "latest"],
+            "description": "排序方式。做旅行地推荐和候选发现时，优先 general 或 popular；latest 更适合追近期热度或当季内容。",
+        },
+        "note_type": {
+            "type": "string",
+            "enum": ["all", "video", "image"],
+            "description": "笔记类型。默认 all，除非你明确需要只看视频或图文。",
+        },
+        "page": {
+            "type": "integer",
+            "description": "页码。小于 1 时会按 1 处理。旅行推荐场景优先先看第 1 页，只有结果明显不够时再谨慎翻页。",
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "期望返回的笔记数量。工具层自动限制在 1 到 10，并截断返回结果。",
+        },
+    },
+    "required": ["keyword"],
+}
+
+_READ_NOTE_PARAMETERS = {
+    "type": "object",
+    "properties": {
         "note_ref": {
             "type": "string",
-            "description": "read_note 和 get_comments 时必填。可传笔记 URL 或 note_id。",
+            "description": "笔记 URL 或 note_id。优先使用 search 结果里的 url。",
         },
         "xsec_token": {
             "type": "string",
             "description": "可选显式 xsec_token。若 note_ref 是完整 URL，当前实现会优先尝试从 URL 自动提取。",
         },
-        "sort": {
+    },
+    "required": ["note_ref"],
+}
+
+_GET_COMMENTS_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "note_ref": {
             "type": "string",
-            "enum": ["general", "popular", "latest"],
-            "description": "search_notes 的排序方式。做旅行地推荐和候选发现时，优先 general 或 popular；latest 更适合追近期热度或当季内容。",
-        },
-        "note_type": {
-            "type": "string",
-            "enum": ["all", "video", "image"],
-            "description": "search_notes 的笔记类型：all、video、image。默认 all，除非你明确需要只看视频或图文。",
-        },
-        "page": {
-            "type": "integer",
-            "description": "search_notes 的页码。小于 1 时会按 1 处理。旅行推荐场景优先先看第 1 页，只有结果明显不够时再谨慎翻页，以降低风控风险。",
-        },
-        "max_results": {
-            "type": "integer",
-            "description": "仅在 search_notes 时使用。期望返回的笔记数量。当前实现会在工具层自动限制在 1 到 10，并截断返回结果。",
+            "description": "笔记 URL 或 note_id。优先使用 search 结果里的 url。",
         },
         "cursor": {
             "type": "string",
-            "description": "get_comments 的评论分页 cursor。",
+            "description": "评论分页 cursor。",
+        },
+        "xsec_token": {
+            "type": "string",
+            "description": "可选显式 xsec_token。若 note_ref 是完整 URL，当前实现会优先尝试从 URL 自动提取。",
         },
         "fetch_all": {
             "type": "boolean",
-            "description": "get_comments 是否拉取全部评论。应谨慎使用，避免高频大批量评论抓取。",
+            "description": "是否拉取全部评论。应谨慎使用，避免高频大批量评论抓取。",
         },
     },
-    "required": [],
+    "required": ["note_ref"],
 }
 
 
-def make_xiaohongshu_search_tool(
+def _build_xhs_dependencies(
     xhs_config: XhsConfig | None = None,
     xhs_client: XiaohongshuCliClient | Any | None = None,
-):
+) -> tuple[XhsConfig, XiaohongshuCliClient | Any]:
     config = xhs_config or XhsConfig()
     client = xhs_client or XiaohongshuCliClient(
         cli_bin=config.cli_bin,
         timeout=config.cli_timeout,
     )
+    return config, client
+
+
+def _ensure_enabled(config: XhsConfig) -> None:
+    if not config.enabled:
+        raise ToolError(
+            "Xiaohongshu tool is disabled",
+            error_code="SERVICE_UNAVAILABLE",
+            suggestion="Enable xhs in config.yaml before using this tool.",
+        )
+
+
+def make_xiaohongshu_search_notes_tool(
+    xhs_config: XhsConfig | None = None,
+    xhs_client: XiaohongshuCliClient | Any | None = None,
+):
+    config, client = _build_xhs_dependencies(xhs_config, xhs_client)
 
     @tool(
-        name="xiaohongshu_search",
-        description="""小红书内容搜索工具。可搜索笔记、读取笔记正文、获取评论，覆盖旅行推荐、灵感发现、目的地/景点/餐厅/住宿的真实体验、避坑、氛围、玩法口碑等内容。
-提供用户生成内容视角的经验信号；标题不足以支撑判断时应读取正文，评论观点会明显影响判断时再获取评论。
-Supported operations:
-  - search_notes: 关键词搜索笔记列表（适合发现和初筛）
-  - read_note: 读取笔记正文详情（适合在初筛后对候选笔记进行深入阅读，提炼正文信息）
-  - get_comments: 获取评论区内容（适合通过评论区的观点来判断氛围、口碑、避坑等主观维度，或挖掘玩法细节等正文未覆盖的信息）
-        返回归一化的小红书数据结构。""",
+        name="xiaohongshu_search_notes",
+        description="""小红书笔记搜索工具。用于搜索旅行推荐、灵感发现、目的地/景点/餐厅/住宿的真实体验、避坑、氛围、玩法口碑等内容。
+返回笔记列表和可继续读取的 url。标题和热度只适合定位笔记，不足以支撑最终判断；需要正文时继续调用 xiaohongshu_read_note。""",
         phases=[1, 3, 5, 7],
-        parameters=_PARAMETERS,
+        parameters=_SEARCH_NOTES_PARAMETERS,
         human_label="翻小红书找灵感",
     )
-    async def xiaohongshu_search(
-        operation: str = "search_notes",
+    async def xiaohongshu_search_notes(
         keyword: str = "",
-        note_ref: str = "",
-        xsec_token: str = "",
         sort: str = "general",
         note_type: str = "all",
         page: int = 1,
         max_results: int = 5,
-        cursor: str = "",
-        fetch_all: bool = False,
     ) -> dict[str, Any]:
-        if not config.enabled:
+        _ensure_enabled(config)
+        if not keyword.strip():
             raise ToolError(
-                "Xiaohongshu tool is disabled",
-                error_code="SERVICE_UNAVAILABLE",
-                suggestion="Enable xhs in config.yaml before using this tool.",
-            )
-
-        if operation not in _OPERATIONS:
-            raise ToolError(
-                f"Unsupported operation: {operation}",
+                "`keyword` is required",
                 error_code="INVALID_INPUT",
-                suggestion=f"Use one of: {', '.join(_OPERATIONS)}.",
+                suggestion="Pass a Xiaohongshu search keyword.",
             )
+        max_results = max(1, min(10, max_results))
+        data = await client.search_notes(
+            keyword=keyword,
+            sort=sort,
+            note_type=note_type,
+            page=max(1, page),
+        )
+        items = data.get("items", [])[:max_results]
+        return {
+            "operation": "search_notes",
+            "keyword": keyword,
+            "has_more": bool(data.get("has_more", False)),
+            "items": [_normalize_search_item(item) for item in items],
+            "_metadata": {
+                "page": max(1, page),
+                "max_results": max_results,
+                "source": "xiaohongshu_cli",
+                "items": [_extract_search_item_metadata(item) for item in items],
+            },
+        }
 
-        if operation == "search_notes":
-            if not keyword.strip():
-                raise ToolError(
-                    "`keyword` is required for search_notes",
-                    error_code="INVALID_INPUT",
-                    suggestion="Pass a Xiaohongshu search keyword.",
-                )
-            max_results = max(1, min(10, max_results))
-            data = await client.search_notes(
-                keyword=keyword,
-                sort=sort,
-                note_type=note_type,
-                page=max(1, page),
-            )
-            items = data.get("items", [])[:max_results]
-            return {
-                "operation": operation,
-                "keyword": keyword,
-                "has_more": bool(data.get("has_more", False)),
-                "items": [_normalize_search_item(item) for item in items],
-                "_metadata": {
-                    "page": max(1, page),
-                    "max_results": max_results,
-                    "source": "xiaohongshu_cli",
-                    "items": [_extract_search_item_metadata(item) for item in items],
-                },
-            }
+    return xiaohongshu_search_notes
 
+
+def make_xiaohongshu_read_note_tool(
+    xhs_config: XhsConfig | None = None,
+    xhs_client: XiaohongshuCliClient | Any | None = None,
+):
+    config, client = _build_xhs_dependencies(xhs_config, xhs_client)
+
+    @tool(
+        name="xiaohongshu_read_note",
+        description="""小红书笔记正文读取工具。用于读取 search 结果中的具体笔记，提取真实体验、路线安排、实用细节、排队时间、适合人群和避坑信息。
+标题不足以支撑判断时必须读取正文；主观评价仍不充分时再调用 xiaohongshu_get_comments。""",
+        phases=[1, 3, 5, 7],
+        parameters=_READ_NOTE_PARAMETERS,
+        human_label="读小红书笔记",
+    )
+    async def xiaohongshu_read_note(
+        note_ref: str = "",
+        xsec_token: str = "",
+    ) -> dict[str, Any]:
+        _ensure_enabled(config)
         if not note_ref.strip():
             raise ToolError(
-                "`note_ref` is required for this operation",
+                "`note_ref` is required",
                 error_code="INVALID_INPUT",
                 suggestion="Pass a Xiaohongshu note URL or note_id.",
             )
 
-        if operation == "read_note":
-            resolved_token = xsec_token or extract_xsec_token(note_ref)
-            data = await client.read_note(note_ref=note_ref, xsec_token=resolved_token)
-            return {
-                "operation": operation,
-                "note": _normalize_note_detail(data),
-                "_metadata": {
-                    "source": "xiaohongshu_cli",
-                    "note": _extract_note_detail_metadata(data),
-                },
-            }
+        resolved_token = xsec_token or extract_xsec_token(note_ref)
+        data = await client.read_note(note_ref=note_ref, xsec_token=resolved_token)
+        return {
+            "operation": "read_note",
+            "note": _normalize_note_detail(data),
+            "_metadata": {
+                "source": "xiaohongshu_cli",
+                "note": _extract_note_detail_metadata(data),
+            },
+        }
+
+    return xiaohongshu_read_note
+
+
+def make_xiaohongshu_get_comments_tool(
+    xhs_config: XhsConfig | None = None,
+    xhs_client: XiaohongshuCliClient | Any | None = None,
+):
+    config, client = _build_xhs_dependencies(xhs_config, xhs_client)
+
+    @tool(
+        name="xiaohongshu_get_comments",
+        description="""小红书评论区读取工具。用于获取评论区多元观点，判断值不值得去、排队强度、真实口碑、避坑、替代玩法和正文没有覆盖的细节。
+应在已有明确 note_ref 后使用；不要把它当搜索工具。""",
+        phases=[1, 3, 5, 7],
+        parameters=_GET_COMMENTS_PARAMETERS,
+        human_label="看小红书评论",
+    )
+    async def xiaohongshu_get_comments(
+        note_ref: str = "",
+        cursor: str = "",
+        xsec_token: str = "",
+        fetch_all: bool = False,
+    ) -> dict[str, Any]:
+        _ensure_enabled(config)
+        if not note_ref.strip():
+            raise ToolError(
+                "`note_ref` is required",
+                error_code="INVALID_INPUT",
+                suggestion="Pass a Xiaohongshu note URL or note_id.",
+            )
 
         resolved_token = xsec_token or extract_xsec_token(note_ref)
-        if operation == "get_comments":
-            data = await client.get_comments(
-                note_ref=note_ref,
-                cursor=cursor,
-                xsec_token=resolved_token,
-                fetch_all=fetch_all,
-            )
-            return {
-                "operation": operation,
+        data = await client.get_comments(
+            note_ref=note_ref,
+            cursor=cursor,
+            xsec_token=resolved_token,
+            fetch_all=fetch_all,
+        )
+        return {
+            "operation": "get_comments",
+            "comments": [
+                _normalize_comment(comment) for comment in data.get("comments", [])
+            ],
+            "has_more": bool(data.get("has_more", False)),
+            "cursor": data.get("cursor", ""),
+            "_metadata": {
+                "note_ref": note_ref,
+                "total_fetched": data.get("total_fetched"),
+                "pages_fetched": data.get("pages_fetched"),
+                "source": "xiaohongshu_cli",
                 "comments": [
-                    _normalize_comment(comment) for comment in data.get("comments", [])
+                    _extract_comment_metadata(comment)
+                    for comment in data.get("comments", [])
                 ],
-                "has_more": bool(data.get("has_more", False)),
-                "cursor": data.get("cursor", ""),
-                "_metadata": {
-                    "note_ref": note_ref,
-                    "total_fetched": data.get("total_fetched"),
-                    "pages_fetched": data.get("pages_fetched"),
-                    "source": "xiaohongshu_cli",
-                    "comments": [
-                        _extract_comment_metadata(comment)
-                        for comment in data.get("comments", [])
-                    ],
-                },
-            }
+            },
+        }
 
-    return xiaohongshu_search
+    return xiaohongshu_get_comments
 
 
 def _normalize_search_item(item: dict[str, Any]) -> dict[str, Any]:

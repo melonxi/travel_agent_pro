@@ -50,6 +50,11 @@ class ToolEngine:
         ]
 
     def _phase3_tool_names(self, step: str) -> set[str]:
+        xiaohongshu_tools = {
+            "xiaohongshu_search_notes",
+            "xiaohongshu_read_note",
+            "xiaohongshu_get_comments",
+        }
         common = {
             "update_trip_basics",
             "request_backtrack",
@@ -61,7 +66,7 @@ class ToolEngine:
                 "add_preferences",
                 "add_constraints",
                 "web_search",
-                "xiaohongshu_search",
+                *xiaohongshu_tools,
                 # Forward-looking: allow candidate write tools so LLM can
                 # self-rescue if it jumps ahead to candidate work.
                 "set_candidate_pool",
@@ -75,7 +80,7 @@ class ToolEngine:
                 "add_preferences",
                 "add_constraints",
                 "web_search",
-                "xiaohongshu_search",
+                *xiaohongshu_tools,
                 "quick_travel_search",
                 "get_poi_info",
                 # Forward-looking: allow skeleton write tools so LLM can
@@ -92,7 +97,7 @@ class ToolEngine:
                 "add_preferences",
                 "add_constraints",
                 "web_search",
-                "xiaohongshu_search",
+                *xiaohongshu_tools,
                 "quick_travel_search",
                 "get_poi_info",
                 "calculate_route",
@@ -112,7 +117,7 @@ class ToolEngine:
                 "add_preferences",
                 "add_constraints",
                 "web_search",
-                "xiaohongshu_search",
+                *xiaohongshu_tools,
                 "quick_travel_search",
                 "get_poi_info",
                 "calculate_route",
@@ -143,7 +148,9 @@ class ToolEngine:
             "add_preferences",
             "add_constraints",
             "web_search",
-            "xiaohongshu_search",
+            "xiaohongshu_search_notes",
+            "xiaohongshu_read_note",
+            "xiaohongshu_get_comments",
             "quick_travel_search",
             "get_poi_info",
             "calculate_route",

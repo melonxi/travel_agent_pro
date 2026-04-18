@@ -123,7 +123,9 @@ class TestGoldenCaseLoader:
             "quick_travel_search",
             "search_travel_services",
             "web_search",
-            "xiaohongshu_search",
+            "xiaohongshu_search_notes",
+            "xiaohongshu_read_note",
+            "xiaohongshu_get_comments",
         }
         bad_targets = [
             (case.id, assertion.target)

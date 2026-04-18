@@ -27,7 +27,11 @@ from tools.search_flights import make_search_flights_tool
 from tools.search_trains import make_search_trains_tool
 from tools.search_travel_services import make_search_travel_services_tool
 from tools.web_search import make_web_search_tool
-from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+from tools.xiaohongshu_search import (
+    make_xiaohongshu_get_comments_tool,
+    make_xiaohongshu_read_note_tool,
+    make_xiaohongshu_search_notes_tool,
+)
 from tests.helpers.register_plan_tools import register_all_plan_tools
 
 
@@ -90,11 +94,16 @@ def _build_default_tool_engine(plan: TravelPlanState) -> ToolEngine:
     engine.register(make_quick_travel_search_tool(flyai_client))
     engine.register(make_search_travel_services_tool(flyai_client))
     engine.register(make_web_search_tool(api_keys))
+    xhs_config = XhsConfig(enabled=False)
+    xhs_client = _FakeXhsClient()
     engine.register(
-        make_xiaohongshu_search_tool(
-            XhsConfig(enabled=False),
-            xhs_client=_FakeXhsClient(),
-        )
+        make_xiaohongshu_search_notes_tool(xhs_config, xhs_client=xhs_client)
+    )
+    engine.register(
+        make_xiaohongshu_read_note_tool(xhs_config, xhs_client=xhs_client)
+    )
+    engine.register(
+        make_xiaohongshu_get_comments_tool(xhs_config, xhs_client=xhs_client)
     )
     return engine
 
@@ -261,7 +270,9 @@ def test_current_default_registered_tools_all_have_human_label():
         "quick_travel_search",
         "search_travel_services",
         "web_search",
-        "xiaohongshu_search",
+        "xiaohongshu_search_notes",
+        "xiaohongshu_read_note",
+        "xiaohongshu_get_comments",
     }
 
     missing_default_tools = sorted(expected_default_names - set(engine._tools))

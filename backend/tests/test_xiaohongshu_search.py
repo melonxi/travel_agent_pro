@@ -226,8 +226,8 @@ async def test_xhs_cli_client_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_xiaohongshu_search_tool_search_notes():
-    from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+async def test_xiaohongshu_search_notes_tool_searches_without_operation():
+    from tools.xiaohongshu_search import make_xiaohongshu_search_notes_tool
 
     xhs_client = SimpleNamespace(
         search_notes=AsyncMock(
@@ -251,9 +251,8 @@ async def test_xiaohongshu_search_tool_search_notes():
         get_comments=AsyncMock(),
     )
 
-    tool_fn = make_xiaohongshu_search_tool(xhs_client=xhs_client)
+    tool_fn = make_xiaohongshu_search_notes_tool(xhs_client=xhs_client)
     result = await tool_fn(
-        operation="search_notes",
         keyword="上海 旅行",
         sort="popular",
         note_type="image",
@@ -277,8 +276,8 @@ async def test_xiaohongshu_search_tool_search_notes():
 
 
 @pytest.mark.asyncio
-async def test_xiaohongshu_search_tool_accepts_max_results_and_truncates_items():
-    from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+async def test_xiaohongshu_search_notes_tool_accepts_max_results_and_truncates_items():
+    from tools.xiaohongshu_search import make_xiaohongshu_search_notes_tool
 
     xhs_client = SimpleNamespace(
         search_notes=AsyncMock(
@@ -312,9 +311,8 @@ async def test_xiaohongshu_search_tool_accepts_max_results_and_truncates_items()
         get_comments=AsyncMock(),
     )
 
-    tool_fn = make_xiaohongshu_search_tool(xhs_client=xhs_client)
+    tool_fn = make_xiaohongshu_search_notes_tool(xhs_client=xhs_client)
     result = await tool_fn(
-        operation="search_notes",
         keyword="赛里木湖 夏季 体验",
         max_results=1,
     )
@@ -330,46 +328,20 @@ async def test_xiaohongshu_search_tool_accepts_max_results_and_truncates_items()
 
 
 @pytest.mark.asyncio
-async def test_xiaohongshu_search_tool_defaults_missing_operation_to_search_notes():
-    from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+async def test_xiaohongshu_search_notes_tool_has_no_operation_parameter():
+    from tools.xiaohongshu_search import make_xiaohongshu_search_notes_tool
 
-    xhs_client = SimpleNamespace(
-        search_notes=AsyncMock(
-            return_value={
-                "items": [
-                    {
-                        "id": "note_1",
-                        "note_card": {
-                            "title": "成都两天一夜",
-                            "type": "image",
-                            "user": {"nickname": "Alice"},
-                            "interact_info": {"liked_count": "12"},
-                        },
-                    }
-                ],
-                "has_more": False,
-            }
-        ),
-        read_note=AsyncMock(),
-        get_comments=AsyncMock(),
-    )
-
-    tool_fn = make_xiaohongshu_search_tool(xhs_client=xhs_client)
-    result = await tool_fn(keyword="成都 两天一夜")
-
-    assert result["operation"] == "search_notes"
-    assert result["items"][0]["title"] == "成都两天一夜"
-    xhs_client.search_notes.assert_awaited_once_with(
-        keyword="成都 两天一夜",
-        sort="general",
-        note_type="all",
-        page=1,
-    )
+    tool_def = make_xiaohongshu_search_notes_tool(xhs_client=SimpleNamespace())
+    assert "operation" not in tool_def.parameters["properties"]
+    assert tool_def.parameters["required"] == ["keyword"]
 
 
 @pytest.mark.asyncio
-async def test_xiaohongshu_search_tool_read_and_comments():
-    from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+async def test_xiaohongshu_read_note_and_get_comments_tools():
+    from tools.xiaohongshu_search import (
+        make_xiaohongshu_get_comments_tool,
+        make_xiaohongshu_read_note_tool,
+    )
 
     xhs_client = SimpleNamespace(
         search_notes=AsyncMock(),
@@ -409,15 +381,15 @@ async def test_xiaohongshu_search_tool_read_and_comments():
         ),
     )
 
-    tool_fn = make_xiaohongshu_search_tool(xhs_client=xhs_client)
+    read_tool = make_xiaohongshu_read_note_tool(xhs_client=xhs_client)
+    comments_tool = make_xiaohongshu_get_comments_tool(xhs_client=xhs_client)
 
-    read_result = await tool_fn(operation="read_note", note_ref="note_1")
+    read_result = await read_tool(note_ref="note_1")
     assert read_result["note"]["title"] == "上海旅行攻略"
     assert read_result["note"]["url"].endswith("/note_1")
     assert read_result["_metadata"]["note"]["author"] == "Alice"
 
-    comments_result = await tool_fn(
-        operation="get_comments",
+    comments_result = await comments_tool(
         note_ref="https://www.xiaohongshu.com/explore/note_1?xsec_token=abc",
         fetch_all=True,
     )
@@ -427,8 +399,11 @@ async def test_xiaohongshu_search_tool_read_and_comments():
 
 
 @pytest.mark.asyncio
-async def test_xiaohongshu_search_tool_requires_operation_specific_inputs():
-    from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+async def test_xiaohongshu_split_tools_require_specific_inputs():
+    from tools.xiaohongshu_search import (
+        make_xiaohongshu_read_note_tool,
+        make_xiaohongshu_search_notes_tool,
+    )
 
     xhs_client = SimpleNamespace(
         search_notes=AsyncMock(),
@@ -436,17 +411,18 @@ async def test_xiaohongshu_search_tool_requires_operation_specific_inputs():
         get_comments=AsyncMock(),
     )
 
-    tool_fn = make_xiaohongshu_search_tool(xhs_client=xhs_client)
+    search_tool = make_xiaohongshu_search_notes_tool(xhs_client=xhs_client)
+    read_tool = make_xiaohongshu_read_note_tool(xhs_client=xhs_client)
 
     with pytest.raises(ToolError, match="keyword"):
-        await tool_fn(operation="search_notes")
+        await search_tool()
 
     with pytest.raises(ToolError, match="note_ref"):
-        await tool_fn(operation="read_note")
+        await read_tool()
 
 
 @pytest.mark.asyncio
-async def test_xiaohongshu_search_tool_registration(monkeypatch):
+async def test_xiaohongshu_split_tools_registration(monkeypatch):
     from main import create_app
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -475,19 +451,30 @@ async def test_xiaohongshu_search_tool_registration(monkeypatch):
 
     session_id = resp.json()["session_id"]
     agent = sessions[session_id]["agent"]
-    tool_def = agent.tool_engine.get_tool("xiaohongshu_search")
-    assert tool_def is not None
-    assert tool_def.name == "xiaohongshu_search"
-    assert "用户生成内容视角的经验信号" in tool_def.description
-    assert "标题不足以支撑判断" in tool_def.description
-    assert "评论观点会明显影响判断时" in tool_def.description
-    assert "phase 1" not in tool_def.description
+    assert agent.tool_engine.get_tool("xiaohongshu_search") is None
+
+    search_tool = agent.tool_engine.get_tool("xiaohongshu_search_notes")
+    read_tool = agent.tool_engine.get_tool("xiaohongshu_read_note")
+    comments_tool = agent.tool_engine.get_tool("xiaohongshu_get_comments")
+
+    assert search_tool is not None
+    assert read_tool is not None
+    assert comments_tool is not None
+    assert search_tool.parameters["required"] == ["keyword"]
+    assert read_tool.parameters["required"] == ["note_ref"]
+    assert comments_tool.parameters["required"] == ["note_ref"]
+    assert "operation" not in search_tool.parameters["properties"]
+    assert "operation" not in read_tool.parameters["properties"]
+    assert "operation" not in comments_tool.parameters["properties"]
+    assert "标题不足以支撑判断" in read_tool.description
+    assert "评论区" in comments_tool.description
+    assert "phase 1" not in search_tool.description
 
 
 @pytest.mark.asyncio
 async def test_tool_engine_extracts_xiaohongshu_metadata():
     from tools.engine import ToolEngine
-    from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+    from tools.xiaohongshu_search import make_xiaohongshu_search_notes_tool
 
     xhs_client = SimpleNamespace(
         search_notes=AsyncMock(
@@ -512,12 +499,12 @@ async def test_tool_engine_extracts_xiaohongshu_metadata():
     )
 
     engine = ToolEngine()
-    engine.register(make_xiaohongshu_search_tool(xhs_client=xhs_client))
+    engine.register(make_xiaohongshu_search_notes_tool(xhs_client=xhs_client))
     result = await engine.execute(
         ToolCall(
             id="tc_1",
-            name="xiaohongshu_search",
-            arguments={"operation": "search_notes", "keyword": "上海 旅行"},
+            name="xiaohongshu_search_notes",
+            arguments={"keyword": "上海 旅行"},
         )
     )
 
@@ -710,9 +697,9 @@ async def test_read_note_extracts_xsec_token_from_url(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_search_tool_read_note_extracts_token_from_url():
-    """xiaohongshu_search read_note should extract xsec_token from URL before calling client."""
-    from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+async def test_read_note_tool_extracts_token_from_url():
+    """xiaohongshu_read_note should extract xsec_token from URL before calling client."""
+    from tools.xiaohongshu_search import make_xiaohongshu_read_note_tool
 
     xhs_client = SimpleNamespace(
         search_notes=AsyncMock(),
@@ -731,9 +718,9 @@ async def test_search_tool_read_note_extracts_token_from_url():
         get_comments=AsyncMock(),
     )
 
-    tool_fn = make_xiaohongshu_search_tool(xhs_client=xhs_client)
+    tool_fn = make_xiaohongshu_read_note_tool(xhs_client=xhs_client)
     url = "https://www.xiaohongshu.com/explore/note_1?xsec_token=tok_extracted"
-    await tool_fn(operation="read_note", note_ref=url)
+    await tool_fn(note_ref=url)
 
     xhs_client.read_note.assert_awaited_once_with(
         note_ref=url, xsec_token="tok_extracted"

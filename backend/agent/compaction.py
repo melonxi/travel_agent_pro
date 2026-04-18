@@ -180,8 +180,17 @@ def compact_tool_result_for_prompt(
 
     if tool_name == "web_search":
         compacted_data = _compact_web_search_data(result.data, mode=mode)
-    elif tool_name == "xiaohongshu_search":
-        compacted_data = _compact_xiaohongshu_data(result.data, mode=mode)
+    elif tool_name in {
+        "xiaohongshu_search",
+        "xiaohongshu_search_notes",
+        "xiaohongshu_read_note",
+        "xiaohongshu_get_comments",
+    }:
+        compacted_data = _compact_xiaohongshu_data(
+            result.data,
+            mode=mode,
+            tool_name=tool_name,
+        )
     else:
         return result
 
@@ -232,9 +241,20 @@ def _compact_web_search_data(data: dict[str, Any], *, mode: str) -> dict[str, An
     return compact
 
 
-def _compact_xiaohongshu_data(data: dict[str, Any], *, mode: str) -> dict[str, Any]:
+def _compact_xiaohongshu_data(
+    data: dict[str, Any],
+    *,
+    mode: str,
+    tool_name: str | None = None,
+) -> dict[str, Any]:
     compact = dict(data)
     operation = data.get("operation")
+    if not operation:
+        operation = {
+            "xiaohongshu_search_notes": "search_notes",
+            "xiaohongshu_read_note": "read_note",
+            "xiaohongshu_get_comments": "get_comments",
+        }.get(tool_name or "")
 
     if operation == "search_notes":
         item_limit = 12 if mode == "moderate" else 8

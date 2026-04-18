@@ -34,7 +34,7 @@ def test_build_system_message(ctx_manager):
         plan,
         phase_prompt="你是灵感顾问",
         user_summary="",
-        available_tools=["update_trip_basics", "xiaohongshu_search"],
+        available_tools=["update_trip_basics", "xiaohongshu_search_notes"],
     )
     assert msg.role == Role.SYSTEM
     assert "旅行规划 Agent" in msg.content  # from SOUL
@@ -45,7 +45,7 @@ def test_build_system_message(ctx_manager):
     assert "必须先调用对应的状态写入工具" in msg.content
     assert "不要重复写入相同值" in msg.content
     assert 'request_backtrack(to_phase=..., reason="...")' in msg.content
-    assert "当前可用工具：update_trip_basics, xiaohongshu_search" in msg.content
+    assert "当前可用工具：update_trip_basics, xiaohongshu_search_notes" in msg.content
 
 
 def test_build_system_message_marks_memory_as_untrusted_data(ctx_manager):

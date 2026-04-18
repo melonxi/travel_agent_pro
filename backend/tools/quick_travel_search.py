@@ -42,7 +42,7 @@ Important:
             raise ToolError(
                 "FlyAI service unavailable",
                 error_code="SERVICE_UNAVAILABLE",
-                suggestion="Use web_search or xiaohongshu_search for destination research instead.",
+                suggestion="Use web_search or xiaohongshu_search_notes for destination research instead.",
             )
 
         try:

@@ -146,8 +146,8 @@ def test_compact_messages_for_prompt_trims_xiaohongshu_search_notes_handles():
             tool_calls=[
                 ToolCall(
                     id="tc2",
-                    name="xiaohongshu_search",
-                    arguments={"operation": "search_notes", "keyword": "京都 旅行"},
+                    name="xiaohongshu_search_notes",
+                    arguments={"keyword": "京都 旅行"},
                 )
             ],
         ),
@@ -185,8 +185,8 @@ def test_compact_messages_for_prompt_trims_xiaohongshu_note_and_comments():
             tool_calls=[
                 ToolCall(
                     id="tc3",
-                    name="xiaohongshu_search",
-                    arguments={"operation": "read_note", "note_ref": "note_1"},
+                    name="xiaohongshu_read_note",
+                    arguments={"note_ref": "note_1"},
                 )
             ],
         ),
@@ -212,8 +212,8 @@ def test_compact_messages_for_prompt_trims_xiaohongshu_note_and_comments():
             tool_calls=[
                 ToolCall(
                     id="tc4",
-                    name="xiaohongshu_search",
-                    arguments={"operation": "get_comments", "note_ref": "note_1"},
+                    name="xiaohongshu_get_comments",
+                    arguments={"note_ref": "note_1"},
                 )
             ],
         ),
@@ -253,8 +253,8 @@ def test_compact_messages_for_prompt_does_not_overcompress_medium_xhs_note_when_
             tool_calls=[
                 ToolCall(
                     id="tc5",
-                    name="xiaohongshu_search",
-                    arguments={"operation": "read_note", "note_ref": "note_1"},
+                    name="xiaohongshu_read_note",
+                    arguments={"note_ref": "note_1"},
                 )
             ],
         ),
