@@ -151,6 +151,10 @@ def test_plan_clear_downstream_from_phase_3():
         selected_skeleton_id="balanced",
         accommodation=Accommodation(area="祇园", hotel="Hotel Gion"),
         daily_plans=[DayPlan(day=1, date="2026-04-10", activities=[])],
+        deliverables={
+            "travel_plan_md": "travel_plan.md",
+            "checklist_md": "checklist.md",
+        },
         constraints=[Constraint(type="hard", description="预算 1 万")],
     )
     plan.clear_downstream(from_phase=3)
@@ -161,6 +165,7 @@ def test_plan_clear_downstream_from_phase_3():
     assert plan.selected_skeleton_id is None
     assert plan.accommodation is None
     assert plan.daily_plans == []
+    assert plan.deliverables is None
     assert plan.destination == "Kyoto"
     assert len(plan.constraints) == 1
 
@@ -195,5 +200,23 @@ def test_clear_downstream_from_phase_5_clears_deliverables():
     )
 
     plan.clear_downstream(from_phase=5)
+    assert plan.daily_plans == []
+    assert plan.deliverables is None
+
+
+def test_clear_downstream_from_phase_1_clears_deliverables():
+    plan = TravelPlanState(
+        session_id="sess_001",
+        phase=7,
+        destination="Kyoto",
+        daily_plans=[DayPlan(day=1, date="2026-04-10", activities=[])],
+        deliverables={
+            "travel_plan_md": "travel_plan.md",
+            "checklist_md": "checklist.md",
+        },
+    )
+
+    plan.clear_downstream(from_phase=1)
+    assert plan.destination is None
     assert plan.daily_plans == []
     assert plan.deliverables is None
