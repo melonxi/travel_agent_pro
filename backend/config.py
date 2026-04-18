@@ -110,6 +110,15 @@ class GuardrailsConfig:
 
 
 @dataclass(frozen=True)
+class Phase5ParallelConfig:
+    enabled: bool = True
+    max_workers: int = 5
+    worker_max_iterations: int = 5
+    worker_timeout_seconds: int = 60
+    fallback_to_serial: bool = True
+
+
+@dataclass(frozen=True)
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     llm_overrides: dict[str, LLMConfig] = field(default_factory=dict)
@@ -127,6 +136,7 @@ class AppConfig:
     )
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     guardrails: GuardrailsConfig = field(default_factory=GuardrailsConfig)
+    phase5_parallel: Phase5ParallelConfig = field(default_factory=Phase5ParallelConfig)
 
 
 def _resolve_env(value: object) -> str:
@@ -283,6 +293,17 @@ def _build_guardrails_config(raw: dict) -> GuardrailsConfig:
     )
 
 
+def _build_phase5_parallel_config(raw: dict) -> Phase5ParallelConfig:
+    p5 = raw.get("phase5", {}).get("parallel", {})
+    return Phase5ParallelConfig(
+        enabled=_as_bool(p5.get("enabled"), True),
+        max_workers=int(p5.get("max_workers", 5)),
+        worker_max_iterations=int(p5.get("worker_max_iterations", 5)),
+        worker_timeout_seconds=int(p5.get("worker_timeout_seconds", 60)),
+        fallback_to_serial=_as_bool(p5.get("fallback_to_serial"), True),
+    )
+
+
 def load_config(path: str | Path = "config.yaml") -> AppConfig:
     path = Path(path)
     if not path.is_absolute() and not path.exists():
@@ -300,6 +321,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             memory_extraction=_build_memory_extraction_config({}),
             memory=_build_memory_config({}, _build_memory_extraction_config({})),
             guardrails=_build_guardrails_config({}),
+            phase5_parallel=_build_phase5_parallel_config({}),
         )
 
     with open(path) as f:
@@ -354,4 +376,5 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         memory_extraction=memory_extraction,
         memory=memory,
         guardrails=guardrails,
+        phase5_parallel=_build_phase5_parallel_config(raw),
     )
