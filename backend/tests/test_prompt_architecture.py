@@ -314,6 +314,15 @@ class TestPhase7SkillCard:
     def test_phase7_mentions_generate_summary(self):
         assert "generate_summary" in PHASE7_PROMPT
 
+    def test_phase7_mentions_travel_plan_markdown(self):
+        assert "travel_plan_markdown" in PHASE7_PROMPT
+
+    def test_phase7_mentions_checklist_markdown(self):
+        assert "checklist_markdown" in PHASE7_PROMPT
+
+    def test_phase7_mentions_frozen_deliverables(self):
+        assert "冻结" in PHASE7_PROMPT or "先回退" in PHASE7_PROMPT
+
     def test_phase7_mentions_search_travel_services(self):
         assert "search_travel_services" in PHASE7_PROMPT
 

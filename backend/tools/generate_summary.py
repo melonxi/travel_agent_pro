@@ -1,105 +1,95 @@
-# backend/tools/generate_summary.py
 from __future__ import annotations
 
-from tools.base import tool
+import re
+
+from state.models import TravelPlanState
+from tools.base import ToolError, tool
 
 _PARAMETERS = {
     "type": "object",
     "properties": {
         "plan_data": {
             "type": "object",
-            "description": "完整的旅行计划数据，包含天数、目的地、预算等信息",
+            "description": "完整的旅行计划数据，至少包含目的地等基础信息。",
+        },
+        "travel_plan_markdown": {
+            "type": "string",
+            "description": "正式交付的 travel_plan.md 内容，必须包含 H1 和逐日小节。",
+        },
+        "checklist_markdown": {
+            "type": "string",
+            "description": "正式交付的 checklist.md 内容，必须包含 H1 和清单项。",
         },
     },
-    "required": ["plan_data"],
+    "required": ["plan_data", "travel_plan_markdown", "checklist_markdown"],
 }
 
 
-def make_generate_summary_tool():
+def _has_h1(text: str) -> bool:
+    return bool(re.search(r"(?m)^#\s+\S+", text))
+
+
+def _has_day_section(text: str) -> bool:
+    return "## 第" in text or "### 第" in text
+
+
+def _has_list_items(text: str) -> bool:
+    return bool(re.search(r"(?m)^- (?:\[[ xX]\] )?.+", text))
+
+
+def _normalize_markdown(value: str) -> str:
+    return value.strip() + "\n"
+
+
+def make_generate_summary_tool(plan: TravelPlanState):
     @tool(
         name="generate_summary",
-        description="""生成旅行计划摘要。
-Use when: 用户在阶段 7，需要生成最终旅行计划总结。
-Don't use when: 计划尚未完成。
-        返回格式化的行程摘要，含天数、预算等关键信息。""",
+        description="""提交正式交付物。
+Use when: 用户在阶段 7，需要冻结最终 travel_plan.md 与 checklist.md。
+Don't use when: 逐日行程未完成，或需要回退前序阶段。
+        返回规范化后的双 markdown 交付物内容。""",
         phases=[7],
         parameters=_PARAMETERS,
         side_effect="write",
-        human_label="生成方案摘要",
+        human_label="提交正式交付物",
     )
-    async def generate_trip_summary(plan_data: dict) -> dict:
-        if not isinstance(plan_data, dict):
-            plan_data = {}
-        destination = plan_data.get("destination", "未知目的地")
-
-        # Tolerate LLM passing `days` as int (intended as total_days) or a
-        # list of dicts, and accept `daily_plans` as an alias.
-        raw_days = plan_data.get("days")
-        if raw_days is None:
-            raw_days = plan_data.get("daily_plans")
-        if isinstance(raw_days, list):
-            days = raw_days
-        else:
-            days = []
-        if days:
-            total_days = len(days)
-        else:
-            total_days_raw = plan_data.get("total_days")
-            if isinstance(total_days_raw, int):
-                total_days = total_days_raw
-            elif isinstance(raw_days, int):
-                total_days = raw_days
-            else:
-                try:
-                    total_days = int(total_days_raw or 0)
-                except (TypeError, ValueError):
-                    total_days = 0
-
-        # Calculate total budget. Tolerate numeric budget shorthand.
-        budget_raw = plan_data.get("budget", {})
-        if isinstance(budget_raw, dict):
-            budget = budget_raw
-        else:
-            budget = {}
-        flight_cost = budget.get("flights", 0) or 0
-        hotel_cost = budget.get("hotels", 0) or 0
-        activities_cost = budget.get("activities", 0) or 0
-        food_cost = budget.get("food", 0) or 0
-        total_budget = flight_cost + hotel_cost + activities_cost + food_cost
-        if not total_budget and isinstance(budget_raw, (int, float)):
-            total_budget = budget_raw
-        elif not total_budget and isinstance(budget_raw, dict):
-            total_budget = budget_raw.get("total", 0) or 0
-
-        # Build day summaries
-        day_summaries = []
-        for i, day in enumerate(days, 1):
-            if not isinstance(day, dict):
-                continue
-            activities = day.get("activities", []) or []
-            if not isinstance(activities, list):
-                activities = []
-            activity_names = [
-                (a.get("name", "未知活动") if isinstance(a, dict) else str(a))
-                for a in activities
-            ]
-            day_summaries.append(
-                f"第{i}天: {', '.join(activity_names) if activity_names else '自由活动'}"
+    async def generate_trip_summary(
+        plan_data: dict,
+        travel_plan_markdown: str,
+        checklist_markdown: str,
+    ) -> dict:
+        if plan.deliverables:
+            raise ToolError(
+                "交付物已冻结；如需重生成，请先回退相关阶段后再提交。",
+                error_code="DELIVERABLES_FROZEN",
             )
 
-        summary_lines = [
-            f"🗺️ 目的地: {destination}",
-            f"📅 行程天数: {total_days}天",
-            f"💰 预计总预算: ¥{total_budget}",
-        ]
-        if day_summaries:
-            summary_lines.append("")
-            summary_lines.extend(day_summaries)
+        if not isinstance(plan_data, dict):
+            plan_data = {}
+
+        travel_plan_markdown = _normalize_markdown(travel_plan_markdown)
+        checklist_markdown = _normalize_markdown(checklist_markdown)
+
+        if not _has_h1(travel_plan_markdown) or not _has_day_section(
+            travel_plan_markdown
+        ):
+            raise ToolError(
+                "travel_plan_markdown 必须包含 H1 标题和逐日章节（如“## 第 1 天”）。",
+                error_code="INVALID_ARGUMENTS",
+            )
+
+        if not _has_h1(checklist_markdown) or not _has_list_items(checklist_markdown):
+            raise ToolError(
+                "checklist_markdown 必须包含 H1 标题和至少一个清单项。",
+                error_code="INVALID_ARGUMENTS",
+            )
+
+        destination = str(plan_data.get("destination") or "未知目的地")
 
         return {
-            "summary": "\n".join(summary_lines),
-            "total_days": total_days,
-            "total_budget": total_budget,
+            "summary": f"已生成并冻结 {destination} 的 travel_plan.md 与 checklist.md",
+            "travel_plan_markdown": travel_plan_markdown,
+            "checklist_markdown": checklist_markdown,
         }
 
     return generate_trip_summary
