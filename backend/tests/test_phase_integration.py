@@ -714,3 +714,4 @@ async def test_phase7_summary_generation(app):
     assert plan_data["accommodation"]["hotel"] == "祇園白川旅館"
     assert plan_data["deliverables"]["travel_plan_md"] == "travel_plan.md"
     assert plan_data["deliverables"]["checklist_md"] == "checklist.md"
+    assert plan_data["deliverables"]["generated_at"]
