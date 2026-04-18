@@ -460,6 +460,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 
 - **后端单元测试**：覆盖 Agent 循环（含白名单前瞻容错、跨阶段状态修复、重复搜索拦截）、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 通道、RunRecord/IterationProgress；plan tools 回归集中位于 `backend/tests/test_plan_tools/`（含 `test_phase3_tools.py`、`test_trip_basics.py` 与 `test_daily_plans.py`），`infer_phase3_step_from_state` 对污染的 `skeleton_plans` 具备 reader-side 过滤防御
 - **测试基线语义**：未知 Anthropic 异常遵循共享 `classify_opaque_api_error` 逻辑，默认归类为 `LLM_TRANSIENT_ERROR`；`validate_lock_budget` 的占比提示基于 `DateRange.total_days` 的 inclusive 天数语义；并行 `add_constraints` 用 `items` 作为增量状态写入参数，约束提示通过 `_pending_system_notes` 在下一轮 LLM 调用前 flush
+- **Memory 集成测试策略**：`backend/tests/test_memory_integration.py` 以公开 chat 流程验证 Phase 7 episode 归档幂等与 each-turn memory extraction 排队行为，不再依赖 `create_app()` 路由闭包里内部 helper 的捕获细节
 - **评估管线**：golden cases（YAML）+ 断言评估 + 离线 runner；断言类型包含 `phase_reached`/`state_field_set`/`tool_called`/`tool_not_called`/`contains_text`/`not_contains_text`/`budget_within`（其中 `not_contains_text` 用于回归"机器感 checklist"类文案违规）；`scripts/eval-stability.py` 生成 pass@k 稳定性报告（JSON + Markdown）；`scripts/failure-analysis/` 对 live backend 执行失败场景并产出分析报告
 - **E2E 测试**：Playwright 三套专项配置——主流程（含 deterministic mock 的阶段切换）、重试体验（继续/重发/停止/不可恢复错误）、等待体验（ThinkingBubble 与工具耗时提示）；demo spec 基于 `demo-scripted-session.json` 稳定回放 Phase 1 → Phase 3 → Phase 5 → backtrack；Prompt 行为回归集中于 `e2e-phase1-no-offtopic.spec.ts`（验证 Phase 1 不主动追问非目的地字段）
 - **运行**：`cd backend && pytest` / `npx playwright test`
