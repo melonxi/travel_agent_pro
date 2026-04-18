@@ -15,6 +15,7 @@ from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from telemetry.attributes import AGENT_PHASE, AGENT_ITERATION
 from tools.engine import ToolEngine
+from config import Phase5ParallelConfig
 from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
 
 
@@ -38,6 +39,7 @@ class AgentLoop:
         guardrail: Any | None = None,
         parallel_tool_execution: bool = True,
         cancel_event: asyncio.Event | None = None,
+        phase5_parallel_config: Phase5ParallelConfig | None = None,
     ):
         self.llm = llm
         self.tool_engine = tool_engine
@@ -60,6 +62,7 @@ class AgentLoop:
         self._parallel_group_counter: int = 0
         self._prev_phase3_step: str | None = None
         self.cancel_event = cancel_event
+        self.phase5_parallel_config = phase5_parallel_config
         self._progress: IterationProgress = IterationProgress.NO_OUTPUT
         self._recent_search_queries: list[str] = []
 
@@ -80,6 +83,33 @@ class AgentLoop:
                 failure_phase="cancelled",
             )
 
+    @staticmethod
+    def should_use_parallel_phase5(
+        plan: Any | None,
+        config: Phase5ParallelConfig | None,
+    ) -> bool:
+        """Determine if Phase 5 should use parallel orchestrator mode.
+
+        Parallel mode is used only for initial full generation:
+        - Phase must be 5
+        - Parallel config must be enabled
+        - daily_plans must be empty (not a modification request)
+        - selected_skeleton_id must exist
+        """
+        if plan is None or config is None:
+            return False
+        if not config.enabled:
+            return False
+        if plan.phase != 5:
+            return False
+        if plan.daily_plans:  # already has plans → user is modifying
+            return False
+        if not plan.selected_skeleton_id:
+            return False
+        if not plan.skeleton_plans:
+            return False
+        return True
+
     async def run(
         self,
         messages: list[Message],
@@ -89,6 +119,21 @@ class AgentLoop:
         tracer = trace.get_tracer("travel-agent-pro")
         with tracer.start_as_current_span("agent_loop.run") as span:
             span.set_attribute(AGENT_PHASE, phase)
+
+            # Phase 5 parallel mode: dispatch orchestrator instead of serial loop
+            if self.should_use_parallel_phase5(self.plan, self.phase5_parallel_config):
+                from agent.orchestrator import Phase5Orchestrator
+
+                orchestrator = Phase5Orchestrator(
+                    plan=self.plan,
+                    llm=self.llm,
+                    tool_engine=self.tool_engine,
+                    config=self.phase5_parallel_config,
+                )
+                async for chunk in orchestrator.run():
+                    yield chunk
+                return
+
             current_phase = self.plan.phase if self.plan is not None else phase
             tools = tools_override or self.tool_engine.get_tools_for_phase(
                 current_phase,
