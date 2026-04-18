@@ -294,6 +294,7 @@ _PHASE_DOWNSTREAM: dict[int, list[str]] = {
         "risks",
         "alternatives",
         "daily_plans",
+        "deliverables",
     ],
     3: [
         "dates",
@@ -310,8 +311,9 @@ _PHASE_DOWNSTREAM: dict[int, list[str]] = {
         "risks",
         "alternatives",
         "daily_plans",
+        "deliverables",
     ],
-    5: ["daily_plans"],
+    5: ["daily_plans", "deliverables"],
 }
 
 _FIELD_DEFAULTS: dict[str, Any] = {
@@ -330,6 +332,7 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "risks": [],
     "alternatives": [],
     "daily_plans": [],
+    "deliverables": None,
 }
 
 
@@ -393,6 +396,7 @@ class TravelPlanState:
     risks: list[dict[str, Any]] = field(default_factory=list)
     alternatives: list[dict[str, Any]] = field(default_factory=list)
     daily_plans: list[DayPlan] = field(default_factory=list)
+    deliverables: dict[str, str] | None = None
     constraints: list[Constraint] = field(default_factory=list)
     preferences: list[Preference] = field(default_factory=list)
     backtrack_history: list[BacktrackEvent] = field(default_factory=list)
@@ -431,6 +435,7 @@ class TravelPlanState:
             "risks": self.risks,
             "alternatives": self.alternatives,
             "daily_plans": [dp.to_dict() for dp in self.daily_plans],
+            "deliverables": self.deliverables,
             "constraints": [c.to_dict() for c in self.constraints],
             "preferences": [p.to_dict() for p in self.preferences],
             "backtrack_history": [b.to_dict() for b in self.backtrack_history],
@@ -489,6 +494,7 @@ class TravelPlanState:
             risks=d.get("risks", []),
             alternatives=d.get("alternatives", []),
             daily_plans=[DayPlan.from_dict(dp) for dp in d.get("daily_plans", [])],
+            deliverables=d.get("deliverables"),
             constraints=[Constraint.from_dict(c) for c in d.get("constraints", [])],
             preferences=[Preference.from_dict(p) for p in d.get("preferences", [])],
             backtrack_history=[
