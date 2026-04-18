@@ -32,6 +32,18 @@ def _get_sessions(app) -> dict:
     raise RuntimeError("Cannot locate sessions dict")
 
 
+def _get_state_manager(app):
+    for route in app.routes:
+        endpoint = getattr(route, "endpoint", None)
+        if endpoint is None or not hasattr(endpoint, "__closure__"):
+            continue
+        free_vars = getattr(endpoint.__code__, "co_freevars", ())
+        for name, cell in zip(free_vars, endpoint.__closure__ or ()):
+            if name == "state_mgr":
+                return cell.cell_contents
+    raise RuntimeError("Cannot locate state_mgr")
+
+
 @pytest.mark.asyncio
 async def test_health(app):
     async with AsyncClient(
@@ -463,6 +475,98 @@ async def test_chat_stream_emits_incremental_state_update_after_successful_plan_
     assert resp.status_code == 200
     assert resp.text.count('"type": "state_update"') >= 2
     assert '"destination": "东京"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_download_deliverable_success(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/api/sessions")
+        session_id = resp.json()["session_id"]
+
+    sessions = _get_sessions(app)
+    state_mgr = _get_state_manager(app)
+    plan = sessions[session_id]["plan"]
+    plan.deliverables = {
+        "travel_plan_md": "travel_plan.md",
+        "checklist_md": "checklist.md",
+        "generated_at": "2026-04-18T22:30:00+08:00",
+    }
+    await state_mgr.save_deliverable(session_id, "travel_plan.md", "# 东京计划\n")
+    await state_mgr.save(plan)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/api/sessions/{session_id}/deliverables/travel_plan.md")
+
+    assert resp.status_code == 200
+    assert resp.text == "# 东京计划\n"
+    assert "attachment" in resp.headers["content-disposition"]
+
+
+@pytest.mark.asyncio
+async def test_download_deliverable_rejects_unknown_filename(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/api/sessions")
+        session_id = resp.json()["session_id"]
+        bad = await client.get(f"/api/sessions/{session_id}/deliverables/random.txt")
+
+    assert bad.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_download_deliverable_returns_404_for_missing_whitelisted_file(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/api/sessions")
+        session_id = resp.json()["session_id"]
+        missing = await client.get(
+            f"/api/sessions/{session_id}/deliverables/travel_plan.md"
+        )
+
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_backtrack_endpoint_clears_deliverables_and_files(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/api/sessions")
+        session_id = resp.json()["session_id"]
+
+    sessions = _get_sessions(app)
+    state_mgr = _get_state_manager(app)
+    plan = sessions[session_id]["plan"]
+    plan.phase = 7
+    plan.deliverables = {
+        "travel_plan_md": "travel_plan.md",
+        "checklist_md": "checklist.md",
+        "generated_at": "2026-04-18T22:30:00+08:00",
+    }
+    await state_mgr.save_deliverable(session_id, "travel_plan.md", "# plan\n")
+    await state_mgr.save_deliverable(session_id, "checklist.md", "# list\n")
+    await state_mgr.save(plan)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        backtrack = await client.post(
+            f"/api/backtrack/{session_id}",
+            json={"to_phase": 5, "reason": "重新生成交付物"},
+        )
+        missing = await client.get(
+            f"/api/sessions/{session_id}/deliverables/travel_plan.md"
+        )
+
+    assert backtrack.status_code == 200
+    assert backtrack.json()["plan"]["deliverables"] is None
+    assert missing.status_code == 404
 
 
 @pytest.mark.asyncio

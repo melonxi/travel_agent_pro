@@ -252,6 +252,50 @@ body::after {
   font-weight: 300;
 }
 
+.deliverables-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.deliverables-title {
+  font-size: 0.92rem;
+  font-family: var(--font-display);
+  color: var(--text-primary);
+}
+
+.deliverables-meta {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.deliverables-list {
+  display: grid;
+  gap: 10px;
+}
+
+.deliverable-link {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: all var(--transition-smooth);
+}
+
+.deliverable-link:hover {
+  border-color: var(--border-accent);
+  transform: translateY(-1px);
+}
+
+.deliverable-link small {
+  color: var(--text-muted);
+}
+
 .header-right {
   display: flex;
   align-items: center;

@@ -623,6 +623,7 @@ async def test_phase7_summary_generation(app):
         result = await self.tool_engine.execute(tc_weather)
         assert result.status == "success"
         assert result.data["forecast"]["description"] == "晴"
+        yield LLMChunk(type=ChunkType.TOOL_RESULT, tool_result=result)
 
         # Step 2: agent calls generate_summary
         tc_summary = ToolCall(
@@ -632,20 +633,17 @@ async def test_phase7_summary_generation(app):
                 "plan_data": {
                     "destination": "京都",
                     "total_days": 5,
-                    "days": [],
-                    "budget": {
-                        "flights": 3000,
-                        "hotels": 4000,
-                        "activities": 1500,
-                        "food": 1500,
-                    },
-                }
+                },
+                "travel_plan_markdown": "# 京都 5 日旅行计划\n\n## 第 1 天\n- 景点1\n",
+                "checklist_markdown": "# 京都出发前清单\n\n- [ ] 护照\n",
             },
         )
         yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=tc_summary)
         result = await self.tool_engine.execute(tc_summary)
         assert result.status == "success"
-        assert result.data["total_budget"] == 10000
+        assert "travel_plan_markdown" in result.data
+        assert "checklist_markdown" in result.data
+        yield LLMChunk(type=ChunkType.TOOL_RESULT, tool_result=result)
 
         # Final text
         yield LLMChunk(
@@ -714,3 +712,6 @@ async def test_phase7_summary_generation(app):
     assert plan_data["destination"] == "京都"
     assert len(plan_data["daily_plans"]) == 5
     assert plan_data["accommodation"]["hotel"] == "祇園白川旅館"
+    assert plan_data["deliverables"]["travel_plan_md"] == "travel_plan.md"
+    assert plan_data["deliverables"]["checklist_md"] == "checklist.md"
+    assert plan_data["deliverables"]["generated_at"]
