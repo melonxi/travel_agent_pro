@@ -44,6 +44,8 @@ def app(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "test-maps-key")
     monkeypatch.setenv("OPENWEATHER_API_KEY", "test-weather-key")
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     return create_app()
 
 
@@ -295,15 +297,15 @@ async def test_phase4_accommodation_search(app):
 async def test_phase5_day_plan_assembly(app):
     """
     Phase 5: destination+dates+accommodation set, daily_plans incomplete.
-    Agent calls assemble_day_plan (a local tool, no external API).
-    Then calls replace_daily_plans to write the plans.
+    Agent calls optimize_day_route (a local tool, no external API).
+    Then calls replace_all_day_plans to write the plans.
     """
 
     async def fake_run(self, messages, phase, tools_override=None):
-        # Step 1: agent calls assemble_day_plan for day 1
+        # Step 1: agent calls optimize_day_route for day 1
         tc_assemble = ToolCall(
             id="tc_adp_1",
-            name="assemble_day_plan",
+            name="optimize_day_route",
             arguments={
                 "pois": [
                     {
@@ -325,23 +327,23 @@ async def test_phase5_day_plan_assembly(app):
                         "duration_hours": 2.0,
                     },
                 ],
-                "start_time": "09:00",
-                "end_time": "18:00",
+                "day_start_time": "09:00",
+                "day_end_time": "18:00",
             },
         )
         yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=tc_assemble)
         result = await self.tool_engine.execute(tc_assemble)
         assert result.status == "success"
-        assert result.data["total_distance_km"] > 0
+        assert result.data["estimated_total_distance_km"] > 0
         ordered_pois = result.data["ordered_pois"]
 
         # Build daily_plans from ordered_pois
         daily_plans_payload = _build_daily_plans_from_pois(ordered_pois)
 
-        # Step 2: agent calls replace_daily_plans to write the plans
+        # Step 2: agent calls replace_all_day_plans to write the plans
         tc_daily = ToolCall(
             id="tc_rdp_1",
-            name="replace_daily_plans",
+            name="replace_all_day_plans",
             arguments={"days": daily_plans_payload},
         )
         yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=tc_daily)
@@ -367,7 +369,7 @@ async def test_phase5_day_plan_assembly(app):
             sessions = _get_sessions(app)
             plan = sessions[session_id]["plan"]
             plan.destination = "京都"
-            plan.dates = DateRange(start="2026-04-10", end="2026-04-15")
+            plan.dates = DateRange(start="2026-04-10", end="2026-04-14")
             plan.accommodation = Accommodation(area="祇園", hotel="祇園白川旅館")
             plan.phase = 5
 
@@ -391,7 +393,7 @@ async def test_phase5_day_plan_assembly(app):
 
 
 def _build_daily_plans_from_pois(ordered_pois: list[dict]) -> list[dict]:
-    """Build daily_plans payload from ordered_pois for replace_daily_plans tool."""
+    """Build daily_plans payload from ordered_pois for replace_all_day_plans tool."""
     daily_plans = []
     for day_idx in range(5):
         activities = []

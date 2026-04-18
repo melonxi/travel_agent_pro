@@ -351,3 +351,44 @@ async def test_execute_no_required_field_skips_prevalidation():
     call = ToolCall(id="c3", name="optional_tool", arguments={})
     result = await engine.execute(call)
     assert result.status == "success"
+
+
+def test_phase5_tools_expose_clear_plan_tools_only():
+    from config import ApiKeysConfig, XhsConfig
+    from tools.assemble_day_plan import make_assemble_day_plan_tool
+    from tools.calculate_route import make_calculate_route_tool
+    from tools.check_availability import make_check_availability_tool
+    from tools.check_weather import make_check_weather_tool
+    from tools.get_poi_info import make_get_poi_info_tool
+    from tools.optimize_day_route import make_optimize_day_route_tool
+    from tools.plan_tools import make_all_plan_tools
+    from tools.xiaohongshu_search import (
+        make_xiaohongshu_get_comments_tool,
+        make_xiaohongshu_read_note_tool,
+        make_xiaohongshu_search_notes_tool,
+    )
+
+    plan = TravelPlanState(session_id="phase5-tools", phase=5)
+    engine = ToolEngine()
+    api_keys = ApiKeysConfig()
+    xhs = XhsConfig(enabled=False)
+    for tool_def in make_all_plan_tools(plan):
+        engine.register(tool_def)
+    engine.register(make_assemble_day_plan_tool())
+    engine.register(make_optimize_day_route_tool())
+    engine.register(make_get_poi_info_tool(api_keys))
+    engine.register(make_calculate_route_tool(api_keys))
+    engine.register(make_check_availability_tool(api_keys))
+    engine.register(make_check_weather_tool(api_keys))
+    engine.register(make_xiaohongshu_search_notes_tool(xhs))
+    engine.register(make_xiaohongshu_read_note_tool(xhs))
+    engine.register(make_xiaohongshu_get_comments_tool(xhs))
+
+    names = {schema["name"] for schema in engine.get_tools_for_phase(5, plan)}
+
+    assert {"optimize_day_route", "save_day_plan", "replace_all_day_plans"}.issubset(
+        names
+    )
+    assert "assemble_day_plan" not in names
+    assert "append_day_plan" not in names
+    assert "replace_daily_plans" not in names

@@ -8,7 +8,12 @@ from .append_tools import (
     make_add_preferences_tool,
 )
 from .backtrack import make_request_backtrack_tool
-from .daily_plans import make_append_day_plan_tool, make_replace_daily_plans_tool
+from .daily_plans import (
+    make_append_day_plan_tool,
+    make_replace_all_day_plans_tool,
+    make_replace_daily_plans_tool,
+    make_save_day_plan_tool,
+)
 from .phase3_tools import (
     make_select_skeleton_tool,
     make_select_transport_tool,
@@ -39,8 +44,8 @@ PLAN_WRITER_TOOL_NAMES = {
     "set_alternatives",
     "add_preferences",
     "add_constraints",
-    "append_day_plan",
-    "replace_daily_plans",
+    "save_day_plan",
+    "replace_all_day_plans",
     "request_backtrack",
 }
 
@@ -50,8 +55,8 @@ def make_all_plan_tools(plan: TravelPlanState) -> list[ToolDef]:
         make_add_constraints_tool(plan),
         make_add_preferences_tool(plan),
         make_request_backtrack_tool(plan),
-        make_append_day_plan_tool(plan),
-        make_replace_daily_plans_tool(plan),
+        make_save_day_plan_tool(plan),
+        make_replace_all_day_plans_tool(plan),
         make_select_skeleton_tool(plan),
         make_select_transport_tool(plan),
         make_set_accommodation_options_tool(plan),
@@ -73,6 +78,8 @@ __all__ = [
     "make_add_constraints_tool",
     "make_add_preferences_tool",
     "make_request_backtrack_tool",
+    "make_save_day_plan_tool",
+    "make_replace_all_day_plans_tool",
     "make_append_day_plan_tool",
     "make_replace_daily_plans_tool",
     "make_select_skeleton_tool",

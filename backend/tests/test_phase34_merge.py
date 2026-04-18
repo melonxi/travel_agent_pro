@@ -4,6 +4,7 @@ TDD tests for Phase 3+4 merge.
 Phase 3 now covers both date/rhythm planning AND accommodation selection.
 Phase 4 no longer exists as a separate phase.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -59,17 +60,26 @@ class TestInferPhaseAfterMerge:
         combos = [
             TravelPlanState(session_id="s"),
             TravelPlanState(session_id="s", destination="A"),
-            TravelPlanState(session_id="s", destination="A",
-                            dates=DateRange(start="2026-01-01", end="2026-01-03")),
-            TravelPlanState(session_id="s", destination="A",
-                            dates=DateRange(start="2026-01-01", end="2026-01-03"),
-                            selected_skeleton_id="balanced",
-                            accommodation=Accommodation(area="X")),
-            TravelPlanState(session_id="s", destination="A",
-                            dates=DateRange(start="2026-01-01", end="2026-01-03"),
-                            selected_skeleton_id="balanced",
-                            accommodation=Accommodation(area="X"),
-                            daily_plans=[DayPlan(day=i, date=f"2026-01-0{i}") for i in range(1, 3)]),
+            TravelPlanState(
+                session_id="s",
+                destination="A",
+                dates=DateRange(start="2026-01-01", end="2026-01-03"),
+            ),
+            TravelPlanState(
+                session_id="s",
+                destination="A",
+                dates=DateRange(start="2026-01-01", end="2026-01-03"),
+                selected_skeleton_id="balanced",
+                accommodation=Accommodation(area="X"),
+            ),
+            TravelPlanState(
+                session_id="s",
+                destination="A",
+                dates=DateRange(start="2026-01-01", end="2026-01-03"),
+                selected_skeleton_id="balanced",
+                accommodation=Accommodation(area="X"),
+                daily_plans=[DayPlan(day=i, date=f"2026-01-0{i}") for i in range(1, 3)],
+            ),
         ]
         for plan in combos:
             assert router.infer_phase(plan) != 4, f"phase 4 returned for {plan}"
@@ -181,7 +191,7 @@ class TestToolPhasesAfterMerge:
         assemble_tool = make_assemble_day_plan_tool()
         assert 4 not in assemble_tool.phases
         assert 3 in assemble_tool.phases
-        assert 5 in assemble_tool.phases
+        assert 5 not in assemble_tool.phases
 
     def test_tools_with_former_phase345_now_phase35(self):
         """get_poi_info was [3,4,5], should now be [3,5]."""
@@ -217,6 +227,7 @@ class TestToolPhasesAfterMerge:
 
     def test_engine_returns_no_tools_for_phase4(self):
         """ToolEngine.get_tools_for_phase(4) should return empty list."""
+
         @tool(name="t1", description="d", phases=[3], parameters={})
         async def t1():
             return {}

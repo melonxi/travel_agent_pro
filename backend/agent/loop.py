@@ -918,10 +918,9 @@ class AgentLoop:
             return (
                 "[状态同步提醒]\n"
                 f"你刚刚已经给出了逐日行程安排，但 `daily_plans` 仍只有 {planned_count}/{total_days} 天。"
-                f"还需要写入 {remaining} 天的行程。"
-                "请立即调用 `replace_daily_plans(days=[...])` 批量写入全部天数，"
-                "或调用 `append_day_plan(...)` 逐天追加。"
-                "每天必须包含 day、date、activities（含 name/location/start_time/end_time/category/cost）。"
+                '请立即调用 `save_day_plan(mode="create", day=缺失天数, date=对应日期, activities=活动列表)` 逐天保存缺失天数，'
+                "或在需要一次性完整覆盖时调用 `replace_all_day_plans(days=完整天数列表)`。"
+                "`optimize_day_route` 只做路线辅助，不能替代状态写入。"
             )
         return None
 

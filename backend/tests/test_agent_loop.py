@@ -1499,7 +1499,7 @@ async def test_phase5_text_only_daily_plan_triggers_state_repair():
         session_id="s1",
         phase=5,
         destination="大阪",
-        dates=DateRange(start="2026-04-15", end="2026-04-18"),
+        dates=DateRange(start="2026-04-15", end="2026-04-17"),
         skeleton_plans=[{"id": "plan_A", "theme": "经典大阪"}],
         selected_skeleton_id="plan_A",
         accommodation=Accommodation(area="心斋桥"),
@@ -1530,7 +1530,7 @@ async def test_phase5_text_only_daily_plan_triggers_state_repair():
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
                     id="tc1",
-                    name="replace_daily_plans",
+                    name="replace_all_day_plans",
                     arguments={
                         "days": [
                             {
@@ -1621,6 +1621,12 @@ async def test_phase5_text_only_daily_plan_triggers_state_repair():
     # The repair hint should have been injected
     assert any(
         content and "daily_plans" in content and "状态同步提醒" in content
+        for call_messages in observed_messages[1:]
+        for content in call_messages
+        if content
+    )
+    assert any(
+        content and "save_day_plan" in content and "replace_all_day_plans" in content
         for call_messages in observed_messages[1:]
         for content in call_messages
         if content

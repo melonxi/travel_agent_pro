@@ -12,7 +12,6 @@ from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
 _WRITE_TOOLS = frozenset(
     PLAN_WRITER_TOOL_NAMES
     | {
-        "assemble_day_plan",
         "generate_summary",
     }
 )

@@ -529,7 +529,7 @@ def test_trace_includes_error_code_and_suggestion():
         iteration=1,
     )
     stats.record_tool_call(
-        tool_name="replace_daily_plans",
+        tool_name="replace_all_day_plans",
         duration_ms=5.0,
         status="error",
         error_code="INVALID_ARGUMENTS",
@@ -561,7 +561,7 @@ def test_trace_success_tool_has_null_error_code():
         iteration=1,
     )
     stats.record_tool_call(
-        tool_name="append_day_plan",
+        tool_name="save_day_plan",
         duration_ms=10.0,
         status="success",
         error_code=None,
