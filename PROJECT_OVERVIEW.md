@@ -462,6 +462,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 - **测试基线语义**：未知 Anthropic 异常遵循共享 `classify_opaque_api_error` 逻辑，默认归类为 `LLM_TRANSIENT_ERROR`；`validate_lock_budget` 的占比提示基于 `DateRange.total_days` 的 inclusive 天数语义；并行 `add_constraints` 用 `items` 作为增量状态写入参数，约束提示通过 `_pending_system_notes` 在下一轮 LLM 调用前 flush
 - **Memory 集成测试策略**：`backend/tests/test_memory_integration.py` 以公开 chat 流程验证 Phase 7 episode 归档幂等与 each-turn memory extraction 排队行为，不再依赖 `create_app()` 路由闭包里内部 helper 的捕获细节
 - **记忆/遥测测试整理**：遗留的 `test_memory.py` 与 `test_telemetry_integration.py` 已并入 `test_memory_manager.py`、`test_telemetry_setup.py`；记忆文档同步补充了 `memory_recall` / `memory_hits` 的可观测性现状与 `TripEpisode` 仍未进入主召回链路的限制
+- **Phase 7 交付物契约草案**：仓库内已新增 dual-deliverables 设计/计划文档，以及 `backend/tests/test_state_models.py`、`backend/tests/test_state_manager.py` 中针对 `plan.deliverables` 与 deliverable 文件读写/清理的待实现测试；当前主干实现尚未支持这些能力
 - **评估管线**：golden cases（YAML）+ 断言评估 + 离线 runner；断言类型包含 `phase_reached`/`state_field_set`/`tool_called`/`tool_not_called`/`contains_text`/`not_contains_text`/`budget_within`（其中 `not_contains_text` 用于回归"机器感 checklist"类文案违规）；`scripts/eval-stability.py` 生成 pass@k 稳定性报告（JSON + Markdown）；`scripts/failure-analysis/` 对 live backend 执行失败场景并产出分析报告
 - **E2E 测试**：Playwright 三套专项配置——主流程（含 deterministic mock 的阶段切换）、重试体验（继续/重发/停止/不可恢复错误）、等待体验（ThinkingBubble 与工具耗时提示）；demo spec 基于 `demo-scripted-session.json` 稳定回放 Phase 1 → Phase 3 → Phase 5 → backtrack；Prompt 行为回归集中于 `e2e-phase1-no-offtopic.spec.ts`（验证 Phase 1 不主动追问非目的地字段）
 - **运行**：`cd backend && pytest` / `npx playwright test`
