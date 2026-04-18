@@ -371,7 +371,7 @@ def test_classify_error_connection_error(provider):
 def test_classify_error_unknown_exception(provider):
     exc = RuntimeError("something weird")
     result = provider._classify_error(exc)
-    assert result.code == LLMErrorCode.PROTOCOL_ERROR
+    assert result.code == LLMErrorCode.TRANSIENT
     assert result.retryable is False
 
 

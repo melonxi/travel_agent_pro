@@ -66,5 +66,6 @@ def test_load_config_falls_back_to_repo_root_for_relative_path(monkeypatch, tmp_
     import config as config_module
 
     monkeypatch.setattr(config_module, "__file__", str(fake_config_module))
+    monkeypatch.chdir(backend_dir)
     cfg = load_config("config.yaml")
     assert cfg.max_retries == 9

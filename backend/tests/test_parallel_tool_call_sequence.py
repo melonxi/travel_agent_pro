@@ -84,7 +84,7 @@ async def test_parallel_plan_tools_with_constraints_flushes_after_group(
         session = sessions[session_id]
         plan: TravelPlanState = session["plan"]
         plan.phase = 3
-        plan.destination = "香港"
+        plan.destination = "东京"
 
         agent = session["agent"]
 
@@ -118,7 +118,7 @@ async def test_parallel_plan_tools_with_constraints_flushes_after_group(
                     tool_call=ToolCall(
                         id="call_2",
                         name="add_constraints",
-                        arguments={"constraints": ["住深圳"]},
+                        arguments={"items": ["住浅草"]},
                     ),
                 )
                 yield LLMChunk(type=ChunkType.DONE)
