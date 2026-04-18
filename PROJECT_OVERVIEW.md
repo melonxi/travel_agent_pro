@@ -33,7 +33,7 @@ travel_agent_pro/
 │   ├── main.py                 # FastAPI 入口，API 端点，会话管理，SSE 流
 │   ├── run.py                  # RunRecord / IterationProgress（LLM 韧性追踪）
 │   ├── config.py               # 配置加载（.env + config.yaml）
-│   ├── agent/                  # Agent 循环：loop / compaction / hooks / reflection / tool_choice / narration / types
+│   ├── agent/                  # Agent 循环：loop / compaction / hooks / reflection / tool_choice / narration / types / orchestrator / day_worker / worker_prompt
 │   ├── llm/                    # LLM 抽象：base Protocol / errors / factory / openai_provider / anthropic_provider
 │   ├── state/                  # 旅行状态模型：models / manager / intake / plan_writers
 │   ├── memory/                 # 结构化 global/trip 记忆 + episode：models / store / manager / extraction / policy / retriever / formatter
@@ -99,12 +99,20 @@ travel_agent_pro/
 
 ### Phase 5 — 日程详排（skill-card，路径规划定位）
 - 核心定位：路径规划优化问题——最小化无效移动，最大化体验密度
-- **增量生成策略**：按1-2天增量调用 `assemble_day_plan`，非一次性全量
+- **双执行模式**：
+  - **串行模式**（默认回退）：AgentLoop 内 LLM 逐日生成，与原有流程一致
+  - **并行 Orchestrator-Workers 模式**：Python Orchestrator（纯代码调度器，非 LLM）将骨架拆分为 N 个 DayTask，并行派发 N 个 Day Worker（轻量 LLM Agent，独立上下文），收集结果后做全局验证（POI 去重 / 预算检查 / 天数覆盖），最后统一写入 `replace_all_daily_plans`
+  - 并行模式通过 `config.yaml` 的 `phase5.parallel` 段控制（`enabled` / `max_workers` / `worker_timeout_seconds` / `fallback_to_serial`）
+  - Worker 共享相同 system prompt prefix → KV-Cache 命中率 ~93.75%（Manus pattern）
+  - Worker 只有只读工具，写入由 Orchestrator 统一完成
+  - 失败率 >50% 自动降级到串行模式
+- **增量生成策略**（串行模式）：按1-2天增量调用 `assemble_day_plan`，非一次性全量
 - **Prompt 已迁移**：Phase 5 使用 `optimize_day_route`（路线辅助，不写状态）、`save_day_plan` / `replace_all_day_plans`（状态写入）与 `request_backtrack`（回退）
 - 流程：expand（骨架→日期）→ assemble（活动+时间）→ validate（开放/距离/天气/预算）→ commit
 - 产出：`daily_plans[]`，每天含完整 Activity 列表
 - Phase 5+ 上下文中 trip_brief 注入时排除 `dates`/`total_days`（已由 `plan.dates` 权威提供），避免重复信号
 - 运行时上下文必须注入骨架内容、`trip_brief` 字段、偏好和约束
+- **并行模式新增文件**：`agent/orchestrator.py`（调度器核心）、`agent/day_worker.py`（单日 Worker 执行引擎）、`agent/worker_prompt.py`（共享前缀 + 日别后缀模板）
 
 ### Phase 7 — 出发前查漏（skill-card）
 - 角色：出发前查漏官；扫描全计划，生成带优先级的检查清单
@@ -145,6 +153,9 @@ travel_agent_pro/
 [main.py] 加载会话+方案，组装消息列表
     ↓
 [AgentLoop.run()] 进入迭代循环
+    │
+    ├─ Phase 5 并行分流检查（should_use_parallel_phase5）
+    │   └─ 条件满足 → Phase5Orchestrator.run() → split → spawn workers → collect → validate → write → return
     │
     ├─ 取消检查点（迭代开始 / LLM 流式 chunk 前 / 工具执行前）
     │
@@ -416,7 +427,7 @@ docker compose -f docker-compose.observability.yml up -d
 
 ```
 backend/.env   敏感凭证（python-dotenv 加载）
-config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 ${ENV_VAR} 引用
+config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase5.parallel 并行模式），支持 ${ENV_VAR} 引用
 优先级：环境变量 > YAML > 代码默认值
 ```
 
@@ -450,6 +461,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 | 重复搜索拦截 | 同 query 滑动窗口去重，阻断搜索死循环 |
 | 小红书三层工具模型 | `xiaohongshu_search_notes`（导航）→ `xiaohongshu_read_note`（信息）→ `xiaohongshu_get_comments`（评价），用单一职责工具替代 `operation` 参数，降低模型漏传 discriminator 的概率 |
 | `DateRange.total_days` inclusive 语义 | 覆盖 start 到 end 的自然日数量（+1），与骨架生成器语义一致 |
+| Phase 5 并行 Orchestrator-Workers | 纯 Python 调度器 + N 个轻量 LLM Day Worker：上下文隔离解决 token 膨胀（N 天共享前缀），并发执行解决串行延迟（asyncio.gather + Semaphore），全局验证解决跨天一致性；失败率 >50% 自动降级到串行 |
 | Phase 3→5 骨架天数门控 | 已选骨架天数必须与 total_days 一致才允许进入 Phase 5 |
 | trip_brief 权威字段强制覆盖 | dates/total_days 在 hydrate 时直接赋值，防止 stale |
 | plan_writer 增量持久化 | 每次 plan_writer 工具成功后立即 `state_mgr.save(plan)` 并同步更新 session meta（phase/title），finally 保底保存 plan 与 messages（含 logger.warning 日志），并把仍处于 running 的 run 标记为 cancelled，防止 SSE 中断丢失状态、消息或三源不一致 |

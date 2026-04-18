@@ -286,6 +286,45 @@ class ContextManager:
             )
         return "\n".join(parts)
 
+    def build_worker_context(self, plan: TravelPlanState) -> dict[str, Any]:
+        """Build a read-only context dict for Day Workers.
+
+        Contains only the immutable planning context that workers need.
+        Excludes mutable state like daily_plans and skeleton_plans.
+        """
+        ctx: dict[str, Any] = {}
+        if plan.destination:
+            ctx["destination"] = plan.destination
+        if plan.dates:
+            ctx["dates_start"] = plan.dates.start
+            ctx["dates_end"] = plan.dates.end
+            ctx["total_days"] = plan.dates.total_days
+        if plan.travelers:
+            ctx["adults"] = plan.travelers.adults
+            ctx["children"] = plan.travelers.children
+        if plan.trip_brief:
+            ctx["trip_brief"] = {
+                k: v
+                for k, v in plan.trip_brief.items()
+                if k not in ("dates", "total_days")
+            }
+        if plan.accommodation:
+            ctx["accommodation_area"] = plan.accommodation.area
+            if plan.accommodation.hotel:
+                ctx["accommodation_hotel"] = plan.accommodation.hotel
+        if plan.budget:
+            ctx["budget_total"] = plan.budget.total
+            ctx["budget_currency"] = plan.budget.currency
+        if plan.preferences:
+            ctx["preferences"] = [
+                {"key": p.key, "value": p.value} for p in plan.preferences if p.key
+            ]
+        if plan.constraints:
+            ctx["constraints"] = [
+                {"type": c.type, "description": c.description} for c in plan.constraints
+            ]
+        return ctx
+
     def _find_selected_skeleton(self, plan: TravelPlanState) -> dict | None:
         """Find the skeleton plan matching selected_skeleton_id."""
         if not plan.selected_skeleton_id or not plan.skeleton_plans:

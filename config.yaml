@@ -63,3 +63,11 @@ memory:
 guardrails:
   enabled: true
   disabled_rules: []
+
+phase5:
+  parallel:
+    enabled: true
+    max_workers: 5
+    worker_max_iterations: 5
+    worker_timeout_seconds: 60
+    fallback_to_serial: true
