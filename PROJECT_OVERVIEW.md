@@ -18,7 +18,7 @@
 | 后端 | Python 3.12+, FastAPI, Uvicorn, async/await |
 | 前端 | TypeScript, React 19, Vite 6, Leaflet |
 | LLM | OpenAI (gpt-4o) + Anthropic (Claude Sonnet 4)，按阶段切换 |
-| 持久化 | aiosqlite（会话/消息）、JSON 文件（旅行方案快照）、deliverables Markdown 文件 |
+| 持久化 | aiosqlite（会话/消息）、JSON 文件（旅行方案快照） |
 | 可观测性 | OpenTelemetry + Jaeger (OTLP gRPC) |
 | 测试 | pytest + pytest-asyncio（后端）、Playwright（E2E） |
 | 外部服务 | Tavily、小红书 CLI、FlyAI CLI、Google Maps、Amadeus、OpenWeather |
@@ -35,7 +35,7 @@ travel_agent_pro/
 │   ├── config.py               # 配置加载（.env + config.yaml）
 │   ├── agent/                  # Agent 循环：loop / compaction / hooks / reflection / tool_choice / narration / types
 │   ├── llm/                    # LLM 抽象：base Protocol / errors / factory / openai_provider / anthropic_provider
-│   ├── state/                  # 旅行状态模型：models / manager / intake / plan_writers（含 deliverables 文件原语）
+│   ├── state/                  # 旅行状态模型：models / manager / intake / plan_writers
 │   ├── memory/                 # 结构化 global/trip 记忆 + episode：models / store / manager / extraction / policy / retriever / formatter
 │   ├── context/                # 上下文：manager（系统提示/压缩决策）+ soul.md（人格）
 │   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，GLOBAL_RED_FLAGS + PHASE{1,3,5,7}_PROMPT + build_phase3_prompt）/ backtrack
