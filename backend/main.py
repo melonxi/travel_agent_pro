@@ -233,7 +233,7 @@ def _days_count_from_dates(dates: Any | None) -> int | None:
         end_date = date.fromisoformat(str(end))
     except (TypeError, ValueError):
         return None
-    return (end_date - start_date).days
+    return (end_date - start_date).days + 1
 
 
 def _truncate_preview(value: Any, max_len: int = 120) -> str:
@@ -1976,7 +1976,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         finally:
             # 保底持久化：即使流异常中断，也尝试保存当前状态
             try:
+                if run.status == "running":
+                    run.status = "cancelled"
+                    run.finished_at = time.time()
                 await state_mgr.save(plan)
+                await _persist_messages(plan.session_id, messages)
                 await session_store.update(
                     plan.session_id,
                     phase=plan.phase,

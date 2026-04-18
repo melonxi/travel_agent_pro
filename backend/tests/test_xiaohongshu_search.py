@@ -330,6 +330,44 @@ async def test_xiaohongshu_search_tool_accepts_max_results_and_truncates_items()
 
 
 @pytest.mark.asyncio
+async def test_xiaohongshu_search_tool_defaults_missing_operation_to_search_notes():
+    from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+
+    xhs_client = SimpleNamespace(
+        search_notes=AsyncMock(
+            return_value={
+                "items": [
+                    {
+                        "id": "note_1",
+                        "note_card": {
+                            "title": "成都两天一夜",
+                            "type": "image",
+                            "user": {"nickname": "Alice"},
+                            "interact_info": {"liked_count": "12"},
+                        },
+                    }
+                ],
+                "has_more": False,
+            }
+        ),
+        read_note=AsyncMock(),
+        get_comments=AsyncMock(),
+    )
+
+    tool_fn = make_xiaohongshu_search_tool(xhs_client=xhs_client)
+    result = await tool_fn(keyword="成都 两天一夜")
+
+    assert result["operation"] == "search_notes"
+    assert result["items"][0]["title"] == "成都两天一夜"
+    xhs_client.search_notes.assert_awaited_once_with(
+        keyword="成都 两天一夜",
+        sort="general",
+        note_type="all",
+        page=1,
+    )
+
+
+@pytest.mark.asyncio
 async def test_xiaohongshu_search_tool_read_and_comments():
     from tools.xiaohongshu_search import make_xiaohongshu_search_tool
 

@@ -588,8 +588,10 @@ class AgentLoop:
                 )
             )
 
-        if to_phase < from_phase:
-            rebuilt.append(self._copy_message(original_user_message))
+        # Preserve the triggering user intent across hard-boundary rebuilds.
+        # Some providers reject assistant-only message sequences, and the next
+        # phase still needs the user's latest request as the active task.
+        rebuilt.append(self._copy_message(original_user_message))
         return rebuilt
 
     async def _rebuild_messages_for_phase3_step_change(

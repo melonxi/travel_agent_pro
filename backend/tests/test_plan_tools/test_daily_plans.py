@@ -52,7 +52,7 @@ def _activity(name: str, start: str, end: str, cost: float = 0) -> dict:
             "append_day_plan",
             "追加一天行程",
             ["day", "date", "activities"],
-            {"day", "date", "activities"},
+            {"day", "date", "activities", "notes"},
         ),
         (
             make_replace_daily_plans_tool,
@@ -106,6 +106,21 @@ class TestAppendDayPlan:
         assert plan.daily_plans[0].day == 1
         assert plan.daily_plans[0].date == "2026-05-01"
         assert len(plan.daily_plans[0].activities) == 1
+
+    @pytest.mark.asyncio
+    async def test_append_day_plan_accepts_optional_notes(self):
+        plan = _make_plan()
+        tool_fn = make_append_day_plan_tool(plan)
+
+        result = await tool_fn(
+            day=1,
+            date="2026-05-01",
+            notes="第一天以城市漫步和美食为主",
+            activities=[_sample_activity()],
+        )
+
+        assert result["day"] == 1
+        assert plan.daily_plans[0].notes == "第一天以城市漫步和美食为主"
 
     @pytest.mark.asyncio
     async def test_append_day_plan_rejects_non_integer_day(self):

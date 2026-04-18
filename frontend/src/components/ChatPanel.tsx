@@ -540,15 +540,16 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
         )
       }
     } else if (event.type === 'memory_recall' && event.item_ids) {
-      onMemoryRecall?.(event.item_ids)
-      roundStateRef.current.memoryCount = event.item_ids.length
-      if (!roundStateRef.current.memoryChipInserted && event.item_ids.length > 0) {
+      const itemIds = event.item_ids
+      onMemoryRecall?.(itemIds)
+      roundStateRef.current.memoryCount = itemIds.length
+      if (!roundStateRef.current.memoryChipInserted && itemIds.length > 0) {
         roundStateRef.current.memoryChipInserted = true
         setMessages((prev) => [...prev, {
           id: createMessageId(),
           role: 'system',
           content: '',
-          memoryChip: { count: event.item_ids.length },
+          memoryChip: { count: itemIds.length },
         }])
       }
     } else if (event.type === 'agent_status') {

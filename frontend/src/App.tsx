@@ -144,6 +144,17 @@ export default function App() {
     setRecalledIds(itemIds)
   }, [])
 
+  const handleStreamEnd = useCallback(() => {
+    setTraceTrigger((n) => n + 1)
+    if (!sessionId) return
+    void loadPlan(sessionId)
+      .then((latestPlan) => {
+        setPlan(latestPlan)
+        void refreshSessionList()
+      })
+      .catch(() => {})
+  }, [loadPlan, refreshSessionList, sessionId])
+
   const handleNewSession = useCallback(async () => {
     await createSession()
   }, [createSession])
@@ -274,7 +285,7 @@ export default function App() {
           onPlanUpdate={handlePlanUpdate}
           onMemoryRecall={handleMemoryRecall}
           onPhaseTransition={handlePhaseTransition}
-          onStreamEnd={() => setTraceTrigger((n) => n + 1)}
+          onStreamEnd={handleStreamEnd}
         />
         <div className="right-panel">
           <div className="right-panel-tabs">

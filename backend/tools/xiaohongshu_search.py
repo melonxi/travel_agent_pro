@@ -19,7 +19,7 @@ _PARAMETERS = {
         "operation": {
             "type": "string",
             "enum": _OPERATIONS,
-            "description": "要执行的小红书操作。只支持 search_notes、read_note、get_comments 三种。",
+            "description": "要执行的小红书操作。只支持 search_notes、read_note、get_comments 三种。省略时默认 search_notes。",
         },
         "keyword": {
             "type": "string",
@@ -67,7 +67,7 @@ _PARAMETERS = {
             "description": "get_comments 是否拉取全部评论。应谨慎使用，避免高频大批量评论抓取。",
         },
     },
-    "required": ["operation"],
+    "required": [],
 }
 
 
@@ -95,7 +95,7 @@ Supported operations:
         human_label="翻小红书找灵感",
     )
     async def xiaohongshu_search(
-        operation: str,
+        operation: str = "search_notes",
         keyword: str = "",
         note_ref: str = "",
         xsec_token: str = "",
