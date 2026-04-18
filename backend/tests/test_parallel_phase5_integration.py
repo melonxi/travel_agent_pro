@@ -5,12 +5,11 @@ Uses mock LLM that returns pre-built DayPlan JSON to verify
 the end-to-end flow: split → spawn → collect → validate → write.
 """
 
-import asyncio
 import json
 import pytest
 
 from agent.orchestrator import Phase5Orchestrator
-from agent.day_worker import DayWorkerResult
+from agent.types import ToolResult
 from config import Phase5ParallelConfig
 from llm.types import ChunkType, LLMChunk
 from state.models import (
@@ -121,8 +120,6 @@ class MockToolEngine:
         return None
 
     async def execute_batch(self, calls):
-        from agent.types import ToolResult
-
         return [
             ToolResult(tool_call_id=tc.id, status="success", data={}) for tc in calls
         ]
@@ -186,7 +183,8 @@ async def test_parallel_detects_poi_duplicate():
     # Plans still written (validation is advisory for now)
     assert len(plan.daily_plans) == 3
 
-    # Check that summary mentions the issue
+    # Check that summary mentions the duplicate issue specifically
     text_chunks = [c for c in chunks if c.type == ChunkType.TEXT_DELTA]
     summary = "".join(c.content or "" for c in text_chunks)
     assert "浅草寺" in summary
+    assert "出现在多天" in summary  # confirms dedup logic, not just POI name
