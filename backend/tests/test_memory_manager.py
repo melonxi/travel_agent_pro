@@ -6,7 +6,7 @@ import pytest
 
 from config import load_config
 from memory.manager import MemoryManager
-from memory.models import MemoryItem, MemorySource, Rejection, UserMemory
+from memory.models import MemoryItem, MemorySource, Rejection, TripSummary, UserMemory
 from state.models import TravelPlanState
 
 
@@ -35,9 +35,13 @@ async def test_generate_context_includes_active_stored_memory(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
     await manager.store.upsert_item(make_item())
 
-    text, item_ids, core_count, trip_count, phase_count = await manager.generate_context(
-        "u1", TravelPlanState(session_id="s1")
-    )
+    (
+        text,
+        item_ids,
+        core_count,
+        trip_count,
+        phase_count,
+    ) = await manager.generate_context("u1", TravelPlanState(session_id="s1"))
 
     assert "## 核心用户画像" in text
     assert "节奏轻松" in text
@@ -200,3 +204,30 @@ parallel_tool_execution: "false"
     assert cfg.xhs.enabled is False
     assert cfg.guardrails.enabled is False
     assert cfg.parallel_tool_execution is False
+
+
+# --- 以下测试迁移自 test_memory.py（原文件已删除）---
+
+
+def test_user_memory_defaults():
+    mem = UserMemory(user_id="u1")
+    assert mem.explicit_preferences == {}
+    assert mem.rejections == []
+    assert mem.trip_history == []
+
+
+def test_generate_summary(tmp_path: Path):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    mem = UserMemory(
+        user_id="u1",
+        explicit_preferences={"no_red_eye": True, "private_bathroom": True},
+        trip_history=[
+            TripSummary(
+                destination="Kyoto", dates="2025-10", satisfaction=4, notes="节奏好"
+            )
+        ],
+        rejections=[Rejection(item="红眼航班", reason="不坐", permanent=True)],
+    )
+    summary = manager.generate_summary(mem)
+    assert "红眼" in summary or "no_red_eye" in summary
+    assert "Kyoto" in summary
