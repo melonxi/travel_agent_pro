@@ -125,7 +125,7 @@ def test_phase5_prompt_mentions_actual_phase5_tools(router):
         "calculate_route",
         "check_availability",
         "check_weather",
-        "xiaohongshu_search",
+        "xiaohongshu_search_notes",
         "append_day_plan",
     ]:
         assert tool_name in prompt
@@ -144,14 +144,14 @@ def test_phase5_prompt_avoids_unavailable_phase5_tools(router):
 
 def test_phase1_prompt_encourages_reading_recommendation_posts_and_comments(router):
     prompt = router.get_prompt(1)
-    assert "不要只停留在标题层判断" in prompt
+    assert "不要只看标题就下结论" in prompt
     assert "求推荐旅行目的地" in prompt
     assert "评论区提炼高频候选" in prompt
 
 
 def test_phase1_prompt_skips_search_when_destination_is_already_confirmed(router):
     prompt = router.get_prompt(1)
-    assert "不要先调 `xiaohongshu_search` 或 `web_search`" in prompt
+    assert "不要先调 `xiaohongshu_search_notes` 或 `web_search`" in prompt
 
 
 def test_phase3_prompt_prioritizes_brief_sync_before_external_search(router):
@@ -164,9 +164,9 @@ def test_phase3_candidate_prompt_limits_search_and_forbids_search_narration(rout
     from phase.prompts import build_phase3_prompt
 
     prompt = build_phase3_prompt("candidate")
-    assert "先写状态，再按需补充验证" in prompt
-    assert "优先控制在 1 次 `xiaohongshu_search` 加 0-1 次 `web_search`" in prompt
-    assert "不要在正文里反复说“我先搜一下”" in prompt
+    assert "获取到足够信息后应立即写入 `set_candidate_pool` 和 `set_shortlist`" in prompt
+    assert "不要为了\"查全\"而反复搜索延迟写入" in prompt
+    assert "不要在正文里反复说\"我先搜一下\"" in prompt
 
 
 def test_get_prompt_for_all_phases(router):

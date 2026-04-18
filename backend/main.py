@@ -72,7 +72,11 @@ from tools.ai_travel_search import make_ai_travel_search_tool
 from tools.quick_travel_search import make_quick_travel_search_tool
 from tools.search_travel_services import make_search_travel_services_tool
 from tools.web_search import make_web_search_tool
-from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+from tools.xiaohongshu_search import (
+    make_xiaohongshu_get_comments_tool,
+    make_xiaohongshu_read_note_tool,
+    make_xiaohongshu_search_notes_tool,
+)
 from tools.plan_tools import PLAN_WRITER_TOOL_NAMES, make_all_plan_tools
 
 logger = logging.getLogger(__name__)
@@ -531,7 +535,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         tool_engine.register(make_quick_travel_search_tool(flyai_client))
         tool_engine.register(make_search_travel_services_tool(flyai_client))
         tool_engine.register(make_web_search_tool(config.api_keys))
-        tool_engine.register(make_xiaohongshu_search_tool(config.xhs))
+        tool_engine.register(make_xiaohongshu_search_notes_tool(config.xhs))
+        tool_engine.register(make_xiaohongshu_read_note_tool(config.xhs))
+        tool_engine.register(make_xiaohongshu_get_comments_tool(config.xhs))
 
         hooks = HookManager()
 

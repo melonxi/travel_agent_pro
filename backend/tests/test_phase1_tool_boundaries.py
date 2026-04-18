@@ -16,7 +16,10 @@ from tools.engine import ToolEngine
 from tools.quick_travel_search import make_quick_travel_search_tool
 from tools.search_destinations import make_search_destinations_tool
 from tools.web_search import make_web_search_tool
-from tools.xiaohongshu_search import make_xiaohongshu_search_tool
+from tools.xiaohongshu_search import (
+    make_xiaohongshu_get_comments_tool,
+    make_xiaohongshu_search_notes_tool,
+)
 from tools.plan_tools.trip_basics import make_update_trip_basics_tool
 
 
@@ -243,7 +246,7 @@ async def test_web_search_runtime_does_not_validate_search_depth_value():
 
 
 @pytest.mark.asyncio
-async def test_xiaohongshu_search_enforces_min_page_and_extracts_token_from_url():
+async def test_xiaohongshu_split_tools_enforce_min_page_and_extract_token_from_url():
     xhs_client = SimpleNamespace(
         search_notes=AsyncMock(return_value={"items": [], "has_more": False}),
         read_note=AsyncMock(),
@@ -257,9 +260,10 @@ async def test_xiaohongshu_search_enforces_min_page_and_extracts_token_from_url(
             }
         ),
     )
-    tool_fn = make_xiaohongshu_search_tool(xhs_client=xhs_client)
+    search_tool = make_xiaohongshu_search_notes_tool(xhs_client=xhs_client)
+    comments_tool = make_xiaohongshu_get_comments_tool(xhs_client=xhs_client)
 
-    await tool_fn(operation="search_notes", keyword="东京 citywalk", page=0)
+    await search_tool(keyword="东京 citywalk", page=0)
     xhs_client.search_notes.assert_awaited_once_with(
         keyword="东京 citywalk",
         sort="general",
@@ -267,8 +271,7 @@ async def test_xiaohongshu_search_enforces_min_page_and_extracts_token_from_url(
         page=1,
     )
 
-    await tool_fn(
-        operation="get_comments",
+    await comments_tool(
         note_ref="https://www.xiaohongshu.com/explore/note_1?xsec_token=abc123",
     )
     xhs_client.get_comments.assert_awaited_once_with(
@@ -280,19 +283,19 @@ async def test_xiaohongshu_search_enforces_min_page_and_extracts_token_from_url(
 
 
 @pytest.mark.asyncio
-async def test_xiaohongshu_search_disabled_short_circuits_before_calling_client():
+async def test_xiaohongshu_search_notes_disabled_short_circuits_before_calling_client():
     xhs_client = SimpleNamespace(
         search_notes=AsyncMock(),
         read_note=AsyncMock(),
         get_comments=AsyncMock(),
     )
-    tool_fn = make_xiaohongshu_search_tool(
+    tool_fn = make_xiaohongshu_search_notes_tool(
         xhs_config=XhsConfig(enabled=False),
         xhs_client=xhs_client,
     )
 
     with pytest.raises(ToolError, match="disabled"):
-        await tool_fn(operation="search_notes", keyword="京都")
+        await tool_fn(keyword="京都")
 
     xhs_client.search_notes.assert_not_awaited()
 

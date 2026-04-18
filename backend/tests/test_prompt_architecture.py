@@ -58,7 +58,7 @@ class TestPhase1SkillCard:
         assert PHASE_PROMPTS[1] == PHASE1_PROMPT
 
     def test_phase1_still_mentions_core_tools(self):
-        assert "xiaohongshu_search" in PHASE1_PROMPT
+        assert "xiaohongshu_search_notes" in PHASE1_PROMPT
         assert "web_search" in PHASE1_PROMPT
 
     def test_phase1_skips_search_when_destination_confirmed(self):

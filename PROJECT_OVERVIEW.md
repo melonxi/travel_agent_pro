@@ -77,15 +77,15 @@ travel_agent_pro/
 ### Phase 1 — 灵感与目的地收敛（skill-card）
 - 角色：旅行灵感顾问；目标：用最少轮次收敛到一个目的地
 - **回复纪律**："先查后说"——每条建议须有工具查询结果支撑；回复≤150字；一次只给2-3个选项
-- 工具：`xiaohongshu_search`、`web_search`、`quick_travel_search`、`update_trip_basics`（状态写入）
-- **工具契约**：小红书搜索采用三层操作模型（`search_notes` 导航层 → `read_note` 信息层 → `get_comments` 评价层），强调深度使用而非浅尝辄止；状态写入契约明确何时写 `update_trip_basics`/`add_preferences`/`add_constraints`，禁止把推荐写入状态
+- 工具：`xiaohongshu_search_notes` / `xiaohongshu_read_note` / `xiaohongshu_get_comments`、`web_search`、`quick_travel_search`、`update_trip_basics`（状态写入）
+- **工具契约**：小红书搜索采用三工具操作模型（`xiaohongshu_search_notes` 导航层 → `xiaohongshu_read_note` 信息层 → `xiaohongshu_get_comments` 评价层），强调深度使用而非浅尝辄止；状态写入契约明确何时写 `update_trip_basics`/`add_preferences`/`add_constraints`，禁止把推荐写入状态
 - **Prompt 已迁移**：Phase 1 改为使用 `update_trip_basics` 收口基础行程信息，并在需要时配合 `add_preferences` / `add_constraints`
 - **完成 Gate**：`destination` 非空 → 自动进入 Phase 3
 - 产出：`destination`、可选的 `budget`/`travelers`/`dates`
 
 ### Phase 3 — 框架规划（4 个子步骤，按子步骤动态拼装 prompt）
 - **brief** → 建立旅行画像（目标/节奏/约束/必做-避免）；收敛压力：≤2轮完成
-- **candidate** → 候选池构建与筛选；"锚定扩展→逐项验证→筛选成短名单"三步走流程；以 trip_brief 为硬锚点，先扩展后验证再筛选；存疑候选项须用 read_note/get_comments 深度验证
+- **candidate** → 候选池构建与筛选；"锚定扩展→逐项验证→筛选成短名单"三步走流程；以 trip_brief 为硬锚点，先扩展后验证再筛选；存疑候选项须用 `xiaohongshu_read_note` / `xiaohongshu_get_comments` 深度验证
 - **skeleton** → 骨架方案（非逐小时）；"经验采集→骨架生成"两阶段流程；生成骨架前必须先搜索真实攻略提取策略（区域分组、天数分配、体力节奏），再结合 shortlist 和 trip_brief 生成 2-3 套差异方案
 - **lock** → 锁定交通 + 住宿；大交通确认时间后即锁
 - **回复纪律**：回复≤200字、问题集中在回复末尾、结论前置、trip_brief 作为画像硬锚点约束所有后续决策
@@ -188,7 +188,7 @@ travel_agent_pro/
 3. **Phase 3 子阶段切换**（brief→candidate→skeleton→lock）：也会触发 system message 重建（无 handoff note / backtrack notice），确保 runtime context 随子阶段即时刷新。Runtime context 中：Phase 7 展开 daily_plans 每日活动（出发前查漏需要），Phase 3 skeleton 子阶段展开骨架紧凑摘要（id/name/tradeoffs/每天 theme），preferences/constraints 自 Phase 1 起即注入。
 
 ### 工具结果特定压缩
-`web_search` / `xiaohongshu_search.*` 按工具类型裁剪摘要长度与条数，保留信息骨架；具体阈值见 `backend/agent/compaction.py`。
+`web_search` / `xiaohongshu_search_notes` / `xiaohongshu_read_note` / `xiaohongshu_get_comments` 按工具类型裁剪摘要长度与条数，保留信息骨架；具体阈值见 `backend/agent/compaction.py`。
 
 ---
 
@@ -238,14 +238,14 @@ LLM API 异常
 - **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集，并把 split plan tools 纳入白名单（如 brief 的 `set_trip_brief` / `add_preferences` / `add_constraints`，lock 的交通住宿锁定工具）；每个子阶段向前开放下一阶段写入工具实现"前瞻容错"（brief 可写 `set_candidate_pool`/`set_shortlist`，candidate 可写 `set_skeleton_plans`/`select_skeleton`）；`phase3_step` 由路由推断
 - **Phase 3 工具描述**：所有 11 个 Phase 3 工具的 `description` 采用四段式结构——功能说明 / 触发条件 / 禁止行为 / 写入后效果，引导 LLM 正确选择工具
 - **Phase 3 状态修复**：`AgentLoop` 覆盖全部 4 个子阶段的状态修复——brief 检测画像描述未写入、candidate 检测候选池/短名单缺失及跳阶信号、skeleton 检测骨架信号词但状态为空、lock 按类别（交通/住宿/风险/备选）独立检测；每个子阶段允许两次修复尝试（首次 + retry）
-- **重复搜索拦截**：`AgentLoop._should_skip_redundant_update` 检测 `web_search`/`xiaohongshu_search`/`quick_travel_search` 的同 query 重复调用（≥2 次），维护最近 20 条搜索记录滑动窗口，跳过时返回 `REDUNDANT_SEARCH` 错误码
+- **重复搜索拦截**：`AgentLoop._should_skip_redundant_update` 检测 `web_search`/`xiaohongshu_search_notes`/`quick_travel_search` 的同 query/keyword 重复调用（≥2 次），维护最近 20 条搜索记录滑动窗口，跳过时返回 `REDUNDANT_SEARCH` 错误码
 
 ### 工具清单
 
 | 类别 | 工具 |
 |------|------|
 | 状态 | `tools.plan_tools`（统一聚合导出 `PLAN_WRITER_TOOL_NAMES` 与 `make_all_plan_tools(plan)`，运行时批量注册 17 个状态写工具）、`tools.plan_tools.trip_basics`（Phase 1/3 基础行程写工具；更新 destination/dates/travelers/budget/departure_city，并在写入前复用 intake parser 做可解析性校验）、`tools.plan_tools.append_tools`（Phase 1/3/5 追加型写工具；追加 preferences/constraints；其中 preferences 兼容 `{key, value}` 与 legacy loose dict 展开语义，并在 wrapper 层做输入类型校验）、`tools.plan_tools.phase3_tools`（Phase 3 强 schema 写工具工厂；对骨架 id/name 做规范化，并兼容 legacy 选择态、冲突检测与歧义回退）、`tools.plan_tools.daily_plans`（Phase 5 逐日行程写工具；追加/整体替换 `daily_plans` 并校验 day/date/activity/notes schema；写入后即时调用 `validate_day_conflicts` 检测时间冲突，在返回 dict 中包含 `conflicts` 和 `has_severe_conflicts` 字段，形成模型自修复闭环）、`tools.plan_tools.backtrack`（`request_backtrack` 阶段回退写工具，薄封装 `state.plan_writers.execute_backtrack`） |
-| 搜索 | `xiaohongshu_search`、`web_search`、`quick_travel_search` |
+| 搜索 | `xiaohongshu_search_notes`、`xiaohongshu_read_note`、`xiaohongshu_get_comments`、`web_search`、`quick_travel_search` |
 | 交通 | `search_flights`（Amadeus + FlyAI 双源融合）、`search_trains`、`calculate_route` |
 | 住宿 | `search_accommodations` |
 | POI | `get_poi_info`（双源降级）、`check_availability` |
@@ -447,7 +447,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 | 四段式工具描述 | 功能说明 / 触发条件 / 禁止行为 / 写入后效果结构化模板，引导 LLM 正确选择工具而非混用 |
 | 子阶段输出协议 | 每个 Phase 3 子步骤开头注入"先工具后文字"正面指令，防止 LLM 只在正文描述方案而不写入状态 |
 | 重复搜索拦截 | 同 query 滑动窗口去重，阻断搜索死循环 |
-| 小红书三层操作模型 | search_notes（导航）→ read_note（信息）→ get_comments（评价），鼓励深度使用 UGC 内容；当前兼容省略 `operation` 时按 search_notes 执行 |
+| 小红书三层工具模型 | `xiaohongshu_search_notes`（导航）→ `xiaohongshu_read_note`（信息）→ `xiaohongshu_get_comments`（评价），用单一职责工具替代 `operation` 参数，降低模型漏传 discriminator 的概率 |
 | `DateRange.total_days` inclusive 语义 | 覆盖 start 到 end 的自然日数量（+1），与骨架生成器语义一致 |
 | Phase 3→5 骨架天数门控 | 已选骨架天数必须与 total_days 一致才允许进入 Phase 5 |
 | trip_brief 权威字段强制覆盖 | dates/total_days 在 hydrate 时直接赋值，防止 stale |
