@@ -1538,6 +1538,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         phase_router.prepare_backtrack(
             plan, req.to_phase, req.reason or "用户主动回退", snapshot_path
         )
+        await state_mgr.clear_deliverables(session_id)
         await _rotate_trip_on_reset_backtrack(
             user_id=session.get("user_id", "default_user"),
             plan=plan,
@@ -1765,6 +1766,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         if tool_name == "generate_summary":
                             await _persist_phase7_deliverables(plan, result_data)
                         elif result_data.get("backtracked"):
+                            await state_mgr.clear_deliverables(plan.session_id)
                             await _rotate_trip_on_reset_backtrack(
                                 user_id=session["user_id"],
                                 plan=plan,
@@ -1931,6 +1933,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         reason,
                         snapshot_path,
                     )
+                    await state_mgr.clear_deliverables(plan.session_id)
                     await _rotate_trip_on_reset_backtrack(
                         user_id=session["user_id"],
                         plan=plan,

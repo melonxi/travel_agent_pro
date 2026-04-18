@@ -29,6 +29,11 @@ def _make_plan(phase: int = 5) -> TravelPlanState:
             DayPlan(day=1, date="2025-08-01"),
             DayPlan(day=2, date="2025-08-02"),
         ],
+        deliverables={
+            "travel_plan_md": "travel_plan.md",
+            "checklist_md": "checklist.md",
+            "generated_at": "2026-04-18T22:30:00+08:00",
+        },
     )
 
 
@@ -60,6 +65,7 @@ class TestBacktrackService:
         assert plan.selected_skeleton_id is None
         assert plan.accommodation is None
         assert plan.daily_plans == []
+        assert plan.deliverables is None
 
         # destination 保留
         assert plan.destination == "Tokyo"
