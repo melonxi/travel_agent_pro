@@ -453,6 +453,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关），支持 
 | Phase 3→5 骨架天数门控 | 已选骨架天数必须与 total_days 一致才允许进入 Phase 5 |
 | trip_brief 权威字段强制覆盖 | dates/total_days 在 hydrate 时直接赋值，防止 stale |
 | plan_writer 增量持久化 | 每次 plan_writer 工具成功后立即 `state_mgr.save(plan)` 并同步更新 session meta（phase/title），finally 保底保存 plan 与 messages（含 logger.warning 日志），并把仍处于 running 的 run 标记为 cancelled，防止 SSE 中断丢失状态、消息或三源不一致 |
+| Phase 5 当前风险与并行化草案 | 已记录一次“只承诺不动手”后静默 DONE 的复盘；并补充了 Orchestrator-Workers 并行化方案文档，作为后续治理 token 膨胀与串行延迟的设计输入 |
 
 ---
 
