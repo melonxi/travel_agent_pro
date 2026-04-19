@@ -35,6 +35,22 @@ from tools.engine import ToolEngine
 logger = logging.getLogger(__name__)
 
 
+def _derive_theme(slice_: dict) -> str | None:
+    area = str(slice_.get("area") or "").strip()
+    theme = str(slice_.get("theme") or "").strip()
+    if area and theme:
+        return f"{area} · {theme}"
+    return area or theme or None
+
+
+def _format_error(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    if len(raw) > 80:
+        return raw[:77] + "..."
+    return raw
+
+
 @dataclass
 class GlobalValidationIssue:
     issue_type: str  # "poi_duplicate" | "budget_overrun" | "coverage_gap"
