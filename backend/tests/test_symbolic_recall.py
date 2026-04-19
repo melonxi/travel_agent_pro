@@ -54,6 +54,13 @@ def test_current_trip_question_does_not_trigger_recall():
     assert should_trigger_memory_recall("这次预算多少？") is False
 
 
+def test_mixed_current_and_history_query_still_triggers_recall():
+    query = build_recall_query("这次和上次一样住哪里？")
+
+    assert query.needs_memory is True
+    assert query.include_slices is True
+
+
 def test_hotel_query_maps_domains_and_destination():
     query = build_recall_query("我上次去京都住哪里？")
     assert query.needs_memory is True
@@ -66,6 +73,14 @@ def test_long_term_preference_query_includes_profile():
     query = build_recall_query("我是不是说过不坐红眼航班？")
     assert query.include_profile is True
     assert "flight" in query.domains
+
+
+def test_lodging_preference_query_includes_profile_and_hotel_domain():
+    query = build_recall_query("我以前不住青旅吗？")
+
+    assert query.needs_memory is True
+    assert query.include_profile is True
+    assert "hotel" in query.domains or "accommodation" in query.domains
 
 
 def test_rank_profile_items_prefers_constraints_over_hypotheses():

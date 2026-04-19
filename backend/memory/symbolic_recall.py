@@ -75,11 +75,16 @@ def should_trigger_memory_recall(message: str) -> bool:
     text = _normalize_text(message)
     if not text:
         return False
+    has_history_cue = any(phrase in text for phrase in _HISTORY_PHRASES)
+    if has_history_cue:
+        return True
+
     if any(phrase in text for phrase in _CURRENT_TRIP_PHRASES):
         if any(word in text for word in _CURRENT_TRIP_STATE_WORDS):
             return False
         return False
-    return any(phrase in text for phrase in _HISTORY_PHRASES)
+
+    return False
 
 
 def build_recall_query(message: str) -> RecallQuery:
@@ -210,7 +215,10 @@ def _score_episode_slice(
 def _should_include_profile(text: str, domains: list[str]) -> bool:
     if any(word in text for word in _PROFILE_HINT_WORDS):
         return True
-    return "flight" in domains or "pace" in domains or "food" in domains
+    return any(
+        domain in {"flight", "pace", "food", "hotel", "accommodation"}
+        for domain in domains
+    )
 
 
 def _should_include_slices(text: str, domains: list[str], destination: str | None) -> bool:
