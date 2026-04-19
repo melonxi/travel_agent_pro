@@ -187,6 +187,7 @@ travel_agent_pro/
 ### 文档沉淀约定
 - `docs/phase*.md`、`docs/*fix*.md`：专题修复记录与设计说明
 - `docs/postmortems/`：事故复盘，记录用户可见故障、根因链路、放大因素与后续动作
+- `docs/postmortems/2026-04-19-phase5-parallel-guard-refactor.md`：记录 Phase 5 并行入口守卫重构的主路径等价性、`max_retries` 边界风险与外部 agent runtime 设计参照
 - `docs/learning/interview-stress-test/`、`docs/mind/`：学习型架构评审与阶段性洞察，当前包含记忆系统写入语境、稳定性、TripEpisode 职责边界与 working memory 取舍分析
 - `docs/learning/2026-04-19-Phase*.md` 与 `docs/learning/assets/phase5-parallel-orchestration/`：面向初学者的 Phase 转换机制、Phase 5 并行 Orchestrator-Workers 生命周期说明和配图
 - `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划
