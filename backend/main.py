@@ -252,6 +252,45 @@ def _truncate_preview(value: Any, max_len: int = 120) -> str:
     return text
 
 
+def _legacy_memory_hit_record_from_recall(
+    memory_recall: MemoryRecallTelemetry,
+):
+    from telemetry.stats import MemoryHitRecord
+
+    def _unique_ids(*groups: list[str]) -> list[str]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for group in groups:
+            for item_id in group:
+                if not item_id or item_id in seen:
+                    continue
+                seen.add(item_id)
+                ordered.append(item_id)
+        return ordered
+
+    item_ids = _unique_ids(
+        memory_recall.profile_ids,
+        memory_recall.working_memory_ids,
+        memory_recall.slice_ids,
+    )
+    if not item_ids:
+        return None
+
+    sources = memory_recall.sources
+    # Until Task 8 splits profile telemetry everywhere, unsplit `profile` hits map
+    # into the legacy core bucket for trace continuity.
+    core_count = sources.get("profile_fixed", sources.get("profile", 0))
+    trip_count = sources.get("working_memory", 0)
+    phase_count = sources.get("episode_slice", 0) + sources.get("query_profile", 0)
+
+    return MemoryHitRecord(
+        item_ids=item_ids,
+        core_count=core_count,
+        trip_count=trip_count,
+        phase_count=phase_count,
+    )
+
+
 def _plan_writer_updates(
     tool_name: str,
     arguments: dict[str, Any],
@@ -2112,6 +2151,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 memory_recall = MemoryRecallTelemetry()
         else:
             memory_context, memory_recall = "暂无相关用户记忆", MemoryRecallTelemetry()
+
+        legacy_memory_hit = _legacy_memory_hit_record_from_recall(memory_recall)
+        if legacy_memory_hit is not None:
+            session_stats = session.get("stats")
+            if session_stats is not None:
+                session_stats.memory_hits.append(legacy_memory_hit)
 
         sys_msg = context_mgr.build_system_message(
             plan,
