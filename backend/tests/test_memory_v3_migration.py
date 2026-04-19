@@ -197,6 +197,79 @@ def test_migrate_user_dry_run_does_not_write_files(tmp_path: Path):
     assert (tmp_path / "users" / "u1" / "memory.json").exists()
 
 
+def test_migrate_user_preserves_existing_legacy_backup_on_collision(tmp_path: Path):
+    user_dir = tmp_path / "users" / "u1"
+    legacy_dir = user_dir / "legacy_memory_v2"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+
+    backup_payload = {
+        "schema_version": 2,
+        "user_id": "u1",
+        "items": [
+            {
+                "id": "backup_item",
+                "user_id": "u1",
+                "type": "preference",
+                "domain": "pace",
+                "key": "preferred_pace",
+                "value": "慢节奏",
+                "scope": "global",
+                "polarity": "like",
+                "confidence": 0.5,
+                "status": "active",
+                "source": {"kind": "migration", "session_id": ""},
+                "created_at": "2026-04-11T00:00:00",
+                "updated_at": "2026-04-11T00:00:00",
+            }
+        ],
+        "legacy": {},
+    }
+    source_payload = {
+        "schema_version": 2,
+        "user_id": "u1",
+        "items": [
+            {
+                "id": "source_item",
+                "user_id": "u1",
+                "type": "preference",
+                "domain": "pace",
+                "key": "preferred_pace",
+                "value": "轻松",
+                "scope": "global",
+                "polarity": "like",
+                "confidence": 0.9,
+                "status": "active",
+                "source": {"kind": "message", "session_id": "s1"},
+                "created_at": "2026-04-11T00:00:00",
+                "updated_at": "2026-04-11T00:00:00",
+            }
+        ],
+        "legacy": {},
+    }
+
+    (legacy_dir / "memory.json").write_text(
+        json.dumps(backup_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (user_dir / "memory.json").parent.mkdir(parents=True, exist_ok=True)
+    (user_dir / "memory.json").write_text(
+        json.dumps(source_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    migrate_user(tmp_path, "u1")
+
+    assert json.loads((legacy_dir / "memory.json").read_text(encoding="utf-8")) == backup_payload
+    collision_files = [
+        path
+        for path in legacy_dir.iterdir()
+        if path.name.startswith("memory.json.") and path.name.endswith(".bak")
+    ]
+    assert len(collision_files) == 1
+    assert json.loads(collision_files[0].read_text(encoding="utf-8")) == source_payload
+    assert not (user_dir / "memory.json").exists()
+
+
 def test_migrate_user_is_idempotent(tmp_path: Path):
     _write_v2_user_data(
         tmp_path,
