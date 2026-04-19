@@ -78,6 +78,9 @@ async def test_golden_path_tokyo_trip(app, sessions):
         session = sessions[session_id]
         plan: TravelPlanState = session["plan"]
         agent = session["agent"]
+        # Golden path covers the sequential flow; parallel phase-5 orchestrator
+        # has its own integration tests.
+        agent.phase5_parallel_config = None
         assert plan.phase == 1
 
         class SummaryLLM:
@@ -117,11 +120,12 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 assert plan.phase == 3
                 assert plan.dates is None
                 assert "- 阶段：3" in messages[0].content
-                # The transition summary now rides on an assistant turn
-                # and is built deterministically from the prior messages.
+                # The handoff note now rides on an assistant turn and is
+                # derived from plan state rather than a decision log.
                 assert messages[1].role == Role.ASSISTANT
-                assert "进入阶段 3" in messages[1].content
-                assert "决策: update_trip_basics" in messages[1].content
+                assert "[阶段交接]" in messages[1].content
+                assert "Phase 3" in messages[1].content
+                assert "目的地" in messages[1].content
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
@@ -140,8 +144,11 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 assert plan.budget is not None
                 assert plan.budget.total == 20000.0
                 assert "- 阶段：3" in messages[0].content
+                # Keep the closing text free of phase-3 repair keywords
+                # (画像/偏好/约束/预算/日期/旅行) so _build_phase3_state_repair_message
+                # does not inject an extra iteration.
                 for chunk in _text_chunks(
-                    "好的，已记录东京和日期。", "接下来我先给你几套行程骨架方案。"
+                    "好了，东京行程的基础信息已经保存。", "稍后会继续推进下一步。"
                 ):
                     yield chunk
                 return
@@ -205,7 +212,6 @@ async def test_golden_path_tokyo_trip(app, sessions):
                                 {
                                     "id": "balanced",
                                     "name": "平衡版",
-                                    "days": [],
                                     "tradeoffs": {},
                                 }
                             ]
@@ -276,7 +282,7 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 "activities": [sample_activity],
                 "notes": f"第{day_num}天行程",
             }
-            for day_num in range(1, 6)
+            for day_num in range(1, 7)
         ]
 
         phase5_call_count = 0
@@ -302,6 +308,13 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 yield chunk
 
         agent.llm.chat = phase5_chat
+        # on_soft_judge hook spins up a real LLM provider for replace_all_day_plans;
+        # suppress it so the golden path stays hermetic.
+        agent.hooks._hooks["after_tool_call"] = [
+            fn
+            for fn in agent.hooks._hooks.get("after_tool_call", [])
+            if fn.__name__ != "on_soft_judge"
+        ]
         resp = await client.post(
             f"/api/chat/{session_id}",
             json={"message": "开始安排每天行程"},
@@ -310,7 +323,7 @@ async def test_golden_path_tokyo_trip(app, sessions):
 
         assert phase5_call_count == 2
         assert plan.phase == 7
-        assert len(plan.daily_plans) == 5
+        assert len(plan.daily_plans) == 6
 
         async def phase7_chat(messages, tools=None, stream=True):
             for chunk in _text_chunks(
@@ -337,7 +350,7 @@ async def test_golden_path_tokyo_trip(app, sessions):
         assert plan.travelers.adults == 2
         assert plan.accommodation is not None
         assert plan.accommodation.area == "新宿"
-        assert len(plan.daily_plans) == 5
+        assert len(plan.daily_plans) == 6
         assert plan.daily_plans[0].activities[0].name == "浅草寺"
 
         resp = await client.get(f"/api/plan/{session_id}")
@@ -349,4 +362,4 @@ async def test_golden_path_tokyo_trip(app, sessions):
         assert plan_dict["dates"]["end"] == "2026-05-06"
         assert plan_dict["budget"]["total"] == 20000.0
         assert plan_dict["accommodation"]["area"] == "新宿"
-        assert len(plan_dict["daily_plans"]) == 5
+        assert len(plan_dict["daily_plans"]) == 6
