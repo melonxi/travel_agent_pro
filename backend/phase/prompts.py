@@ -597,8 +597,8 @@ PHASE5_PROMPT = """## 角色
 ### 动作 3 — validate（关键验证）
 对已组装的天数做针对性验证：
 - calculate_route：验证跨区域移动和酒店往返是否合理
-- check_availability：验证关键景点或预约型项目在指定日期是否可行
 - check_weather：天气敏感日程或用户在意天气时使用
+- web_search：当景点开放状态、营业时间等无法通过其他工具确认时，用 web_search 补充查证
 - xiaohongshu_search_notes / xiaohongshu_read_note / xiaohongshu_get_comments：补真实体验、排队强度、避坑和替代玩法
 - 不是每个活动都机械查一遍，优先查关键项、高风险项、会影响整天结构的项
 
@@ -651,14 +651,13 @@ PHASE5_PROMPT = """## 角色
 
 辅助工具：
 - get_poi_info：补齐 POI 坐标、基础属性、价格
-- check_availability：验证关键景点或活动在指定日期是否可行
 - check_weather：天气敏感日程验证
 - xiaohongshu_search_notes / xiaohongshu_read_note / xiaohongshu_get_comments：补真实体验、排队、避坑、替代玩法
 - web_search：实时网络搜索，用于补充专项工具无法提供的信息
 
 工具回退策略：
-- 当 check_availability 返回无效信息（如：缺少开放时间、开放状态未知、数据明显过时）时，必须主动使用 web_search 搜索该景点/活动的最新开放状态和营业时间。
 - 当 get_poi_info 返回无效信息（如：POI 不存在、坐标缺失、票价为空、基础属性缺失）时，必须主动使用 web_search 搜索该 POI 的详细信息以补齐缺失字段。
+- 景点开放状态、营业时间等无法通过专项工具确认时，使用 web_search 搜索补充。
 - 不要在工具返回无效信息后假装数据完整，也不要跳过验证直接编造——应使用 web_search 作为信息补充手段。
 
 不可用：本阶段不能调用大交通搜索或住宿搜索工具；不要暗示你拥有这些能力。

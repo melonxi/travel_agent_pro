@@ -237,9 +237,6 @@ def test_tool_query_fingerprint():
     gpi_n = ToolCall(id="3", name="get_poi_info", arguments={"name": "天空树"})
     assert _tool_query_fingerprint(gpi_n) == "get_poi_info:天空树"
 
-    ca = ToolCall(id="4", name="check_availability", arguments={"placeName": "寿司大", "date": "2026-05-01"})
-    assert _tool_query_fingerprint(ca) == "check_availability:寿司大:2026-05-01"
-
     other = ToolCall(id="5", name="calculate_route", arguments={"from": "A", "to": "B"})
     assert _tool_query_fingerprint(other) is None
 
@@ -247,9 +244,6 @@ def test_tool_query_fingerprint():
 def test_tool_recovery_key():
     gpi = ToolCall(id="1", name="get_poi_info", arguments={"query": "浅草寺"})
     assert _tool_recovery_key(gpi) == "浅草寺"
-
-    ca = ToolCall(id="2", name="check_availability", arguments={"placeName": "寿司大"})
-    assert _tool_recovery_key(ca) == "寿司大"
 
     ws = ToolCall(id="3", name="web_search", arguments={"query": "东京塔门票"})
     assert _tool_recovery_key(ws) == "东京塔门票"
@@ -405,14 +399,14 @@ async def test_recovery_chain_triggers_forced_emit():
             [
                 LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
-                    tool_call=_tc("web_search", call_id="r1", query="浅草寺"),
+                    tool_call=_tc("web_search", call_id="r1", query="浅草寺 开放时间"),
                 ),
                 LLMChunk(type=ChunkType.DONE),
             ],
             [
                 LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
-                    tool_call=_tc("check_availability", call_id="r2", placeName="浅草寺", date="2026-05-01"),
+                    tool_call=_tc("web_search", call_id="r2", query="浅草寺 营业时间"),
                 ),
                 LLMChunk(type=ChunkType.DONE),
             ],
@@ -436,6 +430,7 @@ async def test_recovery_chain_triggers_forced_emit():
         _ToolResultHelper("r0", "success", data={}),
         _ToolResultHelper("r1", "success", data={}),
         _ToolResultHelper("r2", "success", data={}),
+        _ToolResultHelper("r3", "success", data={}),
     ]
     tool_engine = _ToolEngineWithResults(tool_results)
 

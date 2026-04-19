@@ -123,8 +123,8 @@ def test_phase5_prompt_mentions_actual_phase5_tools(router):
         "optimize_day_route",
         "get_poi_info",
         "calculate_route",
-        "check_availability",
         "check_weather",
+        "web_search",
         "xiaohongshu_search_notes",
         "save_day_plan",
         "replace_all_day_plans",
@@ -141,7 +141,7 @@ def test_phase5_prompt_does_not_mention_legacy_phase5_plan_tools(router):
 def test_phase5_prompt_avoids_unavailable_phase5_tools(router):
     prompt = router.get_prompt(5)
     for tool_name in [
-        "web_search",
+        "check_availability",
         "search_flights",
         "search_trains",
         "search_accommodations",
