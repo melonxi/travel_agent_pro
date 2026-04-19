@@ -23,7 +23,7 @@ api_keys:
   openweather: "${OPENWEATHER_API_KEY}"
 
 data_dir: "./data"
-max_retries: 80
+max_retries: 160
 context_compression_threshold: 0.5
 
 flyai:
@@ -68,6 +68,6 @@ phase5:
   parallel:
     enabled: true
     max_workers: 5
-    worker_max_iterations: 30
-    worker_timeout_seconds: 600
+    worker_max_iterations: 60
+    worker_timeout_seconds: 1200
     fallback_to_serial: true

@@ -8,8 +8,8 @@ def test_phase5_parallel_defaults():
     assert isinstance(cfg.phase5_parallel, Phase5ParallelConfig)
     assert cfg.phase5_parallel.enabled is True
     assert cfg.phase5_parallel.max_workers == 5
-    assert cfg.phase5_parallel.worker_max_iterations == 30
-    assert cfg.phase5_parallel.worker_timeout_seconds == 600
+    assert cfg.phase5_parallel.worker_max_iterations == 60
+    assert cfg.phase5_parallel.worker_timeout_seconds == 1200
     assert cfg.phase5_parallel.fallback_to_serial is True
 
 
@@ -35,5 +35,5 @@ phase5:
     assert cfg.phase5_parallel.enabled is False
     assert cfg.phase5_parallel.max_workers == 3
     # Other fields should have defaults
-    assert cfg.phase5_parallel.worker_max_iterations == 30
-    assert cfg.phase5_parallel.worker_timeout_seconds == 600
+    assert cfg.phase5_parallel.worker_max_iterations == 60
+    assert cfg.phase5_parallel.worker_timeout_seconds == 1200

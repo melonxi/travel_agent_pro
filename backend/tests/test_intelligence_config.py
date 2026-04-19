@@ -3,6 +3,7 @@ from config import AppConfig, load_config
 
 def test_app_config_has_intelligence_defaults():
     cfg = AppConfig()
+    assert cfg.max_retries == 60
     assert cfg.quality_gate.threshold == 3.5
     assert cfg.quality_gate.max_retries == 2
     assert cfg.parallel_tool_execution is True
