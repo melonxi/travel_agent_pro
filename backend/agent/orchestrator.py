@@ -197,7 +197,17 @@ class Phase5Orchestrator:
 
             # 3. Initialize per-worker status tracking
             worker_statuses: list[dict[str, Any]] = [
-                {"day": t.day, "status": "running"} for t in tasks
+                {
+                    "day": t.day,
+                    "status": "running",
+                    "theme": _derive_theme(t.skeleton_slice),
+                    "iteration": None,
+                    "max_iterations": None,
+                    "current_tool": None,
+                    "activity_count": None,
+                    "error": None,
+                }
+                for t in tasks
             ]
 
             def _find_worker_idx(day: int) -> int:
@@ -213,8 +223,28 @@ class Phase5Orchestrator:
 
             # 4. Spawn workers with concurrency control
             semaphore = asyncio.Semaphore(self.config.max_workers)
+            progress_queue: asyncio.Queue = asyncio.Queue()
+
+            def _make_progress_cb(idx: int):
+                def _on_progress(day: int, kind: str, payload: dict) -> None:
+                    try:
+                        if kind == "iter_start":
+                            worker_statuses[idx]["iteration"] = payload["iteration"]
+                            worker_statuses[idx]["max_iterations"] = payload["max"]
+                            worker_statuses[idx]["current_tool"] = None
+                        elif kind == "tool_start":
+                            worker_statuses[idx]["current_tool"] = (
+                                payload.get("human_label") or payload.get("tool")
+                            )
+                        progress_queue.put_nowait({"day": day, "kind": kind})
+                    except Exception as exc:
+                        logger.warning(
+                            "orchestrator progress callback failed: %s", exc
+                        )
+                return _on_progress
 
             async def _run_with_semaphore(task: DayTask) -> DayWorkerResult:
+                idx = _find_worker_idx(task.day)
                 async with semaphore:
                     return await run_day_worker(
                         llm=self.llm,
@@ -224,6 +254,7 @@ class Phase5Orchestrator:
                         shared_prefix=shared_prefix,
                         max_iterations=self.config.worker_max_iterations,
                         timeout_seconds=self.config.worker_timeout_seconds,
+                        on_progress=_make_progress_cb(idx),
                     )
 
             pending: dict[asyncio.Task, DayTask] = {}
@@ -235,10 +266,25 @@ class Phase5Orchestrator:
             successes: list[DayWorkerResult] = []
             failures: list[tuple[DayTask, str]] = []
 
+            getter_task: asyncio.Task | None = None
             while pending:
+                if getter_task is None:
+                    getter_task = asyncio.create_task(progress_queue.get())
+                wait_set: set[asyncio.Task] = set(pending.keys()) | {getter_task}
                 done_set, _ = await asyncio.wait(
-                    pending.keys(), return_when=asyncio.FIRST_COMPLETED
+                    wait_set, return_when=asyncio.FIRST_COMPLETED
                 )
+
+                if getter_task in done_set:
+                    _ = getter_task.result()
+                    getter_task = None
+                    yield self._build_progress_chunk(
+                        worker_statuses,
+                        total_days,
+                        f"正在并行规划 {total_days} 天行程...",
+                    )
+                    continue
+
                 for completed in done_set:
                     day_task = pending.pop(completed)
                     idx = _find_worker_idx(day_task.day)
@@ -247,11 +293,20 @@ class Phase5Orchestrator:
                         if result.success:
                             successes.append(result)
                             worker_statuses[idx]["status"] = "done"
+                            worker_statuses[idx]["current_tool"] = None
+                            if result.dayplan:
+                                worker_statuses[idx]["activity_count"] = len(
+                                    result.dayplan.get("activities", [])
+                                )
                         else:
                             failures.append(
                                 (day_task, result.error or "Unknown error")
                             )
                             worker_statuses[idx]["status"] = "failed"
+                            worker_statuses[idx]["current_tool"] = None
+                            worker_statuses[idx]["error"] = _format_error(
+                                result.error
+                            )
                             logger.warning(
                                 "Day %d worker failed: %s",
                                 day_task.day,
@@ -260,6 +315,10 @@ class Phase5Orchestrator:
                     except Exception as e:
                         failures.append((day_task, f"Exception: {e}"))
                         worker_statuses[idx]["status"] = "failed"
+                        worker_statuses[idx]["current_tool"] = None
+                        worker_statuses[idx]["error"] = _format_error(
+                            f"Exception: {e}"
+                        )
                         logger.error(
                             "Day %d worker exception: %s", day_task.day, e
                         )
@@ -274,6 +333,13 @@ class Phase5Orchestrator:
                     total_days,
                     f"已完成 {done_count}/{total_days} 天...",
                 )
+
+            if getter_task and not getter_task.done():
+                getter_task.cancel()
+                try:
+                    await getter_task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
             span.set_attribute("successes", len(successes))
             span.set_attribute("failures", len(failures))
@@ -294,7 +360,13 @@ class Phase5Orchestrator:
             # 7. Retry failed days (one at a time)
             for task, error_msg in failures:
                 idx = _find_worker_idx(task.day)
-                worker_statuses[idx]["status"] = "retrying"
+                worker_statuses[idx].update({
+                    "status": "retrying",
+                    "iteration": None,
+                    "current_tool": None,
+                    "error": None,
+                    "activity_count": None,
+                })
                 yield self._build_progress_chunk(
                     worker_statuses,
                     total_days,
@@ -311,10 +383,16 @@ class Phase5Orchestrator:
                     shared_prefix=shared_prefix,
                     max_iterations=self.config.worker_max_iterations,
                     timeout_seconds=self.config.worker_timeout_seconds,
+                    on_progress=_make_progress_cb(idx),
                 )
                 if retry_result.success:
                     successes.append(retry_result)
                     worker_statuses[idx]["status"] = "done"
+                    worker_statuses[idx]["current_tool"] = None
+                    if retry_result.dayplan:
+                        worker_statuses[idx]["activity_count"] = len(
+                            retry_result.dayplan.get("activities", [])
+                        )
                     yield self._build_progress_chunk(
                         worker_statuses,
                         total_days,
@@ -322,6 +400,10 @@ class Phase5Orchestrator:
                     )
                 else:
                     worker_statuses[idx]["status"] = "failed"
+                    worker_statuses[idx]["current_tool"] = None
+                    worker_statuses[idx]["error"] = _format_error(
+                        retry_result.error
+                    )
                     logger.error(
                         "Day %d retry also failed: %s",
                         task.day,

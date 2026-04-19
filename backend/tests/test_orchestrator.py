@@ -1,5 +1,6 @@
 # backend/tests/test_orchestrator.py
 import pytest
+from unittest.mock import AsyncMock
 
 from agent.orchestrator import (
     Phase5Orchestrator,
@@ -7,7 +8,10 @@ from agent.orchestrator import (
     _derive_theme,
     _format_error,
 )
+from agent.day_worker import DayWorkerResult
 from agent.worker_prompt import DayTask
+from config import Phase5ParallelConfig
+from llm.types import ChunkType
 from state.models import (
     TravelPlanState,
     DateRange,
@@ -182,3 +186,248 @@ class TestGlobalValidation:
         gap_issues = [i for i in issues if i.issue_type == "coverage_gap"]
         assert len(gap_issues) == 1
         assert 2 in gap_issues[0].affected_days
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_broadcasts_theme_at_init(monkeypatch):
+    plan = _make_plan_with_skeleton()
+    orch = Phase5Orchestrator(
+        plan=plan,
+        llm=AsyncMock(),
+        tool_engine=AsyncMock(),
+        config=Phase5ParallelConfig(enabled=True, max_workers=3),
+    )
+
+    async def _fake_worker(**kwargs):
+        return DayWorkerResult(
+            day=kwargs["task"].day,
+            date=kwargs["task"].date,
+            success=True,
+            dayplan={"day": kwargs["task"].day, "activities": []},
+            iterations=1,
+        )
+
+    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+
+    chunks = [c async for c in orch.run()]
+    progress_chunks = [
+        c for c in chunks
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status.get("stage") == "parallel_progress"
+    ]
+    first = progress_chunks[0]
+    themes = {w["day"]: w["theme"] for w in first.agent_status["workers"]}
+    assert themes[1] == "新宿/原宿 · 潮流文化"
+    assert themes[2] == "浅草/上野 · 传统文化"
+    assert themes[3] == "涩谷/银座 · 购物"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_broadcasts_current_tool_mid_run(monkeypatch):
+    plan = _make_plan_with_skeleton()
+    orch = Phase5Orchestrator(
+        plan=plan,
+        llm=AsyncMock(),
+        tool_engine=AsyncMock(),
+        config=Phase5ParallelConfig(enabled=True, max_workers=3),
+    )
+
+    async def _fake_worker(**kwargs):
+        on_progress = kwargs.get("on_progress")
+        if on_progress:
+            on_progress(kwargs["task"].day, "iter_start", {"iteration": 1, "max": 5})
+            on_progress(
+                kwargs["task"].day,
+                "tool_start",
+                {"tool": "get_poi_info", "human_label": "查询 POI"},
+            )
+        return DayWorkerResult(
+            day=kwargs["task"].day,
+            date=kwargs["task"].date,
+            success=True,
+            dayplan={"day": kwargs["task"].day, "activities": []},
+            iterations=1,
+        )
+
+    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+
+    chunks = [c async for c in orch.run()]
+    progress_chunks = [
+        c for c in chunks
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status.get("stage") == "parallel_progress"
+    ]
+    # At least one mid-run chunk should have a non-null current_tool
+    mid_chunks_with_tool = [
+        c for c in progress_chunks
+        if any(w.get("current_tool") == "查询 POI" for w in c.agent_status["workers"])
+    ]
+    assert len(mid_chunks_with_tool) >= 1
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_populates_activity_count_on_success(monkeypatch):
+    plan = _make_plan_with_skeleton()
+    orch = Phase5Orchestrator(
+        plan=plan,
+        llm=AsyncMock(),
+        tool_engine=AsyncMock(),
+        config=Phase5ParallelConfig(enabled=True, max_workers=3),
+    )
+
+    async def _fake_worker(**kwargs):
+        return DayWorkerResult(
+            day=kwargs["task"].day,
+            date=kwargs["task"].date,
+            success=True,
+            dayplan={
+                "day": kwargs["task"].day,
+                "activities": [{"name": "a"}, {"name": "b"}],
+            },
+            iterations=1,
+        )
+
+    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+
+    chunks = [c async for c in orch.run()]
+    last_progress = [
+        c for c in chunks
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status.get("stage") == "parallel_progress"
+    ][-1]
+    for w in last_progress.agent_status["workers"]:
+        assert w["activity_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_populates_error_on_failure(monkeypatch):
+    plan = _make_plan_with_skeleton()
+    # Disable retry by making fallback kick in
+    orch = Phase5Orchestrator(
+        plan=plan,
+        llm=AsyncMock(),
+        tool_engine=AsyncMock(),
+        config=Phase5ParallelConfig(
+            enabled=True, max_workers=3, fallback_to_serial=True
+        ),
+    )
+
+    async def _fake_worker(**kwargs):
+        return DayWorkerResult(
+            day=kwargs["task"].day,
+            date=kwargs["task"].date,
+            success=False,
+            dayplan=None,
+            error="Worker 超时 (60s)",
+            iterations=5,
+        )
+
+    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+
+    chunks = [c async for c in orch.run()]
+    progress = [
+        c for c in chunks
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status.get("stage") == "parallel_progress"
+    ]
+    # At least one chunk should have error populated for all failed workers
+    has_error = any(
+        all(w["error"] == "Worker 超时 (60s)" for w in c.agent_status["workers"])
+        for c in progress
+    )
+    assert has_error
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_retry_resets_dynamic_fields(monkeypatch):
+    plan = _make_plan_with_skeleton()
+    orch = Phase5Orchestrator(
+        plan=plan,
+        llm=AsyncMock(),
+        tool_engine=AsyncMock(),
+        config=Phase5ParallelConfig(
+            enabled=True, max_workers=3, fallback_to_serial=False
+        ),
+    )
+
+    call_count = {1: 0, 2: 0, 3: 0}
+
+    async def _fake_worker(**kwargs):
+        day = kwargs["task"].day
+        call_count[day] += 1
+        on_progress = kwargs.get("on_progress")
+        if on_progress:
+            on_progress(day, "iter_start", {"iteration": 1, "max": 5})
+            on_progress(
+                day, "tool_start",
+                {"tool": "get_poi_info", "human_label": "查询 POI"},
+            )
+        # First call to day 1 fails, second (retry) succeeds
+        if day == 1 and call_count[1] == 1:
+            return DayWorkerResult(
+                day=day, date=kwargs["task"].date,
+                success=False, dayplan=None,
+                error="first try failed", iterations=5,
+            )
+        return DayWorkerResult(
+            day=day, date=kwargs["task"].date,
+            success=True,
+            dayplan={"day": day, "activities": []}, iterations=1,
+        )
+
+    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+
+    chunks = [c async for c in orch.run()]
+    progress = [
+        c for c in chunks
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status.get("stage") == "parallel_progress"
+    ]
+    # Find the "retrying" transition chunk
+    retry_chunks = [
+        c for c in progress
+        if any(
+            w["day"] == 1 and w["status"] == "retrying"
+            for w in c.agent_status["workers"]
+        )
+    ]
+    assert retry_chunks, "expected at least one retrying chunk for day 1"
+    retry_worker = next(
+        w for w in retry_chunks[0].agent_status["workers"] if w["day"] == 1
+    )
+    assert retry_worker["iteration"] is None
+    assert retry_worker["current_tool"] is None
+    assert retry_worker["theme"] is not None  # theme preserved
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_long_error_truncated_to_80(monkeypatch):
+    plan = _make_plan_with_skeleton()
+    orch = Phase5Orchestrator(
+        plan=plan,
+        llm=AsyncMock(),
+        tool_engine=AsyncMock(),
+        config=Phase5ParallelConfig(
+            enabled=True, max_workers=3, fallback_to_serial=True
+        ),
+    )
+
+    async def _fake_worker(**kwargs):
+        return DayWorkerResult(
+            day=kwargs["task"].day, date=kwargs["task"].date,
+            success=False, dayplan=None,
+            error="x" * 200, iterations=5,
+        )
+
+    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+    chunks = [c async for c in orch.run()]
+    progress = [
+        c for c in chunks
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status.get("stage") == "parallel_progress"
+    ]
+    for c in progress:
+        for w in c.agent_status["workers"]:
+            if w.get("error"):
+                assert len(w["error"]) == 80
+                assert w["error"].endswith("...")
