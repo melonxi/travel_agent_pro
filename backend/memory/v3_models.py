@@ -1,28 +1,57 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
 
-def _normalize_value(value: Any) -> str:
+def _as_dict(value: Any) -> dict[str, Any]:
     if value is None:
-        return ""
+        return {}
+    if isinstance(value, dict):
+        return value
+    return dict(value)
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return list(value)
+
+
+def _normalize_value(value: Any) -> str:
+    def _to_jsonable(obj: Any) -> Any:
+        if obj is None:
+            return None
+        if isinstance(obj, (bool, int, float, str)):
+            return obj
+        if isinstance(obj, dict):
+            return {str(key): _to_jsonable(obj[key]) for key in sorted(obj)}
+        if isinstance(obj, list):
+            return [_to_jsonable(item) for item in obj]
+        if isinstance(obj, tuple):
+            return [_to_jsonable(item) for item in obj]
+        if isinstance(obj, set):
+            rendered = [json.dumps(_to_jsonable(item), ensure_ascii=False, sort_keys=True, separators=(",", ":")) for item in obj]
+            return sorted(rendered)
+        return str(obj)
+
+    if isinstance(value, str):
+        return value.strip()
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, (int, float)):
         return str(value)
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, dict):
-        return "|".join(
-            f"{key}:{_normalize_value(value[key])}" for key in sorted(value)
-        )
-    if isinstance(value, (list, tuple, set)):
-        items = list(value)
-        if isinstance(value, set):
-            items = sorted(items, key=_normalize_value)
-        return "|".join(_normalize_value(item) for item in items)
-    return str(value).strip()
+    return json.dumps(
+        _to_jsonable(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 @dataclass
@@ -71,10 +100,10 @@ class MemoryProfileItem:
             stability=str(data.get("stability", "")),
             confidence=float(data.get("confidence", 0.0)),
             status=str(data.get("status", "")),
-            context=dict(data.get("context", {})),
+            context=_as_dict(data.get("context")),
             applicability=str(data.get("applicability", "")),
-            recall_hints=dict(data.get("recall_hints", {})),
-            source_refs=list(data.get("source_refs", [])),
+            recall_hints=_as_dict(data.get("recall_hints")),
+            source_refs=_as_list(data.get("source_refs")),
             created_at=str(data.get("created_at", "")),
             updated_at=str(data.get("updated_at", "")),
         )
@@ -121,18 +150,20 @@ class UserMemoryProfile:
             schema_version=int(data.get("schema_version", 3)),
             user_id=str(data.get("user_id", user_id or "")),
             constraints=[
-                MemoryProfileItem.from_dict(item) for item in data.get("constraints", [])
+                MemoryProfileItem.from_dict(item)
+                for item in _as_list(data.get("constraints"))
             ],
             rejections=[
-                MemoryProfileItem.from_dict(item) for item in data.get("rejections", [])
+                MemoryProfileItem.from_dict(item)
+                for item in _as_list(data.get("rejections"))
             ],
             stable_preferences=[
                 MemoryProfileItem.from_dict(item)
-                for item in data.get("stable_preferences", [])
+                for item in _as_list(data.get("stable_preferences"))
             ],
             preference_hypotheses=[
                 MemoryProfileItem.from_dict(item)
-                for item in data.get("preference_hypotheses", [])
+                for item in _as_list(data.get("preference_hypotheses"))
             ],
         )
 
@@ -168,11 +199,11 @@ class WorkingMemoryItem:
             id=str(data.get("id", "")),
             phase=int(data.get("phase", 0)),
             kind=str(data.get("kind", "note")),
-            domains=list(data.get("domains", [])),
+            domains=_as_list(data.get("domains")),
             content=str(data.get("content", "")),
             reason=str(data.get("reason", "")),
             status=str(data.get("status", "active")),
-            expires=dict(data.get("expires", {})),
+            expires=_as_dict(data.get("expires")),
             created_at=str(data.get("created_at", "")),
         )
 
@@ -198,7 +229,12 @@ class SessionWorkingMemory:
     def empty(
         cls, user_id: str, session_id: str, trip_id: str | None
     ) -> "SessionWorkingMemory":
-        return cls(schema_version=1, user_id=user_id, session_id=session_id, trip_id=trip_id)
+        return cls(
+            schema_version=1,
+            user_id=user_id,
+            session_id=session_id,
+            trip_id=trip_id,
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SessionWorkingMemory":
@@ -207,7 +243,7 @@ class SessionWorkingMemory:
             user_id=str(data.get("user_id", "")),
             session_id=str(data.get("session_id", "")),
             trip_id=data.get("trip_id"),
-            items=[WorkingMemoryItem.from_dict(item) for item in data.get("items", [])],
+            items=[WorkingMemoryItem.from_dict(item) for item in _as_list(data.get("items"))],
         )
 
 
@@ -248,9 +284,9 @@ class EpisodeSlice:
             source_episode_id=str(data.get("source_episode_id", "")),
             source_trip_id=data.get("source_trip_id"),
             slice_type=str(data.get("slice_type", "general")),
-            domains=list(data.get("domains", [])),
-            entities=dict(data.get("entities", {})),
-            keywords=list(data.get("keywords", [])),
+            domains=_as_list(data.get("domains")),
+            entities=_as_dict(data.get("entities")),
+            keywords=_as_list(data.get("keywords")),
             content=str(data.get("content", "")),
             applicability=str(data.get("applicability", "")),
             created_at=str(data.get("created_at", "")),

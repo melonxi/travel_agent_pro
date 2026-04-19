@@ -101,3 +101,112 @@ def test_episode_slice_round_trip():
 
     assert restored.source_episode_id == "ep_kyoto"
     assert restored.keywords == ["住宿", "酒店"]
+
+
+def test_null_collection_fields_deserialize_safely():
+    profile_item = MemoryProfileItem.from_dict(
+        {
+            "id": "constraints:flight:avoid_red_eye",
+            "domain": "flight",
+            "key": "avoid_red_eye",
+            "value": True,
+            "polarity": "avoid",
+            "stability": "explicit_declared",
+            "confidence": 0.95,
+            "status": "active",
+            "context": None,
+            "applicability": "适用于所有旅行。",
+            "recall_hints": None,
+            "source_refs": None,
+            "created_at": "2026-04-19T00:00:00",
+            "updated_at": "2026-04-19T00:00:00",
+        }
+    )
+    working = WorkingMemoryItem.from_dict(
+        {
+            "id": "wm_001",
+            "phase": 3,
+            "kind": "temporary_rejection",
+            "domains": None,
+            "content": "用户说先别考虑迪士尼。",
+            "reason": "当前候选筛选阶段避免重复推荐。",
+            "status": "active",
+            "expires": None,
+            "created_at": "2026-04-19T00:00:00",
+        }
+    )
+    memory = SessionWorkingMemory.from_dict(
+        {
+            "schema_version": 1,
+            "user_id": "default_user",
+            "session_id": "s1",
+            "trip_id": "trip_123",
+            "items": None,
+        }
+    )
+    slice_ = EpisodeSlice.from_dict(
+        {
+            "id": "slice_001",
+            "user_id": "default_user",
+            "source_episode_id": "ep_kyoto",
+            "source_trip_id": "trip_123",
+            "slice_type": "accommodation_decision",
+            "domains": None,
+            "entities": None,
+            "keywords": None,
+            "content": "上次京都选择町屋。",
+            "applicability": "仅供住宿偏好参考。",
+            "created_at": "2026-04-19T00:00:00",
+        }
+    )
+
+    assert profile_item.context == {}
+    assert profile_item.recall_hints == {}
+    assert profile_item.source_refs == []
+    assert working.domains == []
+    assert working.expires == {}
+    assert memory.items == []
+    assert slice_.domains == []
+    assert slice_.entities == {}
+    assert slice_.keywords == []
+
+
+def test_normalization_distinguishes_scalar_and_container_values():
+    scalar = MemoryProfileItem(
+        id="",
+        domain="hotel",
+        key="avoid",
+        value="x",
+        polarity="avoid",
+        stability="explicit_declared",
+        confidence=0.9,
+        status="active",
+        context={"a": "x"},
+        applicability="",
+        recall_hints={},
+        source_refs=[],
+        created_at="",
+        updated_at="",
+    )
+    list_value = MemoryProfileItem(
+        id="",
+        domain="hotel",
+        key="avoid",
+        value=["x"],
+        polarity="avoid",
+        stability="explicit_declared",
+        confidence=0.9,
+        status="active",
+        context={"a": ["x"]},
+        applicability="",
+        recall_hints={},
+        source_refs=[],
+        created_at="",
+        updated_at="",
+    )
+
+    assert generate_profile_item_id("rejections", scalar) == "rejections:hotel:avoid:x"
+    assert generate_profile_item_id("rejections", list_value) == "rejections:hotel:avoid:[\"x\"]"
+    assert generate_profile_item_id("preference_hypotheses", scalar) != generate_profile_item_id(
+        "preference_hypotheses", list_value
+    )
