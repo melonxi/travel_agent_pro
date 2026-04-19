@@ -222,15 +222,9 @@ def _render_value(value: Any) -> str:
 def _entity_text(value: Any) -> Any:
     if value is None:
         return None
-    if isinstance(value, str):
-        return _truncate(_sanitize_text(value))
     if isinstance(value, bool) or isinstance(value, int) or isinstance(value, float):
-        return value
-    if isinstance(value, dict):
-        return {str(key): _entity_text(value[key]) for key in sorted(value, key=str)}
-    if isinstance(value, (list, tuple)):
-        return [_entity_text(item) for item in value]
-    return _truncate(_sanitize_text(str(value)))
+        return _truncate(_render_value(value))
+    return _truncate(_render_value(value))
 
 
 def _as_list_or_empty(value: Any) -> list[Any]:
