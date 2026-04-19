@@ -157,6 +157,21 @@ async def test_parallel_happy_path():
     done_chunks = [c for c in chunks if c.type == ChunkType.DONE]
     assert len(done_chunks) == 1
 
+    progress_chunks = [
+        c for c in chunks
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status.get("stage") == "parallel_progress"
+    ]
+    # Sanity: must emit at least one parallel_progress chunk per worker.
+    assert len(progress_chunks) >= 3
+
+    # Final progress chunk must carry activity_count for every done worker.
+    last_workers = progress_chunks[-1].agent_status["workers"]
+    for w in last_workers:
+        if w["status"] == "done":
+            assert w["activity_count"] is not None, f"day {w['day']} missing activity_count"
+            assert "theme" in w  # theme key must be present (value may be None if skeleton slice has no area/theme)
+
 
 @pytest.mark.asyncio
 async def test_parallel_detects_poi_duplicate():
