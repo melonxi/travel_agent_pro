@@ -16,7 +16,7 @@
 | 层级 | 技术 |
 |------|------|
 | 后端 | Python 3.12+, FastAPI, Uvicorn, async/await |
-| 前端 | TypeScript, React 19, Vite 6, Leaflet |
+| 前端 | TypeScript, React 19, Vite 6, Leaflet；聊天流支持工具卡、思考态、并行进度和内部系统任务卡 |
 | LLM | OpenAI (gpt-4o) + Anthropic (Claude Sonnet 4)，按阶段切换 |
 | 持久化 | aiosqlite（会话/消息）、JSON 文件（旅行方案快照） |
 | 可观测性 | OpenTelemetry + Jaeger (OTLP gRPC) |
@@ -33,7 +33,7 @@ travel_agent_pro/
 │   ├── main.py                 # FastAPI 入口，API 端点，会话管理，SSE 流
 │   ├── run.py                  # RunRecord / IterationProgress（LLM 韧性追踪）
 │   ├── config.py               # 配置加载（.env + config.yaml）
-│   ├── agent/                  # Agent 循环：loop / compaction / hooks / reflection / tool_choice / narration / types / orchestrator / day_worker / worker_prompt
+│   ├── agent/                  # Agent 循环：loop / compaction / hooks / internal_tasks / reflection / tool_choice / narration / types / orchestrator / day_worker / worker_prompt
 │   ├── llm/                    # LLM 抽象：base Protocol / errors / factory / openai_provider / anthropic_provider
 │   ├── state/                  # 旅行状态模型：models / manager / intake / plan_writers
 │   ├── memory/                 # 结构化 global/trip 记忆 + episode：models / store / manager / extraction / policy / retriever / formatter
@@ -138,11 +138,11 @@ travel_agent_pro/
 
 | 模块 | 定位 | 触发时机 |
 |------|------|---------|
-| Evaluator-Optimizer | 阶段转换质量门控：硬约束阻断，软评分低于阈值时注入修正建议 | before_phase_transition hook |
+| Evaluator-Optimizer | 阶段转换质量门控：硬约束阻断，软评分低于阈值时注入修正建议；质量门控过程以 `quality_gate` 内部任务进入聊天流 | before_phase_transition hook |
 | Reflection | 被动自省提示，会话级去重 | before_llm_call（步骤切换时） |
 | Parallel Tool Exec | 读写分离并行调度，parallel_group ID 透传到 Stats 层 | 工具批量执行时 |
 | Tool Choice (always auto) | Phase 切分后总返回 "auto"，依赖提示纪律 | LLM 调用前 |
-| Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；三路检索按 trip_id 隔离 | 每轮 chat 后后台提取；system prompt 构建前检索 |
+| Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；三路检索按 trip_id 隔离；召回和后台提取以 `memory_recall` / `memory_extraction` 内部任务展示 | 每轮 chat 后后台提取；system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
 | Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
 
@@ -176,8 +176,12 @@ travel_agent_pro/
     │
     ├─ [Hook: after_tool_call]
     │   ├─ validator.validate_incremental → 实时约束检查
-    │   ├─ validator.validate_lock_budget → 交通+住宿预算占比检查
-    │   └─ SoftJudge → pace/geography/coherence/personalization 评分
+    │   └─ validator.validate_lock_budget → 交通+住宿预算占比检查
+    │
+    ├─ yield TOOL_RESULT → SSE 工具卡结束
+    │
+    ├─ [Hook: after_tool_result]
+    │   └─ SoftJudge → pace/geography/coherence/personalization 评分，以 `soft_judge` 内部任务展示
     │
     └─ yield LLMChunk → SSE → 前端
         ↓（异常或取消时）
@@ -186,6 +190,11 @@ travel_agent_pro/
 
 ### Pending system notes
 工具执行阶段产生的 SYSTEM 消息（如实时约束检查）不会立刻 append 到消息历史，而是缓存到 session 级缓冲区，在下一次 LLM 调用前统一 flush。目的是保证 `assistant.tool_calls → 全部 tool 答复` 的协议序列原子性；并行 tool_calls 期间任何 SYSTEM 都落在整组 tool 之后、下一次 assistant 之前。缓冲区不落盘。
+
+### Internal task stream
+后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务，并通过 SSE `{"type":"internal_task","task":...}` 输出到聊天流。前端 `ChatPanel` 按 `task.id` 合并生命周期更新，`MessageBubble` 渲染为系统任务卡，和真实工具卡保持视觉与语义区隔。
+
+当前进入聊天流的内部任务包括：`soft_judge`（工具结果后的行程质量评审）、`quality_gate`（阶段推进检查）、`context_compaction`（上下文整理）、`reflection`（自检提示注入）、`phase5_orchestration`（Phase 5 并行编排）、`memory_recall`（本轮记忆召回）和 `memory_extraction`（后台记忆候选提取）。`save_day_plan` / `replace_all_day_plans` 等真实工具的 `TOOL_RESULT` 会先到达前端并结束工具卡，随后才显示软评审内部任务，避免用户误以为工具仍在执行。
 
 ### 文档沉淀约定
 - `docs/phase*.md`、`docs/*fix*.md`：专题修复记录与设计说明

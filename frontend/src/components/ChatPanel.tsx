@@ -4,7 +4,7 @@ import ThinkingBubble from './ThinkingBubble'
 import ParallelProgress from './ParallelProgress'
 import RoundSummaryBar from './RoundSummaryBar'
 import { useSSE } from '../hooks/useSSE'
-import type { ParallelWorkerStatus, PhaseTransitionEvent, SSEEvent, TravelPlanState } from '../types/plan'
+import type { InternalTaskEvent, ParallelWorkerStatus, PhaseTransitionEvent, SSEEvent, TravelPlanState } from '../types/plan'
 import type { SessionMessage } from '../types/session'
 
 interface StateChange {
@@ -40,6 +40,7 @@ interface ChatMessage {
     estimated_tokens_before: number
     reason: string
   }
+  internalTask?: InternalTaskEvent
   memoryChip?: { count: number }
 }
 
@@ -114,6 +115,7 @@ interface EventHandlerState {
   currentAssistantId: string
   assistantContent: string
   toolMessageIds: Map<string, string>
+  internalTaskMessageIds: Map<string, string>
   completed: boolean
   failed: boolean
 }
@@ -415,6 +417,11 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
     ]
   }
 
+  const toClientTimestamp = (value: number | undefined) => {
+    if (value === undefined) return undefined
+    return value > 1_000_000_000_000 ? value : value * 1000
+  }
+
   const handleStop = async () => {
     if (!streaming) return
     userStoppedRef.current = true
@@ -533,6 +540,37 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
           compressionInfo: info,
         }),
       )
+    } else if (event.type === 'internal_task' && event.task) {
+      const task = event.task
+      const existingMessageId = state.internalTaskMessageIds.get(task.id)
+      const startedAt = toClientTimestamp(task.started_at) ?? Date.now()
+      const endedAt = toClientTimestamp(task.ended_at)
+
+      setMessages((prev) => {
+        if (!existingMessageId) {
+          const messageId = createMessageId()
+          state.internalTaskMessageIds.set(task.id, messageId)
+          return insertBeforeAssistant(prev, state.currentAssistantId, {
+            id: messageId,
+            role: 'system',
+            content: task.message ?? '',
+            startedAt,
+            endedAt,
+            internalTask: task,
+          })
+        }
+
+        return prev.map((message) =>
+          message.id === existingMessageId
+            ? {
+                ...message,
+                content: task.message ?? message.content,
+                endedAt: endedAt ?? (task.status === 'pending' ? undefined : Date.now()),
+                internalTask: task,
+              }
+            : message,
+        )
+      })
     } else if (event.type === 'state_update' && event.plan) {
       const changes = computeStateChanges(prevPlanRef.current, event.plan)
       prevPlanRef.current = event.plan
@@ -626,6 +664,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
       currentAssistantId: createMessageId(),
       assistantContent: '',
       toolMessageIds: new Map<string, string>(),
+      internalTaskMessageIds: new Map<string, string>(),
       completed: false,
       failed: false,
     }
@@ -670,6 +709,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
       currentAssistantId: createMessageId(),
       assistantContent: '',
       toolMessageIds: new Map<string, string>(),
+      internalTaskMessageIds: new Map<string, string>(),
       completed: false,
       failed: false,
     }
@@ -722,6 +762,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
             stateChanges={m.stateChanges}
             phaseTransition={m.phaseTransition}
             compressionInfo={m.compressionInfo}
+            internalTask={m.internalTask}
             staleness={m.role === 'tool' && m.toolStatus === 'pending' ? staleness : undefined}
             memoryChip={m.memoryChip}
           />

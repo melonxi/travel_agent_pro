@@ -399,6 +399,40 @@ async def test_chat_stream_dedupes_pending_memory_per_session(monkeypatch, app):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_emits_memory_recall_internal_task(monkeypatch, app):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+
+    async def fake_generate_context(
+        self, user_id: str, plan: TravelPlanState
+    ) -> tuple[str, list[str], int, int, int]:
+        return "用户偏好：喜欢轻松行程", ["mem_1"], 1, 0, 0
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "继续规划", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"type": "internal_task"' in resp.text
+    assert '"kind": "memory_recall"' in resp.text
+    assert '"status": "pending"' in resp.text
+    assert '"status": "success"' in resp.text
+    assert '"type": "memory_recall"' in resp.text
+
+
+@pytest.mark.asyncio
 async def test_append_trip_episode_once_is_idempotent(app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
     sessions = _get_closure_value(app, "sessions")

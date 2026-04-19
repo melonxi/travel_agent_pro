@@ -207,6 +207,82 @@ async def test_agent_status_compacting_emitted_when_compression_events_present(
 
 
 @pytest.mark.asyncio
+async def test_context_compaction_emits_internal_task(engine, hooks):
+    compression_events = [
+        {
+            "message_count_before": 10,
+            "message_count_after": 6,
+            "must_keep_count": 2,
+            "compressed_count": 4,
+            "estimated_tokens_before": 12000,
+            "reason": "test compaction",
+        }
+    ]
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="ok")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=hooks,
+        compression_events=compression_events,
+    )
+
+    chunks = [
+        chunk
+        async for chunk in agent.run([Message(role=Role.USER, content="继续")], phase=1)
+    ]
+    tasks = [chunk.internal_task for chunk in chunks if chunk.type == ChunkType.INTERNAL_TASK]
+
+    assert any(
+        task and task.kind == "context_compaction" and task.status == "pending"
+        for task in tasks
+    )
+    assert any(
+        task and task.kind == "context_compaction" and task.status == "success"
+        for task in tasks
+    )
+
+
+@pytest.mark.asyncio
+async def test_reflection_emits_internal_task_when_message_injected(engine, hooks):
+    plan = TravelPlanState(session_id="s1", phase=3, phase3_step="lock")
+
+    class FakeReflection:
+        def check_and_inject(self, messages, plan_arg, prev_step):
+            return "[自检] 请先检查方案"
+
+    async def fake_chat(messages, tools=None, stream=True, tool_choice=None):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="ok")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=hooks,
+        plan=plan,
+        reflection=FakeReflection(),
+    )
+
+    chunks = [
+        chunk
+        async for chunk in agent.run([Message(role=Role.USER, content="继续")], phase=3)
+    ]
+    tasks = [chunk.internal_task for chunk in chunks if chunk.type == ChunkType.INTERNAL_TASK]
+
+    assert any(
+        task and task.kind == "reflection" and task.status == "success"
+        for task in tasks
+    )
+
+
+@pytest.mark.asyncio
 async def test_agent_status_thinking_includes_narration_hint(engine, hooks):
     """agent_status(thinking) should include a narration hint based on the plan."""
     llm = MagicMock()

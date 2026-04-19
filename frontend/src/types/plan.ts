@@ -152,10 +152,26 @@ export interface CompressionInfo {
   reason: string
 }
 
+export interface InternalTaskEvent {
+  id: string
+  kind: string
+  label: string
+  status: 'pending' | 'success' | 'warning' | 'error' | 'skipped'
+  message?: string
+  blocking: boolean
+  scope: 'turn' | 'background' | 'session'
+  related_tool_call_id?: string
+  result?: Record<string, unknown>
+  error?: string
+  started_at?: number
+  ended_at?: number
+}
+
 interface BaseSSEEvent {
   content?: string
   tool_call?: ToolCallEvent
   tool_result?: ToolResultEvent
+  task?: InternalTaskEvent
   plan?: TravelPlanState
   compression_info?: CompressionInfo
   item_ids?: string[]
@@ -176,6 +192,7 @@ interface GenericSSEEvent extends BaseSSEEvent {
     | 'tool_result'
     | 'state_update'
     | 'context_compression'
+    | 'internal_task'
     | 'memory_recall'
     | 'error'
     | 'done'

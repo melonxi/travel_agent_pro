@@ -186,3 +186,45 @@ async def test_parallel_orchestrator_fires_after_final_iteration_phase_promotion
         c.type == ChunkType.TEXT_DELTA and "达到最大循环次数" in (c.content or "")
         for c in chunks
     ), "safety-limit fallback must not be emitted when orchestrator can still run"
+
+
+@pytest.mark.asyncio
+async def test_parallel_orchestrator_emits_internal_task_lifecycle(monkeypatch):
+    from state.models import Accommodation, DateRange, DayPlan, TravelPlanState
+
+    plan = TravelPlanState(session_id="s-phase5", phase=5)
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.selected_skeleton_id = "plan_A"
+    plan.skeleton_plans = [{"id": "plan_A", "days": [{}]}]
+    plan.accommodation = Accommodation(area="新宿")
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs):
+            self.plan = kwargs["plan"]
+
+        async def run(self):
+            self.plan.daily_plans = [DayPlan(day=1, date="2026-05-01")]
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="完成")
+            yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr("agent.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+
+    agent = AgentLoop(
+        llm=MagicMock(),
+        tool_engine=ToolEngine(),
+        hooks=HookManager(),
+        plan=plan,
+        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+    )
+
+    chunks = [chunk async for chunk in agent._run_parallel_phase5_orchestrator()]
+    tasks = [chunk.internal_task for chunk in chunks if chunk.type == ChunkType.INTERNAL_TASK]
+
+    assert any(
+        task and task.kind == "phase5_orchestration" and task.status == "pending"
+        for task in tasks
+    )
+    assert any(
+        task and task.kind == "phase5_orchestration" and task.status == "success"
+        for task in tasks
+    )

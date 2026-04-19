@@ -71,3 +71,70 @@ def test_message_to_dict_with_tool_result_error():
     assert d["tool_result"]["error"] == "API timeout"
     assert d["tool_result"]["error_code"] == "TIMEOUT"
     assert d["tool_result"]["suggestion"] == "Retry later"
+
+
+def test_internal_task_to_dict_omits_none_fields():
+    from agent.internal_tasks import InternalTask
+
+    task = InternalTask(
+        id="soft_judge:tc_1",
+        kind="soft_judge",
+        label="行程质量评审",
+        status="pending",
+        message="正在检查行程质量…",
+        blocking=True,
+        scope="turn",
+        related_tool_call_id="tc_1",
+        started_at=100.0,
+    )
+
+    assert task.to_dict() == {
+        "id": "soft_judge:tc_1",
+        "kind": "soft_judge",
+        "label": "行程质量评审",
+        "status": "pending",
+        "message": "正在检查行程质量…",
+        "blocking": True,
+        "scope": "turn",
+        "related_tool_call_id": "tc_1",
+        "started_at": 100.0,
+    }
+
+
+def test_internal_task_requires_known_status_and_scope():
+    import pytest
+    from agent.internal_tasks import InternalTask
+
+    with pytest.raises(ValueError, match="status"):
+        InternalTask(
+            id="bad",
+            kind="soft_judge",
+            label="行程质量评审",
+            status="running",
+        )
+
+    with pytest.raises(ValueError, match="scope"):
+        InternalTask(
+            id="bad",
+            kind="soft_judge",
+            label="行程质量评审",
+            status="pending",
+            scope="global",
+        )
+
+
+def test_llm_chunk_accepts_internal_task():
+    from agent.internal_tasks import InternalTask
+    from llm.types import ChunkType, LLMChunk
+
+    task = InternalTask(
+        id="quality_gate:5:7",
+        kind="quality_gate",
+        label="阶段推进检查",
+        status="success",
+        message="可以进入下一阶段",
+    )
+    chunk = LLMChunk(type=ChunkType.INTERNAL_TASK, internal_task=task)
+
+    assert ChunkType.INTERNAL_TASK.value == "internal_task"
+    assert chunk.internal_task is task

@@ -5,7 +5,7 @@ import pytest
 
 from agent.types import ToolCall
 from llm.types import ChunkType, LLMChunk
-from state.models import Accommodation, Budget, DateRange, TravelPlanState
+from state.models import Accommodation, Budget, DateRange, DayPlan, TravelPlanState
 
 
 @pytest.fixture(autouse=True)
@@ -190,3 +190,97 @@ async def test_on_validate_records_state_changes_to_stats(app, sessions):
     assert rec.state_changes[0]["field"] == "destination"
     assert rec.state_changes[0]["before"] is None
     assert rec.state_changes[0]["after"] == "东京"
+
+
+@pytest.mark.asyncio
+async def test_save_day_plan_replace_existing_shows_soft_judge_after_tool_result(
+    app,
+    sessions,
+):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        create_resp = await client.post("/api/sessions")
+        session_id = create_resp.json()["session_id"]
+
+        session = sessions[session_id]
+        plan: TravelPlanState = session["plan"]
+        plan.phase = 5
+        plan.destination = "惠州"
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+        plan.budget = Budget(total=3_000)
+        plan.accommodation = Accommodation(area="双月湾", hotel="A")
+        plan.daily_plans = [
+            DayPlan.from_dict(
+                {
+                    "day": 1,
+                    "date": "2026-05-01",
+                    "activities": [
+                        {
+                            "name": "旧行程",
+                            "location": {
+                                "name": "双月湾",
+                                "lat": 22.57,
+                                "lng": 114.90,
+                            },
+                            "start_time": "09:00",
+                            "end_time": "10:00",
+                            "category": "景点",
+                            "cost": 0,
+                        }
+                    ],
+                }
+            )
+        ]
+
+        agent = session["agent"]
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, stream=True, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_save_day",
+                        name="save_day_plan",
+                        arguments={
+                            "mode": "replace_existing",
+                            "day": 1,
+                            "date": "2026-05-01",
+                            "activities": [
+                                {
+                                    "name": "巽寮湾散步",
+                                    "location": {
+                                        "name": "巽寮湾",
+                                        "lat": 22.68,
+                                        "lng": 114.74,
+                                    },
+                                    "start_time": "09:00",
+                                    "end_time": "11:00",
+                                    "category": "景点",
+                                    "cost": 0,
+                                }
+                            ],
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+            else:
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已更新")
+                yield LLMChunk(type=ChunkType.DONE)
+
+        agent.llm.chat = fake_chat
+
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "把惠州第一天换成海边慢走"},
+        )
+
+    assert resp.status_code == 200
+    tool_result_pos = resp.text.index('"type": "tool_result"')
+    soft_judge_pos = resp.text.index('"kind": "soft_judge"')
+    assert tool_result_pos < soft_judge_pos
+    assert '"label": "行程质量评审"' in resp.text
+    assert '"status": "pending"' in resp.text
+    assert '"status": "success"' in resp.text

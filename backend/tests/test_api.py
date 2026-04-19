@@ -11,7 +11,7 @@ from llm.types import ChunkType, LLMChunk
 from main import _apply_message_fallbacks, create_app
 from phase.router import PhaseRouter
 from state.intake import parse_dates_value
-from state.models import Accommodation, DateRange, TravelPlanState
+from state.models import Accommodation, DateRange, DayPlan, TravelPlanState
 
 
 @pytest.fixture
@@ -106,6 +106,156 @@ async def test_rebuilt_agent_reuses_session_reflection(app):
 
     assert resp.status_code == 200
     assert _get_sessions(app)[session_id]["agent"].reflection is original_reflection
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_internal_task_event(app):
+    from agent.internal_tasks import InternalTask
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(
+            type=ChunkType.INTERNAL_TASK,
+            internal_task=InternalTask(
+                id="soft_judge:tc_1",
+                kind="soft_judge",
+                label="行程质量评审",
+                status="pending",
+                message="正在检查行程质量…",
+                related_tool_call_id="tc_1",
+                started_at=100.0,
+            ),
+        )
+        yield LLMChunk(type=ChunkType.DONE)
+
+    with patch("agent.loop.AgentLoop.run", fake_run):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "继续"},
+            )
+
+    assert resp.status_code == 200
+    assert '"type": "internal_task"' in resp.text
+    assert '"kind": "soft_judge"' in resp.text
+    assert '"label": "行程质量评审"' in resp.text
+    assert '"status": "pending"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_emits_internal_task_when_blocking(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path / "data"
+    config_file.write_text(
+        f"""
+llm:
+  provider: openai
+  model: gpt-4o
+data_dir: "{data_dir}"
+flyai:
+  enabled: false
+quality_gate:
+  threshold: 4.5
+  max_retries: 1
+memory_extraction:
+  enabled: false
+telemetry:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+
+    class LowScoreProvider:
+        async def chat(self, *args, **kwargs):
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content='{"overall":3.0,"pace":3,"geography":3,"coherence":3,"personalization":3,"suggestions":["补强路线顺路性"]}',
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: LowScoreProvider())
+    app = create_app(str(config_file))
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+
+    session = _get_sessions(app)[session_id]
+    plan = session["plan"]
+    plan.phase = 5
+    plan.destination = "京都"
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.selected_skeleton_id = "s1"
+    plan.skeleton_plans = [{"id": "s1", "days": [{"day": 1}]}]
+    plan.accommodation = Accommodation(area="河原町", hotel="A")
+    plan.daily_plans = [DayPlan(day=1, date="2026-05-01")]
+
+    agent = session["agent"]
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, **kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_save_day",
+                    name="save_day_plan",
+                    arguments={
+                        "mode": "replace_existing",
+                        "day": 1,
+                        "date": "2026-05-01",
+                        "activities": [
+                            {
+                                "name": "清水寺",
+                                "location": {
+                                    "name": "清水寺",
+                                    "lat": 34.9949,
+                                    "lng": 135.7850,
+                                },
+                                "start_time": "09:00",
+                                "end_time": "11:00",
+                                "category": "景点",
+                                "cost": 0,
+                            }
+                        ],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+        else:
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="准备进入下一阶段")
+            yield LLMChunk(type=ChunkType.DONE)
+
+    agent.llm.chat = fake_chat
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "继续"},
+        )
+
+    assert resp.status_code == 200
+    assert '"kind": "quality_gate"' in resp.text
+    assert '"label": "阶段推进检查"' in resp.text
+    assert '"status": "pending"' in resp.text
+    assert '"status": "warning"' in resp.text
+    assert "补强路线顺路性" in resp.text
 
 
 @pytest.mark.asyncio
