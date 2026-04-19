@@ -113,8 +113,8 @@ class GuardrailsConfig:
 class Phase5ParallelConfig:
     enabled: bool = True
     max_workers: int = 5
-    worker_max_iterations: int = 5
-    worker_timeout_seconds: int = 60
+    worker_max_iterations: int = 30
+    worker_timeout_seconds: int = 600
     fallback_to_serial: bool = True
 
 
@@ -298,8 +298,8 @@ def _build_phase5_parallel_config(raw: dict) -> Phase5ParallelConfig:
     return Phase5ParallelConfig(
         enabled=_as_bool(p5.get("enabled"), True),
         max_workers=int(p5.get("max_workers", 5)),
-        worker_max_iterations=int(p5.get("worker_max_iterations", 5)),
-        worker_timeout_seconds=int(p5.get("worker_timeout_seconds", 60)),
+        worker_max_iterations=int(p5.get("worker_max_iterations", 30)),
+        worker_timeout_seconds=int(p5.get("worker_timeout_seconds", 600)),
         fallback_to_serial=_as_bool(p5.get("fallback_to_serial"), True),
     )
 

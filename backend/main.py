@@ -877,6 +877,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool_choice_decider=tool_choice_decider,
             guardrail=guardrail,
             parallel_tool_execution=config.parallel_tool_execution,
+            phase5_parallel_config=config.phase5_parallel,
         )
 
     def _memory_plan_facts(plan: TravelPlanState) -> dict[str, Any]:
