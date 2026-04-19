@@ -39,12 +39,14 @@ def make_web_search_tool(api_keys) -> object:
 Use when:
   - 你需要最新价格、政策变动、开放变化、新闻型更新或通用攻略信息。
   - 现有专项工具不能直接回答，或者你需要补充更通用的外部公开信息。
+  - check_availability 或 get_poi_info 返回无效信息（如：缺少营业时间、票价缺失、POI 不存在、开放状态未知、数据明显过时）时，用 web_search 搜索补充。
 Important:
   - 当前实现只支持 query、search_depth、max_results 三个输入。
   - 不支持域名白名单、官方站点限定、时间窗口过滤或结构化抽取。
   - max_results 会自动限制在 1 到 10。
+  - 当 check_availability 或 get_poi_info 返回的信息不足以支撑行程规划时，应主动用 web_search 补充查证。
         返回 Tavily 的简答和结果列表，包含标题、链接、摘要和分数。对于推荐型 query，它经常能直接给出可用的候选结论。""",
-        phases=[1, 3],
+        phases=[1, 3, 5],
         parameters=_PARAMETERS,
         human_label="上网查资料",
     )

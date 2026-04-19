@@ -361,6 +361,7 @@ def _get_worker_tools(tool_engine: ToolEngine) -> list[dict[str, Any]]:
         "calculate_route",
         "check_availability",
         "check_weather",
+        "web_search",
         "xiaohongshu_search_notes",
         "xiaohongshu_read_note",
         "xiaohongshu_get_comments",
