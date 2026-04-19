@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
+from contextlib import suppress
 from typing import Any, AsyncIterator
 
 from opentelemetry import trace
@@ -10,6 +12,7 @@ from opentelemetry import trace
 from run import IterationProgress
 
 from agent.hooks import HookManager
+from agent.internal_tasks import InternalTask
 from agent.narration import compute_narration
 from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
@@ -40,6 +43,7 @@ class AgentLoop:
         parallel_tool_execution: bool = True,
         cancel_event: asyncio.Event | None = None,
         phase5_parallel_config: Phase5ParallelConfig | None = None,
+        internal_task_events: list[InternalTask] | None = None,
     ):
         self.llm = llm
         self.tool_engine = tool_engine
@@ -63,12 +67,50 @@ class AgentLoop:
         self._prev_phase3_step: str | None = None
         self.cancel_event = cancel_event
         self.phase5_parallel_config = phase5_parallel_config
+        self.internal_task_events = (
+            internal_task_events if internal_task_events is not None else []
+        )
         self._progress: IterationProgress = IterationProgress.NO_OUTPUT
         self._recent_search_queries: list[str] = []
 
     @property
     def progress(self) -> IterationProgress:
         return self._progress
+
+    def _drain_internal_task_events(self) -> list[InternalTask]:
+        events = list(self.internal_task_events)
+        self.internal_task_events.clear()
+        return events
+
+    async def _run_after_tool_result_hook(
+        self,
+        *,
+        tool_name: str,
+        tool_call: ToolCall,
+        result: ToolResult,
+    ) -> AsyncIterator[LLMChunk]:
+        hook_task = asyncio.create_task(
+            self.hooks.run(
+                "after_tool_result",
+                tool_name=tool_name,
+                tool_call=tool_call,
+                result=result,
+            )
+        )
+        try:
+            while not hook_task.done():
+                for task in self._drain_internal_task_events():
+                    yield LLMChunk(type=ChunkType.INTERNAL_TASK, internal_task=task)
+                await asyncio.sleep(0.05)
+            await hook_task
+        except Exception:
+            hook_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await hook_task
+            raise
+
+        for task in self._drain_internal_task_events():
+            yield LLMChunk(type=ChunkType.INTERNAL_TASK, internal_task=task)
 
     def _check_cancelled(self) -> None:
         if self.cancel_event and self.cancel_event.is_set():
@@ -113,14 +155,68 @@ class AgentLoop:
     async def _run_parallel_phase5_orchestrator(self) -> AsyncIterator[LLMChunk]:
         from agent.orchestrator import Phase5Orchestrator
 
+        task_id = f"phase5_orchestration:{self.plan.session_id if self.plan else 'unknown'}"
+        started_at = time.time()
+        yield LLMChunk(
+            type=ChunkType.INTERNAL_TASK,
+            internal_task=InternalTask(
+                id=task_id,
+                kind="phase5_orchestration",
+                label="Phase 5 并行编排",
+                status="pending",
+                message="正在拆分每日任务并并行生成行程…",
+                blocking=True,
+                scope="turn",
+                started_at=started_at,
+            ),
+        )
         orchestrator = Phase5Orchestrator(
             plan=self.plan,
             llm=self.llm,
             tool_engine=self.tool_engine,
             config=self.phase5_parallel_config,
         )
-        async for chunk in orchestrator.run():
-            yield chunk
+        try:
+            async for chunk in orchestrator.run():
+                yield chunk
+        except Exception as exc:
+            yield LLMChunk(
+                type=ChunkType.INTERNAL_TASK,
+                internal_task=InternalTask(
+                    id=task_id,
+                    kind="phase5_orchestration",
+                    label="Phase 5 并行编排",
+                    status="error",
+                    message="并行逐日行程生成失败。",
+                    blocking=True,
+                    scope="turn",
+                    error=str(exc),
+                    started_at=started_at,
+                    ended_at=time.time(),
+                ),
+            )
+            raise
+
+        completed = bool(getattr(self.plan, "daily_plans", None))
+        yield LLMChunk(
+            type=ChunkType.INTERNAL_TASK,
+            internal_task=InternalTask(
+                id=task_id,
+                kind="phase5_orchestration",
+                label="Phase 5 并行编排",
+                status="success" if completed else "warning",
+                message=(
+                    "并行逐日行程生成完成"
+                    if completed
+                    else "并行生成未完全成功，已降级或等待后续串行处理。"
+                ),
+                blocking=True,
+                scope="turn",
+                result={"fallback": not completed},
+                started_at=started_at,
+                ended_at=time.time(),
+            ),
+        )
 
     async def run(
         self,
@@ -167,15 +263,46 @@ class AgentLoop:
 
                     # Yield pending compression events from hook
                     if self.compression_events:
+                        compaction_started_at = time.time()
+                        yield LLMChunk(
+                            type=ChunkType.INTERNAL_TASK,
+                            internal_task=InternalTask(
+                                id=f"context_compaction:{iteration_idx}",
+                                kind="context_compaction",
+                                label="上下文整理",
+                                status="pending",
+                                message="正在整理上下文以控制提示词长度…",
+                                blocking=True,
+                                scope="turn",
+                                started_at=compaction_started_at,
+                            ),
+                        )
                         yield LLMChunk(
                             type=ChunkType.AGENT_STATUS,
                             agent_status={"stage": "compacting"},
                         )
+                    else:
+                        compaction_started_at = None
                     while self.compression_events:
                         info = self.compression_events.pop(0)
                         yield LLMChunk(
                             type=ChunkType.CONTEXT_COMPRESSION,
                             compression_info=info,
+                        )
+                    if compaction_started_at is not None:
+                        yield LLMChunk(
+                            type=ChunkType.INTERNAL_TASK,
+                            internal_task=InternalTask(
+                                id=f"context_compaction:{iteration_idx}",
+                                kind="context_compaction",
+                                label="上下文整理",
+                                status="success",
+                                message="上下文整理完成",
+                                blocking=True,
+                                scope="turn",
+                                started_at=compaction_started_at,
+                                ended_at=time.time(),
+                            ),
                         )
 
                     stage = (
@@ -207,6 +334,22 @@ class AgentLoop:
                         if reflection_msg:
                             messages.append(
                                 Message(role=Role.SYSTEM, content=reflection_msg)
+                            )
+                            now = time.time()
+                            yield LLMChunk(
+                                type=ChunkType.INTERNAL_TASK,
+                                internal_task=InternalTask(
+                                    id=f"reflection:{iteration_idx - 1}",
+                                    kind="reflection",
+                                    label="反思注入",
+                                    status="success",
+                                    message="已注入阶段自检提示",
+                                    blocking=False,
+                                    scope="turn",
+                                    result={"message": reflection_msg},
+                                    started_at=now,
+                                    ended_at=now,
+                                ),
                             )
                         self._prev_phase3_step = getattr(self.plan, "phase3_step", None)
 
@@ -372,6 +515,12 @@ class AgentLoop:
                                     type=ChunkType.TOOL_RESULT,
                                     tool_result=result,
                                 )
+                                async for hook_chunk in self._run_after_tool_result_hook(
+                                    tool_name=batch_tc.name,
+                                    tool_call=batch_tc,
+                                    result=result,
+                                ):
+                                    yield hook_chunk
 
                             idx = scan_idx
                             continue
@@ -415,6 +564,12 @@ class AgentLoop:
                             type=ChunkType.TOOL_RESULT,
                             tool_result=result,
                         )
+                        async for hook_chunk in self._run_after_tool_result_hook(
+                            tool_name=tc.name,
+                            tool_call=tc,
+                            result=result,
+                        ):
+                            yield hook_chunk
 
                         if self._is_backtrack_result(result):
                             rebuild_result = result
@@ -514,6 +669,11 @@ class AgentLoop:
                                 self.plan, hooks=self.hooks
                             )
                         )
+                        for task in self._drain_internal_task_events():
+                            yield LLMChunk(
+                                type=ChunkType.INTERNAL_TASK,
+                                internal_task=task,
+                            )
                         phase_after_batch = self.plan.phase
                         if phase_changed:
                             prev_iteration_had_tools = True

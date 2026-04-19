@@ -345,4 +345,88 @@ test.describe('Agent waiting experience', () => {
     await expect(subtitle).toContainText('翻小红书找灵感（运行较久，请稍候）', { timeout: 10000 })
     await expect.poll(async () => (await elapsed.textContent())?.trim() ?? '', { timeout: 10000 }).toMatch(/^[89]\.\d+s$|^1\d\.\d+s$/)
   })
+
+  test('shows internal task instead of leaving tool card pending during soft judge', async ({ page }) => {
+    const scenario: MockScenario = {
+      expectedMessage: '修改问题',
+      events: [
+        {
+          delayMs: 100,
+          payload: {
+            type: 'tool_call',
+            tool_call: {
+              id: 'tc_day',
+              name: 'save_day_plan',
+              human_label: '保存单日行程',
+              arguments: { day: 3 },
+            },
+          },
+        },
+        {
+          delayMs: 300,
+          payload: {
+            type: 'tool_result',
+            tool_result: {
+              tool_call_id: 'tc_day',
+              status: 'success',
+              data: { day: 3 },
+            },
+          },
+        },
+        {
+          delayMs: 350,
+          payload: {
+            type: 'internal_task',
+            task: {
+              id: 'soft_judge:tc_day',
+              kind: 'soft_judge',
+              label: '行程质量评审',
+              status: 'pending',
+              message: '正在检查行程质量…',
+              blocking: true,
+              scope: 'turn',
+              related_tool_call_id: 'tc_day',
+              started_at: 1776614400,
+            },
+          },
+        },
+        {
+          delayMs: 900,
+          payload: {
+            type: 'internal_task',
+            task: {
+              id: 'soft_judge:tc_day',
+              kind: 'soft_judge',
+              label: '行程质量评审',
+              status: 'success',
+              message: '评分 4.6/5，未发现需要立即处理的问题。',
+              blocking: true,
+              scope: 'turn',
+              related_tool_call_id: 'tc_day',
+              started_at: 1776614400,
+              ended_at: 1776614401,
+              result: { overall: 4.6 },
+            },
+          },
+        },
+        {
+          delayMs: 950,
+          payload: {
+            type: 'text_delta',
+            content: '已保存，并完成质量评审。',
+          },
+        },
+        { delayMs: 1000, payload: { type: 'done' } },
+      ],
+    }
+
+    await installDeterministicWaitingMock(page, scenario)
+    await openChatAndSend(page, scenario.expectedMessage)
+
+    await expect(page.locator('.message.tool.success .tool-status').first()).toContainText('成功')
+    await expect(page.locator('.message.tool.pending')).toHaveCount(0)
+    await expect(page.locator('.system-internal-task.pending')).toContainText('行程质量评审')
+    await expect(page.locator('.system-internal-task.success')).toContainText('评分 4.6/5')
+    await expect(page.locator('.message.assistant .bubble').last()).toContainText('已保存，并完成质量评审。')
+  })
 })

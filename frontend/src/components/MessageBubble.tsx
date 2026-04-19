@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import type { InternalTaskEvent } from '../types/plan'
 
 interface CompressionInfo {
   message_count_before: number
@@ -49,6 +50,7 @@ interface Props {
     to_step?: string | null
   }
   compressionInfo?: CompressionInfo
+  internalTask?: InternalTaskEvent
   staleness?: 'normal' | 'minor' | 'waiting'
   memoryChip?: { count: number }
 }
@@ -72,6 +74,7 @@ export default function MessageBubble({
   stateChanges,
   phaseTransition,
   compressionInfo,
+  internalTask,
   staleness,
   memoryChip,
 }: Props) {
@@ -79,14 +82,15 @@ export default function MessageBubble({
   const [now, setNow] = useState(Date.now())
 
   useEffect(() => {
-    if (role !== 'tool' || toolStatus !== 'pending') return undefined
+    const internalTaskPending = role === 'system' && internalTask?.status === 'pending'
+    if ((role !== 'tool' || toolStatus !== 'pending') && !internalTaskPending) return undefined
 
     const timer = window.setInterval(() => {
       setNow(Date.now())
     }, 500)
 
     return () => window.clearInterval(timer)
-  }, [role, toolStatus])
+  }, [internalTask?.status, role, toolStatus])
 
   if (role === 'system' && memoryChip) {
     return (
@@ -165,6 +169,75 @@ export default function MessageBubble({
             <span className="compression-sep" />
             <span>压缩 {compressionInfo.compressed_count} 条</span>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (role === 'system' && internalTask) {
+    const statusLabel =
+      internalTask.status === 'pending'
+        ? '进行中'
+        : internalTask.status === 'success'
+          ? '完成'
+          : internalTask.status === 'warning'
+            ? '需注意'
+            : internalTask.status === 'skipped'
+              ? '已跳过'
+              : '失败'
+    const startedAtMs = internalTask.started_at
+      ? (internalTask.started_at > 1_000_000_000_000 ? internalTask.started_at : internalTask.started_at * 1000)
+      : startedAt
+    const endedAtMs = internalTask.ended_at
+      ? (internalTask.ended_at > 1_000_000_000_000 ? internalTask.ended_at : internalTask.ended_at * 1000)
+      : endedAt
+    const elapsedMs = startedAtMs
+      ? Math.max(0, (endedAtMs ?? (internalTask.status === 'pending' ? now : Date.now())) - startedAtMs)
+      : null
+    const elapsedLabel = elapsedMs !== null ? `${(elapsedMs / 1000).toFixed(1)}s` : null
+    const detail = internalTask.error ?? internalTask.message ?? content
+    const hasDetails = internalTask.result !== undefined || Boolean(internalTask.error)
+
+    return (
+      <div className={`message system-internal-task ${internalTask.status}`}>
+        <div className="internal-task-card">
+          <div className="internal-task-header">
+            <div className="internal-task-title-group">
+              <span className="internal-task-pulse" aria-hidden="true" />
+              <div>
+                <div className="internal-task-kicker">系统内部任务</div>
+                <div className="internal-task-title">{internalTask.label}</div>
+              </div>
+            </div>
+            <div className="internal-task-meta">
+              {elapsedLabel && <span className="internal-task-elapsed">{elapsedLabel}</span>}
+              <span className={`internal-task-status ${internalTask.status}`}>{statusLabel}</span>
+            </div>
+          </div>
+          {detail && <div className="internal-task-message">{detail}</div>}
+          <div className="internal-task-footer">
+            <span>{internalTask.kind}</span>
+            {internalTask.related_tool_call_id && <span>关联工具 {internalTask.related_tool_call_id}</span>}
+            {internalTask.blocking && <span>阻塞当前回复</span>}
+          </div>
+          {hasDetails && (
+            <button
+              type="button"
+              className="internal-task-details-toggle"
+              onClick={() => setDetailsExpanded((value) => !value)}
+              aria-expanded={detailsExpanded}
+            >
+              详情{detailsExpanded ? '收起' : '展开'}
+            </button>
+          )}
+          {detailsExpanded && hasDetails && (
+            <div className="internal-task-details">
+              {internalTask.result !== undefined && (
+                <pre className="tool-json">{formatJson(internalTask.result)}</pre>
+              )}
+              {internalTask.error && <div className="tool-error">{internalTask.error}</div>}
+            </div>
+          )}
         </div>
       </div>
     )

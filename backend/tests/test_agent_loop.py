@@ -260,6 +260,93 @@ async def test_hooks_called(agent, mock_llm, hooks):
 
 
 @pytest.mark.asyncio
+async def test_tool_result_emitted_before_slow_after_tool_result_internal_task(
+    mock_llm,
+    engine,
+    hooks,
+):
+    from agent.internal_tasks import InternalTask
+
+    hook_started = asyncio.Event()
+    release_hook = asyncio.Event()
+    internal_task_events: list[InternalTask] = []
+
+    async def slow_hook(**kwargs):
+        hook_started.set()
+        internal_task_events.append(
+            InternalTask(
+                id="soft_judge:tc_1",
+                kind="soft_judge",
+                label="行程质量评审",
+                status="pending",
+                related_tool_call_id="tc_1",
+            )
+        )
+        await release_hook.wait()
+        internal_task_events.append(
+            InternalTask(
+                id="soft_judge:tc_1",
+                kind="soft_judge",
+                label="行程质量评审",
+                status="success",
+                related_tool_call_id="tc_1",
+            )
+        )
+
+    hooks.register("after_tool_result", slow_hook)
+
+    call_count = 0
+
+    async def mock_chat(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(id="tc_1", name="greet", arguments={"name": "X"}),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+        else:
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+            yield LLMChunk(type=ChunkType.DONE)
+
+    mock_llm.chat = mock_chat
+    agent = AgentLoop(
+        llm=mock_llm,
+        tool_engine=engine,
+        hooks=hooks,
+        plan=TravelPlanState(session_id="s1", phase=1),
+        internal_task_events=internal_task_events,
+    )
+
+    stream = agent.run([Message(role=Role.USER, content="hi")], phase=1)
+
+    try:
+        while True:
+            chunk = await asyncio.wait_for(stream.__anext__(), timeout=0.5)
+            if chunk.type == ChunkType.TOOL_RESULT:
+                assert chunk.tool_result is not None
+                assert chunk.tool_result.status == "success"
+                assert hook_started.is_set() is False
+                break
+
+        next_chunk = await asyncio.wait_for(stream.__anext__(), timeout=0.5)
+        assert hook_started.is_set() is True
+        assert next_chunk.type == ChunkType.INTERNAL_TASK
+        assert next_chunk.internal_task is not None
+        assert next_chunk.internal_task.status == "pending"
+
+        release_hook.set()
+        final_task_chunk = await asyncio.wait_for(stream.__anext__(), timeout=0.5)
+        assert final_task_chunk.type == ChunkType.INTERNAL_TASK
+        assert final_task_chunk.internal_task is not None
+        assert final_task_chunk.internal_task.status == "success"
+    finally:
+        release_hook.set()
+        await stream.aclose()
+
+
+@pytest.mark.asyncio
 async def test_tool_choice_decider_result_is_passed_to_llm(engine, hooks):
     plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
     forced_choice = {"type": "function", "function": {"name": "set_trip_brief"}}

@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from agent.internal_tasks import InternalTask
 from agent.types import ToolCall, ToolResult
 
 
@@ -20,6 +21,7 @@ class ChunkType(str, Enum):
     DONE = "done"
     PHASE_TRANSITION = "phase_transition"
     AGENT_STATUS = "agent_status"
+    INTERNAL_TASK = "internal_task"
 
 
 @dataclass
@@ -32,3 +34,4 @@ class LLMChunk:
     usage_info: dict | None = None  # {"input_tokens": N, "output_tokens": N}
     phase_info: dict | None = None
     agent_status: dict | None = None
+    internal_task: InternalTask | None = None

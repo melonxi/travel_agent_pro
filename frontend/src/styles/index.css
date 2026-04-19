@@ -1275,6 +1275,185 @@ body::after {
   background: var(--text-muted);
 }
 
+/* ── Internal System Task Card ────────────────────── */
+.message.system-internal-task {
+  align-items: center;
+  padding: 4px 0;
+}
+
+.internal-task-card {
+  width: min(100%, 620px);
+  margin: 0 auto;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(212, 162, 76, 0.16);
+  background:
+    linear-gradient(135deg, rgba(212, 162, 76, 0.10), rgba(59, 169, 156, 0.045)),
+    rgba(11, 13, 17, 0.24);
+  position: relative;
+  overflow: hidden;
+}
+
+.message.system-internal-task.pending .internal-task-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--accent-amber), rgba(59, 169, 156, 0.4));
+  animation: toolBreathBar 1.8s ease-in-out infinite;
+}
+
+.message.system-internal-task.success .internal-task-card {
+  border-color: rgba(59, 169, 156, 0.18);
+  background: rgba(59, 169, 156, 0.07);
+}
+
+.message.system-internal-task.warning .internal-task-card {
+  border-color: rgba(212, 162, 76, 0.22);
+}
+
+.message.system-internal-task.error .internal-task-card {
+  border-color: rgba(217, 106, 75, 0.22);
+  background: rgba(217, 106, 75, 0.08);
+}
+
+.message.system-internal-task.skipped .internal-task-card {
+  border-color: rgba(74, 77, 90, 0.16);
+  background: rgba(74, 77, 90, 0.06);
+}
+
+.internal-task-header,
+.internal-task-title-group,
+.internal-task-meta,
+.internal-task-footer {
+  display: flex;
+  align-items: center;
+}
+
+.internal-task-header {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.internal-task-title-group {
+  min-width: 0;
+  gap: 10px;
+}
+
+.internal-task-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-amber);
+  box-shadow: 0 0 0 5px rgba(212, 162, 76, 0.12);
+  flex-shrink: 0;
+}
+
+.message.system-internal-task.pending .internal-task-pulse {
+  animation: toolPulse 1.4s ease-in-out infinite;
+}
+
+.message.system-internal-task.success .internal-task-pulse {
+  background: var(--accent-teal);
+  box-shadow: 0 0 0 5px rgba(59, 169, 156, 0.12);
+}
+
+.message.system-internal-task.error .internal-task-pulse {
+  background: var(--accent-coral);
+  box-shadow: 0 0 0 5px rgba(217, 106, 75, 0.12);
+}
+
+.message.system-internal-task.skipped .internal-task-pulse {
+  background: var(--text-muted);
+  box-shadow: none;
+}
+
+.internal-task-kicker {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.internal-task-title {
+  margin-top: 2px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.internal-task-meta {
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.internal-task-elapsed {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--text-muted);
+}
+
+.internal-task-status {
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.internal-task-status.pending,
+.internal-task-status.warning {
+  color: var(--accent-amber);
+}
+
+.internal-task-status.success {
+  color: var(--accent-teal);
+}
+
+.internal-task-status.error {
+  color: var(--accent-coral);
+}
+
+.internal-task-message {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  line-height: 1.55;
+}
+
+.internal-task-footer {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.internal-task-footer span {
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+}
+
+.internal-task-details-toggle {
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.internal-task-details-toggle:hover {
+  color: var(--text-primary);
+}
+
+.internal-task-details {
+  margin-top: 8px;
+}
+
 /* ── State Update Inline Card ─────────────────────── */
 .message.system-phase-transition {
   align-items: center;

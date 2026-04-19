@@ -25,6 +25,7 @@ from agent.compaction import (
     estimate_messages_tokens,
 )
 from agent.hooks import GateResult, HookManager
+from agent.internal_tasks import InternalTask
 from agent.loop import AgentLoop
 from agent.reflection import ReflectionInjector
 from agent.tool_choice import ToolChoiceDecider
@@ -543,6 +544,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         tool_engine.register(make_xiaohongshu_get_comments_tool(config.xhs))
 
         hooks = HookManager()
+        internal_task_events: list[InternalTask] = []
 
         async def on_tool_call(**kwargs):
             tool_name = kwargs.get("tool_name")
@@ -726,25 +728,80 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 "generate_summary",
             ):
                 return
+            tool_call = kwargs.get("tool_call")
+            task_id = f"soft_judge:{getattr(tool_call, 'id', tool_name)}"
+            started_at = time.time()
+            internal_task_events.append(
+                InternalTask(
+                    id=task_id,
+                    kind="soft_judge",
+                    label="行程质量评审",
+                    status="pending",
+                    message="正在检查行程节奏、地理顺路性和个性化匹配…",
+                    related_tool_call_id=getattr(tool_call, "id", None),
+                    started_at=started_at,
+                )
+            )
             if not plan.daily_plans:
+                internal_task_events.append(
+                    InternalTask(
+                        id=task_id,
+                        kind="soft_judge",
+                        label="行程质量评审",
+                        status="skipped",
+                        message="暂无每日行程，跳过质量评审。",
+                        related_tool_call_id=getattr(tool_call, "id", None),
+                        started_at=started_at,
+                        ended_at=time.time(),
+                    )
+                )
                 return
             session = sessions.get(plan.session_id)
             if not session:
+                internal_task_events.append(
+                    InternalTask(
+                        id=task_id,
+                        kind="soft_judge",
+                        label="行程质量评审",
+                        status="skipped",
+                        message="会话已不可用，跳过质量评审。",
+                        related_tool_call_id=getattr(tool_call, "id", None),
+                        started_at=started_at,
+                        ended_at=time.time(),
+                    )
+                )
                 return
-            prefs = {p.key: p.value for p in plan.preferences}
-            prompt_text = build_judge_prompt(plan.to_dict(), prefs)
-            judge_llm = create_llm_provider(config.llm)
-            judge_msgs = [
-                Message(role=Role.SYSTEM, content="你是旅行行程质量评估专家。"),
-                Message(role=Role.USER, content=prompt_text),
-            ]
-            result_parts: list[str] = []
-            async for chunk in judge_llm.chat(judge_msgs, tools=[], stream=True):
-                if chunk.content:
-                    result_parts.append(chunk.content)
-            score = parse_judge_response("".join(result_parts))
+            try:
+                prefs = {p.key: p.value for p in plan.preferences}
+                prompt_text = build_judge_prompt(plan.to_dict(), prefs)
+                judge_llm = create_llm_provider(config.llm)
+                judge_msgs = [
+                    Message(role=Role.SYSTEM, content="你是旅行行程质量评估专家。"),
+                    Message(role=Role.USER, content=prompt_text),
+                ]
+                result_parts: list[str] = []
+                async for chunk in judge_llm.chat(judge_msgs, tools=[], stream=True):
+                    if chunk.content:
+                        result_parts.append(chunk.content)
+                score = parse_judge_response("".join(result_parts))
+            except Exception as exc:
+                logger.warning("soft judge failed", exc_info=True)
+                internal_task_events.append(
+                    InternalTask(
+                        id=task_id,
+                        kind="soft_judge",
+                        label="行程质量评审",
+                        status="error",
+                        message="质量评审未完成，不影响已保存的行程。",
+                        error=str(exc),
+                        related_tool_call_id=getattr(tool_call, "id", None),
+                        started_at=started_at,
+                        ended_at=time.time(),
+                    )
+                )
+                return
             # Stage judge scores for the TOOL_RESULT handler to attach to ToolCallRecord
-            session["_pending_judge_scores"] = {
+            judge_scores = {
                 "overall": score.overall,
                 "pace": score.pace,
                 "geography": score.geography,
@@ -752,6 +809,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 "personalization": score.personalization,
                 "suggestions_count": len(score.suggestions),
             }
+            session["_pending_judge_scores"] = judge_scores
+            stats = session.get("stats")
+            if stats and stats.tool_calls:
+                latest = stats.tool_calls[-1]
+                if latest.tool_name == tool_name and latest.judge_scores is None:
+                    latest.judge_scores = judge_scores
             if score.suggestions:
                 suggestion_text = "\n".join(f"- {s}" for s in score.suggestions)
                 session["messages"].append(
@@ -760,16 +823,50 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         content=f"💡 行程质量评估（{score.overall:.1f}/5）：\n{suggestion_text}",
                     )
                 )
+            final_status = "warning" if score.suggestions else "success"
+            final_message = (
+                f"评分 {score.overall:.1f}/5，发现 {len(score.suggestions)} 条改进建议。"
+                if score.suggestions
+                else f"评分 {score.overall:.1f}/5，未发现需要立即处理的问题。"
+            )
+            internal_task_events.append(
+                InternalTask(
+                    id=task_id,
+                    kind="soft_judge",
+                    label="行程质量评审",
+                    status=final_status,
+                    message=final_message,
+                    related_tool_call_id=getattr(tool_call, "id", None),
+                    result=judge_scores,
+                    started_at=started_at,
+                    ended_at=time.time(),
+                )
+            )
 
         hooks.register("after_tool_call", on_tool_call)
         hooks.register("after_tool_call", on_validate)
-        hooks.register("after_tool_call", on_soft_judge)
+        hooks.register("after_tool_result", on_soft_judge)
 
         async def on_before_phase_transition(**kwargs):
             target_plan = kwargs.get("plan", plan)
             from_phase = int(kwargs.get("from_phase", target_plan.phase))
             to_phase = int(kwargs.get("to_phase", from_phase))
             session = sessions.get(target_plan.session_id)
+            task_id = f"quality_gate:{target_plan.session_id}:{from_phase}:{to_phase}"
+            started_at = time.time()
+            internal_task_events.append(
+                InternalTask(
+                    id=task_id,
+                    kind="quality_gate",
+                    label="阶段推进检查",
+                    status="pending",
+                    message=f"正在判断 Phase {from_phase} 是否可以进入 Phase {to_phase}…",
+                    blocking=True,
+                    scope="turn",
+                    result={"from_phase": from_phase, "to_phase": to_phase},
+                    started_at=started_at,
+                )
+            )
 
             # Feasibility gate: catch impossible plans early (Phase 1→3)
             if from_phase == 1 and to_phase == 3:
@@ -792,6 +889,20 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         session["messages"].append(
                             Message(role=Role.SYSTEM, content=feedback)
                         )
+                    internal_task_events.append(
+                        InternalTask(
+                            id=task_id,
+                            kind="quality_gate",
+                            label="阶段推进检查",
+                            status="warning",
+                            message="可行性检查未通过，暂不推进阶段。",
+                            blocking=True,
+                            scope="turn",
+                            result={"reasons": feas.reasons},
+                            started_at=started_at,
+                            ended_at=time.time(),
+                        )
+                    )
                     return GateResult(allowed=False, feedback=feedback)
 
             errors = validate_hard_constraints(target_plan)
@@ -803,9 +914,37 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     session["messages"].append(
                         Message(role=Role.SYSTEM, content=feedback)
                     )
+                internal_task_events.append(
+                    InternalTask(
+                        id=task_id,
+                        kind="quality_gate",
+                        label="阶段推进检查",
+                        status="warning",
+                        message="发现硬约束冲突，暂不推进阶段。",
+                        blocking=True,
+                        scope="turn",
+                        result={"errors": errors},
+                        started_at=started_at,
+                        ended_at=time.time(),
+                    )
+                )
                 return GateResult(allowed=False, feedback=feedback)
 
             if (from_phase, to_phase) not in {(3, 5), (5, 7)}:
+                internal_task_events.append(
+                    InternalTask(
+                        id=task_id,
+                        kind="quality_gate",
+                        label="阶段推进检查",
+                        status="success",
+                        message=f"允许进入 Phase {to_phase}。",
+                        blocking=True,
+                        scope="turn",
+                        result={"from_phase": from_phase, "to_phase": to_phase},
+                        started_at=started_at,
+                        ended_at=time.time(),
+                    )
+                )
                 return GateResult(allowed=True)
 
             try:
@@ -821,12 +960,40 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     if chunk.content:
                         result_parts.append(chunk.content)
                 score = parse_judge_response("".join(result_parts))
-            except Exception:
+            except Exception as exc:
+                internal_task_events.append(
+                    InternalTask(
+                        id=task_id,
+                        kind="quality_gate",
+                        label="阶段推进检查",
+                        status="skipped",
+                        message="阶段推进检查不可用，已跳过并允许主流程继续。",
+                        blocking=True,
+                        scope="turn",
+                        error=str(exc),
+                        started_at=started_at,
+                        ended_at=time.time(),
+                    )
+                )
                 return GateResult(allowed=True)
             if score.overall >= config.quality_gate.threshold:
                 quality_gate_retries.pop(
                     (target_plan.session_id, from_phase, to_phase),
                     None,
+                )
+                internal_task_events.append(
+                    InternalTask(
+                        id=task_id,
+                        kind="quality_gate",
+                        label="阶段推进检查",
+                        status="success",
+                        message=f"评分 {score.overall:.1f}/5，可以进入 Phase {to_phase}。",
+                        blocking=True,
+                        scope="turn",
+                        result={"overall": score.overall},
+                        started_at=started_at,
+                        ended_at=time.time(),
+                    )
                 )
                 return GateResult(allowed=True)
 
@@ -834,6 +1001,20 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             retry_count = quality_gate_retries.get(retry_key, 0)
             if retry_count >= config.quality_gate.max_retries:
                 quality_gate_retries.pop(retry_key, None)
+                internal_task_events.append(
+                    InternalTask(
+                        id=task_id,
+                        kind="quality_gate",
+                        label="阶段推进检查",
+                        status="warning",
+                        message="质量门控已达到重试上限，本次允许继续。",
+                        blocking=True,
+                        scope="turn",
+                        result={"overall": score.overall},
+                        started_at=started_at,
+                        ended_at=time.time(),
+                    )
+                )
                 return GateResult(allowed=True)
 
             quality_gate_retries[retry_key] = retry_count + 1
@@ -848,6 +1029,20 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             )
             if session:
                 session["messages"].append(Message(role=Role.SYSTEM, content=feedback))
+            internal_task_events.append(
+                InternalTask(
+                    id=task_id,
+                    kind="quality_gate",
+                    label="阶段推进检查",
+                    status="warning",
+                    message=f"评分 {score.overall:.1f}/5，低于阈值 {config.quality_gate.threshold:.1f}。",
+                    blocking=True,
+                    scope="turn",
+                    result={"overall": score.overall, "suggestions": suggestions},
+                    started_at=started_at,
+                    ended_at=time.time(),
+                )
+            )
             return GateResult(allowed=False, feedback=feedback)
 
         hooks.register_gate("before_phase_transition", on_before_phase_transition)
@@ -878,6 +1073,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             guardrail=guardrail,
             parallel_tool_execution=config.parallel_tool_execution,
             phase5_parallel_config=config.phase5_parallel,
+            internal_task_events=internal_task_events,
         )
 
     def _memory_plan_facts(plan: TravelPlanState) -> dict[str, Any]:
@@ -1038,6 +1234,22 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         messages_snapshot: list[Message],
         plan_snapshot: TravelPlanState,
     ) -> None:
+        session = sessions.get(session_id)
+        task_id = f"memory_extraction:{session_id}:{int(time.time())}"
+        started_at = time.time()
+        if session is not None:
+            session.setdefault("_background_internal_tasks", []).append(
+                InternalTask(
+                    id=task_id,
+                    kind="memory_extraction",
+                    label="记忆提取",
+                    status="pending",
+                    message="正在后台提取可复用的旅行偏好…",
+                    blocking=False,
+                    scope="background",
+                    started_at=started_at,
+                )
+            )
         task = asyncio.create_task(
             _extract_memory_candidates(
                 session_id=session_id,
@@ -1049,6 +1261,43 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         memory_extraction_tasks[session_id] = task
 
         def _cleanup(done_task: asyncio.Task) -> None:
+            target_session = sessions.get(session_id)
+            if target_session is not None and not done_task.cancelled():
+                try:
+                    item_ids = done_task.result()
+                    target_session.setdefault("_background_internal_tasks", []).append(
+                        InternalTask(
+                            id=task_id,
+                            kind="memory_extraction",
+                            label="记忆提取",
+                            status="success" if item_ids else "skipped",
+                            message=(
+                                f"已提取 {len(item_ids)} 条待确认记忆"
+                                if item_ids
+                                else "本轮没有新的待确认记忆"
+                            ),
+                            blocking=False,
+                            scope="background",
+                            result={"item_ids": item_ids, "count": len(item_ids)},
+                            started_at=started_at,
+                            ended_at=time.time(),
+                        )
+                    )
+                except Exception as exc:
+                    target_session.setdefault("_background_internal_tasks", []).append(
+                        InternalTask(
+                            id=task_id,
+                            kind="memory_extraction",
+                            label="记忆提取",
+                            status="error",
+                            message="后台记忆提取失败。",
+                            blocking=False,
+                            scope="background",
+                            error=str(exc),
+                            started_at=started_at,
+                            ended_at=time.time(),
+                        )
+                    )
             if memory_extraction_tasks.get(session_id) is done_task:
                 memory_extraction_tasks.pop(session_id, None)
             queued = memory_extraction_pending.pop(session_id, None)
@@ -1690,6 +1939,18 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             ensure_ascii=False,
                         )
                         continue
+                    if (
+                        chunk.type == ChunkType.INTERNAL_TASK
+                        and chunk.internal_task is not None
+                    ):
+                        yield json.dumps(
+                            {
+                                "type": "internal_task",
+                                "task": chunk.internal_task.to_dict(),
+                            },
+                            ensure_ascii=False,
+                        )
+                        continue
                     event_type = (
                         "tool_call"
                         if chunk.tool_call and chunk.type.value == "tool_call_start"
@@ -2088,53 +2349,16 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool["name"]
             for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)
         ]
-        memory_context, recalled_ids, mem_core, mem_trip, mem_phase = (
-            await memory_mgr.generate_context(req.user_id, plan)
-            if config.memory.enabled
-            else ("暂无相关用户记忆", [], 0, 0, 0)
-        )
-
-        if recalled_ids:
-            from telemetry.stats import MemoryHitRecord
-
-            session_stats = session.get("stats")
-            if session_stats is not None:
-                session_stats.memory_hits.append(
-                    MemoryHitRecord(
-                        item_ids=recalled_ids,
-                        core_count=mem_core,
-                        trip_count=mem_trip,
-                        phase_count=mem_phase,
-                    )
-                )
-
-        sys_msg = context_mgr.build_system_message(
-            plan,
-            phase_prompt,
-            memory_context,
-            available_tools=available_tools,
-        )
-
-        # Prepend system message
-        if messages and messages[0].role == Role.SYSTEM:
-            messages[0] = sys_msg
-        else:
-            messages.insert(0, sys_msg)
-
-        messages.append(Message(role=Role.USER, content=req.message))
-
         # 记录 agent.run 之前的 phase，用于判断是否发生了回退
         phase_before_run = plan.phase
 
         async def event_stream():
-            if recalled_ids:
+            for task in session.pop("_background_internal_tasks", []):
                 yield json.dumps(
-                    {
-                        "type": "memory_recall",
-                        "item_ids": recalled_ids,
-                    },
+                    {"type": "internal_task", "task": task.to_dict()},
                     ensure_ascii=False,
                 )
+
             if config.memory.enabled:
                 seen_key = (session["user_id"], plan.session_id)
                 seen_item_ids = memory_pending_seen.setdefault(seen_key, set())
@@ -2151,6 +2375,89 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         for item in pending_items
                     )
                     yield _memory_pending_event_from_items(pending_items)
+
+            memory_recall_task_id = f"memory_recall:{plan.session_id}:{int(time.time())}"
+            memory_recall_started_at = time.time()
+            yield json.dumps(
+                {
+                    "type": "internal_task",
+                    "task": InternalTask(
+                        id=memory_recall_task_id,
+                        kind="memory_recall",
+                        label="记忆召回",
+                        status="pending",
+                        message="正在检索本轮可用旅行记忆…",
+                        blocking=True,
+                        scope="turn",
+                        started_at=memory_recall_started_at,
+                    ).to_dict(),
+                },
+                ensure_ascii=False,
+            )
+
+            memory_context, recalled_ids, mem_core, mem_trip, mem_phase = (
+                await memory_mgr.generate_context(req.user_id, plan)
+                if config.memory.enabled
+                else ("暂无相关用户记忆", [], 0, 0, 0)
+            )
+            yield json.dumps(
+                {
+                    "type": "internal_task",
+                    "task": InternalTask(
+                        id=memory_recall_task_id,
+                        kind="memory_recall",
+                        label="记忆召回",
+                        status="success" if recalled_ids else "skipped",
+                        message=(
+                            f"本轮使用 {len(recalled_ids)} 条旅行记忆"
+                            if recalled_ids
+                            else "未找到本轮可用记忆"
+                        ),
+                        blocking=True,
+                        scope="turn",
+                        result={"item_ids": recalled_ids, "count": len(recalled_ids)},
+                        started_at=memory_recall_started_at,
+                        ended_at=time.time(),
+                    ).to_dict(),
+                },
+                ensure_ascii=False,
+            )
+
+            if recalled_ids:
+                from telemetry.stats import MemoryHitRecord
+
+                session_stats = session.get("stats")
+                if session_stats is not None:
+                    session_stats.memory_hits.append(
+                        MemoryHitRecord(
+                            item_ids=recalled_ids,
+                            core_count=mem_core,
+                            trip_count=mem_trip,
+                            phase_count=mem_phase,
+                        )
+                    )
+                yield json.dumps(
+                    {
+                        "type": "memory_recall",
+                        "item_ids": recalled_ids,
+                    },
+                    ensure_ascii=False,
+                )
+
+            sys_msg = context_mgr.build_system_message(
+                plan,
+                phase_prompt,
+                memory_context,
+                available_tools=available_tools,
+            )
+
+            # Prepend system message
+            if messages and messages[0].role == Role.SYSTEM:
+                messages[0] = sys_msg
+            else:
+                messages.insert(0, sys_msg)
+
+            messages.append(Message(role=Role.USER, content=req.message))
 
             from run import RunRecord
 
