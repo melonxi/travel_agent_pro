@@ -29,6 +29,50 @@ logger = logging.getLogger(__name__)
 
 OnProgress = Callable[[int, str, dict], None] | None
 
+_MAX_SAME_QUERY = 2
+_MAX_POI_RECOVERY = 3
+
+_JSON_REPAIR_PROMPT = (
+    "只输出合法 DayPlan JSON，必须包含 `day`、`date`、`activities`。"
+)
+
+_FORCED_EMIT_PROMPT = (
+    "你已陷入重复查询/补救循环，请立即停止调用工具，直接输出 DayPlan JSON。"
+    "必须包含 `day`、`date`、`activities`。"
+)
+
+_LATE_EMIT_PROMPT = (
+    "你已进入收口阶段。不要再为细节重复搜索；"
+    "请基于已知信息立即输出 DayPlan JSON，无法确认的事实写入 notes。"
+)
+
+
+def _should_force_emit(iteration: int, max_iterations: int) -> bool:
+    return iteration + 1 >= max(3, int(max_iterations * 0.6))
+
+
+def _tool_query_fingerprint(call: ToolCall) -> str | None:
+    if call.name == "web_search":
+        return f"web_search:{call.arguments.get('query', '')}"
+    if call.name == "get_poi_info":
+        q = call.arguments.get("query") or call.arguments.get("name") or ""
+        return f"get_poi_info:{q}"
+    if call.name == "check_availability":
+        p = call.arguments.get("placeName", "")
+        d = call.arguments.get("date", "")
+        return f"check_availability:{p}:{d}"
+    return None
+
+
+def _tool_recovery_key(call: ToolCall) -> str | None:
+    if call.name == "get_poi_info":
+        return call.arguments.get("query") or call.arguments.get("name")
+    if call.name == "check_availability":
+        return call.arguments.get("placeName")
+    if call.name == "web_search":
+        return call.arguments.get("query")
+    return None
+
 
 @dataclass
 class DayWorkerResult:
@@ -39,6 +83,7 @@ class DayWorkerResult:
     success: bool
     dayplan: dict[str, Any] | None
     error: str | None = None
+    error_code: str | None = None
     iterations: int = 0
 
 
@@ -117,6 +162,13 @@ async def run_day_worker(
     worker_tools = _get_worker_tools(tool_engine)
 
     iterations = 0
+    emit_repair_attempted = False
+    repair_round_pending = False
+    forced_emit_mode = False
+    forced_emit_reason: str | None = None
+    late_emit_hinted = False
+    repeated_query_counts: dict[str, int] = {}
+    poi_recovery_counts: dict[str, int] = {}
 
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -124,8 +176,9 @@ async def run_day_worker(
                 span.set_attribute("day", task.day)
                 span.set_attribute("date", task.date)
 
-                for iteration in range(max_iterations):
-                    iterations = iteration + 1
+                while iterations < max_iterations or repair_round_pending:
+                    repair_round_pending = False
+                    iterations += 1
 
                     def _safe_emit(kind: str, payload: dict) -> None:
                         if on_progress is None:
@@ -172,13 +225,23 @@ async def run_day_worker(
                                 dayplan=dayplan,
                                 iterations=iterations,
                             )
-                        # No JSON found, but no tools either — worker is stuck
+                        if not emit_repair_attempted:
+                            emit_repair_attempted = True
+                            repair_round_pending = True
+                            messages.append(
+                                Message(
+                                    role=Role.SYSTEM,
+                                    content=_JSON_REPAIR_PROMPT,
+                                )
+                            )
+                            continue
                         return DayWorkerResult(
                             day=task.day,
                             date=task.date,
                             success=False,
                             dayplan=None,
                             error=f"Worker 未输出有效 DayPlan JSON (iteration {iterations})",
+                            error_code="JSON_EMIT_FAILED",
                             iterations=iterations,
                         )
 
@@ -190,6 +253,39 @@ async def run_day_worker(
                             tool_calls=tool_calls,
                         )
                     )
+
+                    # Convergence guards: check for repeated queries & recovery chains
+                    for tc in tool_calls:
+                        fp = _tool_query_fingerprint(tc)
+                        if fp is not None:
+                            repeated_query_counts[fp] = repeated_query_counts.get(fp, 0) + 1
+                            if repeated_query_counts[fp] > _MAX_SAME_QUERY:
+                                forced_emit_mode = True
+                                forced_emit_reason = "REPEATED_QUERY_LOOP"
+                                break
+                        rk = _tool_recovery_key(tc)
+                        if rk is not None:
+                            poi_recovery_counts[rk] = poi_recovery_counts.get(rk, 0) + 1
+                            if poi_recovery_counts[rk] > _MAX_POI_RECOVERY:
+                                forced_emit_mode = True
+                                forced_emit_reason = "RECOVERY_CHAIN_EXHAUSTED"
+                                break
+
+                    if forced_emit_mode:
+                        messages.append(
+                            Message(role=Role.SYSTEM, content=_FORCED_EMIT_PROMPT)
+                        )
+                        continue
+
+                    if (
+                        not late_emit_hinted
+                        and _should_force_emit(iterations, max_iterations)
+                        and tool_calls
+                    ):
+                        late_emit_hinted = True
+                        messages.append(
+                            Message(role=Role.SYSTEM, content=_LATE_EMIT_PROMPT)
+                        )
 
                     if tool_calls:
                         first = tool_calls[0]
@@ -233,6 +329,7 @@ async def run_day_worker(
                     success=False,
                     dayplan=None,
                     error=f"Worker 耗尽 {max_iterations} 轮迭代未输出 DayPlan",
+                    error_code=forced_emit_reason if forced_emit_mode else None,
                     iterations=iterations,
                 )
 

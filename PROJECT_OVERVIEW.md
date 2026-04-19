@@ -106,6 +106,9 @@ travel_agent_pro/
   - Worker 共享相同 system prompt prefix → KV-Cache 命中率 ~93.75%（Manus pattern）
   - Worker 只有只读工具，写入由 Orchestrator 统一完成
   - 失败率 >50% 自动降级到串行模式
+- **Day Worker 提示词止血策略**：Day Worker 具备有限补救 + 保守落地的收敛策略——当 JSON 输出格式异常或工具调用失败时，先尝试有限次数的补救（如 JSON 修复），补救失败则保守落地（返回当前已有结果而非无限重试）
+- **Day Worker loop 保护机制**：Worker 内部循环具备四重收敛保障——**重复查询抑制**（同 query 滑动窗口去重，避免搜索死循环）、**补救链阈值**（连续补救轮次上限，超限即保守落地）、**后半程强制收口**（迭代过半后强制聚焦已有结果，不再启动新搜索）、**JSON 修复回合**（输出 JSON 解析失败时限定修复轮次，避免在格式修复上无限循环）
+- **Worker 失败错误类别**：Worker 失败时输出结构化错误码，便于 Orchestrator 诊断与降级决策——`REPEATED_QUERY_LOOP`（重复查询死循环被抑制）、`RECOVERY_CHAIN_EXHAUSTED`（补救链耗尽仍无法恢复）、`JSON_EMIT_FAILED`（JSON 输出经修复回合仍无法解析）、`TIMEOUT`（Worker 超时）、`LLM_ERROR`（LLM 调用不可恢复错误）
 - **增量生成策略**（串行模式）：按1-2天增量调用 `assemble_day_plan`，非一次性全量
 - **Prompt 已迁移**：Phase 5 使用 `optimize_day_route`（路线辅助，不写状态）、`save_day_plan` / `replace_all_day_plans`（状态写入）与 `request_backtrack`（回退）
 - 流程：expand（骨架→日期）→ assemble（活动+时间）→ validate（开放/距离/天气/预算）→ commit
