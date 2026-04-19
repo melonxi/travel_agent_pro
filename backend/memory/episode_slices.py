@@ -135,9 +135,9 @@ def _build_slice(
 
 def _base_entities(episode: TripEpisode) -> dict[str, Any]:
     return {
-        "destination": episode.destination or "",
-        "trip_id": episode.trip_id,
-        "session_id": episode.session_id,
+        "destination": _entity_text(episode.destination) or "",
+        "trip_id": _entity_text(episode.trip_id),
+        "session_id": _entity_text(episode.session_id),
     }
 
 

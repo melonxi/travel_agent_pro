@@ -151,10 +151,24 @@ def test_episode_slice_entities_do_not_store_unbounded_rendered_values():
             assert isinstance(value, str)
             assert len(value) <= 180
         for key, value in slice_.entities.items():
-            if key == "destination":
-                continue
             if key in {"selected_skeleton", "rejected_item", "lesson", "budget"}:
                 assert not isinstance(value, (dict, list, tuple))
                 continue
+            if isinstance(value, str):
+                assert len(value) <= 180
+
+
+def test_episode_slice_base_entities_are_bounded():
+    episode = _episode(
+        destination="京都" + "D" * 320,
+        trip_id="trip_" + "T" * 320,
+        session_id="session_" + "S" * 320,
+    )
+
+    slices = build_episode_slices(episode, now="2026-04-19T00:00:00")
+
+    assert slices
+    for slice_ in slices:
+        for value in slice_.entities.values():
             if isinstance(value, str):
                 assert len(value) <= 180
