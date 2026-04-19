@@ -32,7 +32,14 @@ _PROFILE_HINT_WORDS = (
     "拒绝",
 )
 _SLICES_HINT_WORDS = ("上次", "之前", "以前", "住哪里", "住哪", "住哪家", "哪里住")
-_PROFILE_RECALL_DOMAINS = {"flight", "pace", "food", "hotel", "accommodation"}
+_PROFILE_RECALL_DOMAINS = {
+    "flight",
+    "train",
+    "pace",
+    "food",
+    "hotel",
+    "accommodation",
+}
 
 _DOMAIN_RULES: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = [
     (

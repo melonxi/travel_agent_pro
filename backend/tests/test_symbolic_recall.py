@@ -99,6 +99,14 @@ def test_direct_lodging_preference_query_triggers_profile_recall():
     assert "hotel" in query.domains or "accommodation" in query.domains
 
 
+def test_direct_train_preference_query_triggers_profile_recall():
+    query = build_recall_query("我不坐高铁吗？")
+
+    assert query.needs_memory is True
+    assert query.include_profile is True
+    assert "train" in query.domains
+
+
 def test_rank_profile_items_prefers_constraints_over_hypotheses():
     query = build_recall_query("我是不是说过不坐红眼航班？")
     profile = UserMemoryProfile(
