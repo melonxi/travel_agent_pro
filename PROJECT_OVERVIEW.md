@@ -36,7 +36,7 @@ travel_agent_pro/
 │   ├── agent/                  # Agent 循环：loop / compaction / hooks / reflection / tool_choice / narration / types / orchestrator / day_worker / worker_prompt
 │   ├── llm/                    # LLM 抽象：base Protocol / errors / factory / openai_provider / anthropic_provider
 │   ├── state/                  # 旅行状态模型：models / manager / intake / plan_writers
-│   ├── memory/                 # 结构化记忆：v2 models/store 与 v3 profile / working memory / episode slice / events 逐步演进；包含 models / store / v3_models / v3_store / manager / extraction / policy / retriever / formatter
+│   ├── memory/                 # 结构化 global/trip 记忆 + episode：models / store / manager / extraction / policy / retriever / formatter
 │   ├── context/                # 上下文：manager（系统提示/压缩决策）+ soul.md（人格）
 │   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，GLOBAL_RED_FLAGS + PHASE{1,3,5,7}_PROMPT + build_phase3_prompt）/ backtrack
 │   ├── tools/                  # 领域工具：base / engine / plan_tools(聚合导出 + Phase 1/3 trip_basics + append_tools + Phase 3 强 schema + Phase 5 daily_plans + 回退工具) / 搜索类 / 规划类 / normalizers
@@ -139,7 +139,7 @@ travel_agent_pro/
 | Reflection | 被动自省提示，会话级去重 | before_llm_call（步骤切换时） |
 | Parallel Tool Exec | 读写分离并行调度，parallel_group ID 透传到 Stats 层 | 工具批量执行时 |
 | Tool Choice (always auto) | Phase 切分后总返回 "auto"，依赖提示纪律 | LLM 调用前 |
-| Memory System | v3 profile / working memory / episode slice 分层记忆；当前旅行事实由 TravelPlanState 权威提供；后台候选提取与分层召回按 user_id/session_id/trip_id 隔离 | 每轮 chat 后后台提取；system prompt 构建前检索 |
+| Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；三路检索按 trip_id 隔离 | 每轮 chat 后后台提取；system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
 | Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
 
@@ -190,7 +190,7 @@ travel_agent_pro/
 - `docs/postmortems/2026-04-19-phase5-parallel-guard-refactor.md`：记录 Phase 5 并行入口守卫重构的主路径等价性、`max_retries` 边界风险与外部 agent runtime 设计参照
 - `docs/learning/interview-stress-test/`、`docs/mind/`：学习型架构评审与阶段性洞察，当前包含记忆系统写入语境、稳定性、TripEpisode 职责边界与 working memory 取舍分析
 - `docs/learning/2026-04-19-Phase*.md` 与 `docs/learning/assets/phase5-parallel-orchestration/`：面向初学者的 Phase 转换机制、Phase 5 并行 Orchestrator-Workers 生命周期说明和配图
-- `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划，覆盖 Memory Storage v3 分层重构的分阶段推进（profile / working memory / episode slice / events）
+- `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划，包含待实现的 Memory Storage v3 分层重构规格与实施计划（profile / working memory / episode slice / events）
 - `docs/agent-tool-design-guide.md`：Agent 工具设计评审准则，新增或重塑工具前应对照其命名、schema、返回值、错误反馈与评估清单
 
 ---
