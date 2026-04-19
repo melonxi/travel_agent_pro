@@ -175,6 +175,11 @@ interface BaseSSEEvent {
   plan?: TravelPlanState
   compression_info?: CompressionInfo
   item_ids?: string[]
+  profile_ids?: string[]
+  working_memory_ids?: string[]
+  slice_ids?: string[]
+  matched_reasons?: string[]
+  sources?: Record<string, number>
   error?: string
   error_code?: string
   message?: string

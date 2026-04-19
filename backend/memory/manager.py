@@ -4,18 +4,31 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memory.formatter import RetrievedMemory, format_memory_context
+from memory.formatter import MemoryRecallTelemetry, format_v3_memory_context
 from memory.models import MemoryItem, Rejection, UserMemory
-from memory.retriever import MemoryRetriever
 from memory.store import FileMemoryStore
+from memory.symbolic_recall import (
+    build_recall_query,
+    rank_episode_slices,
+    rank_profile_items,
+    should_trigger_memory_recall,
+)
+from memory.v3_models import EpisodeSlice, MemoryProfileItem, WorkingMemoryItem
+from memory.v3_store import FileMemoryV3Store
 from state.models import TravelPlanState
+
+
+_FIXED_PROFILE_LIMIT = 10
+_WORKING_MEMORY_LIMIT = 10
+_QUERY_PROFILE_LIMIT = 5
+_QUERY_SLICE_LIMIT = 5
 
 
 class MemoryManager:
     def __init__(self, data_dir: str = "./data"):
         self.data_dir = Path(data_dir)
         self.store = FileMemoryStore(data_dir)
-        self.retriever = MemoryRetriever()
+        self.v3_store = FileMemoryV3Store(data_dir)
 
     def _user_dir(self, user_id: str) -> Path:
         return self.data_dir / "users" / user_id
@@ -95,17 +108,112 @@ class MemoryManager:
         return "\n".join(parts) if parts else "暂无用户画像"
 
     async def generate_context(
-        self, user_id: str, plan: TravelPlanState
-    ) -> tuple[str, list[str], int, int, int]:
-        """Return (context_text, all_item_ids, core_count, trip_count, phase_count)."""
-        items = await self.store.list_items(user_id)
-        retrieved = RetrievedMemory(
-            core=self.retriever.retrieve_core_profile(items),
-            trip=self.retriever.retrieve_trip_memory(items, plan),
-            phase=self.retriever.retrieve_phase_relevant(items, plan, plan.phase),
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+    ) -> tuple[str, MemoryRecallTelemetry]:
+        profile = await self.v3_store.load_profile(user_id)
+        fixed_profile_items = self._fixed_profile_items(profile)
+        working_memory = await self.v3_store.load_working_memory(
+            user_id,
+            plan.session_id,
+            plan.trip_id,
         )
-        core_ids = [it.id for it in retrieved.core]
-        trip_ids = [it.id for it in retrieved.trip]
-        phase_ids = [it.id for it in retrieved.phase]
-        all_ids = core_ids + trip_ids + phase_ids
-        return format_memory_context(retrieved), all_ids, len(core_ids), len(trip_ids), len(phase_ids)
+        working_items = self._active_working_memory_items(working_memory.items)
+
+        query_profile_items: list[tuple[str, MemoryProfileItem, str]] = []
+        query_slices: list[tuple[EpisodeSlice, str]] = []
+        recall_query = build_recall_query(user_message)
+        if user_message and (
+            should_trigger_memory_recall(user_message) or recall_query.needs_memory
+        ):
+            query_profile_items = rank_profile_items(recall_query, profile)[
+                :_QUERY_PROFILE_LIMIT
+            ]
+            candidate_slices = await self.v3_store.list_episode_slices(
+                user_id,
+                destination=recall_query.entities.get("destination"),
+            )
+            query_slices = rank_episode_slices(recall_query, candidate_slices)[
+                :_QUERY_SLICE_LIMIT
+            ]
+
+        telemetry = self._build_v3_telemetry(
+            fixed_profile_items,
+            working_items,
+            query_profile_items,
+            query_slices,
+        )
+        context = format_v3_memory_context(
+            profile_items=fixed_profile_items,
+            working_items=working_items,
+            query_profile_items=query_profile_items,
+            query_slices=query_slices,
+        )
+        return context, telemetry
+
+    def _fixed_profile_items(
+        self, profile
+    ) -> list[tuple[str, MemoryProfileItem]]:
+        items: list[tuple[str, MemoryProfileItem]] = []
+        for bucket in ("constraints", "rejections", "stable_preferences"):
+            for item in getattr(profile, bucket, []):
+                if item.status != "active":
+                    continue
+                items.append((bucket, item))
+                if len(items) >= _FIXED_PROFILE_LIMIT:
+                    return items
+        return items
+
+    def _active_working_memory_items(
+        self, items: list[WorkingMemoryItem]
+    ) -> list[WorkingMemoryItem]:
+        active_items = [item for item in items if item.status == "active"]
+        return active_items[:_WORKING_MEMORY_LIMIT]
+
+    def _build_v3_telemetry(
+        self,
+        fixed_profile_items: list[tuple[str, MemoryProfileItem]],
+        working_items: list[WorkingMemoryItem],
+        query_profile_items: list[tuple[str, MemoryProfileItem, str]],
+        query_slices: list[tuple[EpisodeSlice, str]],
+    ) -> MemoryRecallTelemetry:
+        fixed_profile_ids = self._dedupe_ids(
+            [item.id for _, item in fixed_profile_items]
+        )
+        query_profile_ids = self._dedupe_ids(
+            [item.id for _, item, _ in query_profile_items]
+        )
+        profile_ids = self._dedupe_ids(fixed_profile_ids + query_profile_ids)
+        working_memory_ids = self._dedupe_ids([item.id for item in working_items])
+        slice_ids = self._dedupe_ids([slice_.id for slice_, _ in query_slices])
+        matched_reasons = self._dedupe_values(
+            [reason for _, _, reason in query_profile_items]
+            + [reason for _, reason in query_slices]
+        )
+        return MemoryRecallTelemetry(
+            sources={
+                "profile_fixed": len(fixed_profile_ids),
+                "query_profile": len(query_profile_ids),
+                "working_memory": len(working_memory_ids),
+                "episode_slice": len(slice_ids),
+            },
+            profile_ids=profile_ids,
+            working_memory_ids=working_memory_ids,
+            slice_ids=slice_ids,
+            matched_reasons=matched_reasons,
+        )
+
+    def _dedupe_ids(self, values: list[str]) -> list[str]:
+        return self._dedupe_values(values)
+
+    def _dedupe_values(self, values: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            deduped.append(value)
+        return deduped

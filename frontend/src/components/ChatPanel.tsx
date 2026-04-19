@@ -222,6 +222,33 @@ function createErrorFeedback(event: SSEEvent): StreamFeedback {
   }
 }
 
+function mergeRecalledIds(event: SSEEvent): string[] {
+  const merged = [
+    ...(event.profile_ids ?? []),
+    ...(event.working_memory_ids ?? []),
+    ...(event.slice_ids ?? []),
+  ]
+
+  if (merged.length === 0) {
+    return Array.from(new Set(event.item_ids ?? []))
+  }
+
+  return Array.from(new Set(merged))
+}
+
+function countRecalledItems(event: SSEEvent): number {
+  const recallCount =
+    (event.profile_ids?.length ?? 0) +
+    (event.working_memory_ids?.length ?? 0) +
+    (event.slice_ids?.length ?? 0)
+
+  if (recallCount > 0) {
+    return recallCount
+  }
+
+  return event.item_ids?.length ?? 0
+}
+
 export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onPhaseTransition, onStreamEnd }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -585,17 +612,18 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
           }),
         )
       }
-    } else if (event.type === 'memory_recall' && event.item_ids) {
-      const itemIds = event.item_ids
+    } else if (event.type === 'memory_recall') {
+      const itemIds = mergeRecalledIds(event)
+      const recallCount = countRecalledItems(event)
       onMemoryRecall?.(itemIds)
-      roundStateRef.current.memoryCount = itemIds.length
-      if (!roundStateRef.current.memoryChipInserted && itemIds.length > 0) {
+      roundStateRef.current.memoryCount = recallCount
+      if (!roundStateRef.current.memoryChipInserted && recallCount > 0) {
         roundStateRef.current.memoryChipInserted = true
         setMessages((prev) => [...prev, {
           id: createMessageId(),
           role: 'system',
           content: '',
-          memoryChip: { count: itemIds.length },
+          memoryChip: { count: recallCount },
         }])
       }
     } else if (event.type === 'agent_status') {
@@ -655,6 +683,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
 
     userStoppedRef.current = false
     lastUserMessageRef.current = userMsg
+    onMemoryRecall?.([])
     lastEventTimeRef.current = Date.now()
     setStreamFeedback(null)
     setRoundSummary(null)

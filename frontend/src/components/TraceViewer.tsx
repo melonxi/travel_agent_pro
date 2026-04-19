@@ -231,6 +231,14 @@ function CollapsedThinkingRow({ count, tokens, duration_ms }: { count: number; t
 function EventRow({ iteration }: { iteration: TraceIteration }) {
   const [expanded, setExpanded] = useState(false)
   const maxToolDuration = Math.max(...iteration.tool_calls.map((t) => t.duration_ms), 1)
+  const memorySources = iteration.memory_hits?.sources ?? {}
+  const memoryHitCount =
+    iteration.memory_hits?.item_ids?.length ??
+    [
+      ...(iteration.memory_hits?.profile_ids ?? []),
+      ...(iteration.memory_hits?.working_memory_ids ?? []),
+      ...(iteration.memory_hits?.slice_ids ?? []),
+    ].length
 
   return (
     <div className={`trace-event-row significance-${iteration.significance}`}>
@@ -275,8 +283,8 @@ function EventRow({ iteration }: { iteration: TraceIteration }) {
           <StateDiffPanel changes={iteration.state_changes} />
           {iteration.memory_hits && (
             <div className="trace-memory-hits">
-              命中 {iteration.memory_hits.item_ids.length} 条记忆
-              （core {iteration.memory_hits.core} / trip {iteration.memory_hits.trip} / phase {iteration.memory_hits.phase}）
+              命中 {memoryHitCount} 条记忆
+              （profile {memorySources.profile_fixed ?? 0} / working {memorySources.working_memory ?? 0} / query {memorySources.query_profile ?? 0} / slice {memorySources.episode_slice ?? 0}）
             </div>
           )}
         </div>

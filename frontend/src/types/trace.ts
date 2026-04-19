@@ -17,10 +17,18 @@ export interface StateChange {
 }
 
 export interface MemoryHit {
-  item_ids: string[]
-  core: number
-  trip: number
-  phase: number
+  item_ids?: string[]
+  profile_ids: string[]
+  working_memory_ids: string[]
+  slice_ids: string[]
+  matched_reasons?: string[]
+  sources?: {
+    profile_fixed?: number
+    query_profile?: number
+    working_memory?: number
+    episode_slice?: number
+    [key: string]: number | undefined
+  }
 }
 
 export type Significance = 'high' | 'medium' | 'low' | 'none'
