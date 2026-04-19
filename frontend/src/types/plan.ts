@@ -190,11 +190,18 @@ export interface PhaseTransitionEvent extends BaseSSEEvent {
   reason?: string
 }
 
+export interface ParallelWorkerStatus {
+  day: number
+  status: 'running' | 'done' | 'failed' | 'retrying'
+}
+
 export interface AgentStatusEvent extends BaseSSEEvent {
   type: 'agent_status'
-  stage: 'thinking' | 'summarizing' | 'compacting'
+  stage: 'thinking' | 'summarizing' | 'compacting' | 'planning' | 'parallel_progress'
   iteration?: number
   hint?: string | null
+  total_days?: number
+  workers?: ParallelWorkerStatus[]
   [key: string]: unknown
 }
 

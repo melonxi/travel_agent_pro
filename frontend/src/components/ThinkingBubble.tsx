@@ -2,17 +2,18 @@ import { useEffect, useState } from 'react'
 
 interface Props {
   createdAt: number
-  stage?: 'thinking' | 'summarizing' | 'compacting'
+  stage?: 'thinking' | 'summarizing' | 'compacting' | 'planning'
   iteration?: number
   hint?: string | null
   fading?: boolean
   staleness?: 'normal' | 'minor' | 'waiting'
 }
 
-const STAGE_LABELS: Record<'thinking' | 'summarizing' | 'compacting', string> = {
+const STAGE_LABELS: Record<'thinking' | 'summarizing' | 'compacting' | 'planning', string> = {
   thinking: '思考中…',
   summarizing: '汇总中…',
   compacting: '整理上下文中…',
+  planning: '规划中…',
 }
 
 const HINT_COLLAPSED_KEY = 'thinkingBubble.collapsed'

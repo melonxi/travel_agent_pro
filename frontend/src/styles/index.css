@@ -754,6 +754,147 @@ body::after {
   50% { opacity: 1; transform: scale(1.15); }
 }
 
+/* ── Parallel Progress Card ─────────────────────── */
+.parallel-progress-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  max-width: 380px;
+  animation: bubbleIn 250ms ease-out;
+}
+
+.parallel-progress-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.parallel-progress-icon {
+  font-size: 1.1rem;
+}
+
+.parallel-progress-title {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.parallel-progress-count {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--accent-amber);
+  background: rgba(212, 162, 76, 0.1);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.parallel-progress-workers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.parallel-worker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  font-size: 0.8rem;
+  transition: background 0.25s ease, opacity 0.25s ease;
+}
+
+.parallel-worker-icon {
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.parallel-worker-label {
+  color: var(--text-primary);
+  font-weight: 500;
+  flex: 1;
+}
+
+.parallel-worker-status {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.parallel-worker--running {
+  background: var(--bg-elevated);
+}
+
+.parallel-worker--running .parallel-worker-icon {
+  animation: workerPulse 1.5s ease-in-out infinite;
+}
+
+.parallel-worker--done {
+  background: rgba(59, 169, 156, 0.08);
+}
+
+.parallel-worker--done .parallel-worker-status {
+  color: var(--accent-teal);
+}
+
+.parallel-worker--failed {
+  background: rgba(217, 106, 75, 0.08);
+}
+
+.parallel-worker--failed .parallel-worker-status {
+  color: var(--accent-coral);
+}
+
+.parallel-worker--retrying {
+  background: rgba(139, 126, 200, 0.08);
+}
+
+.parallel-worker--retrying .parallel-worker-icon {
+  animation: workerSpin 1s linear infinite;
+}
+
+.parallel-worker--retrying .parallel-worker-status {
+  color: var(--accent-lavender);
+}
+
+@keyframes workerPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+@keyframes workerSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.parallel-progress-bar-track {
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.parallel-progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-amber), var(--accent-teal));
+  border-radius: 2px;
+  transition: width 0.5s var(--ease-out-expo);
+}
+
+.parallel-progress-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .msg-meta {
   font-size: 0.6rem;
   color: var(--text-muted);
