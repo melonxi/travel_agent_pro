@@ -57,7 +57,7 @@ travel_agent_pro/
 │   └── vite.config.ts          # /api → localhost:8000 代理
 │
 ├── docs/                       # 架构文档、问题修复记录、事故复盘与学习笔记
-├── scripts/                    # dev.sh / dev-stop.sh / eval-stability.py / migrate_memory_v2_to_v3.py / failure-analysis / demo
+├── scripts/                    # dev.sh / dev-stop.sh / eval-stability.py / failure-analysis / demo
 ├── backend/data/               # 本地持久化：sessions.db / sessions/ / users/
 ├── config.yaml                 # 运行时配置（LLM / API / 智能层开关 / 阈值）
 ├── docker-compose.observability.yml
