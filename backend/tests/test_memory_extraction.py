@@ -4,10 +4,16 @@ from memory.extraction import (
     MemoryMerger,
     build_candidate_extraction_prompt,
     build_extraction_prompt,
+    build_v3_extraction_prompt,
     parse_candidate_extraction_response,
     parse_extraction_response,
+    parse_v3_extraction_response,
 )
 from memory.models import MemoryItem, MemorySource, Rejection, UserMemory
+from memory.v3_models import (
+    SessionWorkingMemory,
+    UserMemoryProfile,
+)
 
 
 def make_memory_item(**overrides):
@@ -269,3 +275,101 @@ class TestMemoryMerger:
         assert len(merged.rejections) == 2
         items = {r.item for r in merged.rejections}
         assert items == {"辣椒", "红眼航班"}
+
+
+class TestBuildV3ExtractionPrompt:
+    def test_prompt_separates_state_and_memory(self):
+        profile = UserMemoryProfile.empty("u1")
+        working = SessionWorkingMemory.empty("u1", "s1", "trip_1")
+        prompt = build_v3_extraction_prompt(
+            user_messages=["我不想坐红眼航班", "这次预算3万"],
+            profile=profile,
+            working_memory=working,
+            plan_facts={"destination": "京都", "budget": 30000},
+        )
+
+        assert "state_observations" in prompt
+        assert "preference_hypotheses" in prompt
+        assert "working_memory" in prompt
+        assert "drop" in prompt
+        assert "京都" in prompt
+        assert "红眼航班" in prompt
+
+
+class TestParseV3ExtractionResponse:
+    def test_parse_v3_split_extraction_response(self):
+        response = (
+            '{"profile_updates":{'
+            '"constraints":[{'
+            '"domain":"flight","key":"avoid_red_eye","value":true,"polarity":"avoid",'
+            '"stability":"explicit_declared","confidence":0.95,"status":"active",'
+            '"context":{},"applicability":"适用于所有旅行",'
+            '"recall_hints":{"keywords":["红眼航班"]},"source_refs":[]'
+            '}],'
+            '"rejections":[],"stable_preferences":[],"preference_hypotheses":[]'
+            '},'
+            '"working_memory":[],"episode_evidence":[],'
+            '"state_observations":[],"drop":[]'
+            "}"
+        )
+        result = parse_v3_extraction_response(response)
+        assert result.profile_updates.constraints[0].key == "avoid_red_eye"
+        assert result.profile_updates.constraints[0].recall_hints == {
+            "keywords": ["红眼航班"]
+        }
+
+    def test_state_observation_does_not_become_profile_item(self):
+        response = (
+            '{"profile_updates":{'
+            '"constraints":[],"rejections":[],"stable_preferences":[],'
+            '"preference_hypotheses":[]},'
+            '"working_memory":[],"episode_evidence":[],'
+            '"state_observations":[{"field":"destination","value":"京都"}],"drop":[]'
+            "}"
+        )
+        result = parse_v3_extraction_response(response)
+        assert result.profile_updates.constraints == []
+        assert result.state_observations[0]["field"] == "destination"
+
+    def test_working_memory_parses_session_scope(self):
+        response = (
+            '{"profile_updates":{"constraints":[],"rejections":[],'
+            '"stable_preferences":[],"preference_hypotheses":[]},'
+            '"working_memory":[{"id":"wm_1","phase":3,"kind":"temporary_rejection",'
+            '"domains":["attraction"],"content":"先别考虑迪士尼",'
+            '"reason":"当前候选筛选","status":"active",'
+            '"expires":{"on_session_end":true,"on_trip_change":true,'
+            '"on_phase_exit":false},"created_at":"2026-04-19T00:00:00"}],'
+            '"episode_evidence":[],"state_observations":[],"drop":[]'
+            "}"
+        )
+        result = parse_v3_extraction_response(response)
+        assert result.working_memory[0].kind == "temporary_rejection"
+        assert result.working_memory[0].expires["on_trip_change"] is True
+
+    def test_invalid_json_returns_empty_v3_result(self):
+        result = parse_v3_extraction_response("not json at all")
+        assert result.profile_updates.constraints == []
+        assert result.profile_updates.rejections == []
+        assert result.profile_updates.stable_preferences == []
+        assert result.profile_updates.preference_hypotheses == []
+        assert result.working_memory == []
+        assert result.episode_evidence == []
+        assert result.state_observations == []
+        assert result.drop == []
+
+    def test_fenced_json_v3_extraction(self):
+        response = (
+            "```json\n"
+            '{"profile_updates":{"constraints":[],"rejections":[],'
+            '"stable_preferences":[{"domain":"pace","key":"preferred_pace",'
+            '"value":"relaxed","polarity":"prefer","stability":"pattern_observed",'
+            '"confidence":0.85,"status":"active","context":{},'
+            '"applicability":"适用于所有旅行","recall_hints":{},"source_refs":[]}],'
+            '"preference_hypotheses":[]},'
+            '"working_memory":[],"episode_evidence":[],'
+            '"state_observations":[],"drop":[]}\n'
+            "```"
+        )
+        result = parse_v3_extraction_response(response)
+        assert result.profile_updates.stable_preferences[0].value == "relaxed"

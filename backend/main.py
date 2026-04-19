@@ -45,12 +45,15 @@ from llm.factory import create_llm_provider
 from llm.types import ChunkType
 from memory.extraction import (
     build_candidate_extraction_prompt,
+    build_v3_extraction_prompt,
     parse_candidate_extraction_response,
+    parse_v3_extraction_response,
 )
 from memory.formatter import MemoryRecallTelemetry
 from memory.manager import MemoryManager
 from memory.models import MemoryCandidate, MemoryEvent, MemoryItem, TripEpisode
 from memory.policy import MemoryMerger as PolicyMemoryMerger, MemoryPolicy
+from memory.v3_models import generate_profile_item_id
 from phase.router import PhaseRouter
 from storage.archive_store import ArchiveStore
 from storage.database import Database
@@ -1013,10 +1016,14 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         user_messages: list[str],
         plan_snapshot: TravelPlanState,
     ) -> list[str]:
-        existing_items = await memory_mgr.store.list_items(user_id)
-        prompt = build_candidate_extraction_prompt(
+        profile = await memory_mgr.v3_store.load_profile(user_id)
+        working_memory = await memory_mgr.v3_store.load_working_memory(
+            user_id, session_id, plan_snapshot.trip_id
+        )
+        prompt = build_v3_extraction_prompt(
             user_messages=user_messages,
-            existing_items=existing_items,
+            profile=profile,
+            working_memory=working_memory,
             plan_facts=_memory_plan_facts(plan_snapshot),
         )
         extraction_llm = create_llm_provider(
@@ -1031,38 +1038,49 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             if chunk.content:
                 response_parts.append(chunk.content)
 
-        candidates = parse_candidate_extraction_response("".join(response_parts))
-        if not candidates:
-            return []
+        result = parse_v3_extraction_response("".join(response_parts))
 
         policy = MemoryPolicy(
             auto_save_low_risk=config.memory.policy.auto_save_low_risk,
             auto_save_medium_risk=config.memory.policy.auto_save_medium_risk,
         )
-        merger = PolicyMemoryMerger()
         now = _now_iso()
-        merged_items = existing_items
-        for candidate in candidates:
-            action = policy.classify(candidate)
-            if action == "drop":
-                continue
-            item = policy.to_item(
-                candidate,
-                user_id=user_id,
-                session_id=session_id,
-                now=now,
-                trip_id=plan_snapshot.trip_id,
+        pending_ids: list[str] = []
+
+        buckets = (
+            ("constraints", result.profile_updates.constraints),
+            ("rejections", result.profile_updates.rejections),
+            ("stable_preferences", result.profile_updates.stable_preferences),
+            ("preference_hypotheses", result.profile_updates.preference_hypotheses),
+        )
+        for bucket, items in buckets:
+            for raw_item in items:
+                action = policy.classify_v3_profile_item(bucket, raw_item)
+                if action == "drop":
+                    continue
+                sanitized = policy.sanitize_v3_profile_item(raw_item)
+                sanitized.status = action
+                sanitized.updated_at = now
+                if not sanitized.created_at:
+                    sanitized.created_at = now
+                sanitized.id = generate_profile_item_id(bucket, sanitized)
+                await memory_mgr.v3_store.upsert_profile_item(
+                    user_id, bucket, sanitized
+                )
+                if action in {"pending", "pending_conflict"}:
+                    pending_ids.append(sanitized.id)
+
+        for raw_working_item in result.working_memory:
+            sanitized_working = policy.sanitize_working_memory_item(raw_working_item)
+            if not sanitized_working.created_at:
+                sanitized_working.created_at = now
+            await memory_mgr.v3_store.upsert_working_memory_item(
+                user_id,
+                session_id,
+                plan_snapshot.trip_id,
+                sanitized_working,
             )
-            merged_items = merger.merge(merged_items, item)
 
-        for item in merged_items:
-            await memory_mgr.store.upsert_item(item)
-
-        pending_ids = [
-            item.id
-            for item in merged_items
-            if item.status in {"pending", "pending_conflict"}
-        ]
         return pending_ids
 
     def _cancel_memory_extraction(session_id: str) -> None:

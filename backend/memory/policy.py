@@ -5,9 +5,11 @@ import re
 from typing import Any
 
 from memory.models import MemoryCandidate, MemoryItem, MemorySource, generate_memory_id
+from memory.v3_models import MemoryProfileItem, WorkingMemoryItem
 
 
 _DENIED_DOMAINS = {"payment", "membership"}
+_PENDING_DOMAINS = {"health", "family", "documents", "accessibility"}
 _PII_SEQUENCE_RE = re.compile(r"\d{9,18}")
 _PII_SEPARATED_DIGITS_RE = re.compile(r"(?<!\d)(?:\+?\d[\d\s-]{7,}\d)(?!\d)")
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
@@ -169,6 +171,72 @@ class MemoryPolicy:
             return match.group(0)
 
         return _PII_SEPARATED_DIGITS_RE.sub(redact_separated_digits, text)
+
+    def classify_v3_profile_item(self, bucket: str, item: MemoryProfileItem) -> str:
+        if item.domain in _DENIED_DOMAINS:
+            return "drop"
+        if self._profile_item_contains_pii(item):
+            return "drop"
+        if bucket == "preference_hypotheses":
+            return "pending"
+        if item.domain in _PENDING_DOMAINS:
+            return "pending"
+        if bucket in {"constraints", "rejections"}:
+            if item.stability == "explicit_declared" and item.confidence >= 0.8:
+                return "active"
+            return "pending"
+        if bucket == "stable_preferences":
+            if item.stability in {"explicit_declared", "pattern_observed"} and item.confidence >= 0.8:
+                return "active"
+            return "pending"
+        return "pending"
+
+    def sanitize_v3_profile_item(self, item: MemoryProfileItem) -> MemoryProfileItem:
+        return MemoryProfileItem(
+            id=item.id,
+            domain=item.domain,
+            key=item.key,
+            value=self._redact_for_storage(item.value),
+            polarity=item.polarity,
+            stability=item.stability,
+            confidence=item.confidence,
+            status=item.status,
+            context=self._redact_for_storage(item.context),
+            applicability=self._redact_text(item.applicability),
+            recall_hints=self._redact_for_storage(item.recall_hints),
+            source_refs=self._redact_for_storage(item.source_refs),
+            created_at=item.created_at,
+            updated_at=item.updated_at,
+        )
+
+    def sanitize_working_memory_item(
+        self, item: WorkingMemoryItem
+    ) -> WorkingMemoryItem:
+        return WorkingMemoryItem(
+            id=item.id,
+            phase=item.phase,
+            kind=item.kind,
+            domains=list(item.domains),
+            content=self._redact_text(item.content),
+            reason=self._redact_text(item.reason),
+            status=item.status,
+            expires=dict(item.expires),
+            created_at=item.created_at,
+        )
+
+    def _profile_item_contains_pii(self, item: MemoryProfileItem) -> bool:
+        return any(
+            self._contains_forbidden_pii(value)
+            for value in (
+                item.domain,
+                item.key,
+                item.value,
+                item.applicability,
+                item.context,
+                item.recall_hints,
+                item.source_refs,
+            )
+        )
 
 
 class MemoryMerger:
