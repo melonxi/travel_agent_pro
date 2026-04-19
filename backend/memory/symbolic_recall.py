@@ -19,12 +19,32 @@ _HISTORY_PHRASES = (
     "之前",
     "以前",
 )
-_PROFILE_HINT_WORDS = ("说过", "习惯", "偏好", "喜欢", "不坐", "不吃", "不要", "避开", "拒绝")
+_PROFILE_HINT_WORDS = (
+    "说过",
+    "习惯",
+    "偏好",
+    "喜欢",
+    "不坐",
+    "不吃",
+    "不住",
+    "不要",
+    "避开",
+    "拒绝",
+)
 _SLICES_HINT_WORDS = ("上次", "之前", "以前", "住哪里", "住哪", "住哪家", "哪里住")
+_PROFILE_RECALL_DOMAINS = {"flight", "pace", "food", "hotel", "accommodation"}
 
 _DOMAIN_RULES: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = [
-    ("hotel", ("住", "住宿", "酒店", "民宿"), ("住", "住宿", "酒店", "民宿")),
-    ("accommodation", ("住", "住宿", "酒店", "民宿"), ("住", "住宿", "酒店", "民宿")),
+    (
+        "hotel",
+        ("住哪里", "住哪", "住哪家", "哪里住", "住宿", "酒店", "民宿", "住酒店", "住民宿", "青旅", "住青旅"),
+        ("住哪里", "住哪", "住哪家", "哪里住", "住宿", "酒店", "民宿", "住酒店", "住民宿", "青旅", "住青旅"),
+    ),
+    (
+        "accommodation",
+        ("住哪里", "住哪", "住哪家", "哪里住", "住宿", "酒店", "民宿", "住酒店", "住民宿", "青旅", "住青旅"),
+        ("住哪里", "住哪", "住哪家", "哪里住", "住宿", "酒店", "民宿", "住酒店", "住民宿", "青旅", "住青旅"),
+    ),
     ("flight", ("航班", "红眼", "飞机"), ("航班", "红眼", "飞机")),
     ("train", ("火车", "高铁"), ("火车", "高铁")),
     ("pace", ("节奏", "累", "慢", "松"), ("节奏", "累", "慢", "松")),
@@ -75,8 +95,13 @@ def should_trigger_memory_recall(message: str) -> bool:
     text = _normalize_text(message)
     if not text:
         return False
+
     has_history_cue = any(phrase in text for phrase in _HISTORY_PHRASES)
     if has_history_cue:
+        return True
+
+    domains = _extract_domains(text)
+    if _is_direct_profile_recall_query(text, domains):
         return True
 
     if any(phrase in text for phrase in _CURRENT_TRIP_PHRASES):
@@ -215,15 +240,16 @@ def _score_episode_slice(
 def _should_include_profile(text: str, domains: list[str]) -> bool:
     if any(word in text for word in _PROFILE_HINT_WORDS):
         return True
-    return any(
-        domain in {"flight", "pace", "food", "hotel", "accommodation"}
-        for domain in domains
-    )
+    return any(domain in _PROFILE_RECALL_DOMAINS for domain in domains)
 
 
 def _should_include_slices(text: str, domains: list[str], destination: str | None) -> bool:
     if any(word in text for word in _SLICES_HINT_WORDS):
-        return True
+        if "上次" in text:
+            return True
+        return bool(destination) or any(
+            domain in {"hotel", "accommodation", "train"} for domain in domains
+        )
     return bool(destination) or any(domain in {"hotel", "accommodation", "train"} for domain in domains)
 
 
@@ -244,6 +270,8 @@ def _build_matched_reason(
     history_hits = [phrase for phrase in _HISTORY_PHRASES if phrase in text]
     if history_hits:
         parts.append(f"history cue: {history_hits[0]}")
+    elif _is_direct_profile_recall_query(text, domains):
+        parts.append("profile cue")
     if destination:
         parts.append(f"destination={destination}")
     if domains:
@@ -253,6 +281,12 @@ def _build_matched_reason(
     if include_slices:
         parts.append("slice recall enabled")
     return "; ".join(parts) or "historical recall cue"
+
+
+def _is_direct_profile_recall_query(text: str, domains: list[str]) -> bool:
+    return any(domain in _PROFILE_RECALL_DOMAINS for domain in domains) and any(
+        word in text for word in _PROFILE_HINT_WORDS
+    )
 
 
 def _extract_domains(text: str) -> list[str]:

@@ -83,6 +83,22 @@ def test_lodging_preference_query_includes_profile_and_hotel_domain():
     assert "hotel" in query.domains or "accommodation" in query.domains
 
 
+def test_hospitalization_query_does_not_trigger_lodging_domain():
+    query = build_recall_query("我之前住院了吗？")
+
+    assert "hotel" not in query.domains
+    assert "accommodation" not in query.domains
+    assert query.include_slices is False
+
+
+def test_direct_lodging_preference_query_triggers_profile_recall():
+    query = build_recall_query("我不住青旅吗？")
+
+    assert query.needs_memory is True
+    assert query.include_profile is True
+    assert "hotel" in query.domains or "accommodation" in query.domains
+
+
 def test_rank_profile_items_prefers_constraints_over_hypotheses():
     query = build_recall_query("我是不是说过不坐红眼航班？")
     profile = UserMemoryProfile(
