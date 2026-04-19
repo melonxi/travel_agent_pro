@@ -654,6 +654,12 @@ PHASE5_PROMPT = """## 角色
 - check_availability：验证关键景点或活动在指定日期是否可行
 - check_weather：天气敏感日程验证
 - xiaohongshu_search_notes / xiaohongshu_read_note / xiaohongshu_get_comments：补真实体验、排队、避坑、替代玩法
+- web_search：实时网络搜索，用于补充专项工具无法提供的信息
+
+工具回退策略：
+- 当 check_availability 返回无效信息（如：缺少开放时间、开放状态未知、数据明显过时）时，必须主动使用 web_search 搜索该景点/活动的最新开放状态和营业时间。
+- 当 get_poi_info 返回无效信息（如：POI 不存在、坐标缺失、票价为空、基础属性缺失）时，必须主动使用 web_search 搜索该 POI 的详细信息以补齐缺失字段。
+- 不要在工具返回无效信息后假装数据完整，也不要跳过验证直接编造——应使用 web_search 作为信息补充手段。
 
 不可用：本阶段不能调用大交通搜索或住宿搜索工具；不要暗示你拥有这些能力。
 
