@@ -47,6 +47,7 @@ from memory.extraction import (
     build_candidate_extraction_prompt,
     parse_candidate_extraction_response,
 )
+from memory.formatter import MemoryRecallTelemetry
 from memory.manager import MemoryManager
 from memory.models import MemoryCandidate, MemoryEvent, MemoryItem, TripEpisode
 from memory.policy import MemoryMerger as PolicyMemoryMerger, MemoryPolicy
@@ -2088,25 +2089,29 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool["name"]
             for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)
         ]
-        memory_context, recalled_ids, mem_core, mem_trip, mem_phase = (
-            await memory_mgr.generate_context(req.user_id, plan)
-            if config.memory.enabled
-            else ("暂无相关用户记忆", [], 0, 0, 0)
-        )
-
-        if recalled_ids:
-            from telemetry.stats import MemoryHitRecord
-
-            session_stats = session.get("stats")
-            if session_stats is not None:
-                session_stats.memory_hits.append(
-                    MemoryHitRecord(
-                        item_ids=recalled_ids,
-                        core_count=mem_core,
-                        trip_count=mem_trip,
-                        phase_count=mem_phase,
-                    )
+        if config.memory.enabled:
+            try:
+                memory_result = await memory_mgr.generate_context(
+                    req.user_id,
+                    plan,
+                    user_message=req.message,
                 )
+            except TypeError as exc:
+                if "user_message" not in str(exc):
+                    raise
+                memory_result = await memory_mgr.generate_context(req.user_id, plan)
+
+            if (
+                isinstance(memory_result, tuple)
+                and len(memory_result) == 2
+                and isinstance(memory_result[1], MemoryRecallTelemetry)
+            ):
+                memory_context, memory_recall = memory_result
+            else:
+                memory_context = memory_result[0]
+                memory_recall = MemoryRecallTelemetry()
+        else:
+            memory_context, memory_recall = "暂无相关用户记忆", MemoryRecallTelemetry()
 
         sys_msg = context_mgr.build_system_message(
             plan,
@@ -2127,12 +2132,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         phase_before_run = plan.phase
 
         async def event_stream():
-            if recalled_ids:
+            if any(memory_recall.sources.values()):
                 yield json.dumps(
-                    {
-                        "type": "memory_recall",
-                        "item_ids": recalled_ids,
-                    },
+                    {"type": "memory_recall", **memory_recall.to_dict()},
                     ensure_ascii=False,
                 )
             if config.memory.enabled:

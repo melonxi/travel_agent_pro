@@ -7,6 +7,7 @@ import pytest
 from config import load_config
 from memory.manager import MemoryManager
 from memory.models import MemoryItem, MemorySource, Rejection, TripSummary, UserMemory
+from memory.v3_models import EpisodeSlice, MemoryProfileItem
 from state.models import TravelPlanState
 
 
@@ -31,25 +32,113 @@ def make_item(**overrides):
 
 
 @pytest.mark.asyncio
-async def test_generate_context_includes_active_stored_memory(tmp_path: Path):
+async def test_generate_context_includes_fixed_profile_and_slice_recall(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
-    await manager.store.upsert_item(make_item())
+    await manager.v3_store.upsert_profile_item(
+        "u1",
+        "stable_preferences",
+        MemoryProfileItem(
+            id="stable_preferences:pace:preferred_pace",
+            domain="pace",
+            key="preferred_pace",
+            value="节奏轻松",
+            polarity="prefer",
+            stability="stable",
+            confidence=0.9,
+            status="active",
+            context={},
+            applicability="适用于大多数旅行。",
+            recall_hints={"domains": ["pace"], "keywords": ["节奏"]},
+            source_refs=[],
+            created_at="2026-04-19T00:00:00",
+            updated_at="2026-04-19T00:00:00",
+        ),
+    )
+    await manager.v3_store.append_episode_slice(
+        EpisodeSlice(
+            id="slice_1",
+            user_id="u1",
+            source_episode_id="ep_1",
+            source_trip_id="trip_kyoto_old",
+            slice_type="accommodation_decision",
+            domains=["hotel", "accommodation"],
+            entities={"destination": "京都"},
+            keywords=["住宿", "酒店"],
+            content="上次京都住四条附近的町屋。",
+            applicability="仅供住宿选择参考。",
+            created_at="2026-04-19T00:00:00",
+        )
+    )
 
-    (
-        text,
-        item_ids,
-        core_count,
-        trip_count,
-        phase_count,
-    ) = await manager.generate_context("u1", TravelPlanState(session_id="s1"))
+    text, recall = await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_kyoto_now"),
+        user_message="我上次去京都住哪里？",
+    )
 
-    assert "## 核心用户画像" in text
-    assert "节奏轻松" in text
-    assert "mem-1" in item_ids
-    assert isinstance(item_ids, list)
-    assert core_count >= 1
-    assert isinstance(trip_count, int)
-    assert isinstance(phase_count, int)
+    assert "## 长期用户画像" in text
+    assert "## 本轮请求命中的历史记忆" in text
+    assert "## 本次旅行记忆" not in text
+    assert "上次京都住四条附近的町屋。" in text
+    assert recall.sources["profile"] == 1
+    assert recall.sources["episode_slice"] == 1
+    assert recall.sources["working_memory"] == 0
+    assert recall.profile_ids == ["stable_preferences:pace:preferred_pace"]
+    assert recall.slice_ids == ["slice_1"]
+    assert recall.matched_reasons
+
+
+@pytest.mark.asyncio
+async def test_generate_context_skips_slice_recall_for_current_trip_question(tmp_path: Path):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    await manager.v3_store.upsert_profile_item(
+        "u1",
+        "constraints",
+        MemoryProfileItem(
+            id="constraints:flight:avoid_red_eye",
+            domain="flight",
+            key="avoid_red_eye",
+            value=True,
+            polarity="avoid",
+            stability="explicit_declared",
+            confidence=0.95,
+            status="active",
+            context={},
+            applicability="适用于所有旅行。",
+            recall_hints={"domains": ["flight"], "keywords": ["红眼航班"]},
+            source_refs=[],
+            created_at="2026-04-19T00:00:00",
+            updated_at="2026-04-19T00:00:00",
+        ),
+    )
+    await manager.v3_store.append_episode_slice(
+        EpisodeSlice(
+            id="slice_1",
+            user_id="u1",
+            source_episode_id="ep_1",
+            source_trip_id="trip_kyoto_old",
+            slice_type="accommodation_decision",
+            domains=["hotel"],
+            entities={"destination": "京都"},
+            keywords=["住宿"],
+            content="上次京都住町屋。",
+            applicability="仅供住宿选择参考。",
+            created_at="2026-04-19T00:00:00",
+        )
+    )
+
+    text, recall = await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_kyoto_now"),
+        user_message="这次预算多少？",
+    )
+
+    assert "## 长期用户画像" in text
+    assert "## 本轮请求命中的历史记忆" not in text
+    assert recall.sources["profile"] == 1
+    assert recall.sources["episode_slice"] == 0
+    assert recall.slice_ids == []
+    assert recall.matched_reasons == []
 
 
 @pytest.mark.asyncio
