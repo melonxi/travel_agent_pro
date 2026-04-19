@@ -68,6 +68,6 @@ phase5:
   parallel:
     enabled: true
     max_workers: 5
-    worker_max_iterations: 5
-    worker_timeout_seconds: 60
+    worker_max_iterations: 30
+    worker_timeout_seconds: 600
     fallback_to_serial: true

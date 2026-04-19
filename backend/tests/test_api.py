@@ -17,6 +17,7 @@ from state.models import Accommodation, DateRange, TravelPlanState
 @pytest.fixture
 def app(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
     return create_app()
 
 
@@ -79,6 +80,8 @@ async def test_create_session_wires_agent_intelligence_components(app):
     assert agent.tool_choice_decider is not None
     assert agent.guardrail is not None
     assert agent.parallel_tool_execution is True
+    assert agent.phase5_parallel_config is not None
+    assert agent.phase5_parallel_config.enabled is True
 
 
 @pytest.mark.asyncio
