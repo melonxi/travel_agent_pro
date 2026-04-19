@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -262,7 +263,25 @@ def _move_source_files_to_legacy(user_dir: Path, source_paths: dict[str, Path]) 
     legacy_dir.mkdir(parents=True, exist_ok=True)
     for path in source_paths.values():
         if path.exists():
-            path.replace(legacy_dir / path.name)
+            _move_file_without_overwriting(path, legacy_dir / path.name)
+
+
+def _move_file_without_overwriting(source: Path, destination: Path) -> None:
+    source_bytes = source.read_bytes()
+    if not destination.exists():
+        source.replace(destination)
+        return
+
+    if destination.read_bytes() == source_bytes:
+        source.unlink()
+        return
+
+    suffix = f".{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.{uuid.uuid4().hex}.bak"
+    collision_path = destination.with_name(destination.name + suffix)
+    while collision_path.exists():
+        suffix = f".{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.{uuid.uuid4().hex}.bak"
+        collision_path = destination.with_name(destination.name + suffix)
+    source.replace(collision_path)
 
 
 def _normalize_hint(value: Any) -> str:
