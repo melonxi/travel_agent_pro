@@ -12,7 +12,6 @@ from memory.v3_models import (
     SessionWorkingMemory,
     UserMemoryProfile,
     WorkingMemoryItem,
-    generate_profile_item_id,
 )
 
 
@@ -59,7 +58,12 @@ class FileMemoryV3Store:
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            rows.append(json.loads(line))
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
         return rows
 
     async def load_profile(self, user_id: str) -> UserMemoryProfile:
@@ -125,7 +129,7 @@ class FileMemoryV3Store:
     ) -> None:
         async with self._lock_for(user_id):
             memory = await asyncio.to_thread(
-                self._load_working_memory_sync, user_id, session_id, trip_id
+                self._load_working_memory_for_write_sync, user_id, session_id, trip_id
             )
             memory.user_id = user_id
             memory.session_id = session_id
@@ -143,6 +147,21 @@ class FileMemoryV3Store:
                 self._working_memory_path(user_id, session_id),
                 memory.to_dict(),
             )
+
+    def _load_working_memory_for_write_sync(
+        self, user_id: str, session_id: str, trip_id: str | None
+    ) -> SessionWorkingMemory:
+        path = self._working_memory_path(user_id, session_id)
+        if not path.exists():
+            return SessionWorkingMemory.empty(user_id, session_id, trip_id)
+
+        memory = SessionWorkingMemory.from_dict(self._read_json_sync(path))
+        if memory.trip_id != trip_id:
+            raise ValueError(
+                "working memory trip_id mismatch for session "
+                f"{session_id!r}: stored={memory.trip_id!r} requested={trip_id!r}"
+            )
+        return memory
 
     async def append_episode_slice(self, slice_: EpisodeSlice) -> None:
         async with self._lock_for(slice_.user_id):
