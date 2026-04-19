@@ -113,8 +113,8 @@ class GuardrailsConfig:
 class Phase5ParallelConfig:
     enabled: bool = True
     max_workers: int = 5
-    worker_max_iterations: int = 30
-    worker_timeout_seconds: int = 600
+    worker_max_iterations: int = 60
+    worker_timeout_seconds: int = 1200
     fallback_to_serial: bool = True
 
 
@@ -125,7 +125,7 @@ class AppConfig:
     api_keys: ApiKeysConfig = field(default_factory=ApiKeysConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     data_dir: str = "./data"
-    max_retries: int = 30
+    max_retries: int = 60
     context_compression_threshold: float = 0.5
     flyai: FlyAIConfig = field(default_factory=FlyAIConfig)
     xhs: XhsConfig = field(default_factory=XhsConfig)
@@ -298,8 +298,8 @@ def _build_phase5_parallel_config(raw: dict) -> Phase5ParallelConfig:
     return Phase5ParallelConfig(
         enabled=_as_bool(p5.get("enabled"), True),
         max_workers=int(p5.get("max_workers", 5)),
-        worker_max_iterations=int(p5.get("worker_max_iterations", 30)),
-        worker_timeout_seconds=int(p5.get("worker_timeout_seconds", 600)),
+        worker_max_iterations=int(p5.get("worker_max_iterations", 60)),
+        worker_timeout_seconds=int(p5.get("worker_timeout_seconds", 1200)),
         fallback_to_serial=_as_bool(p5.get("fallback_to_serial"), True),
     )
 
@@ -367,7 +367,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         api_keys=api_keys,
         telemetry=telemetry,
         data_dir=raw.get("data_dir", "./data"),
-        max_retries=raw.get("max_retries", 30),
+        max_retries=raw.get("max_retries", 60),
         context_compression_threshold=raw.get("context_compression_threshold", 0.5),
         flyai=flyai,
         xhs=xhs,

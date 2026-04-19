@@ -128,8 +128,8 @@ async def run_day_worker(
     plan: TravelPlanState,
     task: DayTask,
     shared_prefix: str,
-    max_iterations: int = 5,
-    timeout_seconds: int = 60,
+    max_iterations: int = 10,
+    timeout_seconds: int = 120,
     on_progress: OnProgress = None,
 ) -> DayWorkerResult:
     """Run a single Day Worker agent loop.
