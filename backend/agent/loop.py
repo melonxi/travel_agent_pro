@@ -110,6 +110,18 @@ class AgentLoop:
             return False
         return True
 
+    async def _run_parallel_phase5_orchestrator(self) -> AsyncIterator[LLMChunk]:
+        from agent.orchestrator import Phase5Orchestrator
+
+        orchestrator = Phase5Orchestrator(
+            plan=self.plan,
+            llm=self.llm,
+            tool_engine=self.tool_engine,
+            config=self.phase5_parallel_config,
+        )
+        async for chunk in orchestrator.run():
+            yield chunk
+
     async def run(
         self,
         messages: list[Message],
@@ -122,15 +134,7 @@ class AgentLoop:
 
             # Phase 5 parallel mode: dispatch orchestrator instead of serial loop
             if self.should_use_parallel_phase5(self.plan, self.phase5_parallel_config):
-                from agent.orchestrator import Phase5Orchestrator
-
-                orchestrator = Phase5Orchestrator(
-                    plan=self.plan,
-                    llm=self.llm,
-                    tool_engine=self.tool_engine,
-                    config=self.phase5_parallel_config,
-                )
-                async for chunk in orchestrator.run():
+                async for chunk in self._run_parallel_phase5_orchestrator():
                     yield chunk
                 return
 
@@ -462,6 +466,12 @@ class AgentLoop:
                             current_phase,
                             self.plan,
                         )
+                        if self.should_use_parallel_phase5(
+                            self.plan, self.phase5_parallel_config
+                        ):
+                            async for chunk in self._run_parallel_phase5_orchestrator():
+                                yield chunk
+                            return
                         continue
 
                     phase_after_batch = (
@@ -495,6 +505,12 @@ class AgentLoop:
                             current_phase,
                             self.plan,
                         )
+                        if self.should_use_parallel_phase5(
+                            self.plan, self.phase5_parallel_config
+                        ):
+                            async for chunk in self._run_parallel_phase5_orchestrator():
+                                yield chunk
+                            return
                         continue
 
                     if (
@@ -536,6 +552,14 @@ class AgentLoop:
                                 current_phase,
                                 self.plan,
                             )
+                            if self.should_use_parallel_phase5(
+                                self.plan, self.phase5_parallel_config
+                            ):
+                                async for chunk in (
+                                    self._run_parallel_phase5_orchestrator()
+                                ):
+                                    yield chunk
+                                return
                             continue
 
                     phase3_step_after_batch = (
