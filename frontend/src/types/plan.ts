@@ -193,6 +193,12 @@ export interface PhaseTransitionEvent extends BaseSSEEvent {
 export interface ParallelWorkerStatus {
   day: number
   status: 'running' | 'done' | 'failed' | 'retrying'
+  theme?: string | null
+  iteration?: number | null
+  max_iterations?: number | null
+  current_tool?: string | null
+  activity_count?: number | null
+  error?: string | null
 }
 
 export interface AgentStatusEvent extends BaseSSEEvent {

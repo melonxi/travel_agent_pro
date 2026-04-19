@@ -13,11 +13,29 @@ const STATUS_ICON: Record<ParallelWorkerStatus['status'], string> = {
   retrying: '🔄',
 }
 
-const STATUS_TEXT: Record<ParallelWorkerStatus['status'], string> = {
-  running: '规划中',
-  done: '完成',
-  failed: '失败',
-  retrying: '重试中',
+function renderTail(w: ParallelWorkerStatus): string {
+  if (w.status === 'running') {
+    const tool = w.current_tool ? `调用 ${w.current_tool}` : '思考中'
+    if (w.iteration && w.max_iterations) {
+      return `${tool} · ${w.iteration}/${w.max_iterations} 轮`
+    }
+    return tool
+  }
+  if (w.status === 'done') {
+    return w.activity_count != null
+      ? `完成 · ${w.activity_count} 个活动`
+      : '完成'
+  }
+  if (w.status === 'failed') {
+    return w.error ? `失败 · ${w.error}` : '失败'
+  }
+  if (w.status === 'retrying') {
+    if (w.iteration && w.max_iterations) {
+      return `重试 · ${w.iteration}/${w.max_iterations} 轮`
+    }
+    return '重试中'
+  }
+  return ''
 }
 
 export default function ParallelProgress({ totalDays, workers, hint }: Props) {
@@ -44,7 +62,10 @@ export default function ParallelProgress({ totalDays, workers, hint }: Props) {
             >
               <span className="parallel-worker-icon">{STATUS_ICON[w.status]}</span>
               <span className="parallel-worker-label">第 {w.day} 天</span>
-              <span className="parallel-worker-status">{STATUS_TEXT[w.status]}</span>
+              {w.theme && (
+                <span className="parallel-worker-theme">{w.theme}</span>
+              )}
+              <span className="parallel-worker-status">{renderTail(w)}</span>
             </div>
           ))}
         </div>
