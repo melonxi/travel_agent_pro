@@ -80,7 +80,8 @@ async def test_generate_context_includes_fixed_profile_and_slice_recall(tmp_path
     assert "## 本轮请求命中的历史记忆" in text
     assert "## 本次旅行记忆" not in text
     assert "上次京都住四条附近的町屋。" in text
-    assert recall.sources["profile"] == 1
+    assert recall.sources["profile_fixed"] == 1
+    assert recall.sources["query_profile"] == 0
     assert recall.sources["episode_slice"] == 1
     assert recall.sources["working_memory"] == 0
     assert recall.profile_ids == ["stable_preferences:pace:preferred_pace"]
@@ -135,7 +136,8 @@ async def test_generate_context_skips_slice_recall_for_current_trip_question(tmp
 
     assert "## 长期用户画像" in text
     assert "## 本轮请求命中的历史记忆" not in text
-    assert recall.sources["profile"] == 1
+    assert recall.sources["profile_fixed"] == 1
+    assert recall.sources["query_profile"] == 0
     assert recall.sources["episode_slice"] == 0
     assert recall.slice_ids == []
     assert recall.matched_reasons == []

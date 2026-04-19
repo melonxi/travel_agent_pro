@@ -6,7 +6,6 @@ from pathlib import Path
 
 from memory.formatter import MemoryRecallTelemetry, format_v3_memory_context
 from memory.models import MemoryItem, Rejection, UserMemory
-from memory.retriever import MemoryRetriever
 from memory.store import FileMemoryStore
 from memory.symbolic_recall import (
     build_recall_query,
@@ -30,7 +29,6 @@ class MemoryManager:
         self.data_dir = Path(data_dir)
         self.store = FileMemoryStore(data_dir)
         self.v3_store = FileMemoryV3Store(data_dir)
-        self.retriever = MemoryRetriever()
 
     def _user_dir(self, user_id: str) -> Path:
         return self.data_dir / "users" / user_id
@@ -181,10 +179,13 @@ class MemoryManager:
         query_profile_items: list[tuple[str, MemoryProfileItem, str]],
         query_slices: list[tuple[EpisodeSlice, str]],
     ) -> MemoryRecallTelemetry:
-        profile_ids = self._dedupe_ids(
+        fixed_profile_ids = self._dedupe_ids(
             [item.id for _, item in fixed_profile_items]
-            + [item.id for _, item, _ in query_profile_items]
         )
+        query_profile_ids = self._dedupe_ids(
+            [item.id for _, item, _ in query_profile_items]
+        )
+        profile_ids = self._dedupe_ids(fixed_profile_ids + query_profile_ids)
         working_memory_ids = self._dedupe_ids([item.id for item in working_items])
         slice_ids = self._dedupe_ids([slice_.id for slice_, _ in query_slices])
         matched_reasons = self._dedupe_values(
@@ -193,7 +194,8 @@ class MemoryManager:
         )
         return MemoryRecallTelemetry(
             sources={
-                "profile": len(profile_ids),
+                "profile_fixed": len(fixed_profile_ids),
+                "query_profile": len(query_profile_ids),
                 "working_memory": len(working_memory_ids),
                 "episode_slice": len(slice_ids),
             },

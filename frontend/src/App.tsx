@@ -68,6 +68,7 @@ export default function App() {
   const [bootstrapping, setBootstrapping] = useState(true)
   const [rightTab, setRightTab] = useState<'plan' | 'trace'>('plan')
   const [traceTrigger, setTraceTrigger] = useState(0)
+  const [memoryRefreshTrigger, setMemoryRefreshTrigger] = useState(0)
   const [recalledIds, setRecalledIds] = useState<string[]>([])
   const { dark, toggle: toggleTheme } = useTheme()
   const initializedRef = useRef(false)
@@ -145,8 +146,13 @@ export default function App() {
     setRecalledIds(itemIds)
   }, [])
 
+  useEffect(() => {
+    setRecalledIds([])
+  }, [sessionId])
+
   const handleStreamEnd = useCallback(() => {
     setTraceTrigger((n) => n + 1)
+    setMemoryRefreshTrigger((n) => n + 1)
     if (!sessionId) return
     void loadPlan(sessionId)
       .then((latestPlan) => {
@@ -270,6 +276,7 @@ export default function App() {
           sessions={sessionList}
           activeSessionId={sessionId}
           recalledIds={recalledIds}
+          memoryRefreshTrigger={memoryRefreshTrigger}
           onSelectSession={(id) => {
             void handleSelectSession(id)
           }}
