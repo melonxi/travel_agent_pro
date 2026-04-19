@@ -45,22 +45,14 @@ def _match_compression_event(
     return None
 
 
-def _match_memory_hits(
-    llm_rec: LLMCallRecord,
-    hits: list[MemoryHitRecord],
-) -> dict | None:
-    """Find memory hit record near this LLM call timestamp."""
-    if not hits:
-        return None
-    for hit in hits:
-        if abs(hit.timestamp - llm_rec.timestamp) < 5.0:
-            return {
-                "item_ids": hit.item_ids,
-                "core": hit.core_count,
-                "trip": hit.trip_count,
-                "phase": hit.phase_count,
-            }
-    return None
+def _serialize_memory_hit(hit: MemoryHitRecord) -> dict:
+    return {
+        "sources": dict(hit.sources),
+        "profile_ids": list(hit.profile_ids),
+        "working_memory_ids": list(hit.working_memory_ids),
+        "slice_ids": list(hit.slice_ids),
+        "matched_reasons": list(hit.matched_reasons),
+    }
 
 
 def _classify_significance(iteration: dict) -> str:
@@ -122,9 +114,12 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
     iterations = []
     llm_calls = stats.llm_calls
     tool_calls = list(stats.tool_calls)
+    memory_hits = list(stats.memory_hits)
 
     tool_idx = 0
+    memory_idx = 0
     for i, llm in enumerate(llm_calls):
+        prev_llm_ts = llm_calls[i - 1].timestamp if i > 0 else float("-inf")
         next_llm_ts = (
             llm_calls[i + 1].timestamp if i + 1 < len(llm_calls) else float("inf")
         )
@@ -158,6 +153,13 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
             cost = (llm.input_tokens / 1_000_000) * pricing["input"]
             cost += (llm.output_tokens / 1_000_000) * pricing["output"]
 
+        memory_hit = None
+        if memory_idx < len(memory_hits):
+            candidate = memory_hits[memory_idx]
+            if prev_llm_ts < candidate.timestamp <= llm.timestamp + 5.0:
+                memory_hit = _serialize_memory_hit(candidate)
+                memory_idx += 1
+
         iter_dict = {
             "index": i + 1,
             "phase": llm.phase,
@@ -172,7 +174,7 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
             "tool_calls": iter_tool_dicts,
             "state_changes": _collect_state_changes(iter_tools),
             "compression_event": _match_compression_event(llm, compression_events),
-            "memory_hits": _match_memory_hits(llm, stats.memory_hits),
+            "memory_hits": memory_hit,
         }
         iter_dict["significance"] = _classify_significance(iter_dict)
         iterations.append(iter_dict)

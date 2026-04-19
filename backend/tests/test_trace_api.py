@@ -271,17 +271,18 @@ def test_tool_call_record_defaults_none():
 
 
 def test_memory_hit_record():
-    """MemoryHitRecord stores recall metadata."""
+    """MemoryHitRecord stores v3 recall metadata."""
     from telemetry.stats import MemoryHitRecord
 
     rec = MemoryHitRecord(
-        item_ids=["mem-1", "mem-2"],
-        core_count=1,
-        trip_count=0,
-        phase_count=1,
+        sources={"profile_fixed": 1, "working_memory": 0, "episode_slice": 1},
+        profile_ids=["mem-1"],
+        slice_ids=["slice-1"],
+        matched_reasons=["上次京都住宿"],
     )
-    assert rec.item_ids == ["mem-1", "mem-2"]
-    assert rec.core_count == 1
+    assert rec.profile_ids == ["mem-1"]
+    assert rec.slice_ids == ["slice-1"]
+    assert rec.sources["episode_slice"] == 1
     assert rec.timestamp > 0
 
 
@@ -298,10 +299,8 @@ def test_session_stats_to_dict_includes_memory_hits():
     stats = SessionStats()
     stats.memory_hits.append(
         MemoryHitRecord(
-            item_ids=["m1"],
-            core_count=1,
-            trip_count=0,
-            phase_count=0,
+            sources={"profile_fixed": 1},
+            profile_ids=["m1"],
         )
     )
     d = stats.to_dict()
@@ -487,10 +486,10 @@ async def test_trace_memory_hits(app):
     )
     stats.memory_hits.append(
         MemoryHitRecord(
-            item_ids=["m1", "m2"],
-            core_count=1,
-            trip_count=1,
-            phase_count=0,
+            sources={"profile_fixed": 1, "working_memory": 1},
+            profile_ids=["m1"],
+            working_memory_ids=["m2"],
+            matched_reasons=["历史上的偏好"],
             timestamp=stats.llm_calls[-1].timestamp,
         )
     )
@@ -509,8 +508,60 @@ async def test_trace_memory_hits(app):
 
     hits = data["iterations"][0]["memory_hits"]
     assert hits is not None
-    assert hits["item_ids"] == ["m1", "m2"]
-    assert hits["core"] == 1
+    assert hits["profile_ids"] == ["m1"]
+    assert hits["working_memory_ids"] == ["m2"]
+    assert hits["sources"]["profile_fixed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_trace_memory_hits_attach_only_to_first_matching_llm(app):
+    from telemetry.stats import MemoryHitRecord
+
+    sessions = _get_sessions(app)
+    session_id = "test-memory-hits-first-llm-only"
+    stats = SessionStats()
+    stats.record_llm_call(
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        duration_ms=200.0,
+        phase=1,
+        iteration=1,
+    )
+    first_ts = stats.llm_calls[-1].timestamp
+    stats.record_llm_call(
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=80,
+        output_tokens=40,
+        duration_ms=180.0,
+        phase=1,
+        iteration=2,
+    )
+    stats.llm_calls[-1].timestamp = first_ts + 1
+    stats.memory_hits.append(
+        MemoryHitRecord(
+            sources={"profile_fixed": 1},
+            profile_ids=["m1"],
+            timestamp=first_ts - 0.1,
+        )
+    )
+    sessions[session_id] = {
+        "stats": stats,
+        "messages": [],
+        "plan": None,
+        "compression_events": [],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/api/sessions/{session_id}/trace")
+    data = resp.json()
+
+    assert data["iterations"][0]["memory_hits"] is not None
+    assert data["iterations"][1]["memory_hits"] is None
 
 
 def test_trace_includes_error_code_and_suggestion():

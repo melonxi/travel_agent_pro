@@ -8,6 +8,7 @@ interface Props {
   sessions: SessionMeta[]
   activeSessionId: string | null
   recalledIds?: string[]
+  memoryRefreshTrigger?: number
   onSelectSession: (sessionId: string) => void
   onNewSession: () => void
   onDeleteSession: (sessionId: string) => void
@@ -17,6 +18,7 @@ export default function SessionSidebar({
   sessions,
   activeSessionId,
   recalledIds,
+  memoryRefreshTrigger = 0,
   onSelectSession,
   onNewSession,
   onDeleteSession,
@@ -24,7 +26,7 @@ export default function SessionSidebar({
   const [collapsed, setCollapsed] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [memoryOpen, setMemoryOpen] = useState(false)
-  const memory = useMemory('default_user')
+  const memory = useMemory('default_user', activeSessionId, memoryRefreshTrigger)
 
   const activeSessions = sessions.filter((session) => session.status === 'active')
   const archivedSessions = sessions.filter((session) => session.status === 'archived')

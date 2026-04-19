@@ -69,11 +69,22 @@ class ToolCallRecord:
 
 @dataclass
 class MemoryHitRecord:
-    item_ids: list[str]
-    core_count: int
-    trip_count: int
-    phase_count: int
+    sources: dict[str, int] = field(default_factory=dict)
+    profile_ids: list[str] = field(default_factory=list)
+    working_memory_ids: list[str] = field(default_factory=list)
+    slice_ids: list[str] = field(default_factory=list)
+    matched_reasons: list[str] = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict:
+        return {
+            "sources": dict(self.sources),
+            "profile_ids": list(self.profile_ids),
+            "working_memory_ids": list(self.working_memory_ids),
+            "slice_ids": list(self.slice_ids),
+            "matched_reasons": list(self.matched_reasons),
+            "timestamp": self.timestamp,
+        }
 
 
 @dataclass

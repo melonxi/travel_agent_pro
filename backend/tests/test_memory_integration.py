@@ -15,6 +15,7 @@ from main import (
     _memory_pending_event_from_items,
     create_app,
 )
+from memory.formatter import MemoryRecallTelemetry
 from memory.models import (
     MemoryCandidate,
     MemoryEvent,
@@ -272,10 +273,11 @@ async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
     calls = {"context": 0, "summary": 0}
 
     async def fake_generate_context(
-        self, user_id: str, plan: TravelPlanState
-    ) -> tuple[str, list[str], int, int, int]:
+        self, user_id: str, plan: TravelPlanState, user_message: str = ""
+    ):
         calls["context"] += 1
-        return "memory-context-marker", [], 0, 0, 0
+        assert user_message == "继续规划"
+        return "memory-context-marker", MemoryRecallTelemetry()
 
     def fake_generate_summary(self, memory):
         calls["summary"] += 1
@@ -403,9 +405,16 @@ async def test_chat_stream_emits_memory_recall_internal_task(monkeypatch, app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
 
     async def fake_generate_context(
-        self, user_id: str, plan: TravelPlanState
-    ) -> tuple[str, list[str], int, int, int]:
-        return "用户偏好：喜欢轻松行程", ["mem_1"], 1, 0, 0
+        self, user_id: str, plan: TravelPlanState, user_message: str = ""
+    ):
+        assert user_message == "继续规划"
+        return (
+            "用户偏好：喜欢轻松行程",
+            MemoryRecallTelemetry(
+                sources={"profile_fixed": 1},
+                profile_ids=["mem_1"],
+            ),
+        )
 
     async def fake_run(self, messages, phase, tools_override=None):
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续")
