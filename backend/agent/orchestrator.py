@@ -206,6 +206,7 @@ class Phase5Orchestrator:
                     "current_tool": None,
                     "activity_count": None,
                     "error": None,
+                    "error_code": None,
                 }
                 for t in tasks
             ]
@@ -307,9 +308,11 @@ class Phase5Orchestrator:
                             worker_statuses[idx]["error"] = _format_error(
                                 result.error
                             )
+                            worker_statuses[idx]["error_code"] = result.error_code
                             logger.warning(
-                                "Day %d worker failed: %s",
+                                "Day %d worker failed [%s]: %s",
                                 day_task.day,
+                                result.error_code,
                                 result.error,
                             )
                     except Exception as e:
@@ -319,6 +322,7 @@ class Phase5Orchestrator:
                         worker_statuses[idx]["error"] = _format_error(
                             f"Exception: {e}"
                         )
+                        worker_statuses[idx]["error_code"] = "EXCEPTION"
                         logger.error(
                             "Day %d worker exception: %s", day_task.day, e
                         )
@@ -365,6 +369,7 @@ class Phase5Orchestrator:
                     "iteration": None,
                     "current_tool": None,
                     "error": None,
+                    "error_code": None,
                     "activity_count": None,
                 })
                 yield self._build_progress_chunk(
@@ -404,9 +409,11 @@ class Phase5Orchestrator:
                     worker_statuses[idx]["error"] = _format_error(
                         retry_result.error
                     )
+                    worker_statuses[idx]["error_code"] = retry_result.error_code
                     logger.error(
-                        "Day %d retry also failed: %s",
+                        "Day %d retry also failed [%s]: %s",
                         task.day,
+                        retry_result.error_code,
                         retry_result.error,
                     )
                     yield self._build_progress_chunk(

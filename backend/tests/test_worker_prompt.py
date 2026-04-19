@@ -51,6 +51,15 @@ def test_build_shared_prefix_stable_across_calls():
     assert prefix1 == prefix2
 
 
+def test_build_shared_prefix_contains_fallback_guardrails():
+    plan = _make_plan()
+    prefix = build_shared_prefix(plan)
+    assert "有限次补救" in prefix
+    assert "保守版 DayPlan" in prefix
+    assert "不得编造具体营业时间" in prefix
+    assert "写入 notes" in prefix
+
+
 def test_build_day_suffix():
     task = DayTask(
         day=3,

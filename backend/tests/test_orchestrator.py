@@ -431,3 +431,43 @@ async def test_orchestrator_long_error_truncated_to_80(monkeypatch):
             if w.get("error"):
                 assert len(w["error"]) == 80
                 assert w["error"].endswith("...")
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_error_code_propagated_on_failure(monkeypatch):
+    plan = _make_plan_with_skeleton()
+    orch = Phase5Orchestrator(
+        plan=plan,
+        llm=AsyncMock(),
+        tool_engine=AsyncMock(),
+        config=Phase5ParallelConfig(
+            enabled=True, max_workers=3, fallback_to_serial=True
+        ),
+    )
+
+    async def _fake_worker(**kwargs):
+        return DayWorkerResult(
+            day=kwargs["task"].day,
+            date=kwargs["task"].date,
+            success=False,
+            dayplan=None,
+            error="Worker 耗尽迭代",
+            error_code="REPEATED_QUERY_LOOP",
+            iterations=5,
+        )
+
+    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+    chunks = [c async for c in orch.run()]
+    progress = [
+        c for c in chunks
+        if c.type == ChunkType.AGENT_STATUS
+        and c.agent_status.get("stage") == "parallel_progress"
+    ]
+    has_error_code = any(
+        any(
+            w.get("error_code") == "REPEATED_QUERY_LOOP"
+            for w in c.agent_status["workers"]
+        )
+        for c in progress
+    )
+    assert has_error_code
