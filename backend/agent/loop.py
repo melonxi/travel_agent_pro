@@ -567,6 +567,16 @@ class AgentLoop:
 
                     # Loop continues — LLM will see tool results and decide next step
 
+            # Boundary case: a write tool in the final iteration may have just
+            # promoted phase to 5. Give the parallel orchestrator one more shot
+            # before the safety-limit fallback so we don't drop the upgrade.
+            if self.should_use_parallel_phase5(
+                self.plan, self.phase5_parallel_config
+            ):
+                async for chunk in self._run_parallel_phase5_orchestrator():
+                    yield chunk
+                return
+
             # Safety limit reached
             yield LLMChunk(
                 type=ChunkType.TEXT_DELTA, content="[达到最大循环次数，请重新发送消息]"
