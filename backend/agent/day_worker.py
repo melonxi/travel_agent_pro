@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from opentelemetry import trace
 
@@ -23,6 +24,10 @@ from llm.base import LLMProvider
 from llm.types import ChunkType
 from state.models import TravelPlanState
 from tools.engine import ToolEngine
+
+logger = logging.getLogger(__name__)
+
+OnProgress = Callable[[int, str, dict], None] | None
 
 
 @dataclass
@@ -86,6 +91,7 @@ async def run_day_worker(
     shared_prefix: str,
     max_iterations: int = 5,
     timeout_seconds: int = 60,
+    on_progress: OnProgress = None,
 ) -> DayWorkerResult:
     """Run a single Day Worker agent loop.
 
@@ -120,6 +126,21 @@ async def run_day_worker(
 
                 for iteration in range(max_iterations):
                     iterations = iteration + 1
+
+                    def _safe_emit(kind: str, payload: dict) -> None:
+                        if on_progress is None:
+                            return
+                        try:
+                            on_progress(task.day, kind, payload)
+                        except Exception as exc:
+                            logger.warning(
+                                "day_worker on_progress callback failed: %s", exc
+                            )
+
+                    _safe_emit(
+                        "iter_start",
+                        {"iteration": iterations, "max": max_iterations},
+                    )
 
                     # LLM call
                     tool_calls: list[ToolCall] = []
@@ -169,6 +190,22 @@ async def run_day_worker(
                             tool_calls=tool_calls,
                         )
                     )
+
+                    if tool_calls:
+                        first = tool_calls[0]
+                        tool_def = tool_engine.get_tool(first.name)
+                        _safe_emit(
+                            "tool_start",
+                            {
+                                "tool": first.name,
+                                "human_label": (
+                                    tool_def.human_label
+                                    if tool_def is not None
+                                    and getattr(tool_def, "human_label", None)
+                                    else first.name
+                                ),
+                            },
+                        )
 
                     # Execute tools (all read, can be parallel)
                     results = await tool_engine.execute_batch(tool_calls)
