@@ -194,6 +194,7 @@ travel_agent_pro/
 - `docs/learning/interview-stress-test/`、`docs/mind/`：学习型架构评审与阶段性洞察，当前包含记忆系统写入语境、稳定性、TripEpisode 职责边界与 working memory 取舍分析
 - `docs/learning/2026-04-19-Phase*.md` 与 `docs/learning/assets/phase5-parallel-orchestration/`：面向初学者的 Phase 转换机制、Phase 5 并行 Orchestrator-Workers 生命周期说明和配图
 - `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划，包含待实现的 Memory Storage v3 分层重构规格与实施计划（profile / working memory / episode slice / events）
+- `docs/superpowers/specs/2026-04-19-internal-task-visibility-design.md`：内部耗时任务可见性设计，定义 `internal_task` SSE、系统任务卡片、soft judge / quality gate / memory / compaction / reflection / Phase 5 orchestration 的统一聊天流展示模型
 - `docs/agent-tool-design-guide.md`：Agent 工具设计评审准则，新增或重塑工具前应对照其命名、schema、返回值、错误反馈与评估清单
 
 ---
