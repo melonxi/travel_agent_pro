@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from memory.models import TripEpisode
@@ -29,6 +28,9 @@ _SLICE_META: dict[str, dict[str, list[str]]] = {
 
 
 def build_episode_slices(episode: TripEpisode, *, now: str) -> list[EpisodeSlice]:
+    accepted_items = _as_list_or_empty(episode.accepted_items)
+    rejected_items = _as_list_or_empty(episode.rejected_items)
+    lessons = _as_list_or_empty(episode.lessons)
     slices: list[EpisodeSlice] = []
     base_entities = _base_entities(episode)
 
@@ -39,11 +41,11 @@ def build_episode_slices(episode: TripEpisode, *, now: str) -> list[EpisodeSlice
                 now=now,
                 slice_type="accepted_pattern",
                 index=1,
-                content=_accepted_pattern_content(episode),
+                content=_accepted_pattern_content(episode, accepted_items),
                 entities={
                     **base_entities,
-                    "selected_skeleton": _render_value(episode.selected_skeleton),
-                    "accepted_items_count": len(episode.accepted_items),
+                    "selected_skeleton": _entity_text(episode.selected_skeleton),
+                    "accepted_items_count": len(accepted_items),
                 },
                 applicability=(
                     "仅供规划骨架参考；当前预算、同行人或时间变化时不能直接套用。"
@@ -51,7 +53,7 @@ def build_episode_slices(episode: TripEpisode, *, now: str) -> list[EpisodeSlice
             )
         )
 
-    for index, rejected_item in enumerate(episode.rejected_items[:2], start=1):
+    for index, rejected_item in enumerate(rejected_items[:2], start=1):
         slices.append(
             _build_slice(
                 episode=episode,
@@ -61,14 +63,14 @@ def build_episode_slices(episode: TripEpisode, *, now: str) -> list[EpisodeSlice
                 content=_rejected_option_content(rejected_item),
                 entities={
                     **base_entities,
-                    "rejected_item": _render_value(rejected_item),
+                    "rejected_item": _entity_text(rejected_item),
                     "rejected_index": index,
                 },
                 applicability="仅供避让相似选项；不代表所有同类选项都要排除。",
             )
         )
 
-    for index, lesson in enumerate(episode.lessons[:2], start=1):
+    for index, lesson in enumerate(lessons[:2], start=1):
         slices.append(
             _build_slice(
                 episode=episode,
@@ -78,7 +80,7 @@ def build_episode_slices(episode: TripEpisode, *, now: str) -> list[EpisodeSlice
                 content=_pitfall_content(lesson),
                 entities={
                     **base_entities,
-                    "lesson": _render_value(lesson),
+                    "lesson": _entity_text(lesson),
                     "lesson_index": index,
                 },
                 applicability="仅供风险提醒；具体行程需结合当前节奏和体力。",
@@ -95,7 +97,7 @@ def build_episode_slices(episode: TripEpisode, *, now: str) -> list[EpisodeSlice
                 content=_budget_signal_content(episode),
                 entities={
                     **base_entities,
-                    "budget": _render_value(episode.budget),
+                    "budget": _entity_text(episode.budget),
                     "budget_present": True,
                 },
                 applicability="仅供预算分配参考；当前预算或物价变化时需重新计算。",
@@ -139,16 +141,20 @@ def _base_entities(episode: TripEpisode) -> dict[str, Any]:
     }
 
 
-def _accepted_pattern_content(episode: TripEpisode) -> str:
+def _accepted_pattern_content(
+    episode: TripEpisode, accepted_items: list[Any]
+) -> str:
     parts: list[str] = []
     skeleton = episode.selected_skeleton
     if skeleton:
         rendered_skeleton = _render_value(skeleton)
         if rendered_skeleton:
             parts.append(f"已选骨架：{rendered_skeleton}")
-    if episode.accepted_items:
+    if accepted_items:
         rendered_items = "；".join(
-            _render_value(item) for item in episode.accepted_items[:2] if _render_value(item)
+            rendered
+            for rendered in (_render_value(item) for item in accepted_items[:2])
+            if rendered
         )
         if rendered_items:
             parts.append(f"接受项：{rendered_items}")
@@ -194,7 +200,7 @@ def _render_value(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
-        return value.strip()
+        return _sanitize_text(value)
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, (int, float)):
@@ -204,13 +210,37 @@ def _render_value(value: Any) -> str:
         for key in sorted(value):
             rendered = _render_value(value[key])
             if rendered:
-                parts.append(f"{key}={rendered}")
-        return "；".join(parts)
+                parts.append(f"{_sanitize_text(str(key))}={rendered}")
+        return _truncate("；".join(parts))
     if isinstance(value, (list, tuple)):
         parts = [_render_value(item) for item in value]
         parts = [part for part in parts if part]
-        return "、".join(parts)
-    return str(value).strip()
+        return _truncate("、".join(parts))
+    return _truncate(_sanitize_text(str(value)))
+
+
+def _entity_text(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return _truncate(_sanitize_text(value))
+    if isinstance(value, bool) or isinstance(value, int) or isinstance(value, float):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _entity_text(value[key]) for key in sorted(value, key=str)}
+    if isinstance(value, (list, tuple)):
+        return [_entity_text(item) for item in value]
+    return _truncate(_sanitize_text(str(value)))
+
+
+def _as_list_or_empty(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _sanitize_text(value: Any) -> str:
+    text = "" if value is None else str(value)
+    text = " ".join(part.strip() for part in text.splitlines() if part.strip())
+    return " ".join(text.split()).strip()
 
 
 def _truncate(text: str) -> str:
