@@ -255,42 +255,20 @@ def _truncate_preview(value: Any, max_len: int = 120) -> str:
     return text
 
 
-def _legacy_memory_hit_record_from_recall(
+def _memory_hit_record_from_recall(
     memory_recall: MemoryRecallTelemetry,
 ):
     from telemetry.stats import MemoryHitRecord
 
-    def _unique_ids(*groups: list[str]) -> list[str]:
-        ordered: list[str] = []
-        seen: set[str] = set()
-        for group in groups:
-            for item_id in group:
-                if not item_id or item_id in seen:
-                    continue
-                seen.add(item_id)
-                ordered.append(item_id)
-        return ordered
-
-    item_ids = _unique_ids(
-        memory_recall.profile_ids,
-        memory_recall.working_memory_ids,
-        memory_recall.slice_ids,
-    )
-    if not item_ids:
+    if not any(memory_recall.sources.values()):
         return None
 
-    sources = memory_recall.sources
-    # Until Task 8 splits profile telemetry everywhere, unsplit `profile` hits map
-    # into the legacy core bucket for trace continuity.
-    core_count = sources.get("profile_fixed", sources.get("profile", 0))
-    trip_count = sources.get("working_memory", 0)
-    phase_count = sources.get("episode_slice", 0) + sources.get("query_profile", 0)
-
     return MemoryHitRecord(
-        item_ids=item_ids,
-        core_count=core_count,
-        trip_count=trip_count,
-        phase_count=phase_count,
+        sources=dict(memory_recall.sources),
+        profile_ids=list(memory_recall.profile_ids),
+        working_memory_ids=list(memory_recall.working_memory_ids),
+        slice_ids=list(memory_recall.slice_ids),
+        matched_reasons=list(memory_recall.matched_reasons),
     )
 
 
@@ -1516,7 +1494,80 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     async def get_memory(user_id: str):
         await _ensure_storage_ready()
         items = await memory_mgr.store.list_items(user_id)
-        return {"items": [item.to_dict() for item in items]}
+        payload = {"items": [item.to_dict() for item in items]}
+        user_dir = memory_mgr.data_dir / "users" / user_id
+        if (user_dir / "memory.json").exists() or (user_dir / "trip_episodes.jsonl").exists():
+            payload["deprecated"] = True
+        return payload
+
+    @app.get("/api/memory/{user_id}/profile")
+    async def get_memory_profile(user_id: str):
+        await _ensure_storage_ready()
+        profile = await memory_mgr.v3_store.load_profile(user_id)
+        return profile.to_dict()
+
+    @app.get("/api/memory/{user_id}/episode-slices")
+    async def list_memory_episode_slices(user_id: str):
+        await _ensure_storage_ready()
+        slices = await memory_mgr.v3_store.list_episode_slices(user_id)
+        return {"slices": [slice_.to_dict() for slice_ in slices]}
+
+    @app.get("/api/memory/{user_id}/sessions/{session_id}/working-memory")
+    async def get_session_working_memory(user_id: str, session_id: str):
+        await _ensure_storage_ready()
+        session = sessions.get(session_id)
+        if session is None:
+            restored = await _restore_session(session_id)
+            if restored is not None:
+                sessions[session_id] = restored
+                session = restored
+        trip_id: str | None = None
+        if session is not None:
+            plan = session.get("plan")
+            if plan is not None:
+                trip_id = getattr(plan, "trip_id", None)
+        memory = await memory_mgr.v3_store.load_working_memory(
+            user_id, session_id, trip_id
+        )
+        return memory.to_dict()
+
+    async def _set_v3_profile_item_status(
+        user_id: str,
+        item_id: str,
+        status: str,
+    ) -> bool:
+        profile = await memory_mgr.v3_store.load_profile(user_id)
+        updated = False
+        now = _now_iso()
+
+        for bucket in (
+            "constraints",
+            "rejections",
+            "stable_preferences",
+            "preference_hypotheses",
+        ):
+            items = getattr(profile, bucket)
+            for index, item in enumerate(items):
+                if item.id != item_id:
+                    continue
+                should_remove = status == "obsolete" or (
+                    bucket == "preference_hypotheses" and status == "rejected"
+                )
+                if should_remove:
+                    del items[index]
+                else:
+                    item.status = status
+                    item.updated_at = now
+                updated = True
+                break
+            if updated:
+                break
+
+        if not updated:
+            return False
+
+        await memory_mgr.v3_store.save_profile(profile)
+        return True
 
     async def _set_memory_item_status(
         user_id: str,
@@ -1525,17 +1576,20 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     ) -> None:
         items = await memory_mgr.store.list_items(user_id)
         current = next((item for item in items if item.id == item_id), None)
-        if current is None:
-            raise HTTPException(status_code=404, detail="Memory item not found")
-        if current.status == status:
+        if current is not None:
+            if current.status == status:
+                return
+            changed = await memory_mgr.store.update_status(user_id, item_id, status)
+            if changed:
+                return
+            items = await memory_mgr.store.list_items(user_id)
+            current = next((item for item in items if item.id == item_id), None)
+            if current is not None and current.status == status:
+                return
+
+        if await _set_v3_profile_item_status(user_id, item_id, status):
             return
-        changed = await memory_mgr.store.update_status(user_id, item_id, status)
-        if changed:
-            return
-        items = await memory_mgr.store.list_items(user_id)
-        current = next((item for item in items if item.id == item_id), None)
-        if current is not None and current.status == status:
-            return
+
         raise HTTPException(status_code=404, detail="Memory item not found")
 
     @app.post("/api/memory/{user_id}/confirm")
@@ -1570,7 +1624,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     async def list_memory_episodes(user_id: str):
         await _ensure_storage_ready()
         episodes = await memory_mgr.store.list_episodes(user_id)
-        return {"episodes": [episode.to_dict() for episode in episodes]}
+        return {
+            "episodes": [episode.to_dict() for episode in episodes],
+            "deprecated": True,
+        }
 
     @app.delete("/api/memory/{user_id}/{item_id}")
     async def delete_memory_item(user_id: str, item_id: str):
@@ -2147,16 +2204,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)
         ]
         if config.memory.enabled:
-            try:
-                memory_result = await memory_mgr.generate_context(
-                    req.user_id,
-                    plan,
-                    user_message=req.message,
-                )
-            except TypeError as exc:
-                if "user_message" not in str(exc):
-                    raise
-                memory_result = await memory_mgr.generate_context(req.user_id, plan)
+            memory_result = await memory_mgr.generate_context(
+                req.user_id,
+                plan,
+                user_message=req.message,
+            )
 
             if (
                 isinstance(memory_result, tuple)
@@ -2170,11 +2222,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         else:
             memory_context, memory_recall = "暂无相关用户记忆", MemoryRecallTelemetry()
 
-        legacy_memory_hit = _legacy_memory_hit_record_from_recall(memory_recall)
-        if legacy_memory_hit is not None:
+        memory_hit_record = _memory_hit_record_from_recall(memory_recall)
+        if memory_hit_record is not None:
             session_stats = session.get("stats")
             if session_stats is not None:
-                session_stats.memory_hits.append(legacy_memory_hit)
+                session_stats.memory_hits.append(memory_hit_record)
 
         sys_msg = context_mgr.build_system_message(
             plan,

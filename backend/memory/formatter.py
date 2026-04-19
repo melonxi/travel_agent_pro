@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
-from memory.models import MemoryItem
 from memory.v3_models import EpisodeSlice, MemoryProfileItem, WorkingMemoryItem
 
 
@@ -13,17 +12,11 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 
 @dataclass
-class RetrievedMemory:
-    core: list[MemoryItem] = field(default_factory=list)
-    trip: list[MemoryItem] = field(default_factory=list)
-    phase: list[MemoryItem] = field(default_factory=list)
-
-
-@dataclass
 class MemoryRecallTelemetry:
     sources: dict[str, int] = field(
         default_factory=lambda: {
-            "profile": 0,
+            "profile_fixed": 0,
+            "query_profile": 0,
             "working_memory": 0,
             "episode_slice": 0,
         }
@@ -41,19 +34,6 @@ class MemoryRecallTelemetry:
             "slice_ids": list(self.slice_ids),
             "matched_reasons": list(self.matched_reasons),
         }
-
-
-def format_memory_context(memory: RetrievedMemory) -> str:
-    sections: list[str] = []
-
-    if memory.core:
-        sections.append(_format_section("核心用户画像", memory.core))
-    if memory.trip:
-        sections.append(_format_section("本次旅行记忆", memory.trip))
-    if memory.phase:
-        sections.append(_format_section("当前阶段相关历史", memory.phase))
-
-    return "\n\n".join(sections) if sections else "暂无相关用户记忆"
 
 
 def format_v3_memory_context(

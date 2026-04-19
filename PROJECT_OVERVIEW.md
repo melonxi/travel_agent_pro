@@ -36,7 +36,7 @@ travel_agent_pro/
 │   ├── agent/                  # Agent 循环：loop / compaction / hooks / reflection / tool_choice / narration / types / orchestrator / day_worker / worker_prompt
 │   ├── llm/                    # LLM 抽象：base Protocol / errors / factory / openai_provider / anthropic_provider
 │   ├── state/                  # 旅行状态模型：models / manager / intake / plan_writers
-│   ├── memory/                 # 结构化 global/trip 记忆 + episode：models / store / manager / extraction / policy / retriever / formatter
+│   ├── memory/                 # v3 分层记忆：profile / working memory / episode slice + 兼容层：models / store / manager / extraction / policy / retriever / formatter
 │   ├── context/                # 上下文：manager（系统提示/压缩决策）+ soul.md（人格）
 │   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，GLOBAL_RED_FLAGS + PHASE{1,3,5,7}_PROMPT + build_phase3_prompt）/ backtrack
 │   ├── tools/                  # 领域工具：base / engine / plan_tools(聚合导出 + Phase 1/3 trip_basics + append_tools + Phase 3 强 schema + Phase 5 daily_plans + 回退工具) / 搜索类 / 规划类 / normalizers
@@ -139,7 +139,7 @@ travel_agent_pro/
 | Reflection | 被动自省提示，会话级去重 | before_llm_call（步骤切换时） |
 | Parallel Tool Exec | 读写分离并行调度，parallel_group ID 透传到 Stats 层 | 工具批量执行时 |
 | Tool Choice (always auto) | Phase 切分后总返回 "auto"，依赖提示纪律 | LLM 调用前 |
-| Memory System | 结构化 global/trip 双 scope 记忆 + episode 归档；后台候选提取；三路检索按 trip_id 隔离 | 每轮 chat 后后台提取；system prompt 构建前检索 |
+| Memory System | v3 profile / working memory / episode slice 分层记忆；当前旅行事实由 TravelPlanState 权威提供；query-aware symbolic recall 只在显式历史/偏好查询时触发 | 每轮 chat 后后台提取；system prompt 构建前检索 |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
 | Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
 
@@ -302,7 +302,7 @@ LLM API 异常
 | `agent_status` | ThinkingBubble 状态（thinking/summarizing/compacting + hint 旁白） |
 | `state_update` | 完整 TravelPlanState（含 `deliverables` 冻结元数据） |
 | `context_compression` | 压缩通知 |
-| `memory_recall` | 本轮命中的记忆 ID 列表 |
+| `memory_recall` | 本轮命中的结构化记忆召回结果（`sources`、`profile_ids`、`working_memory_ids`、`slice_ids`、`matched_reasons`） |
 | `error` | LLM 错误（含 retryable / can_continue） |
 | `keepalive` | 心跳 |
 | `done` | 流结束（含 run 状态 + can_continue） |
@@ -313,7 +313,7 @@ LLM API 异常
 - **TraceViewer** — 分阶段分组的 Trace 视图，按 significance 分级展示，连续 thinking 自动折叠
 - **Phase3Workbench** — 旅行画像/候选池/骨架/锁定/风险 五卡片
 - **ThinkingBubble** — stage-aware 等待气泡，展示 narration hint
-- **MemoryCenter** — 右滑抽屉，活跃/待确认/归档三 Tab，乐观更新
+- **MemoryCenter** — 右滑抽屉；当前同时读取 v3 `profile` / `working-memory` / `episode-slices` 与遗留 v2 pending/episode 数据
 - **MapView / Timeline / BudgetChart** — 地图、时间线、预算可视化
 - **useSSE / useMemory / useTrace** — SSE 连接、记忆 CRUD、Trace 拉取三个 Hook
 
@@ -339,7 +339,7 @@ archives       → id, session_id, plan_json, summary, created_at
 backend/data/
 ├── sessions.db
 ├── sessions/sess_*/          # plan.json + snapshots/ + tool_results/ + deliverables/
-└── users/{user_id}/          # memory.json + memory_events.jsonl + trip_episodes.jsonl
+└── users/{user_id}/          # memory/（profile.json、sessions/*/working_memory.json、episode_slices.jsonl） + memory.json + memory_events.jsonl + trip_episodes.jsonl
 ```
 
 ---
@@ -361,12 +361,15 @@ GET    /api/messages/{id}                   消息历史
 POST   /api/backtrack/{id}                  回退阶段
 GET    /api/sessions/{id}/trace             Trace 视图
 GET    /api/sessions/{id}/stats             成本与延迟
-GET    /api/memory/{user_id}                记忆项
-POST   /api/memory/{user_id}/confirm        确认 pending
-POST   /api/memory/{user_id}/reject         拒绝 pending
+GET    /api/memory/{user_id}                v2 记忆项（deprecated）
+GET    /api/memory/{user_id}/profile        v3 长期画像
+GET    /api/memory/{user_id}/episode-slices v3 历史切片
+GET    /api/memory/{user_id}/sessions/{session_id}/working-memory v3 会话工作记忆
+POST   /api/memory/{user_id}/confirm        兼容确认入口（legacy pending / v3 profile）
+POST   /api/memory/{user_id}/reject         兼容拒绝入口（legacy pending / v3 profile）
 POST   /api/memory/{user_id}/events         追加事件
-GET    /api/memory/{user_id}/episodes       旅行 episode
-DELETE /api/memory/{user_id}/{item_id}      标记 obsolete
+GET    /api/memory/{user_id}/episodes       v2 旅行 episode（deprecated）
+DELETE /api/memory/{user_id}/{item_id}      兼容删除入口（legacy / v3 profile）
 ```
 
 ---
@@ -456,10 +459,10 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase5.par
 | Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
 | 并行工具执行 | 读写分离：搜索类并行，状态更新顺序 |
 | Tool Choice (always auto) | split 工具后移除强制逻辑，全依赖 prompt 纪律与 State Repair |
-| Memory System | 结构化 global/trip 双 scope + episode 归档；policy 全字段 PII 脱敏；按 trip_id 隔离；新行程回退时轮转 trip_id |
+| Memory System | v3 结构化长期画像（profile）+ 会话 working memory + episode slice；当前旅行事实由 TravelPlanState 权威提供；query-aware symbolic recall 只在显式历史/偏好查询时触发；遗留 v2 memory/item/episode API 仅保留兼容 |
 | Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
 | Trace Data Pipeline | "丰富 Stats 层，Trace 只做读取"：钩子 post-hoc 写入 `ToolCallRecord`；`build_trace` 纯读取消费 |
-| Memory Recall SSE | `memory_recall` 事件透传到前端，驱动 SessionSidebar 高亮与 ChatPanel memory chip |
+| Memory Recall SSE | `memory_recall` 事件透传到前端，payload 含 `sources/profile_ids/working_memory_ids/slice_ids/matched_reasons`，驱动 SessionSidebar 高亮与 ChatPanel memory chip |
 | LLM 韧性三层架构 | 错误归一化 → 停止生成（cancel_event + 取消检查点 + RunRecord）→ 安全继续（continuation_context + continue endpoint） |
 | 工具白名单前瞻容错 | 每个 Phase 3 子阶段向前开放下一阶段写入工具，防止 LLM 跳阶时工具不可用导致状态丢失和死循环 |
 | 四段式工具描述 | 功能说明 / 触发条件 / 禁止行为 / 写入后效果结构化模板，引导 LLM 正确选择工具而非混用 |
