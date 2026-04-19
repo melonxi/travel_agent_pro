@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from agent.hooks import HookManager
 from agent.loop import AgentLoop
 from agent.types import Message, Role, ToolCall, ToolResult
+from config import Phase5ParallelConfig
 from harness.guardrail import GuardrailResult
 from llm.errors import LLMError, LLMErrorCode
 from llm.types import ChunkType, LLMChunk
@@ -1876,6 +1877,88 @@ async def test_phase3_step_change_rebuilds_system_message():
     assert "phase=3" in observed_system_contents[-1]
     assert "已完成 Phase" not in observed_system_contents[-1]
     assert "handoff" not in observed_system_contents[-1]
+
+
+@pytest.mark.asyncio
+async def test_phase3_to_phase5_transition_rechecks_parallel_routing():
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase3_step="lock",
+        destination="东京",
+        dates=DateRange(start="2026-05-01", end="2026-05-03"),
+        skeleton_plans=[{"id": "plan_A", "days": [{}, {}, {}]}],
+        selected_skeleton_id="plan_A",
+    )
+
+    @tool(
+        name="promote_to_phase5",
+        description="Promote plan to phase 5",
+        phases=[3],
+        parameters={"type": "object", "properties": {}, "required": []},
+        side_effect="write",
+    )
+    async def promote_to_phase5() -> dict:
+        plan.phase = 5
+        return {"updated_field": "phase", "phase": 5}
+
+    engine = ToolEngine()
+    engine.register(promote_to_phase5)
+
+    llm_call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal llm_call_count
+        llm_call_count += 1
+        yield LLMChunk(
+            type=ChunkType.TOOL_CALL_START,
+            tool_call=ToolCall(
+                id="tc_phase5",
+                name="promote_to_phase5",
+                arguments={},
+            ),
+        )
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=3,
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u-phase5-reentry",
+        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+    )
+
+    parallel_calls = 0
+
+    async def fake_parallel_runner():
+        nonlocal parallel_calls
+        parallel_calls += 1
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="parallel phase5")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    agent._run_parallel_phase5_orchestrator = fake_parallel_runner
+
+    chunks = [c async for c in agent.run([Message(role=Role.USER, content="继续")], phase=3)]
+
+    assert plan.phase == 5
+    assert llm_call_count == 1
+    assert parallel_calls == 1
+    assert any(
+        c.type == ChunkType.PHASE_TRANSITION and c.phase_info["to_phase"] == 5
+        for c in chunks
+    )
+    assert any(
+        c.type == ChunkType.TEXT_DELTA and c.content == "parallel phase5"
+        for c in chunks
+    )
 
 
 @pytest.mark.asyncio
