@@ -57,18 +57,12 @@ def _tool_query_fingerprint(call: ToolCall) -> str | None:
     if call.name == "get_poi_info":
         q = call.arguments.get("query") or call.arguments.get("name") or ""
         return f"get_poi_info:{q}"
-    if call.name == "check_availability":
-        p = call.arguments.get("placeName", "")
-        d = call.arguments.get("date", "")
-        return f"check_availability:{p}:{d}"
     return None
 
 
 def _tool_recovery_key(call: ToolCall) -> str | None:
     if call.name == "get_poi_info":
         return call.arguments.get("query") or call.arguments.get("name")
-    if call.name == "check_availability":
-        return call.arguments.get("placeName")
     if call.name == "web_search":
         return call.arguments.get("query")
     return None
@@ -359,7 +353,6 @@ def _get_worker_tools(tool_engine: ToolEngine) -> list[dict[str, Any]]:
         "get_poi_info",
         "optimize_day_route",
         "calculate_route",
-        "check_availability",
         "check_weather",
         "web_search",
         "xiaohongshu_search_notes",
