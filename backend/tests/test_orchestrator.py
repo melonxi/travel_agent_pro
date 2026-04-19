@@ -1,7 +1,12 @@
 # backend/tests/test_orchestrator.py
 import pytest
 
-from agent.orchestrator import Phase5Orchestrator, GlobalValidationIssue
+from agent.orchestrator import (
+    Phase5Orchestrator,
+    GlobalValidationIssue,
+    _derive_theme,
+    _format_error,
+)
 from agent.worker_prompt import DayTask
 from state.models import (
     TravelPlanState,
@@ -49,6 +54,40 @@ def _make_plan_with_skeleton() -> TravelPlanState:
         }
     ]
     return plan
+
+
+class TestDeriveTheme:
+    def test_area_and_theme_both_present(self):
+        assert _derive_theme({"area": "浅草", "theme": "传统文化"}) == "浅草 · 传统文化"
+
+    def test_only_area(self):
+        assert _derive_theme({"area": "浅草"}) == "浅草"
+
+    def test_only_theme(self):
+        assert _derive_theme({"theme": "传统文化"}) == "传统文化"
+
+    def test_neither(self):
+        assert _derive_theme({}) is None
+
+    def test_empty_strings_treated_as_missing(self):
+        assert _derive_theme({"area": "  ", "theme": ""}) is None
+
+
+class TestFormatError:
+    def test_none_stays_none(self):
+        assert _format_error(None) is None
+
+    def test_empty_stays_none(self):
+        assert _format_error("") is None
+
+    def test_short_passes_through(self):
+        assert _format_error("超时 60s") == "超时 60s"
+
+    def test_long_truncates_with_ellipsis(self):
+        raw = "x" * 120
+        result = _format_error(raw)
+        assert len(result) == 80
+        assert result.endswith("...")
 
 
 class TestSplitTasks:
