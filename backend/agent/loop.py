@@ -132,12 +132,6 @@ class AgentLoop:
         with tracer.start_as_current_span("agent_loop.run") as span:
             span.set_attribute(AGENT_PHASE, phase)
 
-            # Phase 5 parallel mode: dispatch orchestrator instead of serial loop
-            if self.should_use_parallel_phase5(self.plan, self.phase5_parallel_config):
-                async for chunk in self._run_parallel_phase5_orchestrator():
-                    yield chunk
-                return
-
             current_phase = self.plan.phase if self.plan is not None else phase
             tools = tools_override or self.tool_engine.get_tools_for_phase(
                 current_phase,
@@ -150,6 +144,15 @@ class AgentLoop:
             prev_iteration_had_tools = False
             phase_changed_in_prev_iteration = False
             for iteration in range(self.max_retries):  # safety limit on loop iterations
+                # Loop-top guard covers both cold start and hot switch after
+                # a write tool upgrades phase to 5 mid-run.
+                if self.should_use_parallel_phase5(
+                    self.plan, self.phase5_parallel_config
+                ):
+                    async for chunk in self._run_parallel_phase5_orchestrator():
+                        yield chunk
+                    return
+
                 self._check_cancelled()
                 self._progress = IterationProgress.NO_OUTPUT
                 with tracer.start_as_current_span("agent_loop.iteration") as iter_span:
@@ -466,12 +469,6 @@ class AgentLoop:
                             current_phase,
                             self.plan,
                         )
-                        if self.should_use_parallel_phase5(
-                            self.plan, self.phase5_parallel_config
-                        ):
-                            async for chunk in self._run_parallel_phase5_orchestrator():
-                                yield chunk
-                            return
                         continue
 
                     phase_after_batch = (
@@ -505,12 +502,6 @@ class AgentLoop:
                             current_phase,
                             self.plan,
                         )
-                        if self.should_use_parallel_phase5(
-                            self.plan, self.phase5_parallel_config
-                        ):
-                            async for chunk in self._run_parallel_phase5_orchestrator():
-                                yield chunk
-                            return
                         continue
 
                     if (
@@ -552,14 +543,6 @@ class AgentLoop:
                                 current_phase,
                                 self.plan,
                             )
-                            if self.should_use_parallel_phase5(
-                                self.plan, self.phase5_parallel_config
-                            ):
-                                async for chunk in (
-                                    self._run_parallel_phase5_orchestrator()
-                                ):
-                                    yield chunk
-                                return
                             continue
 
                     phase3_step_after_batch = (
