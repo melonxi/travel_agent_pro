@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from memory.models import MemoryItem
+from memory.v3_models import EpisodeSlice, MemoryProfileItem, WorkingMemoryItem
 
 
 _MAX_VALUE_LENGTH = 160
@@ -18,6 +19,30 @@ class RetrievedMemory:
     phase: list[MemoryItem] = field(default_factory=list)
 
 
+@dataclass
+class MemoryRecallTelemetry:
+    sources: dict[str, int] = field(
+        default_factory=lambda: {
+            "profile": 0,
+            "working_memory": 0,
+            "episode_slice": 0,
+        }
+    )
+    profile_ids: list[str] = field(default_factory=list)
+    working_memory_ids: list[str] = field(default_factory=list)
+    slice_ids: list[str] = field(default_factory=list)
+    matched_reasons: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sources": dict(self.sources),
+            "profile_ids": list(self.profile_ids),
+            "working_memory_ids": list(self.working_memory_ids),
+            "slice_ids": list(self.slice_ids),
+            "matched_reasons": list(self.matched_reasons),
+        }
+
+
 def format_memory_context(memory: RetrievedMemory) -> str:
     sections: list[str] = []
 
@@ -29,6 +54,103 @@ def format_memory_context(memory: RetrievedMemory) -> str:
         sections.append(_format_section("当前阶段相关历史", memory.phase))
 
     return "\n\n".join(sections) if sections else "暂无相关用户记忆"
+
+
+def format_v3_memory_context(
+    profile_items: list[tuple[str, MemoryProfileItem]],
+    working_items: list[WorkingMemoryItem],
+    query_profile_items: list[tuple[str, MemoryProfileItem, str]],
+    query_slices: list[tuple[EpisodeSlice, str]],
+) -> str:
+    sections: list[str] = []
+
+    if profile_items:
+        lines = ["## 长期用户画像"]
+        for bucket, item in profile_items:
+            lines.append(_format_v3_profile_item(bucket, item))
+        sections.append("\n".join(lines))
+
+    if working_items:
+        lines = ["## 当前会话工作记忆"]
+        for item in working_items:
+            lines.append(_format_v3_working_memory_item(item))
+        sections.append("\n".join(lines))
+
+    history_lines: list[str] = []
+    for bucket, item, matched_reason in query_profile_items:
+        history_lines.append(
+            _format_v3_profile_item(bucket, item, matched_reason=matched_reason)
+        )
+    for slice_, matched_reason in query_slices:
+        history_lines.append(_format_v3_slice(slice_, matched_reason))
+    if history_lines:
+        sections.append("\n".join(["## 本轮请求命中的历史记忆", *history_lines]))
+
+    return "\n\n".join(sections) if sections else "暂无相关用户记忆"
+
+
+def _format_v3_profile_item(
+    bucket: str,
+    item: MemoryProfileItem,
+    matched_reason: str | None = None,
+) -> str:
+    details = _format_details(
+        source="profile",
+        bucket=bucket,
+        matched_reason=matched_reason,
+        applicability=item.applicability,
+    )
+    return (
+        f"- {_sanitize_text(details)} "
+        f"[{_sanitize_text(item.domain)}] {_sanitize_text(item.key)}: "
+        f"{_format_value(item.value)}"
+    )
+
+
+def _format_v3_working_memory_item(item: WorkingMemoryItem) -> str:
+    details = _format_details(
+        source="working_memory",
+        bucket=item.kind,
+        matched_reason=item.reason,
+    )
+    domain_text = ",".join(_sanitize_text(domain) for domain in item.domains if domain)
+    domain_prefix = f"[{domain_text}] " if domain_text else ""
+    return (
+        f"- {_sanitize_text(details)} "
+        f"{domain_prefix}content: {_format_value(item.content)}"
+    )
+
+
+def _format_v3_slice(slice_: EpisodeSlice, matched_reason: str | None = None) -> str:
+    details = _format_details(
+        source="episode_slice",
+        bucket=slice_.slice_type,
+        matched_reason=matched_reason,
+        applicability=slice_.applicability,
+    )
+    domain_text = ",".join(_sanitize_text(domain) for domain in slice_.domains if domain)
+    domain_prefix = f"[{domain_text}] " if domain_text else ""
+    return (
+        f"- {_sanitize_text(details)} "
+        f"{domain_prefix}content: {_format_value(slice_.content)}"
+    )
+
+
+def _format_details(
+    *,
+    source: str,
+    bucket: str | None = None,
+    matched_reason: str | None = None,
+    applicability: str | None = None,
+) -> str:
+    parts = [f"source={source}"]
+    if bucket:
+        parts.append(f"bucket={bucket}")
+    if matched_reason:
+        parts.append(f"matched reason={matched_reason}")
+    if applicability:
+        parts.append(f"applicability={applicability}")
+    return " ".join(_sanitize_text(part) for part in parts if part)
 
 
 def _format_section(title: str, items: list[MemoryItem]) -> str:
