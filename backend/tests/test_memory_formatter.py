@@ -130,3 +130,29 @@ def test_memory_recall_telemetry_to_dict_preserves_fields():
         "slice_ids": ["slice-1"],
         "matched_reasons": ["exact destination match on 京都"],
     }
+
+
+def test_legacy_memory_hit_record_from_v3_recall_uses_compatibility_mapping():
+    from main import _legacy_memory_hit_record_from_recall
+    from memory.formatter import MemoryRecallTelemetry
+
+    telemetry = MemoryRecallTelemetry(
+        sources={
+            "profile": 2,
+            "working_memory": 1,
+            "episode_slice": 1,
+            "query_profile": 1,
+        },
+        profile_ids=["profile-1", "profile-2"],
+        working_memory_ids=["wm-1", "profile-2"],
+        slice_ids=["slice-1", "profile-1"],
+        matched_reasons=["history cue: 上次"],
+    )
+
+    record = _legacy_memory_hit_record_from_recall(telemetry)
+
+    assert record is not None
+    assert record.item_ids == ["profile-1", "profile-2", "wm-1", "slice-1"]
+    assert record.core_count == 2
+    assert record.trip_count == 1
+    assert record.phase_count == 2
