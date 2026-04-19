@@ -141,10 +141,28 @@ class Phase5Orchestrator:
 
         return issues
 
+    def _build_progress_chunk(
+        self,
+        worker_statuses: list[dict[str, Any]],
+        total_days: int,
+        hint: str,
+    ) -> LLMChunk:
+        """Build a parallel_progress AGENT_STATUS chunk with per-worker status."""
+        return LLMChunk(
+            type=ChunkType.AGENT_STATUS,
+            agent_status={
+                "stage": "parallel_progress",
+                "hint": hint,
+                "total_days": total_days,
+                "workers": [dict(w) for w in worker_statuses],
+            },
+        )
+
     async def run(self) -> AsyncIterator[LLMChunk]:
         """Execute parallel Phase 5 generation.
 
-        Yields LLMChunk events for frontend progress display.
+        Yields LLMChunk events for frontend progress display, including
+        real-time per-worker status updates via ``parallel_progress`` events.
         """
         tracer = trace.get_tracer("phase5-orchestrator")
 
@@ -155,20 +173,29 @@ class Phase5Orchestrator:
                 agent_status={"stage": "planning", "hint": "正在分解行程任务..."},
             )
             tasks = self._split_tasks()
-            span.set_attribute("total_days", len(tasks))
+            total_days = len(tasks)
+            span.set_attribute("total_days", total_days)
 
             # 2. Build shared prefix
             shared_prefix = build_shared_prefix(self.plan)
 
-            # 3. Spawn workers with concurrency control
-            yield LLMChunk(
-                type=ChunkType.AGENT_STATUS,
-                agent_status={
-                    "stage": "thinking",
-                    "hint": f"正在并行规划第 1-{len(tasks)} 天的详细行程...",
-                },
+            # 3. Initialize per-worker status tracking
+            worker_statuses: list[dict[str, Any]] = [
+                {"day": t.day, "status": "running"} for t in tasks
+            ]
+
+            def _find_worker_idx(day: int) -> int:
+                return next(
+                    i for i, w in enumerate(worker_statuses) if w["day"] == day
+                )
+
+            yield self._build_progress_chunk(
+                worker_statuses,
+                total_days,
+                f"正在并行规划 {total_days} 天行程...",
             )
 
+            # 4. Spawn workers with concurrency control
             semaphore = asyncio.Semaphore(self.config.max_workers)
 
             async def _run_with_semaphore(task: DayTask) -> DayWorkerResult:
@@ -183,53 +210,83 @@ class Phase5Orchestrator:
                         timeout_seconds=self.config.worker_timeout_seconds,
                     )
 
-            raw_results = await asyncio.gather(
-                *[_run_with_semaphore(t) for t in tasks],
-                return_exceptions=True,
-            )
+            pending: dict[asyncio.Task, DayTask] = {}
+            for task in tasks:
+                atask = asyncio.create_task(_run_with_semaphore(task))
+                pending[atask] = task
 
-            # 4. Collect results
+            # 5. Collect results as each worker finishes (real-time progress)
             successes: list[DayWorkerResult] = []
             failures: list[tuple[DayTask, str]] = []
 
-            for task, result in zip(tasks, raw_results):
-                if isinstance(result, Exception):
-                    failures.append((task, f"Exception: {result}"))
-                    logger.error("Day %d worker exception: %s", task.day, result)
-                elif result.success:
-                    successes.append(result)
-                    yield LLMChunk(
-                        type=ChunkType.AGENT_STATUS,
-                        agent_status={
-                            "stage": "summarizing",
-                            "hint": f"第 {result.day} 天规划完成",
-                        },
-                    )
-                else:
-                    failures.append((task, result.error or "Unknown error"))
-                    logger.warning("Day %d worker failed: %s", task.day, result.error)
+            while pending:
+                done_set, _ = await asyncio.wait(
+                    pending.keys(), return_when=asyncio.FIRST_COMPLETED
+                )
+                for completed in done_set:
+                    day_task = pending.pop(completed)
+                    idx = _find_worker_idx(day_task.day)
+                    try:
+                        result = completed.result()
+                        if result.success:
+                            successes.append(result)
+                            worker_statuses[idx]["status"] = "done"
+                        else:
+                            failures.append(
+                                (day_task, result.error or "Unknown error")
+                            )
+                            worker_statuses[idx]["status"] = "failed"
+                            logger.warning(
+                                "Day %d worker failed: %s",
+                                day_task.day,
+                                result.error,
+                            )
+                    except Exception as e:
+                        failures.append((day_task, f"Exception: {e}"))
+                        worker_statuses[idx]["status"] = "failed"
+                        logger.error(
+                            "Day %d worker exception: %s", day_task.day, e
+                        )
+
+                done_count = sum(
+                    1
+                    for w in worker_statuses
+                    if w["status"] in ("done", "failed")
+                )
+                yield self._build_progress_chunk(
+                    worker_statuses,
+                    total_days,
+                    f"已完成 {done_count}/{total_days} 天...",
+                )
 
             span.set_attribute("successes", len(successes))
             span.set_attribute("failures", len(failures))
 
-            # 5. Check if we should fall back to serial
+            # 6. Check if we should fall back to serial
             if self.config.fallback_to_serial and len(failures) > len(tasks) / 2:
                 logger.warning(
                     "Parallel mode failure rate %.0f%%, falling back to serial",
                     len(failures) / len(tasks) * 100,
                 )
-                yield LLMChunk(
-                    type=ChunkType.AGENT_STATUS,
-                    agent_status={
-                        "stage": "thinking",
-                        "hint": "并行模式失败率过高，切换到串行模式...",
-                    },
+                yield self._build_progress_chunk(
+                    worker_statuses,
+                    total_days,
+                    "并行模式失败率过高，切换到串行模式...",
                 )
                 return
 
-            # 6. Retry failed days (one at a time)
+            # 7. Retry failed days (one at a time)
             for task, error_msg in failures:
-                logger.info("Retrying day %d (previous error: %s)", task.day, error_msg)
+                idx = _find_worker_idx(task.day)
+                worker_statuses[idx]["status"] = "retrying"
+                yield self._build_progress_chunk(
+                    worker_statuses,
+                    total_days,
+                    f"重试第 {task.day} 天...",
+                )
+                logger.info(
+                    "Retrying day %d (previous error: %s)", task.day, error_msg
+                )
                 retry_result = await run_day_worker(
                     llm=self.llm,
                     tool_engine=self.tool_engine,
@@ -241,46 +298,48 @@ class Phase5Orchestrator:
                 )
                 if retry_result.success:
                     successes.append(retry_result)
-                    yield LLMChunk(
-                        type=ChunkType.AGENT_STATUS,
-                        agent_status={
-                            "stage": "summarizing",
-                            "hint": f"第 {retry_result.day} 天（重试）规划完成",
-                        },
+                    worker_statuses[idx]["status"] = "done"
+                    yield self._build_progress_chunk(
+                        worker_statuses,
+                        total_days,
+                        f"第 {retry_result.day} 天（重试）规划完成",
                     )
                 else:
+                    worker_statuses[idx]["status"] = "failed"
                     logger.error(
                         "Day %d retry also failed: %s",
                         task.day,
                         retry_result.error,
                     )
+                    yield self._build_progress_chunk(
+                        worker_statuses,
+                        total_days,
+                        f"第 {task.day} 天重试失败",
+                    )
 
-            # 7. Sort and validate
+            # 8. Sort and validate
             dayplans = sorted(
                 [r.dayplan for r in successes if r.dayplan],
                 key=lambda dp: dp.get("day", 0),
             )
 
-            yield LLMChunk(
-                type=ChunkType.AGENT_STATUS,
-                agent_status={"stage": "summarizing", "hint": "正在做最终验证..."},
+            yield self._build_progress_chunk(
+                worker_statuses, total_days, "正在做最终验证..."
             )
             issues = self._global_validate(dayplans)
             for issue in issues:
                 logger.warning("Global validation: %s", issue.description)
 
-            # 8. Write results
+            # 9. Write results
             if dayplans:
                 replace_all_daily_plans(self.plan, dayplans)
-                yield LLMChunk(
-                    type=ChunkType.AGENT_STATUS,
-                    agent_status={
-                        "stage": "summarizing",
-                        "hint": f"已写入 {len(dayplans)} 天行程",
-                    },
+                yield self._build_progress_chunk(
+                    worker_statuses,
+                    total_days,
+                    f"已写入 {len(dayplans)} 天行程",
                 )
 
-            # 9. Generate summary text
+            # 10. Generate summary text
             summary_lines = [f"已完成 {len(dayplans)}/{len(tasks)} 天的行程规划。\n"]
             for dp in dayplans:
                 day_num = dp.get("day", "?")

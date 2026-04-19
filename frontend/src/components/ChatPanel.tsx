@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import MessageBubble from './MessageBubble'
 import ThinkingBubble from './ThinkingBubble'
+import ParallelProgress from './ParallelProgress'
 import RoundSummaryBar from './RoundSummaryBar'
 import { useSSE } from '../hooks/useSSE'
-import type { PhaseTransitionEvent, SSEEvent, TravelPlanState } from '../types/plan'
+import type { ParallelWorkerStatus, PhaseTransitionEvent, SSEEvent, TravelPlanState } from '../types/plan'
 import type { SessionMessage } from '../types/session'
 
 interface StateChange {
@@ -119,10 +120,16 @@ interface EventHandlerState {
 
 interface ThinkingState {
   createdAt: number
-  stage?: 'thinking' | 'summarizing' | 'compacting'
+  stage?: 'thinking' | 'summarizing' | 'compacting' | 'planning'
   iteration?: number
   hint?: string | null
   fading?: boolean
+}
+
+interface ParallelProgressState {
+  totalDays: number
+  workers: ParallelWorkerStatus[]
+  hint: string | null
 }
 
 type StreamFeedbackKind = 'waiting' | 'continue' | 'retry' | 'fatal' | 'stopped'
@@ -218,6 +225,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [thinking, setThinking] = useState<ThinkingState | null>(null)
+  const [parallelProgress, setParallelProgress] = useState<ParallelProgressState | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
@@ -553,19 +561,31 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
         }])
       }
     } else if (event.type === 'agent_status') {
-      showThinking({
-        createdAt: Date.now(),
-        stage: event.stage,
-        iteration: typeof event.iteration === 'number' ? event.iteration : undefined,
-        hint: typeof event.hint === 'string' ? event.hint : null,
-      })
+      if (event.stage === 'parallel_progress' && Array.isArray(event.workers)) {
+        setParallelProgress({
+          totalDays: typeof event.total_days === 'number' ? event.total_days : 0,
+          workers: event.workers as ParallelWorkerStatus[],
+          hint: typeof event.hint === 'string' ? event.hint : null,
+        })
+        clearThinkingImmediately()
+      } else {
+        setParallelProgress(null)
+        showThinking({
+          createdAt: Date.now(),
+          stage: event.stage as ThinkingState['stage'],
+          iteration: typeof event.iteration === 'number' ? event.iteration : undefined,
+          hint: typeof event.hint === 'string' ? event.hint : null,
+        })
+      }
     } else if (event.type === 'error') {
       state.failed = true
       dismissThinking()
+      setParallelProgress(null)
       setStreamFeedback(createErrorFeedback(event))
     } else if (event.type === 'done') {
       state.completed = true
       clearThinkingImmediately()
+      setParallelProgress(null)
       setStreamFeedback(null)
       if (roundStateRef.current.toolCount > 0) {
         setRoundSummary({
@@ -581,6 +601,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
   const finishStream = (state: EventHandlerState) => {
     setStreaming(false)
     clearThinkingImmediately()
+    setParallelProgress(null)
     if (!state.completed && !state.failed && !userStoppedRef.current) {
       setStreamFeedback(createUnexpectedEndFeedback())
     }
@@ -705,7 +726,14 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
             memoryChip={m.memoryChip}
           />
         ))}
-        {thinking && (
+        {parallelProgress && (
+          <ParallelProgress
+            totalDays={parallelProgress.totalDays}
+            workers={parallelProgress.workers}
+            hint={parallelProgress.hint}
+          />
+        )}
+        {thinking && !parallelProgress && (
           <ThinkingBubble
             createdAt={thinking.createdAt}
             stage={thinking.stage}
