@@ -391,12 +391,12 @@ CSS 新增：`.parallel-worker-theme { color: var(--accent-gold); min-width: 110
 
 ### 前端
 
-4. **`frontend/src/components/__tests__/ParallelProgress.test.tsx`（新增或扩展）**
-   - 5 种状态 fixture 各一，断言 row 文本包含对应尾部字段。
-   - theme null 时 span 不渲染。
-   - iteration/max 都有时尾部含 `"N/M 轮"` 片段。
+4. **手动 UI 冒烟**（前端当前未装组件测试框架，`package.json` 只有 Vite + React；不为本次改动引入 Vitest）
+   - `npm run dev` 启后端 + 前端，跑一次 Phase 5 并行路径。
+   - 验证：running 行含"调用 &lt;tool&gt; · N/M 轮"、done 行含"完成 · K 个活动"、failed 行含"失败 · &lt;error&gt;"、retrying 行含"重试 · N/M 轮"、theme 为 null 时 span 不渲染。
+   - 截图存档到 `screenshots/phase5-worker-card-enhanced.png` 作为 commit evidence。
 
-5. **TS 编译**：`pnpm tsc --noEmit` 必须通过。
+5. **TS 编译**：`cd frontend && npx tsc --noEmit` 必须通过——新字段全可选，不破坏现有 usage。
 
 ### 不测试
 
@@ -434,7 +434,7 @@ callback 在 worker 协程内执行（用 semaphore 串行了并发），`put_no
 | `frontend/src/types/plan.ts` | `ParallelWorkerStatus` 加 6 个可选字段 |
 | `frontend/src/components/ParallelProgress.tsx` | 新 render 逻辑 + theme span |
 | `frontend/src/styles/index.css` | `.parallel-worker-theme` 一条 CSS |
-| `frontend/src/components/__tests__/ParallelProgress.test.tsx` | 新增或扩展 |
+| `screenshots/phase5-worker-card-enhanced.png` | 手动 UI 冒烟验证截图 |
 
 ---
 
@@ -446,8 +446,8 @@ callback 在 worker 协程内执行（用 semaphore 串行了并发），`put_no
 2. orchestrator `_derive_theme` / `_format_error` 小工具 + 单测（纯函数最好测）
 3. orchestrator `worker_statuses` 扩字段 + 回调装配 + queue 主循环 + 单测（核心改动）
 4. 集成测试断言扩展
-5. 前端 TS 类型 + render 逻辑 + 组件测试
-6. 全量 pytest + tsc --noEmit + 手动打开 web 验证
+5. 前端 TS 类型 + render 逻辑 + CSS
+6. 全量 `pytest` + `npx tsc --noEmit` + 手动打开 web 验证（截图存档）
 
 ---
 
