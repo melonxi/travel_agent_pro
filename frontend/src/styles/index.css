@@ -820,12 +820,27 @@ body::after {
 .parallel-worker-label {
   color: var(--text-primary);
   font-weight: 500;
-  flex: 1;
+  min-width: 58px;
+  flex-shrink: 0;
+}
+
+.parallel-worker-theme {
+  color: var(--accent-gold);
+  font-size: 0.78rem;
+  min-width: 110px;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .parallel-worker-status {
   color: var(--text-secondary);
   font-size: 0.75rem;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .parallel-worker--running {
