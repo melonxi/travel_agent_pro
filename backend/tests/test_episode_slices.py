@@ -116,31 +116,45 @@ def test_build_episode_slices_handles_missing_optional_lists():
     assert any(item.slice_type == "budget_signal" for item in slices)
 
 
+def test_build_episode_slices_handles_non_list_optional_inputs():
+    episode = _episode(
+        accepted_items="bad",  # type: ignore[arg-type]
+        rejected_items={"bad": True},  # type: ignore[arg-type]
+        lessons="bad",  # type: ignore[arg-type]
+    )
+
+    slices = build_episode_slices(episode, now="2026-04-19T00:00:00")
+
+    assert any(item.slice_type == "accepted_pattern" for item in slices)
+    assert any(item.slice_type == "budget_signal" for item in slices)
+    assert not any(item.slice_type == "rejected_option" for item in slices)
+    assert not any(item.slice_type == "pitfall" for item in slices)
+
+
 def test_episode_slice_entities_do_not_store_unbounded_rendered_values():
     episode = _episode(
+        selected_skeleton={f"k{i}": f"v{i}" for i in range(220)},
         rejected_items=[
-            {"type": "hotel", "name": "C" * 220},
+            {f"field{i}": f"value{i}" for i in range(220)},
         ],
         lessons=["D" * 220],
+        budget={"amount": 20000, "currency": "CNY", **{f"meta{i}": f"value{i}" for i in range(220)}},
     )
 
     slices = build_episode_slices(episode, now="2026-04-19T00:00:00")
 
     for slice_ in slices:
+        for key in ("selected_skeleton", "rejected_item", "lesson", "budget"):
+            value = slice_.entities.get(key)
+            if value is None:
+                continue
+            assert isinstance(value, str)
+            assert len(value) <= 180
         for key, value in slice_.entities.items():
             if key == "destination":
                 continue
-
-            def _walk(node):
-                if isinstance(node, str):
-                    assert len(node) <= 180
-                elif isinstance(node, dict):
-                    for nested_key, nested_value in node.items():
-                        if nested_key == "destination":
-                            continue
-                        _walk(nested_value)
-                elif isinstance(node, (list, tuple)):
-                    for item in node:
-                        _walk(item)
-
-            _walk(value)
+            if key in {"selected_skeleton", "rejected_item", "lesson", "budget"}:
+                assert not isinstance(value, (dict, list, tuple))
+                continue
+            if isinstance(value, str):
+                assert len(value) <= 180
