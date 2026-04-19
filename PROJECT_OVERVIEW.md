@@ -190,7 +190,7 @@ travel_agent_pro/
 - `docs/postmortems/2026-04-19-phase5-parallel-guard-refactor.md`：记录 Phase 5 并行入口守卫重构的主路径等价性、`max_retries` 边界风险与外部 agent runtime 设计参照
 - `docs/learning/interview-stress-test/`、`docs/mind/`：学习型架构评审与阶段性洞察，当前包含记忆系统写入语境、稳定性、TripEpisode 职责边界与 working memory 取舍分析
 - `docs/learning/2026-04-19-Phase*.md` 与 `docs/learning/assets/phase5-parallel-orchestration/`：面向初学者的 Phase 转换机制、Phase 5 并行 Orchestrator-Workers 生命周期说明和配图
-- `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划
+- `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划，包含待实现的 Memory Storage v3 分层重构规格（profile / working memory / episode slice / events）
 - `docs/agent-tool-design-guide.md`：Agent 工具设计评审准则，新增或重塑工具前应对照其命名、schema、返回值、错误反馈与评估清单
 
 ---
