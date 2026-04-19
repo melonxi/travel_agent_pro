@@ -1,0 +1,80 @@
+<svg viewBox="0 0 980 360" role="img" aria-label="Phase 5 入口路由三个检查点" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(28,25,23,0.10)"/>
+    </pattern>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#57534e"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#b5523a"/>
+    </marker>
+    <style>
+      .title { font: 400 24px "Instrument Serif", Georgia, serif; fill: #1c1917; }
+      .node { fill: #fff; stroke: #1c1917; stroke-width: 1; }
+      .input { fill: rgba(87,83,78,0.10); stroke: #78716c; stroke-width: 1; }
+      .focal { fill: rgba(181,82,58,0.08); stroke: #b5523a; stroke-width: 1.2; }
+      .optional { fill: rgba(28,25,23,0.02); stroke: rgba(28,25,23,0.30); stroke-width: 1; stroke-dasharray: 4 3; }
+      .name { font: 600 12px "Geist", Arial, sans-serif; fill: #1c1917; text-anchor: middle; }
+      .sub { font: 400 9px "Geist Mono", ui-monospace, monospace; fill: #57534e; text-anchor: middle; }
+      .tag { font: 500 8px "Geist Mono", ui-monospace, monospace; fill: #78716c; text-anchor: middle; letter-spacing: .14em; }
+      .label { font: 400 8px "Geist Mono", ui-monospace, monospace; fill: #57534e; text-anchor: middle; letter-spacing: .06em; }
+      .arrow { fill: none; stroke: #57534e; stroke-width: 1.2; marker-end: url(#arrow); }
+      .accent-arrow { fill: none; stroke: #b5523a; stroke-width: 1.4; marker-end: url(#arrow-accent); }
+      .dash { stroke-dasharray: 5 4; }
+      .lane { fill: rgba(28,25,23,0.02); stroke: rgba(28,25,23,0.12); stroke-width: .8; }
+    </style>
+  </defs>
+
+  <rect width="980" height="360" fill="#faf7f2"/>
+  <rect width="980" height="360" fill="url(#dots)" opacity="0.55"/>
+  <text class="title" x="32" y="44">Entry Guards</text>
+
+  <rect class="lane" x="32" y="72" width="916" height="92" rx="8"/>
+  <text class="tag" x="100" y="96">CHECKPOINT 1</text>
+  <rect class="input" x="76" y="112" width="116" height="36" rx="6"/>
+  <text class="name" x="134" y="135">循环顶部</text>
+  <polygon class="focal" points="320,104 388,130 320,156 252,130"/>
+  <text class="name" x="320" y="128">should_use?</text>
+  <rect class="node" x="472" y="108" width="136" height="44" rx="6"/>
+  <text class="name" x="540" y="135">LLM + 工具</text>
+  <rect class="focal" x="688" y="108" width="144" height="44" rx="6"/>
+  <text class="name" x="760" y="135">Orchestrator</text>
+
+  <path class="accent-arrow" d="M192 130 H252"/>
+  <path class="arrow" d="M388 130 H472"/>
+  <path class="accent-arrow" d="M320 156 C320 176 760 176 760 152"/>
+  <rect x="416" y="122" width="24" height="14" rx="2" fill="#faf7f2"/>
+  <text class="label" x="428" y="132">NO</text>
+  <rect x="516" y="168" width="28" height="14" rx="2" fill="#faf7f2"/>
+  <text class="label" x="530" y="178">YES</text>
+
+  <rect class="lane" x="32" y="188" width="440" height="112" rx="8"/>
+  <text class="tag" x="112" y="212">CHECKPOINT 2</text>
+  <rect class="node" x="76" y="232" width="116" height="44" rx="6"/>
+  <text class="name" x="134" y="258">phase 变 5</text>
+  <rect class="node" x="268" y="232" width="96" height="44" rx="6"/>
+  <text class="name" x="316" y="258">continue</text>
+  <path class="arrow" d="M192 254 H268"/>
+  <path class="arrow dash" d="M316 232 C316 184 320 184 320 156"/>
+  <rect x="252" y="184" width="120" height="14" rx="2" fill="#faf7f2"/>
+  <text class="label" x="312" y="194">NEXT ITERATION</text>
+
+  <rect class="lane" x="508" y="188" width="440" height="112" rx="8"/>
+  <text class="tag" x="600" y="212">CHECKPOINT 3</text>
+  <rect class="focal" x="552" y="232" width="132" height="44" rx="6"/>
+  <text class="name" x="618" y="258">循环后兜底</text>
+  <rect class="node" x="756" y="216" width="132" height="36" rx="6"/>
+  <text class="name" x="822" y="240">最后一轮进入</text>
+  <rect class="optional" x="756" y="268" width="132" height="36" rx="6"/>
+  <text class="sub" x="822" y="291">否则卡在限制文本</text>
+  <path class="accent-arrow" d="M684 254 C716 254 724 234 756 234"/>
+  <path class="arrow dash" d="M684 254 C716 254 724 286 756 286"/>
+
+  <path class="arrow dash" d="M540 152 C540 204 134 204 134 232"/>
+  <path class="arrow dash" d="M608 152 C608 188 618 196 618 232"/>
+
+  <line x1="32" y1="328" x2="948" y2="328" stroke="rgba(28,25,23,0.12)" stroke-width="0.8"/>
+  <text x="32" y="348" fill="#57534e" font-size="8" font-family="Geist Mono, ui-monospace, monospace" letter-spacing=".14em">NOTE</text>
+  <text x="88" y="348" fill="#57534e" font-size="9" font-family="Geist Mono, ui-monospace, monospace">三个入口共同覆盖：循环顶部、工具改 phase 后、最后一轮循环退出后</text>
+</svg>

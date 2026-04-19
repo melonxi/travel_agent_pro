@@ -1,0 +1,99 @@
+<svg viewBox="0 0 980 520" role="img" aria-label="Worker 退出循环的三种情况" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(28,25,23,0.10)"/>
+    </pattern>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#57534e"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#b5523a"/>
+    </marker>
+    <style>
+      .title { font: 400 24px "Instrument Serif", Georgia, serif; fill: #1c1917; }
+      .node { fill: #fff; stroke: #1c1917; stroke-width: 1; }
+      .store { fill: rgba(28,25,23,0.05); stroke: #57534e; stroke-width: 1; }
+      .focal { fill: rgba(181,82,58,0.08); stroke: #b5523a; stroke-width: 1.2; }
+      .optional { fill: rgba(28,25,23,0.02); stroke: rgba(28,25,23,0.30); stroke-width: 1; stroke-dasharray: 4 3; }
+      .name { font: 600 12px "Geist", Arial, sans-serif; fill: #1c1917; text-anchor: middle; }
+      .sub { font: 400 9px "Geist Mono", ui-monospace, monospace; fill: #57534e; text-anchor: middle; }
+      .tag { font: 500 8px "Geist Mono", ui-monospace, monospace; fill: #78716c; text-anchor: middle; letter-spacing: .14em; }
+      .label { font: 400 8px "Geist Mono", ui-monospace, monospace; fill: #57534e; text-anchor: middle; letter-spacing: .06em; }
+      .arrow { fill: none; stroke: #57534e; stroke-width: 1.2; marker-end: url(#arrow); }
+      .accent-arrow { fill: none; stroke: #b5523a; stroke-width: 1.4; marker-end: url(#arrow-accent); }
+      .dash { stroke-dasharray: 5 4; }
+    </style>
+  </defs>
+
+  <rect width="980" height="520" fill="#faf7f2"/>
+  <rect width="980" height="520" fill="url(#dots)" opacity="0.55"/>
+  <text class="title" x="36" y="48">Day Worker Loop</text>
+
+  <rect class="node" x="64" y="112" width="124" height="48" rx="6"/>
+  <text class="tag" x="126" y="132">START</text>
+  <text class="name" x="126" y="152">开始规划一天</text>
+
+  <rect class="focal" x="264" y="112" width="140" height="48" rx="6"/>
+  <text class="tag" x="334" y="132">LLM</text>
+  <text class="name" x="334" y="152">调用模型</text>
+
+  <polygon class="node" points="520,92 604,136 520,180 436,136"/>
+  <text class="name" x="520" y="132">有工具调用？</text>
+  <text class="sub" x="520" y="148">tool_calls</text>
+
+  <rect class="store" x="452" y="240" width="136" height="48" rx="6"/>
+  <text class="tag" x="520" y="260">TOOLS</text>
+  <text class="name" x="520" y="280">执行只读工具</text>
+
+  <rect class="store" x="264" y="240" width="140" height="48" rx="6"/>
+  <text class="tag" x="334" y="260">HISTORY</text>
+  <text class="name" x="334" y="280">结果入对话</text>
+
+  <rect class="node" x="704" y="112" width="132" height="48" rx="6"/>
+  <text class="tag" x="770" y="132">FINAL</text>
+  <text class="name" x="770" y="152">提取 JSON</text>
+
+  <polygon class="node" points="770,220 852,264 770,308 688,264"/>
+  <text class="name" x="770" y="260">DayPlan 有效？</text>
+  <text class="sub" x="770" y="276">schema parse</text>
+
+  <rect class="focal" x="700" y="392" width="144" height="48" rx="6"/>
+  <text class="tag" x="772" y="412">SUCCESS</text>
+  <text class="name" x="772" y="432">返回 dayplan</text>
+
+  <rect class="optional" x="500" y="392" width="144" height="48" rx="6"/>
+  <text class="tag" x="572" y="412">FAIL</text>
+  <text class="name" x="572" y="432">返回错误</text>
+
+  <rect class="optional" x="80" y="372" width="256" height="76" rx="6"/>
+  <text class="tag" x="208" y="396">TIMEOUT / MAX ITER</text>
+  <text class="name" x="208" y="416">最后一轮再尝试提取</text>
+  <text class="sub" x="208" y="436">成功则回成功，否则失败</text>
+
+  <path class="accent-arrow" d="M188 136 H264"/>
+  <path class="accent-arrow" d="M404 136 H436"/>
+  <path class="arrow" d="M604 136 H704"/>
+  <rect x="632" y="128" width="24" height="14" rx="2" fill="#faf7f2"/>
+  <text class="label" x="644" y="138">NO</text>
+  <path class="arrow" d="M520 180 V240"/>
+  <rect x="532" y="204" width="28" height="14" rx="2" fill="#faf7f2"/>
+  <text class="label" x="546" y="214">YES</text>
+  <path class="arrow" d="M452 264 H404"/>
+  <path class="arrow dash" d="M334 240 C334 208 334 192 334 160"/>
+  <rect x="344" y="204" width="56" height="14" rx="2" fill="#faf7f2"/>
+  <text class="label" x="372" y="214">NEXT</text>
+  <path class="arrow" d="M770 160 V220"/>
+  <path class="accent-arrow" d="M770 308 V392"/>
+  <rect x="784" y="344" width="28" height="14" rx="2" fill="#faf7f2"/>
+  <text class="label" x="798" y="354">YES</text>
+  <path class="arrow" d="M688 264 C628 264 572 332 572 392"/>
+  <rect x="632" y="292" width="64" height="14" rx="2" fill="#faf7f2"/>
+  <text class="label" x="664" y="302">NO JSON</text>
+  <path class="arrow dash" d="M334 288 C334 332 272 344 208 372"/>
+  <path class="arrow dash" d="M336 416 C396 416 440 416 500 416"/>
+  <path class="arrow dash" d="M336 396 C488 336 628 344 700 416"/>
+
+  <line x1="36" y1="480" x2="944" y2="480" stroke="rgba(28,25,23,0.12)" stroke-width="0.8"/>
+  <text x="36" y="500" fill="#57534e" font-size="8" font-family="Geist Mono, ui-monospace, monospace" letter-spacing=".14em">EXIT PATHS</text>
+  <text x="136" y="500" fill="#57534e" font-size="9" font-family="Geist Mono, ui-monospace, monospace">有效 DayPlan、无效 JSON、超时 / 30 轮耗尽</text>
+</svg>

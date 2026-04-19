@@ -1,0 +1,99 @@
+<svg viewBox="0 0 1080 560" role="img" aria-label="Orchestrator 收集 Worker 结果的并行时序" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(28,25,23,0.10)"/>
+    </pattern>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#57534e"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#b5523a"/>
+    </marker>
+    <style>
+      .title { font: 400 24px "Instrument Serif", Georgia, serif; fill: #1c1917; }
+      .row { fill: rgba(28,25,23,0.02); stroke: rgba(28,25,23,0.12); stroke-width: .8; }
+      .ok { fill: rgba(181,82,58,0.08); stroke: #b5523a; stroke-width: 1.2; }
+      .fail { fill: rgba(28,25,23,0.04); stroke: #78716c; stroke-width: 1; stroke-dasharray: 4 3; }
+      .event { fill: #fff; stroke: #1c1917; stroke-width: 1; }
+      .store { fill: rgba(28,25,23,0.05); stroke: #57534e; stroke-width: 1; }
+      .name { font: 600 12px "Geist", Arial, sans-serif; fill: #1c1917; text-anchor: middle; }
+      .left { font: 600 12px "Geist", Arial, sans-serif; fill: #1c1917; }
+      .sub { font: 400 9px "Geist Mono", ui-monospace, monospace; fill: #57534e; text-anchor: middle; }
+      .tag { font: 500 8px "Geist Mono", ui-monospace, monospace; fill: #78716c; text-anchor: middle; letter-spacing: .14em; }
+      .label { font: 400 8px "Geist Mono", ui-monospace, monospace; fill: #57534e; text-anchor: middle; letter-spacing: .06em; }
+      .axis { stroke: rgba(28,25,23,0.18); stroke-width: .8; }
+      .arrow { fill: none; stroke: #57534e; stroke-width: 1.2; marker-end: url(#arrow); }
+      .accent-arrow { fill: none; stroke: #b5523a; stroke-width: 1.4; marker-end: url(#arrow-accent); }
+      .dash { stroke-dasharray: 5 4; }
+    </style>
+  </defs>
+
+  <rect width="1080" height="560" fill="#faf7f2"/>
+  <rect width="1080" height="560" fill="url(#dots)" opacity="0.55"/>
+  <text class="title" x="36" y="44">Collect Results By Completion</text>
+
+  <line class="axis" x1="168" y1="92" x2="996" y2="92"/>
+  <text class="label" x="168" y="76">SPAWN</text>
+  <text class="label" x="332" y="76">1/5</text>
+  <text class="label" x="484" y="76">2/5</text>
+  <text class="label" x="672" y="76">4/5</text>
+  <text class="label" x="784" y="76">FAIL</text>
+  <text class="label" x="916" y="76">RETRY OK</text>
+  <text class="label" x="996" y="76">DONE</text>
+
+  <rect class="row" x="32" y="116" width="1016" height="52" rx="6"/>
+  <text class="left" x="56" y="148">Worker 1</text>
+  <rect class="ok" x="168" y="132" width="308" height="20" rx="4"/>
+  <text class="sub" x="322" y="146">Day 1 success</text>
+
+  <rect class="row" x="32" y="180" width="1016" height="52" rx="6"/>
+  <text class="left" x="56" y="212">Worker 2</text>
+  <rect class="ok" x="168" y="196" width="156" height="20" rx="4"/>
+  <text class="sub" x="246" y="210">Day 2 success</text>
+
+  <rect class="row" x="32" y="244" width="1016" height="52" rx="6"/>
+  <text class="left" x="56" y="276">Worker 3</text>
+  <rect class="fail" x="168" y="260" width="604" height="20" rx="4"/>
+  <text class="sub" x="470" y="274">Day 3 timeout</text>
+  <rect class="ok" x="804" y="260" width="108" height="20" rx="4"/>
+  <text class="sub" x="858" y="274">retry</text>
+
+  <rect class="row" x="32" y="308" width="1016" height="52" rx="6"/>
+  <text class="left" x="56" y="340">Worker 4</text>
+  <rect class="ok" x="168" y="324" width="492" height="20" rx="4"/>
+  <text class="sub" x="414" y="338">Day 4 success</text>
+
+  <rect class="row" x="32" y="372" width="1016" height="52" rx="6"/>
+  <text class="left" x="56" y="404">Worker 5</text>
+  <rect class="ok" x="168" y="388" width="500" height="20" rx="4"/>
+  <text class="sub" x="418" y="402">Day 5 success</text>
+
+  <rect class="event" x="280" y="460" width="104" height="36" rx="6"/>
+  <text class="tag" x="332" y="480">FIRST</text>
+  <text class="sub" x="332" y="492">progress 1/5</text>
+  <rect class="event" x="432" y="460" width="104" height="36" rx="6"/>
+  <text class="tag" x="484" y="480">NEXT</text>
+  <text class="sub" x="484" y="492">progress 2/5</text>
+  <rect class="event" x="616" y="460" width="112" height="36" rx="6"/>
+  <text class="tag" x="672" y="480">BATCH</text>
+  <text class="sub" x="672" y="492">progress 4/5</text>
+  <rect class="event" x="756" y="460" width="104" height="36" rx="6"/>
+  <text class="tag" x="808" y="480">FAIL</text>
+  <text class="sub" x="808" y="492">Day 3</text>
+  <rect class="event" x="888" y="460" width="104" height="36" rx="6"/>
+  <text class="tag" x="940" y="480">RETRY</text>
+  <text class="sub" x="940" y="492">success</text>
+
+  <path class="arrow dash" d="M324 196 V460"/>
+  <path class="arrow dash" d="M476 132 C484 220 484 364 484 460"/>
+  <path class="arrow dash" d="M660 324 C672 356 672 412 672 460"/>
+  <path class="arrow dash" d="M772 260 C804 320 808 396 808 460"/>
+  <path class="arrow dash" d="M912 260 C940 332 940 404 940 460"/>
+
+  <rect class="store" x="700" y="516" width="320" height="32" rx="6"/>
+  <text class="name" x="860" y="536">排序 + 全局验证 + 统一写入 + DONE</text>
+  <path class="accent-arrow" d="M940 496 C940 508 924 516 924 516"/>
+
+  <rect x="676" y="288" width="228" height="14" rx="2" fill="#faf7f2"/>
+  <text class="label" x="790" y="298">1/5 FAILURE &lt; 50%, RETRY ONLY</text>
+</svg>
