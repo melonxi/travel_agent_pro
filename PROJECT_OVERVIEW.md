@@ -464,7 +464,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase5.par
 | 重复搜索拦截 | 同 query 滑动窗口去重，阻断搜索死循环 |
 | 小红书三层工具模型 | `xiaohongshu_search_notes`（导航）→ `xiaohongshu_read_note`（信息）→ `xiaohongshu_get_comments`（评价），用单一职责工具替代 `operation` 参数，降低模型漏传 discriminator 的概率 |
 | `DateRange.total_days` inclusive 语义 | 覆盖 start 到 end 的自然日数量（+1），与骨架生成器语义一致 |
-| Phase 5 并行 Orchestrator-Workers | 纯 Python 调度器 + N 个轻量 LLM Day Worker：上下文隔离解决 token 膨胀（N 天共享前缀），并发执行解决串行延迟（asyncio.gather + Semaphore），全局验证解决跨天一致性；失败率 >50% 自动降级到串行 |
+| Phase 5 并行 Orchestrator-Workers | 纯 Python 调度器 + N 个轻量 LLM Day Worker：上下文隔离解决 token 膨胀（N 天共享前缀），并发执行解决串行延迟（asyncio.gather + Semaphore），全局验证解决跨天一致性；失败率 >50% 自动降级到串行；Worker 实时通过 `on_progress(day, kind, payload)` 同步回调向 Orchestrator 报告 `iter_start` / `tool_start`，经 `asyncio.Queue` 唤醒主收集循环，合并进 `worker_statuses[idx]` 并广播 `parallel_progress` SSE（workers[] 含 theme/iteration/current_tool/activity_count/error 字段） |
 | Phase 3→5 骨架天数门控 | 已选骨架天数必须与 total_days 一致才允许进入 Phase 5 |
 | trip_brief 权威字段强制覆盖 | dates/total_days 在 hydrate 时直接赋值，防止 stale |
 | plan_writer 增量持久化 | 每次 plan_writer 工具成功后立即 `state_mgr.save(plan)` 并同步更新 session meta（phase/title），finally 保底保存 plan 与 messages（含 logger.warning 日志），并把仍处于 running 的 run 标记为 cancelled，防止 SSE 中断丢失状态、消息或三源不一致 |
