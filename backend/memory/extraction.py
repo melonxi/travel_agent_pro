@@ -205,12 +205,254 @@ class V3ExtractionResult:
     drop: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass
+class V3ExtractionGateResult:
+    should_extract: bool = False
+    reason: str = ""
+    message: str = ""
+
+
 _V3_PROFILE_BUCKETS = (
     "constraints",
     "rejections",
     "stable_preferences",
     "preference_hypotheses",
 )
+
+_V3_EXTRACTION_TOOL_NAME = "extract_memory_candidates"
+_V3_EXTRACTION_GATE_TOOL_NAME = "decide_memory_extraction"
+
+_V3_PROFILE_DOMAINS = [
+    "pace",
+    "food",
+    "hotel",
+    "accommodation",
+    "flight",
+    "train",
+    "budget",
+    "family",
+    "accessibility",
+    "planning_style",
+    "documents",
+    "general",
+]
+
+_V3_WORKING_MEMORY_DOMAINS = sorted(
+    {*
+        _V3_PROFILE_DOMAINS,
+        "attraction",
+        "transport",
+    }
+)
+
+_V3_POLARITIES = ["prefer", "avoid", "neutral"]
+_V3_STABILITIES = [
+    "explicit_declared",
+    "pattern_observed",
+    "hard_constraint",
+    "soft_constraint",
+]
+_V3_WORKING_KINDS = [
+    "temporary_preference",
+    "temporary_rejection",
+    "decision_hint",
+    "open_question",
+    "watchout",
+    "note",
+]
+
+
+def build_v3_extraction_tool() -> dict[str, Any]:
+    profile_item_schema = {
+        "type": "object",
+        "properties": {
+            "domain": {
+                "type": "string",
+                "enum": _V3_PROFILE_DOMAINS,
+                "description": "长期画像所属领域。只能使用枚举值。",
+            },
+            "key": {
+                "type": "string",
+                "description": "稳定字段名，使用 snake_case，例如 avoid_red_eye、avoid_spicy。",
+            },
+            "value": {
+                "description": "偏好或约束的值。可为 string / boolean / number / object。",
+            },
+            "polarity": {
+                "type": "string",
+                "enum": _V3_POLARITIES,
+                "description": "用户是偏好、规避还是中性事实。",
+            },
+            "stability": {
+                "type": "string",
+                "enum": _V3_STABILITIES,
+                "description": "稳定性标签。单次观察长期偏好请放 preference_hypotheses，而不是伪装成稳定偏好。",
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "0 到 1 的置信度。",
+            },
+            "reason": {
+                "type": "string",
+                "description": "简短说明为什么值得写入记忆。",
+            },
+            "evidence": {
+                "type": "string",
+                "description": "尽量贴近用户原话的证据短句。",
+            },
+        },
+        "required": [
+            "domain",
+            "key",
+            "value",
+            "polarity",
+            "stability",
+            "confidence",
+            "reason",
+            "evidence",
+        ],
+        "additionalProperties": False,
+    }
+    working_item_schema = {
+        "type": "object",
+        "properties": {
+            "phase": {
+                "type": "integer",
+                "description": "该临时信号产生于哪个阶段，例如 1 / 3 / 5 / 7。",
+            },
+            "kind": {
+                "type": "string",
+                "enum": _V3_WORKING_KINDS,
+                "description": "会话内临时记忆的类型。",
+            },
+            "domains": {
+                "type": "array",
+                "items": {"type": "string", "enum": _V3_WORKING_MEMORY_DOMAINS},
+                "description": "相关领域，至少一个。",
+            },
+            "content": {
+                "type": "string",
+                "description": "会话内短期记忆内容，例如“这轮先别考虑迪士尼”。",
+            },
+            "reason": {
+                "type": "string",
+                "description": "为什么需要在当前会话保留这个临时信号。",
+            },
+            "status": {
+                "type": "string",
+                "enum": ["active"],
+                "description": "当前仅允许 active。",
+            },
+            "expires": {
+                "type": "object",
+                "properties": {
+                    "on_session_end": {"type": "boolean"},
+                    "on_trip_change": {"type": "boolean"},
+                    "on_phase_exit": {"type": "boolean"},
+                },
+                "required": [
+                    "on_session_end",
+                    "on_trip_change",
+                    "on_phase_exit",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "required": [
+            "phase",
+            "kind",
+            "domains",
+            "content",
+            "reason",
+            "status",
+            "expires",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "name": _V3_EXTRACTION_TOOL_NAME,
+        "description": (
+            "只提取两类可写入结果：长期画像 profile_updates 与会话工作记忆 "
+            "working_memory。当前行程事实、PII、以及与本轮无关的推测都不要输出。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "profile_updates": {
+                    "type": "object",
+                    "properties": {
+                        bucket: {"type": "array", "items": profile_item_schema}
+                        for bucket in _V3_PROFILE_BUCKETS
+                    },
+                    "required": list(_V3_PROFILE_BUCKETS),
+                    "additionalProperties": False,
+                },
+                "working_memory": {"type": "array", "items": working_item_schema},
+            },
+            "required": ["profile_updates", "working_memory"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def build_v3_extraction_gate_tool() -> dict[str, Any]:
+    return {
+        "name": _V3_EXTRACTION_GATE_TOOL_NAME,
+        "description": (
+            "判断当前这一轮对话是否值得继续执行较重的记忆提取。"
+            "只根据当前轮上下文判断 should_extract，不要产出具体记忆条目。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "should_extract": {
+                    "type": "boolean",
+                    "description": "当前轮是否值得继续执行正式记忆提取。",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "稳定英文/蛇形标识，例如 explicit_preference_signal、trip_state_only。",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "给前端展示的简短中文说明。",
+                },
+            },
+            "required": ["should_extract", "reason", "message"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def v3_extraction_tool_name() -> str:
+    return _V3_EXTRACTION_TOOL_NAME
+
+
+def v3_extraction_gate_tool_name() -> str:
+    return _V3_EXTRACTION_GATE_TOOL_NAME
+
+
+def parse_v3_extraction_tool_arguments(arguments: dict[str, Any] | None) -> V3ExtractionResult:
+    if not isinstance(arguments, dict):
+        return V3ExtractionResult()
+    return parse_v3_extraction_response(json.dumps(arguments, ensure_ascii=False))
+
+
+def parse_v3_extraction_gate_tool_arguments(
+    arguments: dict[str, Any] | None,
+) -> V3ExtractionGateResult:
+    if not isinstance(arguments, dict):
+        return V3ExtractionGateResult()
+    should_extract = bool(arguments.get("should_extract", False))
+    reason = str(arguments.get("reason", "") or "").strip()
+    message = str(arguments.get("message", "") or "").strip()
+    return V3ExtractionGateResult(
+        should_extract=should_extract,
+        reason=reason,
+        message=message,
+    )
 
 
 def build_v3_extraction_prompt(
@@ -225,12 +467,24 @@ def build_v3_extraction_prompt(
         working_memory.to_dict(), ensure_ascii=False, indent=2
     )
     facts_text = json.dumps(plan_facts, ensure_ascii=False, indent=2)
-    return f"""你在维护一个旅行助手的长期记忆系统（v3）。请从下列用户消息中提取不同类别的信号，并按严格 JSON 输出。
+    return f"""你在执行一个内部记忆提取任务。你的目标只有两类输出：
+
+1. `profile_updates`
+长期可复用的用户画像，包含：
+- `constraints`：跨旅行硬约束，例如“不坐红眼航班”“不住青旅”
+- `rejections`：明确拒绝的对象
+- `stable_preferences`：已经足够稳定、值得长期保留的偏好
+- `preference_hypotheses`：只有单次观察、暂时不够稳定的偏好假设
+
+2. `working_memory`
+只对当前会话/当前 trip 暂时有用的短期信号，例如“这轮先别考虑迪士尼”
+
+请调用工具 `{_V3_EXTRACTION_TOOL_NAME}` 提交结果，不要输出 JSON 正文、不要输出解释文字、不要输出代码块。
 
 用户消息：
 {messages_text}
 
-当前解析出的本次行程事实（state_observations 的真相源）：
+当前解析出的本次行程事实：
 {facts_text}
 
 已有长期画像：
@@ -239,38 +493,74 @@ def build_v3_extraction_prompt(
 已有会话工作记忆：
 {working_text}
 
-**分类规则：**
+分类规则：
 - `profile_updates.constraints`：跨旅行的硬约束（例如「不坐红眼航班」「不住青旅」）。
 - `profile_updates.rejections`：明确的拒绝项，要带 value。
 - `profile_updates.stable_preferences`：多次观察到的稳定偏好。
-- `profile_updates.preference_hypotheses`：**单次观察**得到的偏好假设，默认 status=pending。
-- `working_memory`：**本次会话**内的临时信号，例如「先别考虑迪士尼」。要带 expires。
-- `episode_evidence`：可以写入未来 episode 的证据对象。
-- `state_observations`：**本次行程**的事实（destination/dates/budget/travelers/candidate_pool/skeleton/daily_plans）——它们属于 TravelPlanState，不是记忆，绝对不能进 profile_updates。
-- `drop`：payment、membership、身份证号、护照号、手机号、邮箱、银行卡号等 PII 或敏感信息。
+- `profile_updates.preference_hypotheses`：单次观察得到的偏好假设。
+- `working_memory`：本次会话内的临时信号，例如「先别考虑迪士尼」。要带 expires。
 
-**硬性要求：**
-- 本次目的地、日期、预算、旅客人数、候选池、骨架、每日计划 → 永远放 `state_observations`。
+硬性要求：
+- 本次目的地、日期、预算、旅客人数、候选池、骨架、每日计划都属于当前 trip state，不要输出到任何字段。
+- 支付信息、会员信息、身份证号、护照号、手机号、邮箱、银行卡号等敏感信息直接忽略，不要输出。
 - 不要把临时信号写进 profile_updates；不要把长期偏好写进 working_memory。
 - 不要推测用户没说过的偏好。
-- 不要重复已有 profile 条目。
-- 所有文本字段必须为中文简体字符串。
+- 不要重复已有 profile 条目或 working memory 条目。
+- `domain`、`polarity`、`stability`、`kind`、`status` 必须严格遵守工具 schema 的枚举。
+- `key` 使用稳定的 snake_case；`reason` 和 `evidence` 可以是简洁中文说明，不强制所有文本字段都写成中文。
 
-**输出 JSON（严格遵守 schema）：**
-{{
-  "profile_updates": {{
-    "constraints": [MemoryProfileItem],
-    "rejections": [MemoryProfileItem],
-    "stable_preferences": [MemoryProfileItem],
-    "preference_hypotheses": [MemoryProfileItem]
-  }},
-  "working_memory": [WorkingMemoryItem],
-  "episode_evidence": [object],
-  "state_observations": [object],
-  "drop": [object]
-}}
+示例：
+- 用户说“我不坐红眼航班” -> 放进 `profile_updates.constraints`
+- 用户说“我不吃辣”且这是第一次观察 -> 优先放进 `profile_updates.preference_hypotheses`
+- 用户说“这轮先别考虑迪士尼” -> 放进 `working_memory`
+- 用户说“这次预算 3 万、五一去京都” -> 这是当前行程事实，不要输出
 
-如果没有可提取内容，输出所有字段都是空数组的 JSON。"""
+如果没有可提取内容，就调用工具并传入空数组。"""
+
+
+def build_v3_extraction_gate_prompt(
+    user_messages: list[str],
+    plan_facts: dict[str, Any],
+    existing_memory_summary: dict[str, Any] | None = None,
+) -> str:
+    messages_text = "\n".join(f"- {message}" for message in user_messages)
+    facts_text = json.dumps(plan_facts, ensure_ascii=False, indent=2)
+    memory_summary_text = json.dumps(
+        existing_memory_summary or {},
+        ensure_ascii=False,
+        indent=2,
+    )
+    return f"""你在执行一个轻量级的内部记忆判定任务。
+
+你的职责不是提取记忆条目，而是先判断：当前这一轮对话，是否值得继续执行较重的记忆提取。
+
+请调用工具 `{_V3_EXTRACTION_GATE_TOOL_NAME}` 返回：
+- `should_extract`: true / false
+- `reason`: 稳定英文标识
+- `message`: 给前端看的简短中文说明
+
+用户消息：
+{messages_text}
+
+当前解析出的本次行程事实：
+{facts_text}
+
+已有记忆摘要（仅用于避免重复和辅助判断）：
+{memory_summary_text}
+
+判定规则：
+- 如果用户表达了跨旅行可复用的长期偏好、硬约束、明确拒绝，通常应返回 `should_extract=true`
+- 如果用户表达了只对当前会话短期有用的临时信号，也可以返回 `should_extract=true`
+- 如果本轮只是推进当前 trip 的事实状态，例如目的地、日期、预算、候选池、骨架、每日安排，没有新的可复用偏好信号，返回 `should_extract=false`
+- 如果只是寒暄、确认、重复既有偏好、或空泛追问，返回 `should_extract=false`
+- 如果已有记忆摘要里已经明确覆盖本轮信号，且没有新增细化或冲突信息，优先返回 `should_extract=false`
+- 不要输出 JSON 正文、不要解释、不要输出具体 memory item
+
+示例：
+- “我不吃辣，也不要住青旅” -> `should_extract=true`
+- “这次五一去京都，预算 3 万” -> `should_extract=false`
+- “继续规划吧” -> `should_extract=false`
+"""
 
 
 def parse_v3_extraction_response(response: str) -> V3ExtractionResult:

@@ -259,7 +259,7 @@ telemetry:
 
 
 @pytest.mark.asyncio
-async def test_phase1_to3_chat_extracts_memory_async(monkeypatch, tmp_path):
+async def test_phase1_to3_chat_extracts_memory_in_same_stream(monkeypatch, tmp_path):
     config_file = tmp_path / "config.yaml"
     data_dir = tmp_path / "data"
     config_file.write_text(
@@ -281,25 +281,50 @@ telemetry:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     class FakeProvider:
-        async def chat(self, *args, **kwargs):
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None, **kwargs):
+            tool_name = tools[0]["name"] if tools else ""
+            if tool_name == "decide_memory_extraction":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_gate",
+                        name=tool_name,
+                        arguments={
+                            "should_extract": True,
+                            "reason": "explicit_preference_signal",
+                            "message": "检测到可复用偏好信号",
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
             yield LLMChunk(
-                type=ChunkType.TEXT_DELTA,
-                content=json.dumps(
-                    [
-                        {
-                            "type": "preference",
-                            "domain": "food",
-                            "key": "spicy",
-                            "value": "no spicy food",
-                            "scope": "global",
-                            "polarity": "avoid",
-                            "confidence": 0.82,
-                            "risk": "low",
-                            "evidence": "我不吃辣",
-                            "reason": "用户明确表达",
-                        }
-                    ],
-                    ensure_ascii=False,
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_memory",
+                    name="extract_memory_candidates",
+                    arguments={
+                        "profile_updates": {
+                            "constraints": [],
+                            "rejections": [],
+                            "stable_preferences": [
+                                {
+                                    "domain": "food",
+                                    "key": "avoid_spicy",
+                                    "value": "不吃辣",
+                                    "polarity": "avoid",
+                                    "stability": "explicit_declared",
+                                    "confidence": 0.95,
+                                    "context": {},
+                                    "applicability": "通用旅行饮食偏好",
+                                    "recall_hints": {"keywords": ["不吃辣"]},
+                                    "source_refs": [],
+                                }
+                            ],
+                            "preference_hypotheses": [],
+                        },
+                        "working_memory": [],
+                    },
                 ),
             )
             yield LLMChunk(type=ChunkType.DONE)
@@ -330,21 +355,19 @@ telemetry:
                 f"/api/chat/{session_id}",
                 json={"message": "我不吃辣，喜欢住民宿", "user_id": "u_mem"},
             )
+            profile_resp = await client.get("/api/memory/u_mem/profile")
 
     assert resp.status_code == 200
-    for _ in range(20):
-        memory_path = data_dir / "users" / "u_mem" / "memory.json"
-        if memory_path.exists():
-            break
-        await asyncio.sleep(0.01)
-
-    data = json.loads(memory_path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 2
+    assert '"kind": "memory_extraction_gate"' in resp.text
+    assert '"kind": "memory_extraction"' in resp.text
+    assert profile_resp.status_code == 200
+    data = profile_resp.json()
+    assert data["schema_version"] == 3
     assert any(
-        item["key"] == "spicy"
-        and item["value"] == "no spicy food"
+        item["key"] == "avoid_spicy"
+        and item["value"] == "不吃辣"
         and item["status"] == "active"
-        for item in data["items"]
+        for item in data["stable_preferences"]
     )
 
 
@@ -375,16 +398,17 @@ telemetry:
     class FakeProvider:
         async def chat(self, *args, **kwargs):
             yield LLMChunk(
-                type=ChunkType.TEXT_DELTA,
-                content=json.dumps(
-                    {
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_judge",
+                    name="emit_soft_judge_score",
+                    arguments={
                         "pace": 2,
                         "geography": 2,
                         "coherence": 2,
                         "personalization": 2,
                         "suggestions": ["补充交通住宿取舍"],
                     },
-                    ensure_ascii=False,
                 ),
             )
             yield LLMChunk(type=ChunkType.DONE)
@@ -424,6 +448,210 @@ telemetry:
         message.content and "质量门控" in message.content and "补充交通住宿取舍" in message.content
         for message in session["messages"]
     )
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_uses_forced_tool_call(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path / "data"
+    config_file.write_text(
+        f"""
+llm:
+  provider: openai
+  model: gpt-4o
+data_dir: "{data_dir}"
+flyai:
+  enabled: false
+quality_gate:
+  threshold: 3.5
+  max_retries: 2
+memory_extraction:
+  enabled: false
+telemetry:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    observed = {}
+
+    class FakeProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None, **kwargs):
+            observed["tools"] = tools
+            observed["tool_choice"] = tool_choice
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_judge",
+                    name="emit_soft_judge_score",
+                    arguments={
+                        "pace": 2,
+                        "geography": 2,
+                        "coherence": 2,
+                        "personalization": 2,
+                        "suggestions": ["补充交通住宿取舍"],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: FakeProvider())
+    app = create_app(str(config_file))
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+
+    session_id = session_resp.json()["session_id"]
+    session = _get_sessions(app)[session_id]
+    plan = session["plan"]
+    plan.phase = 3
+    plan.destination = "京都"
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
+    plan.selected_skeleton_id = "balanced"
+    plan.accommodation = Accommodation(area="祇園")
+    agent = session["agent"]
+
+    changed = await agent.phase_router.check_and_apply_transition(
+        plan,
+        hooks=agent.hooks,
+    )
+
+    assert changed is False
+    assert observed["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "emit_soft_judge_score"},
+    }
+    assert observed["tools"] is not None
+    assert observed["tools"][0]["name"] == "emit_soft_judge_score"
+
+
+@pytest.mark.asyncio
+async def test_soft_judge_uses_forced_tool_call_after_replace(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path / "data"
+    config_file.write_text(
+        f"""
+llm:
+  provider: openai
+  model: gpt-4o
+data_dir: "{data_dir}"
+flyai:
+  enabled: false
+memory_extraction:
+  enabled: false
+telemetry:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    observed = {"judge_calls": []}
+
+    class FakeProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None, **kwargs):
+            observed["judge_calls"].append({"tools": tools, "tool_choice": tool_choice})
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_judge",
+                    name="emit_soft_judge_score",
+                    arguments={
+                        "pace": 4,
+                        "geography": 4,
+                        "coherence": 4,
+                        "personalization": 4,
+                        "suggestions": [],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: FakeProvider())
+    app = create_app(str(config_file))
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+
+    session = _get_sessions(app)[session_id]
+    plan = session["plan"]
+    plan.phase = 5
+    plan.destination = "京都"
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.selected_skeleton_id = "s1"
+    plan.skeleton_plans = [{"id": "s1", "days": [{"day": 1}]}]
+    plan.accommodation = Accommodation(area="河原町", hotel="A")
+    plan.daily_plans = [DayPlan(day=1, date="2026-05-01")]
+
+    agent = session["agent"]
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, **kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_save_day",
+                    name="save_day_plan",
+                    arguments={
+                        "mode": "replace_existing",
+                        "day": 1,
+                        "date": "2026-05-01",
+                        "activities": [
+                            {
+                                "name": "清水寺",
+                                "location": {"name": "清水寺", "lat": 34.9949, "lng": 135.7850},
+                                "start_time": "09:00",
+                                "end_time": "11:00",
+                                "category": "景点",
+                                "cost": 0,
+                            }
+                        ],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+        else:
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="准备进入下一阶段")
+            yield LLMChunk(type=ChunkType.DONE)
+
+    agent.llm.chat = fake_chat
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "继续"},
+        )
+
+    assert resp.status_code == 200
+    assert observed["judge_calls"]
+    assert observed["judge_calls"][0]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "emit_soft_judge_score"},
+    }
+    assert observed["judge_calls"][0]["tools"][0]["name"] == "emit_soft_judge_score"
 
 
 @pytest.mark.asyncio

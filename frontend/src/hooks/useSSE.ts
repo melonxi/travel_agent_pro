@@ -2,16 +2,14 @@ import { useCallback, useRef } from 'react'
 import type { SSEEvent } from '../types/plan'
 
 export function useSSE() {
-  const abortRef = useRef<AbortController | null>(null)
+  const chatAbortRef = useRef<AbortController | null>(null)
 
   const streamSSE = async (
     url: string,
     fetchOptions: RequestInit,
     onEvent: (event: SSEEvent) => void,
+    controller: AbortController,
   ) => {
-    const controller = new AbortController()
-    abortRef.current = controller
-
     const response = await fetch(url, {
       ...fetchOptions,
       signal: controller.signal,
@@ -57,6 +55,8 @@ export function useSSE() {
       message: string,
       onEvent: (event: SSEEvent) => void,
     ) => {
+      const controller = new AbortController()
+      chatAbortRef.current = controller
       await streamSSE(
         `/api/chat/${sessionId}`,
         {
@@ -65,14 +65,40 @@ export function useSSE() {
           body: JSON.stringify({ message }),
         },
         onEvent,
+        controller,
       )
     },
     [],
   )
 
+  const subscribe = useCallback((
+    url: string,
+    onEvent: (event: SSEEvent) => void,
+    onError?: (error: unknown) => void,
+  ) => {
+    const source = new EventSource(url)
+
+    source.onmessage = (message) => {
+      try {
+        const event: SSEEvent = JSON.parse(message.data)
+        onEvent(event)
+      } catch {
+        // skip malformed events
+      }
+    }
+
+    source.onerror = (error) => {
+      onError?.(error)
+    }
+
+    return () => {
+      source.close()
+    }
+  }, [])
+
   const cancel = useCallback(async (sessionId: string) => {
-    abortRef.current?.abort()
-    abortRef.current = null
+    chatAbortRef.current?.abort()
+    chatAbortRef.current = null
     try {
       await fetch(`/api/chat/${sessionId}/cancel`, { method: 'POST' })
     } catch {
@@ -85,14 +111,17 @@ export function useSSE() {
       sessionId: string,
       onEvent: (event: SSEEvent) => void,
     ) => {
+      const controller = new AbortController()
+      chatAbortRef.current = controller
       await streamSSE(
         `/api/chat/${sessionId}/continue`,
         { method: 'POST' },
         onEvent,
+        controller,
       )
     },
     [],
   )
 
-  return { sendMessage, cancel, continueGeneration }
+  return { sendMessage, subscribe, cancel, continueGeneration }
 }
