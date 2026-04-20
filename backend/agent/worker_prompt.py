@@ -7,7 +7,7 @@ high KV-Cache hit rates (Manus / Claude Code fork sub-agent pattern).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,14 @@ class DayTask:
     date: str
     skeleton_slice: dict[str, Any]
     pace: str
+    locked_pois: list[str] = field(default_factory=list)
+    candidate_pois: list[str] = field(default_factory=list)
+    forbidden_pois: list[str] = field(default_factory=list)
+    area_cluster: list[str] = field(default_factory=list)
+    mobility_envelope: dict[str, Any] = field(default_factory=dict)
+    fallback_slots: list[dict] = field(default_factory=list)
+    date_role: str = "full_day"
+    repair_hints: list[str] = field(default_factory=list)
 
 
 _SOUL_PATH = Path(__file__).resolve().parent.parent / "context" / "soul.md"
@@ -138,6 +146,54 @@ def build_shared_prefix(plan: TravelPlanState) -> str:
     return "\n".join(parts)
 
 
+def _build_constraint_block(task: DayTask) -> str:
+    lines: list[str] = []
+    has_constraints = (
+        task.locked_pois or task.candidate_pois or task.forbidden_pois
+        or task.area_cluster or task.mobility_envelope
+        or task.date_role != "full_day" or task.fallback_slots or task.repair_hints
+    )
+    if not has_constraints:
+        return ""
+
+    lines.append("\n## 硬约束（必须遵守）\n")
+
+    if task.locked_pois:
+        lines.append(f"- **必须包含的活动**: {', '.join(task.locked_pois)}")
+    if task.candidate_pois:
+        lines.append(f"- **允许使用的候选池**: {', '.join(task.candidate_pois)}")
+        lines.append("- 优先从候选池选取，如需额外补充须在同 area_cluster 内")
+    if task.forbidden_pois:
+        lines.append(f"- **禁止使用（已分配给其他天）**: {', '.join(task.forbidden_pois)}")
+    if task.area_cluster:
+        lines.append(f"- **当日区域**: {', '.join(task.area_cluster)}")
+
+    env = task.mobility_envelope
+    if env:
+        max_hops = env.get("max_cross_area_hops", "不限")
+        max_leg = env.get("max_transit_leg_min", "不限")
+        lines.append(f"- **移动限制**: 最多跨 {max_hops} 个区域, 单段交通 ≤ {max_leg} 分钟")
+
+    if task.date_role == "arrival_day":
+        lines.append("- **到达日**: 注意大交通到达时间，首活动须留足接驳缓冲")
+    elif task.date_role == "departure_day":
+        lines.append("- **离开日**: 注意大交通离开时间，末活动须留足前往交通枢纽的时间")
+
+    if task.fallback_slots:
+        lines.append("\n### 备选方案")
+        for slot in task.fallback_slots:
+            target = slot.get("replace_if_unavailable", "?")
+            alts = slot.get("alternatives", [])
+            lines.append(f"- 如 {target} 不可行 → 替换为: {', '.join(alts)}")
+
+    if task.repair_hints:
+        lines.append("\n### ⚠️ 修复要求（上一轮校验发现的问题）")
+        for hint in task.repair_hints:
+            lines.append(f"- {hint}")
+
+    return "\n".join(lines)
+
+
 def build_day_suffix(task: DayTask) -> str:
     """Build the per-day suffix that differs across workers."""
     parts = [f"\n---\n\n## 你的任务：第 {task.day} 天（{task.date}）\n"]
@@ -168,6 +224,11 @@ def build_day_suffix(task: DayTask) -> str:
     else:
         count_range = "3-4"
     parts.append(f"\n节奏要求：{pace} → 本天 {count_range} 个核心活动")
+
+    constraint_block = _build_constraint_block(task)
+    if constraint_block:
+        parts.append(constraint_block)
+
     parts.append(
         "\n请为这一天生成完整的 DayPlan JSON。"
         "先用工具补齐信息和优化路线，最后输出 JSON。"
@@ -194,12 +255,19 @@ def split_skeleton_to_day_tasks(
             day_date = (start + timedelta(days=i)).isoformat()
         else:
             day_date = f"day-{day_num}"
+        sk = day_skeleton if isinstance(day_skeleton, dict) else {}
         tasks.append(
             DayTask(
                 day=day_num,
                 date=day_date,
-                skeleton_slice=day_skeleton if isinstance(day_skeleton, dict) else {},
+                skeleton_slice=sk,
                 pace=pace,
+                locked_pois=sk.get("locked_pois", []) if isinstance(sk.get("locked_pois"), list) else [],
+                candidate_pois=sk.get("candidate_pois", []) if isinstance(sk.get("candidate_pois"), list) else [],
+                area_cluster=sk.get("area_cluster", []) if isinstance(sk.get("area_cluster"), list) else [],
+                mobility_envelope=sk.get("mobility_envelope", {}) if isinstance(sk.get("mobility_envelope"), dict) else {},
+                fallback_slots=sk.get("fallback_slots", []) if isinstance(sk.get("fallback_slots"), list) else [],
+                date_role=sk.get("date_role", "full_day") if isinstance(sk.get("date_role"), str) else "full_day",
             )
         )
     return tasks

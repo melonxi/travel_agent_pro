@@ -119,3 +119,105 @@ def test_split_skeleton_no_dates():
     tasks = split_skeleton_to_day_tasks(skeleton, plan)
     assert tasks[0].date == "day-1"
     assert tasks[1].date == "day-2"
+
+
+class TestDayTaskConstraints:
+    def test_day_task_has_constraint_fields(self):
+        task = DayTask(
+            day=1, date="2026-05-01", skeleton_slice={}, pace="balanced",
+            locked_pois=["浅草寺"],
+            candidate_pois=["上野公園"],
+            forbidden_pois=["明治神宫"],
+            area_cluster=["浅草", "上野"],
+        )
+        assert task.locked_pois == ["浅草寺"]
+        assert task.forbidden_pois == ["明治神宫"]
+        assert task.area_cluster == ["浅草", "上野"]
+
+    def test_day_task_defaults_empty(self):
+        task = DayTask(day=1, date="2026-05-01", skeleton_slice={}, pace="balanced")
+        assert task.locked_pois == []
+        assert task.forbidden_pois == []
+        assert task.candidate_pois == []
+        assert task.area_cluster == []
+        assert task.mobility_envelope == {}
+        assert task.fallback_slots == []
+        assert task.date_role == "full_day"
+        assert task.repair_hints == []
+
+    def test_suffix_contains_constraint_block(self):
+        task = DayTask(
+            day=2, date="2026-05-02",
+            skeleton_slice={"area": "浅草/上野", "theme": "传统文化"},
+            pace="balanced",
+            locked_pois=["浅草寺"],
+            candidate_pois=["仲见世商店街", "上野公園"],
+            forbidden_pois=["明治神宫", "涩谷Sky"],
+            area_cluster=["浅草", "上野"],
+            mobility_envelope={"max_cross_area_hops": 1, "max_transit_leg_min": 35},
+        )
+        suffix = build_day_suffix(task)
+        assert "浅草寺" in suffix
+        assert "明治神宫" in suffix
+        assert "禁止" in suffix
+        assert "候选" in suffix or "允许" in suffix
+        assert "35" in suffix
+
+    def test_suffix_contains_repair_hints(self):
+        task = DayTask(
+            day=1, date="2026-05-01", skeleton_slice={}, pace="balanced",
+            repair_hints=["Day 1 时间冲突：A→B 间隔不足"],
+        )
+        suffix = build_day_suffix(task)
+        assert "修复要求" in suffix or "修复" in suffix
+        assert "时间冲突" in suffix
+
+    def test_suffix_contains_arrival_day_note(self):
+        task = DayTask(
+            day=1, date="2026-05-01", skeleton_slice={}, pace="balanced",
+            date_role="arrival_day",
+        )
+        suffix = build_day_suffix(task)
+        assert "到达日" in suffix
+
+    def test_suffix_contains_departure_day_note(self):
+        task = DayTask(
+            day=3, date="2026-05-03", skeleton_slice={}, pace="balanced",
+            date_role="departure_day",
+        )
+        suffix = build_day_suffix(task)
+        assert "离开日" in suffix
+
+
+class TestSplitExtractsNewFields:
+    def test_extracts_locked_and_candidate_pois(self):
+        plan = _make_plan()
+        plan.selected_skeleton_id = "plan_A"
+        plan.skeleton_plans = [{
+            "id": "plan_A", "name": "平衡版",
+            "days": [
+                {
+                    "area_cluster": ["浅草", "上野"],
+                    "theme": "传统文化",
+                    "locked_pois": ["浅草寺"],
+                    "candidate_pois": ["上野公園", "仲见世商店街"],
+                    "core_activities": ["寺庙", "散步"],
+                },
+            ],
+        }]
+        tasks = split_skeleton_to_day_tasks(plan.skeleton_plans[0], plan)
+        assert tasks[0].locked_pois == ["浅草寺"]
+        assert tasks[0].candidate_pois == ["上野公園", "仲见世商店街"]
+        assert tasks[0].area_cluster == ["浅草", "上野"]
+
+    def test_missing_new_fields_default_empty(self):
+        plan = _make_plan()
+        plan.selected_skeleton_id = "plan_A"
+        plan.skeleton_plans = [{
+            "id": "plan_A", "name": "平衡版",
+            "days": [{"area": "新宿", "theme": "购物"}],
+        }]
+        tasks = split_skeleton_to_day_tasks(plan.skeleton_plans[0], plan)
+        assert tasks[0].locked_pois == []
+        assert tasks[0].candidate_pois == []
+        assert tasks[0].area_cluster == []
