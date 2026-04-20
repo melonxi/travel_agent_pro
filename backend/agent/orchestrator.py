@@ -101,6 +101,28 @@ def _names_similar(a: str, b: str) -> bool:
     return _levenshtein(a_norm, b_norm) <= 2
 
 
+def _extract_transport_time(transport: dict[str, Any], direction: str) -> int | None:
+    """Extract arrival/departure time from selected_transport dict.
+
+    direction: 'outbound' → arrival_time, 'return' → departure_time
+    """
+    segments = transport.get("segments")
+    if isinstance(segments, list):
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+            seg_dir = seg.get("direction", "")
+            if seg_dir == direction:
+                if direction == "outbound":
+                    return _time_to_minutes(seg.get("arrival_time", ""))
+                else:
+                    return _time_to_minutes(seg.get("departure_time", ""))
+    # Fallback: single-segment transport
+    if direction == "outbound":
+        return _time_to_minutes(transport.get("arrival_time", ""))
+    return _time_to_minutes(transport.get("departure_time", ""))
+
+
 class Phase5Orchestrator:
     def __init__(
         self,
@@ -207,6 +229,12 @@ class Phase5Orchestrator:
         # 5. Semantic duplicates
         issues.extend(self._validate_semantic_duplicates(dayplans))
 
+        # 6. Transport connection
+        issues.extend(self._validate_transport_connection(dayplans))
+
+        # 7. Pace check
+        issues.extend(self._validate_pace(dayplans))
+
         return issues
 
     def _validate_semantic_duplicates(
@@ -277,6 +305,71 @@ class Phase5Orchestrator:
                             affected_days=[day],
                             severity="error",
                         ))
+        return issues
+
+    def _validate_transport_connection(self, dayplans: list[dict[str, Any]]) -> list[GlobalValidationIssue]:
+        issues: list[GlobalValidationIssue] = []
+        transport = self.plan.selected_transport
+        if not isinstance(transport, dict):
+            return issues
+
+        sorted_days = sorted(dayplans, key=lambda d: d.get("day", 0))
+        if not sorted_days:
+            return issues
+
+        arrival_min = _extract_transport_time(transport, "outbound")
+        if arrival_min is not None:
+            first_day = sorted_days[0]
+            acts = first_day.get("activities", [])
+            if acts:
+                first_start = _time_to_minutes(acts[0].get("start_time", ""))
+                if first_start is not None and first_start < arrival_min + 120:
+                    issues.append(GlobalValidationIssue(
+                        issue_type="transport_connection",
+                        description=(
+                            f"Day {first_day.get('day', 1)} 首活动开始时间过早，"
+                            f"距到达不足 2 小时"
+                        ),
+                        affected_days=[first_day.get("day", 1)],
+                        severity="error",
+                    ))
+
+        departure_min = _extract_transport_time(transport, "return")
+        if departure_min is not None:
+            last_day = sorted_days[-1]
+            acts = last_day.get("activities", [])
+            if acts:
+                last_end = _time_to_minutes(acts[-1].get("end_time", ""))
+                if last_end is not None and last_end > departure_min - 180:
+                    issues.append(GlobalValidationIssue(
+                        issue_type="transport_connection",
+                        description=(
+                            f"Day {last_day.get('day', len(sorted_days))} 末活动结束过晚，"
+                            f"距离开不足 3 小时"
+                        ),
+                        affected_days=[last_day.get("day", len(sorted_days))],
+                        severity="error",
+                    ))
+
+        return issues
+
+    def _validate_pace(self, dayplans: list[dict[str, Any]]) -> list[GlobalValidationIssue]:
+        issues: list[GlobalValidationIssue] = []
+        pace = (self.plan.trip_brief or {}).get("pace", "balanced")
+        max_activities = {"relaxed": 3, "balanced": 4, "intensive": 5}.get(pace, 4)
+
+        for dp in dayplans:
+            day = dp.get("day", 0)
+            act_count = len(dp.get("activities", []))
+            if act_count > max_activities:
+                issues.append(GlobalValidationIssue(
+                    issue_type="pace_mismatch",
+                    description=(
+                        f"Day {day}: {act_count} 个活动超出 {pace} 节奏上限 {max_activities}"
+                    ),
+                    affected_days=[day],
+                    severity="warning",
+                ))
         return issues
 
     def _build_progress_chunk(

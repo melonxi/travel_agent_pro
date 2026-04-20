@@ -629,3 +629,129 @@ async def test_orchestrator_error_code_propagated_on_failure(monkeypatch):
         for c in progress
     )
     assert has_error_code
+
+
+class TestTransportConnectionValidation:
+    def _make_dayplan_dict(self, day: int, date: str, activities: list[dict]) -> dict:
+        return {"day": day, "date": date, "notes": "", "activities": activities}
+
+    def _make_timed_activity(self, name: str, start: str, end: str) -> dict:
+        return {
+            "name": name,
+            "location": {"name": name, "lat": 35.0, "lng": 139.0},
+            "start_time": start,
+            "end_time": end,
+            "category": "activity",
+            "cost": 0,
+            "transport_from_prev": "地铁",
+            "transport_duration_min": 0,
+        }
+
+    def test_arrival_too_early_flagged(self):
+        plan = _make_plan_with_skeleton()
+        plan.selected_transport = {
+            "segments": [
+                {"type": "flight", "departure_time": "08:00", "arrival_time": "11:00", "direction": "outbound"},
+                {"type": "flight", "departure_time": "18:00", "arrival_time": "21:00", "direction": "return"},
+            ]
+        }
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_timed_activity("A", "11:30", "13:00"),  # 11:00 arrival + 120min = 13:00, 11:30 < 13:00
+            ]),
+            self._make_dayplan_dict(2, "2026-05-02", [
+                self._make_timed_activity("B", "09:00", "12:00"),
+            ]),
+            self._make_dayplan_dict(3, "2026-05-03", [
+                self._make_timed_activity("C", "09:00", "12:00"),
+            ]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        conn_issues = [i for i in issues if i.issue_type == "transport_connection"]
+        assert len(conn_issues) >= 1
+        assert any("首活动" in i.description or "到达" in i.description for i in conn_issues)
+
+    def test_departure_too_late_flagged(self):
+        plan = _make_plan_with_skeleton()
+        plan.selected_transport = {
+            "segments": [
+                {"type": "flight", "departure_time": "08:00", "arrival_time": "11:00", "direction": "outbound"},
+                {"type": "flight", "departure_time": "15:00", "arrival_time": "18:00", "direction": "return"},
+            ]
+        }
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_timed_activity("A", "14:00", "17:00"),
+            ]),
+            self._make_dayplan_dict(2, "2026-05-02", [
+                self._make_timed_activity("B", "09:00", "12:00"),
+            ]),
+            self._make_dayplan_dict(3, "2026-05-03", [
+                self._make_timed_activity("C", "09:00", "13:00"),  # ends 13:00, departure 15:00, gap=120 < 180
+            ]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        conn_issues = [i for i in issues if i.issue_type == "transport_connection"]
+        assert len(conn_issues) >= 1
+        assert any("末活动" in i.description or "离开" in i.description for i in conn_issues)
+
+    def test_no_transport_no_issue(self):
+        plan = _make_plan_with_skeleton()
+        plan.selected_transport = None
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [self._make_timed_activity("A", "06:00", "08:00")]),
+            self._make_dayplan_dict(2, "2026-05-02", [self._make_timed_activity("B", "09:00", "12:00")]),
+            self._make_dayplan_dict(3, "2026-05-03", [self._make_timed_activity("C", "09:00", "23:00")]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        conn_issues = [i for i in issues if i.issue_type == "transport_connection"]
+        assert len(conn_issues) == 0
+
+
+class TestPaceValidation:
+    def _make_dayplan_dict(self, day: int, date: str, activities: list[dict]) -> dict:
+        return {"day": day, "date": date, "notes": "", "activities": activities}
+
+    def _make_activity(self, name: str) -> dict:
+        return {
+            "name": name,
+            "location": {"name": name, "lat": 35.0, "lng": 139.0},
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "category": "activity",
+            "cost": 0,
+        }
+
+    def test_relaxed_pace_over_limit(self):
+        plan = _make_plan_with_skeleton()
+        plan.trip_brief = {"pace": "relaxed"}
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_activity(f"Act{i}") for i in range(5)
+            ]),
+            self._make_dayplan_dict(2, "2026-05-02", [self._make_activity("B")]),
+            self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C")]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        pace_issues = [i for i in issues if i.issue_type == "pace_mismatch"]
+        assert len(pace_issues) >= 1
+        assert pace_issues[0].severity == "warning"
+
+    def test_balanced_pace_within_limit(self):
+        plan = _make_plan_with_skeleton()
+        plan.trip_brief = {"pace": "balanced"}
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_activity(f"Act{i}") for i in range(4)
+            ]),
+            self._make_dayplan_dict(2, "2026-05-02", [self._make_activity("B")]),
+            self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C")]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        pace_issues = [i for i in issues if i.issue_type == "pace_mismatch"]
+        assert len(pace_issues) == 0
