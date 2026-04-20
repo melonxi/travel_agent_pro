@@ -153,8 +153,8 @@ async def test_set_skeleton_plans_records_counts(plan):
 
     result = await tool_fn(
         plans=[
-            {"id": " plan-a ", "name": " 轻松版 ", "days": [], "tradeoffs": {}},
-            {"id": "plan-b", "name": "平衡版", "days": [], "tradeoffs": {}},
+            {"id": " plan-a ", "name": " 轻松版 ", "tradeoffs": {}},
+            {"id": "plan-b", "name": "平衡版", "tradeoffs": {}},
         ]
     )
 
@@ -164,8 +164,8 @@ async def test_set_skeleton_plans_records_counts(plan):
         "previous_count": 1,
     }
     assert plan.skeleton_plans == [
-        {"id": "plan-a", "name": "轻松版", "days": [], "tradeoffs": {}},
-        {"id": "plan-b", "name": "平衡版", "days": [], "tradeoffs": {}},
+        {"id": "plan-a", "name": "轻松版", "tradeoffs": {}},
+        {"id": "plan-b", "name": "平衡版", "tradeoffs": {}},
     ]
 
 
