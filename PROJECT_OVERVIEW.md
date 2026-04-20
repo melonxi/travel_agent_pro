@@ -86,7 +86,7 @@ travel_agent_pro/
 ### Phase 3 — 框架规划（4 个子步骤，按子步骤动态拼装 prompt）
 - **brief** → 建立旅行画像（目标/节奏/约束/必做-避免）；收敛压力：≤2轮完成
 - **candidate** → 候选池构建与筛选；"锚定扩展→逐项验证→筛选成短名单"三步走流程；以 trip_brief 为硬锚点，先扩展后验证再筛选；存疑候选项须用 `xiaohongshu_read_note` / `xiaohongshu_get_comments` 深度验证
-- **skeleton** → 骨架方案（非逐小时）；"经验采集→骨架生成"两阶段流程；生成骨架前必须先搜索真实攻略提取策略（区域分组、天数分配、体力节奏），再结合 shortlist 和 trip_brief 生成 2-3 套差异方案
+- **skeleton** → 骨架方案（非逐小时）；"经验采集→骨架生成"两阶段流程；生成骨架前必须先搜索真实攻略提取策略（区域分组、天数分配、体力节奏），再结合 shortlist 和 trip_brief 生成 2-3 套差异方案；日级结构化字段：`area_cluster`（必填）、`locked_pois`（必填，跨天唯一）、`candidate_pois`（必填）、可选 `excluded_pois` / `date_role` / `mobility_envelope` / `fallback_slots`
 - **lock** → 锁定交通 + 住宿；大交通确认时间后即锁
 - **回复纪律**：回复≤200字、问题集中在回复末尾、结论前置、trip_brief 作为画像硬锚点约束所有后续决策
 - **输出协议**：每个子阶段 prompt 开头注入 `⚠️ 输出协议`——正面指令（先工具后文字）、必须调用的工具、严禁行为
@@ -108,7 +108,8 @@ travel_agent_pro/
   - 失败率 >50% 自动降级到串行模式
 - **Day Worker 提示词止血策略**：Day Worker 具备有限补救 + 保守落地的收敛策略——当 JSON 输出格式异常或工具调用失败时，先尝试有限次数的补救（如 JSON 修复），补救失败则保守落地（返回当前已有结果而非无限重试）
 - **Day Worker loop 保护机制**：Worker 内部循环具备四重收敛保障——**重复查询抑制**（同 query 滑动窗口去重，避免搜索死循环）、**补救链阈值**（连续补救轮次上限，超限即保守落地）、**后半程强制收口**（迭代过半后强制聚焦已有结果，不再启动新搜索）、**JSON 修复回合**（输出 JSON 解析失败时限定修复轮次，避免在格式修复上无限循环）
-- **Worker 失败错误类别**：Worker 失败时输出结构化错误码，便于 Orchestrator 诊断与降级决策——`REPEATED_QUERY_LOOP`（重复查询死循环被抑制）、`RECOVERY_CHAIN_EXHAUSTED`（补救链耗尽仍无法恢复）、`JSON_EMIT_FAILED`（JSON 输出经修复回合仍无法解析）、`TIMEOUT`（Worker 超时）、`LLM_ERROR`（LLM 调用不可恢复错误）
+- **Worker 失败错误类别**：Worker 失败时输出结构化错误码，便于 Orchestrator 诊断与降级决策——`REPEATED_QUERY_LOOP`（重复查询死循环被抑制）、`RECOVERY_CHAIN_EXHAUSTED`（补救链耗尽仍无法恢复）、`JSON_EMIT_FAILED`（JSON 输出经修复回合仍无法解析）、`TIMEOUT`（Worker 超时）、`LLM_ERROR`（LLM 调用不可恢复错误）、`NEEDS_PHASE3_REPLAN`（locked_pois 全部不可行，需回退 Phase 3 重调骨架）
+- **Worker 约束注入**：DayTask 携带 `locked_pois`/`candidate_pois`/`forbidden_pois`/`area_cluster`/`mobility_envelope`/`date_role`/`repair_hints` 等约束字段，由 `_build_constraint_block` 渲染为中文 prompt 硬约束块注入 Worker 上下文
 - **增量生成策略**（串行模式）：按1-2天增量调用 `assemble_day_plan`，非一次性全量
 - **Prompt 已迁移**：Phase 5 使用 `optimize_day_route`（路线辅助，不写状态）、`save_day_plan` / `replace_all_day_plans`（状态写入）与 `request_backtrack`（回退）
 - 流程：expand（骨架→日期）→ assemble（活动+时间）→ validate（开放/距离/天气/预算）→ commit
