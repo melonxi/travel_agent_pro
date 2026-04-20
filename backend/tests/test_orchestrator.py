@@ -188,6 +188,72 @@ class TestGlobalValidation:
         assert 2 in gap_issues[0].affected_days
 
 
+class TestTimeConflictValidation:
+    def _make_dayplan_dict(self, day: int, date: str, activities: list[dict]) -> dict:
+        return {"day": day, "date": date, "notes": "", "activities": activities}
+
+    def _make_timed_activity(
+        self, name: str, start: str, end: str, transport_min: int = 0
+    ) -> dict:
+        return {
+            "name": name,
+            "location": {"name": name, "lat": 35.0, "lng": 139.0},
+            "start_time": start,
+            "end_time": end,
+            "category": "activity",
+            "cost": 0,
+            "transport_from_prev": "徒步",
+            "transport_duration_min": transport_min,
+        }
+
+    def test_no_time_conflict(self):
+        plan = _make_plan_with_skeleton()
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_timed_activity("A", "09:00", "10:00"),
+                self._make_timed_activity("B", "10:30", "12:00", transport_min=15),
+            ]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        time_issues = [i for i in issues if i.issue_type == "time_conflict"]
+        assert len(time_issues) == 0
+
+    def test_detects_time_conflict(self):
+        plan = _make_plan_with_skeleton()
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_timed_activity("A", "09:00", "10:30"),
+                self._make_timed_activity("B", "10:00", "12:00", transport_min=20),
+            ]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        time_issues = [i for i in issues if i.issue_type == "time_conflict"]
+        assert len(time_issues) == 1
+        assert time_issues[0].severity == "error"
+        assert time_issues[0].affected_days == [1]
+
+    def test_severity_field_exists_on_all_issues(self):
+        plan = _make_plan_with_skeleton()
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_timed_activity("浅草寺", "09:00", "10:00"),
+            ]),
+            self._make_dayplan_dict(2, "2026-05-02", [
+                self._make_timed_activity("浅草寺", "09:00", "10:00"),
+            ]),
+            self._make_dayplan_dict(3, "2026-05-03", [
+                self._make_timed_activity("C", "09:00", "10:00"),
+            ]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        for issue in issues:
+            assert hasattr(issue, "severity")
+            assert issue.severity in ("error", "warning")
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_broadcasts_theme_at_init(monkeypatch):
     plan = _make_plan_with_skeleton()

@@ -54,8 +54,18 @@ def _format_error(raw: str | None) -> str | None:
 @dataclass
 class GlobalValidationIssue:
     issue_type: str  # "poi_duplicate" | "budget_overrun" | "coverage_gap"
+                     # | "time_conflict" | "transport_connection" | "semantic_duplicate" | "pace_mismatch"
     description: str
     affected_days: list[int] = field(default_factory=list)
+    severity: str = "warning"  # "error" | "warning"
+
+
+def _time_to_minutes(t: str) -> int | None:
+    try:
+        h, m = map(int, t.split(":"))
+        return h * 60 + m
+    except (ValueError, AttributeError):
+        return None
 
 
 class Phase5Orchestrator:
@@ -112,6 +122,7 @@ class Phase5Orchestrator:
                         issue_type="poi_duplicate",
                         description=f"POI '{poi_name}' 出现在多天: {days}",
                         affected_days=days[1:],
+                        severity="error",
                     )
                 )
 
@@ -138,6 +149,7 @@ class Phase5Orchestrator:
                             f"{self.plan.budget.total} {self.plan.budget.currency}"
                         ),
                         affected_days=[d for d, _ in day_costs[:2]],
+                        severity="warning",
                     )
                 )
 
@@ -152,9 +164,40 @@ class Phase5Orchestrator:
                         issue_type="coverage_gap",
                         description=f"缺少天数: {sorted(missing)}",
                         affected_days=sorted(missing),
+                        severity="warning",
                     )
                 )
 
+        # 4. Time conflicts
+        issues.extend(self._validate_time_conflicts(dayplans))
+
+        return issues
+
+    def _validate_time_conflicts(
+        self, dayplans: list[dict[str, Any]]
+    ) -> list[GlobalValidationIssue]:
+        issues: list[GlobalValidationIssue] = []
+        for dp in dayplans:
+            day = dp.get("day", 0)
+            activities = dp.get("activities", [])
+            for i in range(1, len(activities)):
+                prev = activities[i - 1]
+                curr = activities[i]
+                prev_end = _time_to_minutes(prev.get("end_time", ""))
+                curr_start = _time_to_minutes(curr.get("start_time", ""))
+                travel = curr.get("transport_duration_min", 0) or 0
+                if prev_end is not None and curr_start is not None:
+                    if prev_end + travel > curr_start:
+                        issues.append(GlobalValidationIssue(
+                            issue_type="time_conflict",
+                            description=(
+                                f"Day {day}: '{prev.get('name')}'→'{curr.get('name')}' "
+                                f"时间冲突（{prev.get('end_time')} 结束 + 交通 {travel}min "
+                                f"> {curr.get('start_time')} 开始）"
+                            ),
+                            affected_days=[day],
+                            severity="error",
+                        ))
         return issues
 
     def _build_progress_chunk(
