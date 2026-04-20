@@ -28,6 +28,40 @@ from tools.base import ToolError, tool
 # set_skeleton_plans
 # ---------------------------------------------------------------------------
 
+_SKELETON_DAY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "area_cluster": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "当天主区域列表",
+        },
+        "theme": {"type": "string", "description": "当天主题"},
+        "locked_pois": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "该天独占的强锚点（其他天禁止使用）",
+        },
+        "candidate_pois": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "该天允许使用的候选 POI 池",
+        },
+        "core_activities": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "核心活动或体验",
+        },
+        "fatigue_level": {"type": "string", "description": "疲劳等级"},
+        "budget_level": {"type": "string", "description": "预算等级"},
+        "excluded_pois": {"type": "array", "items": {"type": "string"}},
+        "date_role": {"type": "string", "enum": ["arrival_day", "departure_day", "full_day"]},
+        "mobility_envelope": {"type": "object"},
+        "fallback_slots": {"type": "array", "items": {"type": "object"}},
+    },
+    "required": ["area_cluster", "locked_pois", "candidate_pois"],
+}
+
 _SET_SKELETON_PLANS_PARAMS = {
     "type": "object",
     "properties": {
@@ -38,7 +72,7 @@ _SET_SKELETON_PLANS_PARAMS = {
                 "properties": {
                     "id": {"type": "string"},
                     "name": {"type": "string"},
-                    "days": {"type": "array", "items": {"type": "object"}},
+                    "days": {"type": "array", "items": _SKELETON_DAY_SCHEMA},
                     "tradeoffs": {"type": "object"},
                 },
                 "required": ["id", "name"],
@@ -48,6 +82,65 @@ _SET_SKELETON_PLANS_PARAMS = {
     },
     "required": ["plans"],
 }
+
+
+def _validate_skeleton_days(plans: list[dict]) -> None:
+    for plan_idx, plan in enumerate(plans):
+        if "days" not in plan:
+            continue  # missing key is fine (backward compat)
+        days = plan["days"]
+        if isinstance(days, list) and len(days) == 0:
+            raise ToolError(
+                f"plans[{plan_idx}].days 不能为空",
+                error_code="INVALID_VALUE",
+                suggestion="每个骨架方案必须包含至少一天的安排",
+            )
+        if not isinstance(days, list):
+            continue  # skip if not list (backward compat)
+
+        all_locked: dict[str, tuple[int, int]] = {}
+
+        for day_idx, day in enumerate(days):
+            if not isinstance(day, dict):
+                continue
+            prefix = f"plans[{plan_idx}].days[{day_idx}]"
+
+            ac = day.get("area_cluster")
+            if not ac or not isinstance(ac, list) or not all(isinstance(x, str) for x in ac):
+                raise ToolError(
+                    f"{prefix}.area_cluster 必须是非空字符串列表",
+                    error_code="INVALID_VALUE",
+                    suggestion='例如 "area_cluster": ["浅草", "上野"]',
+                )
+
+            lp = day.get("locked_pois")
+            if lp is None or not isinstance(lp, list):
+                raise ToolError(
+                    f"{prefix}.locked_pois 必须是字符串列表（可以为空列表）",
+                    error_code="INVALID_VALUE",
+                    suggestion='例如 "locked_pois": ["浅草寺"] 或 "locked_pois": []',
+                )
+
+            cp = day.get("candidate_pois")
+            if not cp or not isinstance(cp, list):
+                raise ToolError(
+                    f"{prefix}.candidate_pois 必须是非空字符串列表",
+                    error_code="INVALID_VALUE",
+                    suggestion='例如 "candidate_pois": ["仲见世商店街", "上野公園"]',
+                )
+
+            for poi in (lp if isinstance(lp, list) else []):
+                if not isinstance(poi, str):
+                    continue
+                if poi in all_locked:
+                    prev_p, prev_d = all_locked[poi]
+                    raise ToolError(
+                        f"'{poi}' 同时被 plans[{prev_p}].days[{prev_d}] "
+                        f"和 {prefix} locked，locked_pois 必须跨天唯一",
+                        error_code="INVALID_VALUE",
+                        suggestion=f"把 '{poi}' 只分配给一天，另一天可放入 candidate_pois",
+                    )
+                all_locked[poi] = (plan_idx, day_idx)
 
 
 def _validated_skeleton_id_map(
@@ -211,6 +304,7 @@ def make_set_skeleton_plans_tool(plan: TravelPlanState):
             normalized_plan["id"] = normalized_id
             normalized_plan["name"] = normalized_name
             normalized_plans.append(normalized_plan)
+        _validate_skeleton_days(normalized_plans)
         prev_count = len(plan.skeleton_plans)
         previous_skeleton_plans = list(plan.skeleton_plans)
         write_skeleton_plans(plan, normalized_plans)
