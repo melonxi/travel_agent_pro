@@ -116,7 +116,7 @@ interface EventHandlerState {
   currentAssistantId: string
   assistantContent: string
   toolMessageIds: Map<string, string>
-  internalTaskMessageIds: Map<string, string>
+  sawMemoryRecallTask: boolean
   completed: boolean
   failed: boolean
 }
@@ -262,9 +262,11 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
   const inputRef = useRef<HTMLInputElement>(null)
   
   const prevPlanRef = useRef<TravelPlanState | null>(null)
+  const activeAssistantIdRef = useRef<string | null>(null)
+  const internalTaskMessageIdsRef = useRef<Map<string, string>>(new Map())
   const lastEventTimeRef = useRef<number>(Date.now())
   const [streamFeedback, setStreamFeedback] = useState<StreamFeedback | null>(null)
-  const { sendMessage, cancel, continueGeneration } = useSSE()
+  const { sendMessage, subscribe, cancel, continueGeneration } = useSSE()
   const lastUserMessageRef = useRef('')
   const userStoppedRef = useRef(false)
   const thinkingDismissTimerRef = useRef<number | null>(null)
@@ -347,6 +349,8 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
     setStreamFeedback(null)
     lastUserMessageRef.current = ''
     userStoppedRef.current = false
+    activeAssistantIdRef.current = null
+    internalTaskMessageIdsRef.current = new Map()
     setMessages([])
     setThinking(null)
     prevPlanRef.current = null
@@ -450,6 +454,124 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
     return value > 1_000_000_000_000 ? value : value * 1000
   }
 
+  const upsertInternalTaskMessage = (
+    task: InternalTaskEvent,
+    assistantId: string | null = activeAssistantIdRef.current,
+  ) => {
+    const startedAt = toClientTimestamp(task.started_at) ?? Date.now()
+    const endedAt = toClientTimestamp(task.ended_at)
+
+    setMessages((prev) => {
+      const mappedMessageId = internalTaskMessageIdsRef.current.get(task.id)
+      const mappedMessage = mappedMessageId
+        ? prev.find((message) => message.id === mappedMessageId)
+        : undefined
+      const fallbackMessage = prev.find((message) => message.role === 'system' && message.internalTaskId === task.id)
+      const targetMessageId = mappedMessage?.id ?? fallbackMessage?.id
+
+      if (targetMessageId) {
+        internalTaskMessageIdsRef.current.set(task.id, targetMessageId)
+        return prev.map((message) =>
+          message.id === targetMessageId
+            ? {
+                ...message,
+                content: task.message ?? message.content,
+                startedAt: message.startedAt ?? startedAt,
+                endedAt: endedAt ?? (task.status === 'pending' ? undefined : Date.now()),
+                internalTask: task,
+                internalTaskId: task.id,
+              }
+            : message,
+        )
+      }
+
+      const messageId = createMessageId()
+      const nextMessage: ChatMessage = {
+        id: messageId,
+        role: 'system',
+        content: task.message ?? '',
+        startedAt,
+        endedAt,
+        internalTask: task,
+        internalTaskId: task.id,
+      }
+      internalTaskMessageIdsRef.current.set(task.id, messageId)
+      return assistantId
+        ? insertBeforeAssistant(prev, assistantId, nextMessage)
+        : [...prev, nextMessage]
+    })
+  }
+
+  const ensureMemoryRecallTaskMessage = (
+    task: InternalTaskEvent,
+    assistantId: string | null,
+  ) => {
+    const roundStartedAt = roundStateRef.current.startedAt
+    const startedAt = toClientTimestamp(task.started_at) ?? Date.now()
+    const endedAt = toClientTimestamp(task.ended_at)
+
+    setMessages((prev) => {
+      const hasRecallTask = prev.some((message) =>
+        message.internalTask?.kind === 'memory_recall' &&
+        (message.startedAt ?? 0) >= roundStartedAt - 1000,
+      )
+      if (hasRecallTask) {
+        return prev
+      }
+
+      const messageId = createMessageId()
+      internalTaskMessageIdsRef.current.set(task.id, messageId)
+      const nextMessage: ChatMessage = {
+        id: messageId,
+        role: 'system',
+        content: task.message ?? '',
+        startedAt,
+        endedAt,
+        internalTask: task,
+        internalTaskId: task.id,
+      }
+      return assistantId
+        ? insertBeforeAssistant(prev, assistantId, nextMessage)
+        : [...prev, nextMessage]
+    })
+  }
+
+  const refreshInternalTasks = async (
+    targetSessionId: string = sessionId,
+    shouldApply: () => boolean = () => true,
+  ) => {
+    try {
+      const response = await fetch(`/api/internal-tasks/${targetSessionId}`)
+      if (!response.ok) return
+      const data = (await response.json()) as { tasks?: InternalTaskEvent[] }
+      if (!shouldApply()) return
+      for (const task of data.tasks ?? []) {
+        upsertInternalTaskMessage(task)
+      }
+    } catch {
+      // 实时 SSE 仍在工作，快照拉取失败不阻塞聊天。
+    }
+  }
+
+  useEffect(() => {
+    let active = true
+    const unsubscribe = subscribe(
+      `/api/internal-tasks/${sessionId}/stream`,
+      (event) => {
+        if (event.type === 'internal_task' && event.task) {
+          upsertInternalTaskMessage(event.task)
+        }
+      },
+    )
+
+    void refreshInternalTasks(sessionId, () => active)
+
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [sessionId, subscribe])
+
   const handleStop = async () => {
     if (!streaming) return
     userStoppedRef.current = true
@@ -485,6 +607,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
       dismissThinking()
       state.assistantContent += event.content
       const targetId = state.currentAssistantId
+      activeAssistantIdRef.current = targetId
       setMessages((prev) => {
         const exists = prev.some((m) => m.id === targetId)
         if (!exists) {
@@ -518,6 +641,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
         const newAssistantId = createMessageId()
         state.currentAssistantId = newAssistantId
         state.assistantContent = ''
+        activeAssistantIdRef.current = newAssistantId
         setMessages((prev) => [...prev, toolMsg])
       } else {
         setMessages((prev) =>
@@ -569,45 +693,10 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
         }),
       )
     } else if (event.type === 'internal_task' && event.task) {
-      const task = event.task
-      const mappedMessageId = state.internalTaskMessageIds.get(task.id)
-      const startedAt = toClientTimestamp(task.started_at) ?? Date.now()
-      const endedAt = toClientTimestamp(task.ended_at)
-
-      setMessages((prev) => {
-        const fallbackMessage = mappedMessageId
-          ? undefined
-          : prev.find((message) => message.role === 'system' && message.internalTaskId === task.id)
-        const targetMessageId = mappedMessageId ?? fallbackMessage?.id
-
-        if (targetMessageId) {
-          state.internalTaskMessageIds.set(task.id, targetMessageId)
-          return prev.map((message) =>
-            message.id === targetMessageId
-              ? {
-                  ...message,
-                  content: task.message ?? message.content,
-                  startedAt: message.startedAt ?? startedAt,
-                  endedAt: endedAt ?? (task.status === 'pending' ? undefined : Date.now()),
-                  internalTask: task,
-                  internalTaskId: task.id,
-                }
-              : message,
-          )
-        }
-
-        const messageId = createMessageId()
-        state.internalTaskMessageIds.set(task.id, messageId)
-        return insertBeforeAssistant(prev, state.currentAssistantId, {
-          id: messageId,
-          role: 'system',
-          content: task.message ?? '',
-          startedAt,
-          endedAt,
-          internalTask: task,
-          internalTaskId: task.id,
-        })
-      })
+      if (event.task.kind === 'memory_recall') {
+        state.sawMemoryRecallTask = true
+      }
+      upsertInternalTaskMessage(event.task, state.currentAssistantId)
     } else if (event.type === 'state_update' && event.plan) {
       const changes = computeStateChanges(prevPlanRef.current, event.plan)
       prevPlanRef.current = event.plan
@@ -627,6 +716,26 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
       const recallCount = countRecalledItems(event)
       onMemoryRecall?.(itemIds)
       roundStateRef.current.memoryCount = recallCount
+      const status = recallCount > 0 ? 'success' : 'skipped'
+      ensureMemoryRecallTaskMessage({
+        id: `memory_recall:fallback:${state.currentAssistantId}`,
+        kind: 'memory_recall',
+        label: '记忆召回',
+        status,
+        message: recallCount > 0
+          ? `本轮使用 ${recallCount} 条旅行记忆`
+          : '未找到本轮可用记忆',
+        blocking: true,
+        scope: 'turn',
+        result: {
+          item_ids: itemIds,
+          count: recallCount,
+          sources: event.sources ?? {},
+        },
+        started_at: roundStateRef.current.startedAt,
+        ended_at: Date.now(),
+      }, state.currentAssistantId)
+      state.sawMemoryRecallTask = true
       if (!roundStateRef.current.memoryChipInserted && recallCount > 0) {
         roundStateRef.current.memoryChipInserted = true
         setMessages((prev) => [...prev, {
@@ -678,6 +787,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
     setStreaming(false)
     clearThinkingImmediately()
     setParallelProgress(null)
+    activeAssistantIdRef.current = null
     if (!state.completed && !state.failed && !userStoppedRef.current) {
       setStreamFeedback(createUnexpectedEndFeedback())
     }
@@ -703,10 +813,11 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
       currentAssistantId: createMessageId(),
       assistantContent: '',
       toolMessageIds: new Map<string, string>(),
-      internalTaskMessageIds: new Map<string, string>(),
+      sawMemoryRecallTask: false,
       completed: false,
       failed: false,
     }
+    activeAssistantIdRef.current = state.currentAssistantId
 
     if (clearInput) {
       setInput('')
@@ -721,6 +832,9 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
       await sendMessage(sessionId, userMsg, createEventHandler(state))
     } finally {
       finishStream(state)
+      void refreshInternalTasks(sessionId)
+      window.setTimeout(() => void refreshInternalTasks(sessionId), 3000)
+      window.setTimeout(() => void refreshInternalTasks(sessionId), 12000)
     }
   }
 
@@ -748,10 +862,11 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
       currentAssistantId: createMessageId(),
       assistantContent: '',
       toolMessageIds: new Map<string, string>(),
-      internalTaskMessageIds: new Map<string, string>(),
+      sawMemoryRecallTask: false,
       completed: false,
       failed: false,
     }
+    activeAssistantIdRef.current = state.currentAssistantId
     setStreaming(true)
 
     try {

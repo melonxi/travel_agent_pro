@@ -3,10 +3,14 @@ import pytest
 from memory.extraction import (
     MemoryMerger,
     build_candidate_extraction_prompt,
+    build_v3_extraction_gate_prompt,
+    build_v3_extraction_gate_tool,
+    build_v3_extraction_tool,
     build_extraction_prompt,
     build_v3_extraction_prompt,
     parse_candidate_extraction_response,
     parse_extraction_response,
+    parse_v3_extraction_gate_tool_arguments,
     parse_v3_extraction_response,
 )
 from memory.models import MemoryItem, MemorySource, Rejection, UserMemory
@@ -288,12 +292,71 @@ class TestBuildV3ExtractionPrompt:
             plan_facts={"destination": "京都", "budget": 30000},
         )
 
-        assert "state_observations" in prompt
         assert "preference_hypotheses" in prompt
         assert "working_memory" in prompt
-        assert "drop" in prompt
         assert "京都" in prompt
         assert "红眼航班" in prompt
+        assert "extract_memory_candidates" in prompt
+        assert "不要输出 JSON 正文" in prompt
+        assert "state_observations" not in prompt
+        assert "episode_evidence" not in prompt
+        assert "drop" not in prompt
+        assert "所有文本字段必须为中文简体字符串" not in prompt
+
+
+class TestBuildV3ExtractionTool:
+    def test_top_level_schema_only_requires_written_outputs(self):
+        tool = build_v3_extraction_tool()
+
+        assert tool["name"] == "extract_memory_candidates"
+        assert tool["parameters"]["required"] == ["profile_updates", "working_memory"]
+        assert "state_observations" not in tool["parameters"]["properties"]
+        assert "episode_evidence" not in tool["parameters"]["properties"]
+        assert "drop" not in tool["parameters"]["properties"]
+
+    def test_schema_strengthens_core_field_semantics(self):
+        tool = build_v3_extraction_tool()
+        profile_item = tool["parameters"]["properties"]["profile_updates"]["properties"][
+            "constraints"
+        ]["items"]
+
+        assert profile_item["properties"]["domain"]["enum"]
+        assert profile_item["properties"]["polarity"]["enum"]
+        assert profile_item["properties"]["stability"]["enum"]
+        assert "scope" not in profile_item["properties"]
+
+
+class TestBuildV3ExtractionGate:
+    def test_gate_prompt_focuses_on_judgement_only(self):
+        prompt = build_v3_extraction_gate_prompt(
+            user_messages=["我不吃辣", "继续规划吧"],
+            plan_facts={"destination": "京都", "budget": 30000},
+        )
+
+        assert "decide_memory_extraction" in prompt
+        assert "不要输出具体 memory item" in prompt
+        assert "继续规划吧" in prompt
+        assert "京都" in prompt
+
+    def test_gate_tool_requires_only_decision_fields(self):
+        tool = build_v3_extraction_gate_tool()
+
+        assert tool["name"] == "decide_memory_extraction"
+        assert tool["parameters"]["required"] == [
+            "should_extract",
+            "reason",
+            "message",
+        ]
+        assert tool["parameters"]["properties"]["should_extract"]["type"] == "boolean"
+
+    def test_parse_gate_tool_arguments_defaults_safely(self):
+        result = parse_v3_extraction_gate_tool_arguments(
+            {"should_extract": True, "reason": "explicit_preference_signal"}
+        )
+
+        assert result.should_extract is True
+        assert result.reason == "explicit_preference_signal"
+        assert result.message == ""
 
 
 class TestParseV3ExtractionResponse:
@@ -317,6 +380,9 @@ class TestParseV3ExtractionResponse:
         assert result.profile_updates.constraints[0].recall_hints == {
             "keywords": ["红眼航班"]
         }
+        assert result.episode_evidence == []
+        assert result.state_observations == []
+        assert result.drop == []
 
     def test_state_observation_does_not_become_profile_item(self):
         response = (
@@ -330,6 +396,18 @@ class TestParseV3ExtractionResponse:
         result = parse_v3_extraction_response(response)
         assert result.profile_updates.constraints == []
         assert result.state_observations[0]["field"] == "destination"
+
+    def test_missing_optional_v3_fields_defaults_to_empty_lists(self):
+        response = (
+            '{"profile_updates":{"constraints":[],"rejections":[],'
+            '"stable_preferences":[],"preference_hypotheses":[]},'
+            '"working_memory":[]}'
+        )
+        result = parse_v3_extraction_response(response)
+        assert result.working_memory == []
+        assert result.episode_evidence == []
+        assert result.state_observations == []
+        assert result.drop == []
 
     def test_working_memory_parses_session_scope(self):
         response = (

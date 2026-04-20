@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,7 +35,13 @@ from telemetry import setup_telemetry
 from telemetry.stats import SessionStats
 from context.manager import ContextManager
 from harness.guardrail import ToolGuardrail
-from harness.judge import build_judge_prompt, parse_judge_response
+from harness.judge import (
+    build_judge_prompt,
+    build_judge_tool,
+    judge_tool_name,
+    parse_judge_response,
+    parse_judge_tool_arguments,
+)
 from harness.validator import (
     validate_hard_constraints,
     validate_incremental,
@@ -44,11 +50,19 @@ from harness.validator import (
 from llm.errors import LLMError, LLMErrorCode
 from llm.factory import create_llm_provider
 from llm.types import ChunkType
+from memory.async_jobs import (
+    MemoryJobScheduler,
+    MemoryJobSnapshot,
+    build_extraction_user_window,
+    build_gate_user_window,
+)
 from memory.extraction import (
-    build_candidate_extraction_prompt,
+    build_v3_extraction_gate_prompt,
+    build_v3_extraction_gate_tool,
+    build_v3_extraction_tool,
     build_v3_extraction_prompt,
-    parse_candidate_extraction_response,
-    parse_v3_extraction_response,
+    parse_v3_extraction_gate_tool_arguments,
+    parse_v3_extraction_tool_arguments,
 )
 from memory.formatter import MemoryRecallTelemetry
 from memory.manager import MemoryManager
@@ -88,6 +102,90 @@ from tools.plan_tools import PLAN_WRITER_TOOL_NAMES, make_all_plan_tools
 logger = logging.getLogger(__name__)
 
 KEEPALIVE_INTERVAL_S = 8
+
+
+@dataclass
+class MemoryExtractionOutcome:
+    status: str
+    message: str
+    item_ids: list[str]
+    saved_profile_count: int = 0
+    saved_working_count: int = 0
+    reason: str | None = None
+    error: str | None = None
+
+    @property
+    def saved_total(self) -> int:
+        return self.saved_profile_count + self.saved_working_count
+
+    def to_result(self) -> dict[str, Any]:
+        result = {
+            "item_ids": list(self.item_ids),
+            "count": len(self.item_ids),
+            "saved_profile_count": self.saved_profile_count,
+            "saved_working_count": self.saved_working_count,
+            "saved_total": self.saved_total,
+        }
+        if self.reason:
+            result["reason"] = self.reason
+        return result
+
+
+@dataclass
+class MemoryExtractionGateDecision:
+    should_extract: bool
+    reason: str
+    message: str
+    error: str | None = None
+
+    @property
+    def status(self) -> str:
+        if self.reason in {"timeout", "error", "no_tool_result"}:
+            return "warning"
+        if self.should_extract:
+            return "success"
+        return "skipped"
+
+    def to_result(self) -> dict[str, Any]:
+        result = {
+            "should_extract": self.should_extract,
+            "reason": self.reason,
+        }
+        if self.error:
+            result["error"] = self.error
+        return result
+
+
+@dataclass
+class MemorySchedulerRuntime:
+    scheduler: MemoryJobScheduler
+    last_consumed_user_count: int = 0
+
+
+def _truncate_for_log(value: str, limit: int = 600) -> str:
+    text = (value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}...<truncated>"
+
+
+async def _collect_forced_tool_call_arguments(
+    llm,
+    *,
+    messages: list[Message],
+    tool_def: dict[str, Any],
+) -> dict[str, Any] | None:
+    tool_name = tool_def["name"]
+    async for chunk in llm.chat(
+        messages,
+        tools=[tool_def],
+        stream=True,
+        tool_choice={"type": "function", "function": {"name": tool_name}},
+    ):
+        if chunk.type == ChunkType.TOOL_CALL_START and chunk.tool_call:
+            if chunk.tool_call.name == tool_name:
+                return chunk.tool_call.arguments
+    return None
 
 
 def push_pending_system_note(session: dict, content: str) -> None:
@@ -474,10 +572,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
     # Session-level caches
     sessions: dict[str, dict] = {}  # session_id → {plan, messages, agent}
-    memory_extraction_tasks: dict[str, asyncio.Task] = {}
-    memory_extraction_pending: dict[
-        str, tuple[str, list[Message], TravelPlanState]
-    ] = {}
+    memory_scheduler_runtimes: dict[str, MemorySchedulerRuntime] = {}
+    memory_task_subscribers: dict[str, set[asyncio.Queue[str]]] = {}
+    memory_active_tasks: dict[str, dict[str, InternalTask]] = {}
     memory_pending_seen: dict[tuple[str, str], set[str]] = {}
     reflection_cache: dict[str, ReflectionInjector] = {}
     quality_gate_retries: dict[tuple[str, int, int], int] = {}
@@ -509,9 +606,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         await db.initialize()
         await _probe_context_window()
         yield
-        for task in list(memory_extraction_tasks.values()):
-            task.cancel()
-        memory_extraction_pending.clear()
+        for runtime in memory_scheduler_runtimes.values():
+            task = runtime.scheduler.running_task
+            if task is not None and not task.done():
+                task.cancel()
         await db.close()
 
     app = FastAPI(title="Travel Agent Pro", lifespan=lifespan)
@@ -800,11 +898,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     Message(role=Role.SYSTEM, content="你是旅行行程质量评估专家。"),
                     Message(role=Role.USER, content=prompt_text),
                 ]
-                result_parts: list[str] = []
-                async for chunk in judge_llm.chat(judge_msgs, tools=[], stream=True):
-                    if chunk.content:
-                        result_parts.append(chunk.content)
-                score = parse_judge_response("".join(result_parts))
+                score_args = await _collect_forced_tool_call_arguments(
+                    judge_llm,
+                    messages=judge_msgs,
+                    tool_def=build_judge_tool(),
+                )
+                score = parse_judge_tool_arguments(score_args)
             except Exception as exc:
                 logger.warning("soft judge failed", exc_info=True)
                 internal_task_events.append(
@@ -976,11 +1075,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     Message(role=Role.SYSTEM, content="你是旅行行程质量评估专家。"),
                     Message(role=Role.USER, content=prompt_text),
                 ]
-                result_parts: list[str] = []
-                async for chunk in judge_llm.chat(judge_msgs, tools=[], stream=True):
-                    if chunk.content:
-                        result_parts.append(chunk.content)
-                score = parse_judge_response("".join(result_parts))
+                score_args = await _collect_forced_tool_call_arguments(
+                    judge_llm,
+                    messages=judge_msgs,
+                    tool_def=build_judge_tool(),
+                )
+                score = parse_judge_tool_arguments(score_args)
             except Exception as exc:
                 internal_task_events.append(
                     InternalTask(
@@ -1145,29 +1245,303 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         )
         asyncio.create_task(_append_memory_event_nonfatal(event))
 
-    _EXTRACTION_TIMEOUT_SECONDS = 20.0
+    _GATE_MAX_USER_MESSAGES = 3
+    _GATE_MAX_CHARS = 1200
+    _EXTRACTION_MAX_USER_MESSAGES = 8
+    _EXTRACTION_MAX_CHARS = 3000
+    _EXTRACTION_GATE_TIMEOUT_SECONDS = 30.0
+    _EXTRACTION_TIMEOUT_SECONDS = 40.0
+
+    async def _build_gate_memory_summary(
+        *,
+        user_id: str,
+        session_id: str,
+        plan_snapshot: TravelPlanState,
+    ) -> dict[str, Any]:
+        profile = await memory_mgr.v3_store.load_profile(user_id)
+        working_memory = await memory_mgr.v3_store.load_working_memory(
+            user_id, session_id, plan_snapshot.trip_id
+        )
+        return {
+            "profile_counts": {
+                "constraints": len(profile.constraints),
+                "rejections": len(profile.rejections),
+                "stable_preferences": len(profile.stable_preferences),
+                "preference_hypotheses": len(profile.preference_hypotheses),
+            },
+            "profile_keys": {
+                "constraints": [item.key for item in profile.constraints[:8]],
+                "rejections": [item.key for item in profile.rejections[:8]],
+                "stable_preferences": [
+                    item.key for item in profile.stable_preferences[:8]
+                ],
+                "preference_hypotheses": [
+                    item.key for item in profile.preference_hypotheses[:8]
+                ],
+            },
+            "working_memory_count": len(working_memory.items),
+            "working_memory_preview": [
+                item.content for item in working_memory.items[:5]
+            ],
+        }
+
+    def _publish_memory_task(session_id: str, task: InternalTask) -> None:
+        active = memory_active_tasks.setdefault(session_id, {})
+        active[task.id] = task
+        cutoff = time.time() - 300
+        for task_id, existing_task in list(active.items()):
+            ended_at = getattr(existing_task, "ended_at", None)
+            if ended_at is not None and ended_at < cutoff:
+                active.pop(task_id, None)
+        if len(active) > 20:
+            ordered_task_ids = sorted(
+                active,
+                key=lambda task_id: (
+                    active[task_id].ended_at is None,
+                    active[task_id].ended_at or active[task_id].started_at or 0,
+                ),
+            )
+            for task_id in ordered_task_ids[: len(active) - 20]:
+                active.pop(task_id, None)
+
+        payload = json.dumps(
+            {"type": "internal_task", "task": task.to_dict()},
+            ensure_ascii=False,
+        )
+        subscribers = list(memory_task_subscribers.get(session_id, set()))
+        delivered_count = 0
+        dropped_count = 0
+        for queue in list(memory_task_subscribers.get(session_id, set())):
+            try:
+                queue.put_nowait(payload)
+                delivered_count += 1
+            except asyncio.QueueFull:
+                dropped_count += 1
+                continue
+        logger.warning(
+            "后台记忆任务发布 session=%s task_id=%s kind=%s status=%s scope=%s subscribers=%s delivered=%s dropped=%s active_tasks=%s",
+            session_id,
+            task.id,
+            task.kind,
+            task.status,
+            task.scope,
+            len(subscribers),
+            delivered_count,
+            dropped_count,
+            len(active),
+        )
+
+    def _get_memory_scheduler_runtime(session_id: str) -> MemorySchedulerRuntime:
+        runtime = memory_scheduler_runtimes.get(session_id)
+        if runtime is not None:
+            return runtime
+
+        async def _runner(snapshot: MemoryJobSnapshot) -> None:
+            await _run_memory_job(snapshot)
+
+        runtime = MemorySchedulerRuntime(scheduler=MemoryJobScheduler(runner=_runner))
+        memory_scheduler_runtimes[session_id] = runtime
+        return runtime
+
+    def _build_memory_job_snapshot(
+        *,
+        session_id: str,
+        user_id: str,
+        messages: list[Message],
+        plan: TravelPlanState,
+    ) -> MemoryJobSnapshot:
+        user_messages = [
+            message.content
+            for message in messages
+            if message.role == Role.USER and message.content
+        ]
+        return MemoryJobSnapshot(
+            session_id=session_id,
+            user_id=user_id,
+            turn_id=str(uuid.uuid4()),
+            user_messages=list(user_messages),
+            submitted_user_count=len(user_messages),
+            plan_snapshot=TravelPlanState.from_dict(plan.to_dict()),
+        )
+
+    def _submit_memory_snapshot(snapshot: MemoryJobSnapshot) -> None:
+        if not config.memory.enabled or not config.memory.extraction.enabled:
+            logger.warning(
+                "记忆提取快照未提交 session=%s turn=%s reason=disabled memory_enabled=%s extraction_enabled=%s",
+                snapshot.session_id,
+                snapshot.turn_id,
+                config.memory.enabled,
+                config.memory.extraction.enabled,
+            )
+            return
+        if config.memory.extraction.trigger != "each_turn":
+            logger.warning(
+                "记忆提取快照未提交 session=%s turn=%s reason=trigger_not_matched trigger=%s",
+                snapshot.session_id,
+                snapshot.turn_id,
+                config.memory.extraction.trigger,
+            )
+            return
+        runtime = _get_memory_scheduler_runtime(snapshot.session_id)
+        logger.warning(
+            "记忆提取快照提交 session=%s turn=%s user=%s user_messages=%s submitted_user_count=%s scheduler_running=%s has_pending=%s",
+            snapshot.session_id,
+            snapshot.turn_id,
+            snapshot.user_id,
+            len(snapshot.user_messages),
+            snapshot.submitted_user_count,
+            runtime.scheduler.running_task is not None
+            and not runtime.scheduler.running_task.done(),
+            runtime.scheduler.pending_snapshot is not None,
+        )
+        runtime.scheduler.submit(snapshot)
+
+    async def _decide_memory_extraction(
+        *,
+        session_id: str,
+        user_id: str,
+        user_messages: list[str],
+        plan_snapshot: TravelPlanState,
+    ) -> MemoryExtractionGateDecision:
+        if not config.memory.enabled or not config.memory.extraction.enabled:
+            return MemoryExtractionGateDecision(
+                should_extract=False,
+                reason="disabled",
+                message="记忆提取未启用",
+            )
+        if config.memory.extraction.trigger != "each_turn":
+            return MemoryExtractionGateDecision(
+                should_extract=False,
+                reason="trigger_not_matched",
+                message="当前提取策略未在本轮触发",
+            )
+        if not user_messages:
+            return MemoryExtractionGateDecision(
+                should_extract=False,
+                reason="no_user_messages",
+                message="本轮没有可提取的用户消息",
+            )
+
+        gate_window = build_gate_user_window(
+            user_messages=user_messages,
+            max_messages=_GATE_MAX_USER_MESSAGES,
+            max_chars=_GATE_MAX_CHARS,
+        )
+        if not gate_window:
+            return MemoryExtractionGateDecision(
+                should_extract=False,
+                reason="no_user_messages",
+                message="本轮没有可提取的用户消息",
+            )
+
+        memory_summary = await _build_gate_memory_summary(
+            user_id=user_id,
+            session_id=session_id,
+            plan_snapshot=plan_snapshot,
+        )
+        prompt = build_v3_extraction_gate_prompt(
+            user_messages=gate_window,
+            plan_facts=_memory_plan_facts(plan_snapshot),
+            existing_memory_summary=memory_summary,
+        )
+        gate_llm = create_llm_provider(config.llm)
+        logger.warning(
+            "记忆提取判定开始调用模型 session=%s user=%s model=%s prompt_chars=%s user_messages=%s",
+            session_id,
+            user_id,
+            config.llm.model,
+            len(prompt),
+            len(gate_window),
+        )
+        try:
+            tool_args = await asyncio.wait_for(
+                _collect_forced_tool_call_arguments(
+                    gate_llm,
+                    messages=[Message(role=Role.USER, content=prompt)],
+                    tool_def=build_v3_extraction_gate_tool(),
+                ),
+                timeout=_EXTRACTION_GATE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "记忆提取判定超时 session=%s user=%s timeout_seconds=%s",
+                session_id,
+                user_id,
+                _EXTRACTION_GATE_TIMEOUT_SECONDS,
+            )
+            return MemoryExtractionGateDecision(
+                should_extract=False,
+                reason="timeout",
+                message="记忆提取判定超时，已跳过本轮提取。",
+            )
+        except Exception:
+            logger.exception(
+                "记忆提取判定失败 session=%s user=%s",
+                session_id,
+                user_id,
+            )
+            return MemoryExtractionGateDecision(
+                should_extract=False,
+                reason="error",
+                message="记忆提取判定失败，已跳过本轮提取。",
+                error="记忆提取判定异常，请检查后端日志。",
+            )
+
+        decision = parse_v3_extraction_gate_tool_arguments(tool_args)
+        if not decision.reason:
+            decision.reason = (
+                "memory_signal_detected"
+                if decision.should_extract
+                else "no_reusable_memory_signal"
+            )
+        if not decision.message:
+            decision.message = (
+                "检测到可复用偏好信号"
+                if decision.should_extract
+                else "本轮未发现可复用记忆信号"
+            )
+        logger.warning(
+            "记忆提取判定完成 session=%s user=%s should_extract=%s reason=%s",
+            session_id,
+            user_id,
+            decision.should_extract,
+            decision.reason,
+        )
+        return MemoryExtractionGateDecision(
+            should_extract=decision.should_extract,
+            reason=decision.reason,
+            message=decision.message,
+        )
 
     async def _extract_memory_candidates(
         *,
         session_id: str,
         user_id: str,
-        messages_snapshot: list[Message],
+        user_messages: list[str],
         plan_snapshot: TravelPlanState,
-    ) -> list[str]:
+    ) -> MemoryExtractionOutcome:
         if not config.memory.enabled or not config.memory.extraction.enabled:
-            return []
+            return MemoryExtractionOutcome(
+                status="skipped",
+                message="记忆提取未启用",
+                item_ids=[],
+                reason="disabled",
+            )
         if config.memory.extraction.trigger != "each_turn":
-            return []
-
-        user_messages = [
-            message.content
-            for message in messages_snapshot
-            if message.role == Role.USER and message.content
-        ]
+            return MemoryExtractionOutcome(
+                status="skipped",
+                message="当前提取策略未在本轮触发",
+                item_ids=[],
+                reason="trigger_not_matched",
+            )
         if not user_messages:
-            return []
+            return MemoryExtractionOutcome(
+                status="skipped",
+                message="本轮没有可提取的用户消息",
+                item_ids=[],
+                reason="no_user_messages",
+            )
 
-        user_messages = user_messages[-config.memory.extraction.max_user_messages :]
         try:
             return await asyncio.wait_for(
                 _do_extract_memory_candidates(
@@ -1179,9 +1553,31 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 timeout=_EXTRACTION_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
-            return []
+            logger.warning(
+                "记忆提取超时 session=%s user=%s timeout_seconds=%s",
+                session_id,
+                user_id,
+                _EXTRACTION_TIMEOUT_SECONDS,
+            )
+            return MemoryExtractionOutcome(
+                status="warning",
+                message="记忆提取超时，本轮未写入记忆。",
+                item_ids=[],
+                reason="timeout",
+            )
         except Exception:
-            return []
+            logger.exception(
+                "记忆提取失败 session=%s user=%s",
+                session_id,
+                user_id,
+            )
+            return MemoryExtractionOutcome(
+                status="error",
+                message="记忆提取失败，本轮未写入记忆。",
+                item_ids=[],
+                reason="error",
+                error="记忆提取异常，请检查后端日志。",
+            )
 
     async def _do_extract_memory_candidates(
         *,
@@ -1189,7 +1585,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         user_id: str,
         user_messages: list[str],
         plan_snapshot: TravelPlanState,
-    ) -> list[str]:
+    ) -> MemoryExtractionOutcome:
         profile = await memory_mgr.v3_store.load_profile(user_id)
         working_memory = await memory_mgr.v3_store.load_working_memory(
             user_id, session_id, plan_snapshot.trip_id
@@ -1200,19 +1596,54 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             working_memory=working_memory,
             plan_facts=_memory_plan_facts(plan_snapshot),
         )
-        extraction_llm = create_llm_provider(
-            replace(config.llm, model=config.memory.extraction.model)
+        extraction_llm = create_llm_provider(config.llm)
+        logger.warning(
+            "记忆提取开始调用模型 session=%s user=%s model=%s prompt_chars=%s user_messages=%s",
+            session_id,
+            user_id,
+            config.llm.model,
+            len(prompt),
+            len(user_messages),
         )
-        response_parts: list[str] = []
-        async for chunk in extraction_llm.chat(
-            [Message(role=Role.USER, content=prompt)],
-            tools=[],
-            stream=True,
-        ):
-            if chunk.content:
-                response_parts.append(chunk.content)
+        tool_args = await _collect_forced_tool_call_arguments(
+            extraction_llm,
+            messages=[Message(role=Role.USER, content=prompt)],
+            tool_def=build_v3_extraction_tool(),
+        )
+        logger.warning(
+            "记忆提取模型返回 session=%s user=%s has_arguments=%s argument_keys=%s",
+            session_id,
+            user_id,
+            bool(tool_args),
+            sorted(tool_args.keys()) if isinstance(tool_args, dict) else [],
+        )
 
-        result = parse_v3_extraction_response("".join(response_parts))
+        result = parse_v3_extraction_tool_arguments(tool_args)
+        profile_count = sum(
+            len(items)
+            for items in (
+                result.profile_updates.constraints,
+                result.profile_updates.rejections,
+                result.profile_updates.stable_preferences,
+                result.profile_updates.preference_hypotheses,
+            )
+        )
+        working_count = len(result.working_memory)
+        if profile_count == 0 and working_count == 0:
+            logger.warning(
+                "记忆提取未产生任何结构化结果 session=%s user=%s arguments=%s",
+                session_id,
+                user_id,
+                _truncate_for_log(json.dumps(tool_args or {}, ensure_ascii=False)),
+            )
+        else:
+            logger.warning(
+                "记忆提取解析完成 session=%s user=%s profile_items=%s working_items=%s",
+                session_id,
+                user_id,
+                profile_count,
+                working_count,
+            )
 
         policy = MemoryPolicy(
             auto_save_low_risk=config.memory.policy.auto_save_low_risk,
@@ -1220,6 +1651,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         )
         now = _now_iso()
         pending_ids: list[str] = []
+        saved_profile_count = 0
+        saved_working_count = 0
 
         buckets = (
             ("constraints", result.profile_updates.constraints),
@@ -1241,6 +1674,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 await memory_mgr.v3_store.upsert_profile_item(
                     user_id, bucket, sanitized
                 )
+                saved_profile_count += 1
                 if action in {"pending", "pending_conflict"}:
                     pending_ids.append(sanitized.id)
 
@@ -1254,125 +1688,223 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 plan_snapshot.trip_id,
                 sanitized_working,
             )
+            saved_working_count += 1
 
-        return pending_ids
-
-    def _cancel_memory_extraction(session_id: str) -> None:
-        task = memory_extraction_tasks.pop(session_id, None)
-        if task is not None and not task.done():
-            task.cancel()
-        memory_extraction_pending.pop(session_id, None)
-
-    def _start_memory_extraction(
-        *,
-        session_id: str,
-        user_id: str,
-        messages_snapshot: list[Message],
-        plan_snapshot: TravelPlanState,
-    ) -> None:
-        session = sessions.get(session_id)
-        task_id = f"memory_extraction:{session_id}:{int(time.time())}"
-        started_at = time.time()
-        if session is not None:
-            session.setdefault("_background_internal_tasks", []).append(
-                InternalTask(
-                    id=task_id,
-                    kind="memory_extraction",
-                    label="记忆提取",
-                    status="pending",
-                    message="正在后台提取可复用的旅行偏好…",
-                    blocking=False,
-                    scope="background",
-                    started_at=started_at,
-                )
+        saved_total = saved_profile_count + saved_working_count
+        if saved_total == 0:
+            return MemoryExtractionOutcome(
+                status="skipped",
+                message="本轮没有新的可复用记忆",
+                item_ids=[],
+                reason="no_structured_result",
             )
-        task = asyncio.create_task(
-            _extract_memory_candidates(
-                session_id=session_id,
-                user_id=user_id,
-                messages_snapshot=messages_snapshot,
-                plan_snapshot=plan_snapshot,
+
+        pending_count = len(pending_ids)
+        if pending_count == 0:
+            message = f"已提取 {saved_total} 条记忆"
+        elif pending_count == saved_total:
+            message = f"已提取 {pending_count} 条待确认记忆"
+        else:
+            message = (
+                f"已提取 {saved_total} 条记忆，其中 {pending_count} 条待确认"
             )
+
+        return MemoryExtractionOutcome(
+            status="success",
+            message=message,
+            item_ids=pending_ids,
+            saved_profile_count=saved_profile_count,
+            saved_working_count=saved_working_count,
+            reason="saved",
         )
-        memory_extraction_tasks[session_id] = task
 
-        def _cleanup(done_task: asyncio.Task) -> None:
-            target_session = sessions.get(session_id)
-            if target_session is not None and not done_task.cancelled():
-                try:
-                    item_ids = done_task.result()
-                    target_session.setdefault("_background_internal_tasks", []).append(
-                        InternalTask(
-                            id=task_id,
-                            kind="memory_extraction",
-                            label="记忆提取",
-                            status="success" if item_ids else "skipped",
-                            message=(
-                                f"已提取 {len(item_ids)} 条待确认记忆"
-                                if item_ids
-                                else "本轮没有新的待确认记忆"
-                            ),
-                            blocking=False,
-                            scope="background",
-                            result={"item_ids": item_ids, "count": len(item_ids)},
-                            started_at=started_at,
-                            ended_at=time.time(),
-                        )
-                    )
-                except Exception as exc:
-                    target_session.setdefault("_background_internal_tasks", []).append(
-                        InternalTask(
-                            id=task_id,
-                            kind="memory_extraction",
-                            label="记忆提取",
-                            status="error",
-                            message="后台记忆提取失败。",
-                            blocking=False,
-                            scope="background",
-                            error=str(exc),
-                            started_at=started_at,
-                            ended_at=time.time(),
-                        )
-                    )
-            if memory_extraction_tasks.get(session_id) is done_task:
-                memory_extraction_tasks.pop(session_id, None)
-            queued = memory_extraction_pending.pop(session_id, None)
-            if queued is not None and not done_task.cancelled():
-                next_user_id, next_messages, next_plan = queued
-                _start_memory_extraction(
-                    session_id=session_id,
-                    user_id=next_user_id,
-                    messages_snapshot=next_messages,
-                    plan_snapshot=next_plan,
-                )
-
-        task.add_done_callback(_cleanup)
-
-    def _schedule_memory_extraction(
-        *,
-        session_id: str,
-        user_id: str,
-        messages_snapshot: list[Message],
-        plan_snapshot: TravelPlanState,
-    ) -> None:
-        if not config.memory.enabled or not config.memory.extraction.enabled:
-            return
-        if config.memory.extraction.trigger != "each_turn":
-            return
-        existing = memory_extraction_tasks.get(session_id)
-        if existing is not None and not existing.done():
-            memory_extraction_pending[session_id] = (
-                user_id,
-                messages_snapshot,
-                plan_snapshot,
-            )
-            return
-        _start_memory_extraction(
-            session_id=session_id,
-            user_id=user_id,
-            messages_snapshot=messages_snapshot,
+    async def _run_memory_job(snapshot: MemoryJobSnapshot) -> None:
+        runtime = _get_memory_scheduler_runtime(snapshot.session_id)
+        plan_snapshot = (
+            snapshot.plan_snapshot
+            if isinstance(snapshot.plan_snapshot, TravelPlanState)
+            else TravelPlanState(session_id=snapshot.session_id)
+        )
+        logger.warning(
+            "记忆提取后台任务开始 session=%s turn=%s user=%s user_messages=%s submitted_user_count=%s last_consumed_user_count=%s trip_id=%s",
+            snapshot.session_id,
+            snapshot.turn_id,
+            snapshot.user_id,
+            len(snapshot.user_messages),
+            snapshot.submitted_user_count,
+            runtime.last_consumed_user_count,
+            getattr(plan_snapshot, "trip_id", None),
+        )
+        gate_task_id = f"memory_extraction_gate:{snapshot.session_id}:{snapshot.turn_id}"
+        gate_started_at = time.time()
+        _publish_memory_task(
+            snapshot.session_id,
+            InternalTask(
+                id=gate_task_id,
+                kind="memory_extraction_gate",
+                label="记忆提取判定",
+                status="pending",
+                message="正在判断本轮是否值得提取记忆…",
+                blocking=False,
+                scope="background",
+                started_at=gate_started_at,
+            ),
+        )
+        gate_decision = await _decide_memory_extraction(
+            session_id=snapshot.session_id,
+            user_id=snapshot.user_id,
+            user_messages=snapshot.user_messages,
             plan_snapshot=plan_snapshot,
         )
+        _publish_memory_task(
+            snapshot.session_id,
+            InternalTask(
+                id=gate_task_id,
+                kind="memory_extraction_gate",
+                label="记忆提取判定",
+                status=gate_decision.status,
+                message=gate_decision.message,
+                blocking=False,
+                scope="background",
+                result=gate_decision.to_result(),
+                error=gate_decision.error,
+                started_at=gate_started_at,
+                ended_at=time.time(),
+            ),
+        )
+        if not gate_decision.should_extract:
+            if gate_decision.status == "skipped":
+                runtime.last_consumed_user_count = max(
+                    runtime.last_consumed_user_count,
+                    snapshot.submitted_user_count,
+                )
+            logger.warning(
+                "记忆提取后台任务结束 session=%s turn=%s gate_status=%s should_extract=%s reason=%s last_consumed_user_count=%s",
+                snapshot.session_id,
+                snapshot.turn_id,
+                gate_decision.status,
+                gate_decision.should_extract,
+                gate_decision.reason,
+                runtime.last_consumed_user_count,
+            )
+            return
+
+        extraction_window = build_extraction_user_window(
+            user_messages=snapshot.user_messages,
+            last_consumed_user_count=runtime.last_consumed_user_count,
+            submitted_user_count=snapshot.submitted_user_count,
+            max_messages=_EXTRACTION_MAX_USER_MESSAGES,
+            max_chars=_EXTRACTION_MAX_CHARS,
+        )
+        logger.warning(
+            "记忆提取窗口构建完成 session=%s turn=%s user_messages=%s extraction_window=%s last_consumed_user_count=%s submitted_user_count=%s",
+            snapshot.session_id,
+            snapshot.turn_id,
+            len(snapshot.user_messages),
+            len(extraction_window),
+            runtime.last_consumed_user_count,
+            snapshot.submitted_user_count,
+        )
+        task_id = f"memory_extraction:{snapshot.session_id}:{snapshot.turn_id}"
+        started_at = time.time()
+        _publish_memory_task(
+            snapshot.session_id,
+            InternalTask(
+                id=task_id,
+                kind="memory_extraction",
+                label="记忆提取",
+                status="pending",
+                message="正在提取可复用的旅行偏好…",
+                blocking=False,
+                scope="background",
+                started_at=started_at,
+            ),
+        )
+        outcome = await _extract_memory_candidates(
+            session_id=snapshot.session_id,
+            user_id=snapshot.user_id,
+            user_messages=extraction_window,
+            plan_snapshot=plan_snapshot,
+        )
+        _publish_memory_task(
+            snapshot.session_id,
+            InternalTask(
+                id=task_id,
+                kind="memory_extraction",
+                label="记忆提取",
+                status=outcome.status,
+                message=outcome.message,
+                blocking=False,
+                scope="background",
+                result=outcome.to_result(),
+                error=outcome.error,
+                started_at=started_at,
+                ended_at=time.time(),
+            ),
+        )
+        if outcome.status in {"success", "skipped"}:
+            runtime.last_consumed_user_count = max(
+                runtime.last_consumed_user_count,
+                snapshot.submitted_user_count,
+            )
+        logger.warning(
+            "记忆提取后台任务结束 session=%s turn=%s extraction_status=%s reason=%s item_ids=%s saved_profile=%s saved_working=%s last_consumed_user_count=%s",
+            snapshot.session_id,
+            snapshot.turn_id,
+            outcome.status,
+            outcome.reason,
+            len(outcome.item_ids),
+            outcome.saved_profile_count,
+            outcome.saved_working_count,
+            runtime.last_consumed_user_count,
+        )
+
+    async def _memory_task_stream(session_id: str, request: Request):
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=64)
+        subscribers = memory_task_subscribers.setdefault(session_id, set())
+        subscribers.add(queue)
+        logger.warning(
+            "后台记忆任务 SSE 订阅打开 session=%s subscribers=%s active_tasks=%s",
+            session_id,
+            len(subscribers),
+            len(memory_active_tasks.get(session_id, {})),
+        )
+
+        try:
+            for task in memory_active_tasks.get(session_id, {}).values():
+                logger.warning(
+                    "后台记忆任务 SSE 重放 session=%s task_id=%s kind=%s status=%s",
+                    session_id,
+                    task.id,
+                    task.kind,
+                    task.status,
+                )
+                yield json.dumps(
+                    {"type": "internal_task", "task": task.to_dict()},
+                    ensure_ascii=False,
+                )
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    payload = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=KEEPALIVE_INTERVAL_S,
+                    )
+                except asyncio.TimeoutError:
+                    yield json.dumps({"type": "keepalive"}, ensure_ascii=False)
+                    continue
+                yield payload
+        finally:
+            subscribers.discard(queue)
+            if not subscribers:
+                memory_task_subscribers.pop(session_id, None)
+            logger.warning(
+                "后台记忆任务 SSE 订阅关闭 session=%s subscribers=%s",
+                session_id,
+                len(memory_task_subscribers.get(session_id, set())),
+            )
 
     async def _build_trip_episode(
         *,
@@ -1910,7 +2442,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             to_phase=req.to_phase,
             reason_text=req.reason,
         )
-        _cancel_memory_extraction(session_id)
         await state_mgr.save(plan)
         session["agent"] = _build_agent(
             plan,
@@ -2013,6 +2544,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 async for chunk in agent.run(messages, phase=plan.phase):
                     if chunk.type.value == "keepalive":
                         yield {"comment": "ping"}
+                        continue
+                    if chunk.type == ChunkType.DONE:
                         continue
                     if chunk.type == ChunkType.USAGE and chunk.usage_info:
                         _record_llm_usage_stats(
@@ -2352,7 +2885,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     )
 
             if user_message is not None and plan.phase < phase_before_run:
-                _cancel_memory_extraction(plan.session_id)
                 await _apply_message_fallbacks(plan, user_message, phase_router)
 
             if run.status == "running":
@@ -2391,16 +2923,28 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         )
                     except Exception:
                         pass
-            _schedule_memory_extraction(
-                session_id=plan.session_id,
-                user_id=session["user_id"],
-                messages_snapshot=list(messages),
-                plan_snapshot=plan,
-            )
             yield json.dumps(
                 {"type": "state_update", "plan": plan.to_dict()},
                 ensure_ascii=False,
             )
+            if run.status == "completed":
+                yield json.dumps(
+                    {
+                        "type": "done",
+                        "run_id": run.run_id,
+                        "run_status": run.status,
+                    },
+                    ensure_ascii=False,
+                )
+            elif run.status == "cancelled":
+                yield json.dumps(
+                    {
+                        "type": "done",
+                        "run_id": run.run_id,
+                        "run_status": run.status,
+                    },
+                    ensure_ascii=False,
+                )
 
         finally:
             # 保底持久化：即使流异常中断，也尝试保存当前状态
@@ -2469,6 +3013,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
 
         async def event_stream():
             for task in session.pop("_background_internal_tasks", []):
+                if getattr(task, "kind", None) == "memory_extraction":
+                    continue
                 yield json.dumps(
                     {"type": "internal_task", "task": task.to_dict()},
                     ensure_ascii=False,
@@ -2490,6 +3036,16 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         for item in pending_items
                     )
                     yield _memory_pending_event_from_items(pending_items)
+
+            messages.append(Message(role=Role.USER, content=req.message))
+            _submit_memory_snapshot(
+                _build_memory_job_snapshot(
+                    session_id=plan.session_id,
+                    user_id=session["user_id"],
+                    messages=messages,
+                    plan=plan,
+                )
+            )
 
             memory_recall_task_id = f"memory_recall:{plan.session_id}:{int(time.time())}"
             memory_recall_started_at = time.time()
@@ -2590,8 +3146,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             else:
                 messages.insert(0, sys_msg)
 
-            messages.append(Message(role=Role.USER, content=req.message))
-
             from run import RunRecord
 
             run = RunRecord(
@@ -2615,6 +3169,47 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 yield event
 
         return EventSourceResponse(event_stream())
+
+    @app.get("/api/internal-tasks/{session_id}/stream")
+    async def stream_internal_tasks(session_id: str, request: Request):
+        await _ensure_storage_ready()
+        session = sessions.get(session_id)
+        if not session:
+            restored = await _restore_session(session_id)
+            if restored is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            sessions[session_id] = restored
+
+        logger.warning(
+            "后台记忆任务 SSE 请求 session=%s restored=%s active_tasks=%s subscribers=%s",
+            session_id,
+            session is None,
+            len(memory_active_tasks.get(session_id, {})),
+            len(memory_task_subscribers.get(session_id, set())),
+        )
+        return EventSourceResponse(_memory_task_stream(session_id, request))
+
+    @app.get("/api/internal-tasks/{session_id}")
+    async def list_internal_tasks(session_id: str):
+        await _ensure_storage_ready()
+        session = sessions.get(session_id)
+        if not session:
+            restored = await _restore_session(session_id)
+            if restored is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            sessions[session_id] = restored
+
+        tasks = sorted(
+            memory_active_tasks.get(session_id, {}).values(),
+            key=lambda task: task.started_at or task.ended_at or 0,
+        )
+        logger.warning(
+            "后台记忆任务快照请求 session=%s tasks=%s kinds=%s",
+            session_id,
+            len(tasks),
+            [task.kind for task in tasks],
+        )
+        return {"tasks": [task.to_dict() for task in tasks]}
 
     @app.post("/api/chat/{session_id}/cancel")
     async def cancel_chat(session_id: str):
@@ -2727,6 +3322,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 "Content-Disposition": f'attachment; filename="{filename}"',
             },
         )
+
+    app.state.memory_scheduler_runtimes = memory_scheduler_runtimes
+    app.state.memory_active_tasks = memory_active_tasks
+    app.state.run_memory_job = _run_memory_job
+    app.state.extract_memory_candidates = _extract_memory_candidates
 
     return app
 

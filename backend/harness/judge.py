@@ -8,6 +8,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_SOFT_JUDGE_TOOL_NAME = "emit_soft_judge_score"
+
 
 def _clamp(value: int, lo: int = 1, hi: int = 5) -> int:
     return max(lo, min(hi, value))
@@ -43,6 +45,57 @@ def build_judge_prompt(plan_data: dict[str, Any], user_prefs: dict[str, Any]) ->
 
 严格输出 JSON：
 {{"pace": N, "geography": N, "coherence": N, "personalization": N, "suggestions": ["建议1", "建议2"]}}"""
+
+
+def build_judge_tool() -> dict[str, Any]:
+    return {
+        "name": _SOFT_JUDGE_TOOL_NAME,
+        "description": "输出行程质量评分与改进建议",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pace": {"type": "integer", "minimum": 1, "maximum": 5},
+                "geography": {"type": "integer", "minimum": 1, "maximum": 5},
+                "coherence": {"type": "integer", "minimum": 1, "maximum": 5},
+                "personalization": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                },
+                "suggestions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": [
+                "pace",
+                "geography",
+                "coherence",
+                "personalization",
+                "suggestions",
+            ],
+            "additionalProperties": False,
+        },
+    }
+
+
+def judge_tool_name() -> str:
+    return _SOFT_JUDGE_TOOL_NAME
+
+
+def parse_judge_tool_arguments(arguments: dict[str, Any] | None) -> SoftScore:
+    data = arguments or {}
+    try:
+        return SoftScore(
+            pace=_clamp(int(data.get("pace", 3))),
+            geography=_clamp(int(data.get("geography", 3))),
+            coherence=_clamp(int(data.get("coherence", 3))),
+            personalization=_clamp(int(data.get("personalization", 3))),
+            suggestions=[str(item) for item in data.get("suggestions", [])],
+        )
+    except (TypeError, ValueError) as exc:
+        logger.warning("评估工具参数解析失败 (%s): %s", type(exc).__name__, data)
+        return SoftScore(suggestions=["评估解析失败，使用默认评分"])
 
 
 def parse_judge_response(response: str) -> SoftScore:
