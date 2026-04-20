@@ -101,7 +101,7 @@ travel_agent_pro/
 - 核心定位：路径规划优化问题——最小化无效移动，最大化体验密度
 - **双执行模式**：
   - **串行模式**（默认回退）：AgentLoop 内 LLM 逐日生成，与原有流程一致
-  - **并行 Orchestrator-Workers 模式**：Python Orchestrator（纯代码调度器，非 LLM）将骨架拆分为 N 个 DayTask，并行派发 N 个 Day Worker（轻量 LLM Agent，独立上下文），收集结果后做全局验证（POI 去重 / 预算检查 / 天数覆盖 / 时间冲突），最后统一写入 `replace_all_daily_plans`。`GlobalValidationIssue` 带 `severity`（`"error"` | `"warning"`）字段，便于后续按严重度决定是否重派
+  - **并行 Orchestrator-Workers 模式**：Python Orchestrator（纯代码调度器，非 LLM）将骨架拆分为 N 个 DayTask，经 `_compile_day_tasks` 注入跨天约束（forbidden_pois / mobility_envelope / date_role），并行派发 N 个 Day Worker（轻量 LLM Agent，独立上下文），收集结果后做全局验证（POI 去重 / 预算检查 / 天数覆盖 / 时间冲突 / 语义去重 / 交通衔接 / 节奏匹配），error 级问题触发最多 1 轮 re-dispatch（注入 repair_hints 重跑受影响天），最后统一写入 `replace_all_daily_plans`
   - 并行模式通过 `config.yaml` 的 `phase5.parallel` 段控制（`enabled` / `max_workers` / `worker_timeout_seconds` / `fallback_to_serial`）
   - Worker 共享相同 system prompt prefix → KV-Cache 命中率 ~93.75%（Manus pattern）
   - Worker 只有只读工具，写入由 Orchestrator 统一完成
