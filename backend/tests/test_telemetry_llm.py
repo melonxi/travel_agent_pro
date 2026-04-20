@@ -1,6 +1,8 @@
 # backend/tests/test_telemetry_llm.py
+import asyncio
 import opentelemetry.trace as _trace_module
 import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -9,6 +11,26 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from agent.types import Message, Role
 from telemetry.attributes import LLM_PROVIDER, LLM_MODEL
+
+
+class _AsyncChunkStream:
+    def __init__(self, chunks):
+        self._chunks = iter(chunks)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._chunks)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
+def _openai_stream_chunk(*, content: str | None = None, finish_reason=None):
+    delta = SimpleNamespace(content=content, tool_calls=None)
+    choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
+    return SimpleNamespace(choices=[choice])
 
 
 def _reset_tracer_provider():
@@ -115,6 +137,35 @@ async def test_openai_chat_request_event_with_tools(otel_exporter):
     span = next(s for s in spans if s.name == "llm.chat")
     req_event = next(e for e in span.events if e.name == EVENT_LLM_REQUEST)
     assert req_event.attributes["has_tools"] is True
+
+
+async def test_openai_stream_can_close_from_different_task_without_otel_context_error(
+    otel_exporter,
+):
+    stream = _AsyncChunkStream(
+        [
+            _openai_stream_chunk(content="hello"),
+            _openai_stream_chunk(finish_reason="stop"),
+        ]
+    )
+
+    with patch("llm.openai_provider.AsyncOpenAI") as MockClient:
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(return_value=stream)
+
+        from llm.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(model="gpt-4o")
+        generator = provider.chat([Message(role=Role.USER, content="hello")])
+
+        first = await generator.__anext__()
+        assert first.content == "hello"
+
+        close_task = asyncio.create_task(generator.aclose())
+        await close_task
+
+    spans = otel_exporter.get_finished_spans()
+    assert any(span.name == "llm.chat" for span in spans)
 
 
 async def test_anthropic_chat_has_request_event(otel_exporter):
