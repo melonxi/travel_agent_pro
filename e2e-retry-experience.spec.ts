@@ -128,6 +128,86 @@ test.describe('重试与中断恢复体验', () => {
     await expect(page.locator('.message.assistant .bubble').last()).toContainText('继续补完。')
   })
 
+  test('继续生成时同一个 internal task 原位更新而不是新增第二张卡片', async ({ page }) => {
+    let continueCalled = false
+
+    await page.route(`**/api/chat/${MOCK_SESSION_ID}`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        headers: { 'Cache-Control': 'no-cache', Connection: 'keep-alive' },
+        body: createSseBody([
+          {
+            type: 'internal_task',
+            task: {
+              id: 'soft_judge:resume-same-task',
+              kind: 'soft_judge',
+              label: '行程质量评审',
+              status: 'pending',
+              message: '正在检查行程质量…',
+              blocking: true,
+              scope: 'turn',
+              started_at: 1776614400,
+            },
+          },
+          {
+            type: 'error',
+            message: '模型回复过程中连接中断。',
+            error_code: 'LLM_STREAM_INTERRUPTED',
+            retryable: true,
+            can_continue: true,
+            failure_phase: 'streaming',
+          },
+        ]),
+      })
+    })
+
+    await page.route(`**/api/chat/${MOCK_SESSION_ID}/continue`, async (route) => {
+      continueCalled = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        headers: { 'Cache-Control': 'no-cache', Connection: 'keep-alive' },
+        body: createSseBody([
+          {
+            type: 'internal_task',
+            task: {
+              id: 'soft_judge:resume-same-task',
+              kind: 'soft_judge',
+              label: '行程质量评审',
+              status: 'success',
+              message: '评分 4.6/5，未发现需要立即处理的问题。',
+              blocking: true,
+              scope: 'turn',
+              started_at: 1776614400,
+              ended_at: 1776614401,
+              result: { overall: 4.6 },
+            },
+          },
+          { type: 'text_delta', content: '继续补完。' },
+          { type: 'done' },
+        ]),
+      })
+    })
+
+    await page.locator('.input-bar input').fill('测试继续生成时的内部任务合并')
+    await page.locator('.send-btn:not(.send-btn--hidden)').click()
+
+    await expect(page.locator('.system-internal-task.pending')).toContainText('正在检查行程质量…')
+    await expect(page.getByRole('button', { name: '继续生成' })).toBeVisible()
+
+    await page.getByRole('button', { name: '继续生成' }).click()
+    await expect.poll(() => continueCalled).toBe(true)
+
+    const taskCards = page.locator('.message.system-internal-task', { hasText: '行程质量评审' })
+    await expect(taskCards).toHaveCount(1)
+    await expect(page.locator('.system-internal-task.pending', { hasText: '行程质量评审' })).toHaveCount(0)
+    await expect(page.locator('.system-internal-task.success', { hasText: '行程质量评审' })).toHaveCount(1)
+    await expect(taskCards.first()).toContainText('评分 4.6/5，未发现需要立即处理的问题。')
+    await expect(page.locator('.chat-status')).toHaveCount(0)
+    await expect(page.locator('.message.assistant .bubble').last()).toContainText('继续补完。')
+  })
+
   test('可重试错误时显示重新发送按钮并再次发起上一条消息', async ({ page }) => {
     const requests: string[] = []
 
