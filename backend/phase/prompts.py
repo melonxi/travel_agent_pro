@@ -419,8 +419,21 @@ PHASE3_STEP_PROMPTS: dict[str, str] = {
 每套骨架的 **最小结构化字段**（写入 `skeleton_plans` 时必须包含）：
 - `id`：唯一标识符，必须是简短稳定的英文 ID（如 `"plan_A"`、`"plan_B"`），后续选择时作为唯一引用主键
 - `name`：方案显示名称（如"轻松版""平衡版""高密度版"），前端卡片标题优先读取此字段
-- `days`：list，每天分配的主区域和核心活动
+- `days`：list，每天必须包含：
+  - `area_cluster`：当天主区域列表（如 `["浅草", "上野"]`）
+  - `theme`：当天主题
+  - `locked_pois`：该天独占的强锚点列表（如 `["浅草寺"]`）。每个 POI 只能被一天 lock，不允许跨天重复。可以为空列表。
+  - `candidate_pois`：该天允许使用的候选 POI 池（如 `["仲见世商店街", "上野公園"]`），不能为空
+  - `core_activities`：核心活动
+  - `fatigue_level`：疲劳等级（low / medium / high）
+  - `budget_level`：预算等级（low / medium / high）
 - `tradeoffs`：保留了什么、放弃了什么
+
+可选字段（有则更好，没有时系统自动推导）：
+- `excluded_pois`：该天显式排除的 POI
+- `date_role`：`"arrival_day"` / `"departure_day"` / `"full_day"`
+- `mobility_envelope`：`{ "max_cross_area_hops": 1, "max_transit_leg_min": 35 }`
+- `fallback_slots`：`[{ "replace_if_unavailable": "浅草寺", "alternatives": ["今户神社"] }]`
 
 注意：`id` 必须在同一组骨架中唯一且稳定，`selected_skeleton_id` 必须精确等于某套骨架的 `id` 值。不要用"方案A""轻松版"等中文名作为 ID。
 
@@ -482,7 +495,9 @@ PHASE3_STEP_PROMPTS: dict[str, str] = {
 - **没有搜索攻略就直接生成骨架**——这是最常见的失败模式，会导致方案"逻辑正确但不实用"
 - 骨架之间差异太小（仅顺序不同，无实质取舍差异）
 - 没有说明取舍（保留了什么、放弃了什么）
-- 没有按锚点思考直接生成方案""",
+- 没有按锚点思考直接生成方案
+- **locked_pois 跨天重复**——同一个 POI 被两天同时 lock，会导致 Phase 5 并行 Worker 产生冲突
+- **candidate_pois 为空**——Phase 5 Worker 没有候选池就只能凭空创造，容易偏离骨架意图""",
     "lock": """# 当前子阶段：lock — 锁定大交通和住宿
 
 ## ⚠️ 输出协议
