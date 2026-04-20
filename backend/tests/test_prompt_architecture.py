@@ -128,6 +128,16 @@ class TestPhase3Split:
             or "锚定" in PHASE3_STEP_PROMPTS["skeleton"]
         )
 
+    def test_skeleton_marks_candidate_pois_as_single_day_owned(self):
+        assert "单天专属候选池" in PHASE3_STEP_PROMPTS["skeleton"]
+
+    def test_skeleton_requires_global_uniqueness_across_locked_and_candidate(self):
+        prompt = PHASE3_STEP_PROMPTS["skeleton"]
+        assert "locked_pois" in prompt
+        assert "candidate_pois" in prompt
+        assert "同一套 skeleton 内" in prompt
+        assert "只能出现在一天" in prompt
+
     def test_lock_mentions_transport_timing(self):
         """Lock must address transport timing — the fix for Question 2."""
         assert "大交通" in PHASE3_STEP_PROMPTS["lock"]
