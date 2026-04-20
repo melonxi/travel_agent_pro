@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from math import radians, sin, cos, sqrt, atan2
 from typing import Any, AsyncIterator
 
 from opentelemetry import trace
@@ -66,6 +67,36 @@ def _time_to_minutes(t: str) -> int | None:
         return h * 60 + m
     except (ValueError, AttributeError):
         return None
+
+
+def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    R = 6_371_000
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    return R * 2 * atan2(sqrt(a), sqrt(1 - a))
+
+
+def _levenshtein(a: str, b: str) -> int:
+    if len(a) < len(b):
+        return _levenshtein(b, a)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a):
+        curr = [i + 1]
+        for j, cb in enumerate(b):
+            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (ca != cb)))
+        prev = curr
+    return prev[-1]
+
+
+def _names_similar(a: str, b: str) -> bool:
+    a_norm = a.lower().strip()
+    b_norm = b.lower().strip()
+    if a_norm in b_norm or b_norm in a_norm:
+        return True
+    return _levenshtein(a_norm, b_norm) <= 2
 
 
 class Phase5Orchestrator:
@@ -171,6 +202,48 @@ class Phase5Orchestrator:
         # 4. Time conflicts
         issues.extend(self._validate_time_conflicts(dayplans))
 
+        # 5. Semantic duplicates
+        issues.extend(self._validate_semantic_duplicates(dayplans))
+
+        return issues
+
+    def _validate_semantic_duplicates(
+        self, dayplans: list[dict[str, Any]]
+    ) -> list[GlobalValidationIssue]:
+        issues: list[GlobalValidationIssue] = []
+        all_pois: list[tuple[int, str, float, float]] = []
+        for dp in dayplans:
+            day = dp.get("day", 0)
+            for act in dp.get("activities", []):
+                loc = act.get("location", {})
+                if not isinstance(loc, dict):
+                    continue
+                lat = loc.get("lat")
+                lng = loc.get("lng")
+                name = act.get("name", "")
+                if name and lat is not None and lng is not None:
+                    all_pois.append((day, name, float(lat), float(lng)))
+
+        seen_pairs: set[tuple[int, int]] = set()
+        for i, (day_a, name_a, lat_a, lng_a) in enumerate(all_pois):
+            for j, (day_b, name_b, lat_b, lng_b) in enumerate(all_pois):
+                if i >= j or day_a == day_b:
+                    continue
+                pair = (i, j)
+                if pair in seen_pairs:
+                    continue
+                dist = _haversine_meters(lat_a, lng_a, lat_b, lng_b)
+                if dist < 200 and _names_similar(name_a, name_b):
+                    seen_pairs.add(pair)
+                    issues.append(GlobalValidationIssue(
+                        issue_type="semantic_duplicate",
+                        description=(
+                            f"'{name_a}'(Day {day_a}) 与 '{name_b}'(Day {day_b}) "
+                            f"疑似同一地点（距离 {dist:.0f}m）"
+                        ),
+                        affected_days=[day_b],
+                        severity="error",
+                    ))
         return issues
 
     def _validate_time_conflicts(

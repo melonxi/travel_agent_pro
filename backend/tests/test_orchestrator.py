@@ -128,10 +128,10 @@ class TestGlobalValidation:
     def _make_dayplan_dict(self, day: int, date: str, activities: list[dict]) -> dict:
         return {"day": day, "date": date, "notes": "", "activities": activities}
 
-    def _make_activity(self, name: str, cost: float = 0) -> dict:
+    def _make_activity(self, name: str, cost: float = 0, lat: float = 35.0, lng: float = 139.0) -> dict:
         return {
             "name": name,
-            "location": {"name": name, "lat": 35.0, "lng": 139.0},
+            "location": {"name": name, "lat": lat, "lng": lng},
             "start_time": "09:00",
             "end_time": "10:00",
             "category": "activity",
@@ -141,9 +141,9 @@ class TestGlobalValidation:
     def test_no_issues_when_valid(self):
         plan = _make_plan_with_skeleton()
         dayplans = [
-            self._make_dayplan_dict(1, "2026-05-01", [self._make_activity("A", 5000)]),
-            self._make_dayplan_dict(2, "2026-05-02", [self._make_activity("B", 5000)]),
-            self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C", 5000)]),
+            self._make_dayplan_dict(1, "2026-05-01", [self._make_activity("A", 5000, lat=35.7, lng=139.7)]),
+            self._make_dayplan_dict(2, "2026-05-02", [self._make_activity("B", 5000, lat=35.6, lng=139.6)]),
+            self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C", 5000, lat=35.5, lng=139.5)]),
         ]
         orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
@@ -252,6 +252,98 @@ class TestTimeConflictValidation:
         for issue in issues:
             assert hasattr(issue, "severity")
             assert issue.severity in ("error", "warning")
+
+
+class TestSemanticDuplicateValidation:
+    def _make_dayplan_dict(self, day: int, date: str, activities: list[dict]) -> dict:
+        return {"day": day, "date": date, "notes": "", "activities": activities}
+
+    def _make_geo_activity(self, name: str, lat: float, lng: float) -> dict:
+        return {
+            "name": name,
+            "location": {"name": name, "lat": lat, "lng": lng},
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "category": "activity",
+            "cost": 0,
+        }
+
+    def test_no_duplicate_when_far_apart(self):
+        plan = _make_plan_with_skeleton()
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_geo_activity("浅草寺", 35.7148, 139.7967),
+            ]),
+            self._make_dayplan_dict(2, "2026-05-02", [
+                self._make_geo_activity("明治神宫", 35.6764, 139.6993),
+            ]),
+            self._make_dayplan_dict(3, "2026-05-03", [
+                self._make_geo_activity("上野公園", 35.7146, 139.7734),
+            ]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        sem_issues = [i for i in issues if i.issue_type == "semantic_duplicate"]
+        assert len(sem_issues) == 0
+
+    def test_detects_nearby_with_similar_name(self):
+        """Same location (< 200m), similar name → semantic duplicate."""
+        plan = _make_plan_with_skeleton()
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_geo_activity("浅草寺", 35.71478, 139.79675),
+            ]),
+            self._make_dayplan_dict(2, "2026-05-02", [
+                self._make_geo_activity("浅草寺観音堂", 35.71485, 139.79680),
+            ]),
+            self._make_dayplan_dict(3, "2026-05-03", [
+                self._make_geo_activity("C", 35.0, 139.0),
+            ]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        sem_issues = [i for i in issues if i.issue_type == "semantic_duplicate"]
+        assert len(sem_issues) == 1
+        assert sem_issues[0].severity == "error"
+
+    def test_nearby_but_different_name_no_duplicate(self):
+        """< 200m but completely different names → NOT duplicate."""
+        plan = _make_plan_with_skeleton()
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_geo_activity("浅草寺", 35.71478, 139.79675),
+            ]),
+            self._make_dayplan_dict(2, "2026-05-02", [
+                self._make_geo_activity("雷門前蕎麦屋", 35.71490, 139.79670),
+            ]),
+            self._make_dayplan_dict(3, "2026-05-03", [
+                self._make_geo_activity("C", 35.0, 139.0),
+            ]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        sem_issues = [i for i in issues if i.issue_type == "semantic_duplicate"]
+        assert len(sem_issues) == 0
+
+    def test_same_day_nearby_not_flagged(self):
+        """Same day duplicates are NOT flagged (only cross-day)."""
+        plan = _make_plan_with_skeleton()
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_geo_activity("浅草寺", 35.71478, 139.79675),
+                self._make_geo_activity("浅草寺観音堂", 35.71485, 139.79680),
+            ]),
+            self._make_dayplan_dict(2, "2026-05-02", [
+                self._make_geo_activity("明治神宫", 35.6764, 139.6993),
+            ]),
+            self._make_dayplan_dict(3, "2026-05-03", [
+                self._make_geo_activity("上野公園", 35.7146, 139.7734),
+            ]),
+        ]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        sem_issues = [i for i in issues if i.issue_type == "semantic_duplicate"]
+        assert len(sem_issues) == 0
 
 
 @pytest.mark.asyncio
