@@ -94,6 +94,8 @@ def _levenshtein(a: str, b: str) -> int:
 def _names_similar(a: str, b: str) -> bool:
     a_norm = a.lower().strip()
     b_norm = b.lower().strip()
+    if not a_norm or not b_norm:
+        return False
     if a_norm in b_norm or b_norm in a_norm:
         return True
     return _levenshtein(a_norm, b_norm) <= 2
@@ -260,7 +262,11 @@ class Phase5Orchestrator:
                 curr_start = _time_to_minutes(curr.get("start_time", ""))
                 travel = curr.get("transport_duration_min", 0) or 0
                 if prev_end is not None and curr_start is not None:
-                    if prev_end + travel > curr_start:
+                    # Handle midnight crossing: large backward jump (>12h) means next day
+                    effective_start = curr_start
+                    if prev_end - curr_start > 720:
+                        effective_start = curr_start + 1440
+                    if prev_end + travel > effective_start:
                         issues.append(GlobalValidationIssue(
                             issue_type="time_conflict",
                             description=(
