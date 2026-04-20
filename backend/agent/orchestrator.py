@@ -695,6 +695,26 @@ class Phase5Orchestrator:
                         f"第 {task.day} 天重试失败",
                     )
 
+            # 7b. Check for NEEDS_PHASE3_REPLAN from any worker
+            all_replan_errors: list[str] = []
+            for ws in worker_statuses:
+                if ws.get("error_code") == "NEEDS_PHASE3_REPLAN":
+                    all_replan_errors.append(
+                        f"Day {ws['day']}: {ws.get('error', 'unknown')}"
+                    )
+
+            if all_replan_errors:
+                reason = (
+                    "骨架分配失败，以下天数无法按当前骨架展开:\n"
+                    + "\n".join(all_replan_errors)
+                )
+                yield LLMChunk(
+                    type=ChunkType.TEXT_DELTA,
+                    content=f"\n\n⚠️ {reason}\n需要回退到 Phase 3 重新调整骨架方案。\n",
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+
             # 8. Sort and validate
             dayplans = sorted(
                 [r.dayplan for r in successes if r.dayplan],

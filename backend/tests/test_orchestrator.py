@@ -1,6 +1,6 @@
 # backend/tests/test_orchestrator.py
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from agent.orchestrator import (
     Phase5Orchestrator,
@@ -832,3 +832,57 @@ class TestCompileDayTasks:
         compiled = orch._compile_day_tasks(tasks)
         assert compiled[0].mobility_envelope["max_cross_area_hops"] == 5
         assert compiled[0].mobility_envelope["max_transit_leg_min"] == 60
+
+
+class TestBacktrackProtocol:
+    @pytest.mark.asyncio
+    async def test_needs_replan_triggers_backtrack_chunk(self):
+        """When a worker returns NEEDS_PHASE3_REPLAN, orchestrator should yield backtrack text."""
+        plan = _make_plan_with_skeleton()
+        plan.skeleton_plans = [{
+            "id": "plan_A", "name": "平衡版",
+            "days": [
+                {"area_cluster": ["A"], "locked_pois": ["X"], "candidate_pois": ["y"]},
+                {"area_cluster": ["B"], "locked_pois": ["Z"], "candidate_pois": ["w"]},
+                {"area_cluster": ["C"], "locked_pois": [], "candidate_pois": ["v"]},
+            ],
+        }]
+
+        replan_result = DayWorkerResult(
+            day=1, date="2026-05-01", success=False, dayplan=None,
+            error="locked_pois ['X'] 全部不可行", error_code="NEEDS_PHASE3_REPLAN",
+        )
+        ok_result_2 = DayWorkerResult(
+            day=2, date="2026-05-02", success=True,
+            dayplan={"day": 2, "date": "2026-05-02", "notes": "", "activities": []},
+        )
+        ok_result_3 = DayWorkerResult(
+            day=3, date="2026-05-03", success=True,
+            dayplan={"day": 3, "date": "2026-05-03", "notes": "", "activities": []},
+        )
+
+        mock_llm = AsyncMock()
+        mock_tool_engine = AsyncMock()
+
+        with patch("agent.orchestrator.run_day_worker") as mock_worker:
+            async def side_effect(**kwargs):
+                day = kwargs["task"].day
+                if day == 1:
+                    return replan_result
+                elif day == 2:
+                    return ok_result_2
+                else:
+                    return ok_result_3
+            mock_worker.side_effect = side_effect
+
+            orch = Phase5Orchestrator(
+                plan=plan, llm=mock_llm, tool_engine=mock_tool_engine,
+                config=Phase5ParallelConfig(max_workers=3, fallback_to_serial=False),
+            )
+            chunks = []
+            async for chunk in orch.run():
+                chunks.append(chunk)
+
+            text_chunks = [c for c in chunks if c.type == ChunkType.TEXT_DELTA]
+            combined_text = "".join(c.content for c in text_chunks if c.content)
+            assert "骨架分配失败" in combined_text or "NEEDS_PHASE3_REPLAN" in combined_text or "回退" in combined_text

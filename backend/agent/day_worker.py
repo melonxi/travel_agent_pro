@@ -31,6 +31,7 @@ OnProgress = Callable[[int, str, dict], None] | None
 
 _MAX_SAME_QUERY = 2
 _MAX_POI_RECOVERY = 3
+ERROR_NEEDS_PHASE3_REPLAN = "NEEDS_PHASE3_REPLAN"
 
 _JSON_REPAIR_PROMPT = (
     "只输出合法 DayPlan JSON，必须包含 `day`、`date`、`activities`。"
