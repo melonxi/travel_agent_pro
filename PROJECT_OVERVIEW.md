@@ -101,7 +101,7 @@ travel_agent_pro/
 - 核心定位：路径规划优化问题——最小化无效移动，最大化体验密度
 - **双执行模式**：
   - **串行模式**（默认回退）：AgentLoop 内 LLM 逐日生成，与原有流程一致
-  - **并行 Orchestrator-Workers 模式**：Python Orchestrator（纯代码调度器，非 LLM）将骨架拆分为 N 个 DayTask，并行派发 N 个 Day Worker（轻量 LLM Agent，独立上下文），收集结果后做全局验证（POI 去重 / 预算检查 / 天数覆盖），最后统一写入 `replace_all_daily_plans`
+  - **并行 Orchestrator-Workers 模式**：Python Orchestrator（纯代码调度器，非 LLM）将骨架拆分为 N 个 DayTask，并行派发 N 个 Day Worker（轻量 LLM Agent，独立上下文），收集结果后做全局验证（POI 去重 / 预算检查 / 天数覆盖 / 时间冲突），最后统一写入 `replace_all_daily_plans`。`GlobalValidationIssue` 带 `severity`（`"error"` | `"warning"`）字段，便于后续按严重度决定是否重派
   - 并行模式通过 `config.yaml` 的 `phase5.parallel` 段控制（`enabled` / `max_workers` / `worker_timeout_seconds` / `fallback_to_serial`）
   - Worker 共享相同 system prompt prefix → KV-Cache 命中率 ~93.75%（Manus pattern）
   - Worker 只有只读工具，写入由 Orchestrator 统一完成
@@ -192,7 +192,7 @@ travel_agent_pro/
 工具执行阶段产生的 SYSTEM 消息（如实时约束检查）不会立刻 append 到消息历史，而是缓存到 session 级缓冲区，在下一次 LLM 调用前统一 flush。目的是保证 `assistant.tool_calls → 全部 tool 答复` 的协议序列原子性；并行 tool_calls 期间任何 SYSTEM 都落在整组 tool 之后、下一次 assistant 之前。缓冲区不落盘。
 
 ### Internal task stream
-后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务，并通过 SSE `{"type":"internal_task","task":...}` 输出到聊天流。前端 `ChatPanel` 按 `task.id` 合并生命周期更新，`MessageBubble` 渲染为系统任务卡，和真实工具卡保持视觉与语义区隔。
+后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务，并通过 SSE `{"type":"internal_task","task":...}` 输出到聊天流。前端 `ChatPanel` 按 `task.id` 合并生命周期更新；除当前 SSE 流内的快速映射外，还需要对已有消息列表做按 `task.id` 的回写查找，确保 `memory_recall`、`memory_extraction`、`quality_gate` 等内部任务在跨流场景下不会出现一张卡停留在进行中、另一张卡再显示完成的重复状态。`MessageBubble` 渲染为系统任务卡，和真实工具卡保持视觉与语义区隔。
 
 当前进入聊天流的内部任务包括：`soft_judge`（工具结果后的行程质量评审）、`quality_gate`（阶段推进检查）、`context_compaction`（上下文整理）、`reflection`（自检提示注入）、`phase5_orchestration`（Phase 5 并行编排）、`memory_recall`（本轮记忆召回）和 `memory_extraction`（后台记忆候选提取）。`save_day_plan` / `replace_all_day_plans` 等真实工具的 `TOOL_RESULT` 会先到达前端并结束工具卡，随后才显示软评审内部任务，避免用户误以为工具仍在执行。
 
