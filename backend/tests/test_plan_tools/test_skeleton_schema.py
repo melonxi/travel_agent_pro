@@ -115,6 +115,129 @@ async def test_cross_day_locked_poi_duplicate_raises():
 
 
 @pytest.mark.asyncio
+async def test_cross_day_candidate_poi_duplicate_raises():
+    plan = _make_plan()
+    tool = _make_tool(plan)
+    with pytest.raises(ToolError, match="上野公園"):
+        await tool(plans=[{
+            "id": "plan_a",
+            "name": "平衡版",
+            "days": [
+                {
+                    "area_cluster": ["浅草"],
+                    "locked_pois": ["浅草寺"],
+                    "candidate_pois": ["上野公園", "仲见世商店街"],
+                },
+                {
+                    "area_cluster": ["上野"],
+                    "locked_pois": ["东京塔"],
+                    "candidate_pois": ["上野公園", "不忍池"],
+                },
+            ],
+        }])
+
+
+@pytest.mark.asyncio
+async def test_cross_day_locked_candidate_conflict_raises():
+    plan = _make_plan()
+    tool = _make_tool(plan)
+    with pytest.raises(ToolError, match="浅草寺"):
+        await tool(plans=[{
+            "id": "plan_a",
+            "name": "平衡版",
+            "days": [
+                {
+                    "area_cluster": ["浅草"],
+                    "locked_pois": ["浅草寺"],
+                    "candidate_pois": ["仲见世商店街"],
+                },
+                {
+                    "area_cluster": ["上野"],
+                    "locked_pois": ["东京塔"],
+                    "candidate_pois": ["浅草寺", "上野公園"],
+                },
+            ],
+        }])
+
+
+@pytest.mark.asyncio
+async def test_cross_day_candidate_locked_conflict_raises():
+    plan = _make_plan()
+    tool = _make_tool(plan)
+    with pytest.raises(ToolError, match="浅草寺"):
+        await tool(plans=[{
+            "id": "plan_a",
+            "name": "平衡版",
+            "days": [
+                {
+                    "area_cluster": ["浅草"],
+                    "locked_pois": ["仲见世商店街"],
+                    "candidate_pois": ["浅草寺", "上野公園"],
+                },
+                {
+                    "area_cluster": ["上野"],
+                    "locked_pois": ["浅草寺"],
+                    "candidate_pois": ["不忍池", "东京塔"],
+                },
+            ],
+        }])
+
+
+@pytest.mark.asyncio
+async def test_same_day_locked_candidate_conflict_raises():
+    plan = _make_plan()
+    tool = _make_tool(plan)
+    with pytest.raises(ToolError, match="浅草寺"):
+        await tool(plans=[{
+            "id": "plan_a",
+            "name": "平衡版",
+            "days": [
+                {
+                    "area_cluster": ["浅草"],
+                    "locked_pois": ["浅草寺"],
+                    "candidate_pois": ["浅草寺", "仲见世商店街"],
+                },
+            ],
+        }])
+
+
+@pytest.mark.asyncio
+async def test_same_day_candidate_duplicate_raises():
+    plan = _make_plan()
+    tool = _make_tool(plan)
+    with pytest.raises(ToolError, match="仲见世商店街"):
+        await tool(plans=[{
+            "id": "plan_a",
+            "name": "平衡版",
+            "days": [
+                {
+                    "area_cluster": ["浅草"],
+                    "locked_pois": [],
+                    "candidate_pois": ["仲见世商店街", "上野公園", "仲见世商店街"],
+                },
+            ],
+        }])
+
+
+@pytest.mark.asyncio
+async def test_same_day_locked_duplicate_raises():
+    plan = _make_plan()
+    tool = _make_tool(plan)
+    with pytest.raises(ToolError, match="浅草寺"):
+        await tool(plans=[{
+            "id": "plan_a",
+            "name": "平衡版",
+            "days": [
+                {
+                    "area_cluster": ["浅草"],
+                    "locked_pois": ["浅草寺", "浅草寺"],
+                    "candidate_pois": ["仲见世商店街"],
+                },
+            ],
+        }])
+
+
+@pytest.mark.asyncio
 async def test_empty_locked_pois_is_valid():
     plan = _make_plan()
     tool = _make_tool(plan)

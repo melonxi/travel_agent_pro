@@ -137,6 +137,8 @@ class TestPhase3Split:
         assert "candidate_pois" in prompt
         assert "同一套 skeleton 内" in prompt
         assert "只能出现在一天" in prompt
+        assert "上野公園" in prompt
+        assert "不要把 `上野公園` 同时写进 Day 1 和 Day 2 的 `candidate_pois`。" in prompt
 
     def test_lock_mentions_transport_timing(self):
         """Lock must address transport timing — the fix for Question 2."""

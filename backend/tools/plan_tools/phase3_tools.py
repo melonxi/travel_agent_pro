@@ -98,12 +98,29 @@ def _validate_skeleton_days(plans: list[dict]) -> None:
         if not isinstance(days, list):
             continue  # skip if not list (backward compat)
 
-        all_locked: dict[str, tuple[int, int]] = {}
+        poi_owners: dict[str, str] = {}
 
         for day_idx, day in enumerate(days):
             if not isinstance(day, dict):
                 continue
             prefix = f"plans[{plan_idx}].days[{day_idx}]"
+
+            def register_poi(poi: object, field_name: str, poi_idx: int) -> None:
+                if not isinstance(poi, str):
+                    return
+                location = f"{prefix}.{field_name}[{poi_idx}]"
+                previous_location = poi_owners.get(poi)
+                if previous_location is not None:
+                    raise ToolError(
+                        f"POI '{poi}' 重复出现在 {previous_location} 和 {location}；"
+                        "同一套 skeleton 内，POI 在 locked_pois/candidate_pois 中必须全局唯一",
+                        error_code="INVALID_VALUE",
+                        suggestion=(
+                            f"请把 '{poi}' 只保留在其中一天，并避免把弱候选跨天重复写入 "
+                            "candidate_pois。"
+                        ),
+                    )
+                poi_owners[poi] = location
 
             ac = day.get("area_cluster")
             if not ac or not isinstance(ac, list) or not all(isinstance(x, str) for x in ac):
@@ -129,18 +146,11 @@ def _validate_skeleton_days(plans: list[dict]) -> None:
                     suggestion='例如 "candidate_pois": ["仲见世商店街", "上野公園"]',
                 )
 
-            for poi in (lp if isinstance(lp, list) else []):
-                if not isinstance(poi, str):
-                    continue
-                if poi in all_locked:
-                    prev_p, prev_d = all_locked[poi]
-                    raise ToolError(
-                        f"'{poi}' 同时被 plans[{prev_p}].days[{prev_d}] "
-                        f"和 {prefix} locked，locked_pois 必须跨天唯一",
-                        error_code="INVALID_VALUE",
-                        suggestion=f"把 '{poi}' 只分配给一天，另一天可放入 candidate_pois",
-                    )
-                all_locked[poi] = (plan_idx, day_idx)
+            for poi_idx, poi in enumerate(lp if isinstance(lp, list) else []):
+                register_poi(poi, "locked_pois", poi_idx)
+
+            for poi_idx, poi in enumerate(cp if isinstance(cp, list) else []):
+                register_poi(poi, "candidate_pois", poi_idx)
 
 
 def _validated_skeleton_id_map(

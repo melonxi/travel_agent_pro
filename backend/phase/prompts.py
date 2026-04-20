@@ -422,12 +422,25 @@ PHASE3_STEP_PROMPTS: dict[str, str] = {
 - `days`：list，每天必须包含：
   - `area_cluster`：当天主区域列表（如 `["浅草", "上野"]`）
   - `theme`：当天主题
-  - `locked_pois`：该天独占的强锚点列表（如 `["浅草寺"]`）。每个 POI 只能被一天 lock，不允许跨天重复。可以为空列表。
-  - `candidate_pois`：该天允许使用的候选 POI 池（如 `["仲见世商店街", "上野公園"]`），不能为空
+  - `locked_pois`：该天独占的强锚点列表（如 `["浅草寺"]`）。每个 POI 只能被一天 lock，不允许跨天重复，也不能再出现在其他天的 `locked_pois` 或 `candidate_pois` 中。可以为空列表。
+  - `candidate_pois`：该天的 `单天专属候选池`（如 `["仲见世商店街", "上野公園"]`），不能为空。`candidate_pois` 里的 POI 也只能归属这一日，不允许出现在其他天的 `locked_pois` 或 `candidate_pois` 里。
   - `core_activities`：核心活动
   - `fatigue_level`：疲劳等级（low / medium / high）
   - `budget_level`：预算等级（low / medium / high）
 - `tradeoffs`：保留了什么、放弃了什么
+
+同一套 skeleton 内，一个 POI 只能出现在一天的 locked_pois 或 candidate_pois 中一次。不要把同一个 POI 当作多天共享候选池；如果只是弱备选，也必须只归属给最合适的一天。
+
+最小合法示例：
+Day 1:
+- `locked_pois`: `["浅草寺"]`
+- `candidate_pois`: `["仲见世商店街", "隅田公园"]`
+
+Day 2:
+- `locked_pois`: `["明治神宫"]`
+- `candidate_pois`: `["原宿", "代代木公园"]`
+
+不要把 `上野公園` 同时写进 Day 1 和 Day 2 的 `candidate_pois`。
 
 可选字段（有则更好，没有时系统自动推导）：
 - `excluded_pois`：该天显式排除的 POI
