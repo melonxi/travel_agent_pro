@@ -167,6 +167,53 @@ class Phase5Orchestrator:
             raise ValueError("未找到已选骨架方案")
         return split_skeleton_to_day_tasks(skeleton, self.plan)
 
+    def _compile_day_tasks(self, tasks: list[DayTask]) -> list[DayTask]:
+        """Enrich DayTasks with cross-day constraints derived from skeleton."""
+
+        # 1. Build global POI ownership map (locked only)
+        poi_owner: dict[str, int] = {}
+        for t in tasks:
+            for poi in t.locked_pois:
+                if poi in poi_owner:
+                    logger.warning(
+                        "POI '%s' locked by both Day %d and Day %d",
+                        poi, poi_owner[poi], t.day,
+                    )
+                poi_owner[poi] = t.day
+
+        # 2. Derive forbidden_pois for each day
+        for t in tasks:
+            t.forbidden_pois = [
+                poi for poi, owner_day in poi_owner.items()
+                if owner_day != t.day
+            ]
+
+        # 3. Fill mobility_envelope defaults (only if skeleton didn't provide)
+        pace_defaults = {
+            "relaxed":   {"max_cross_area_hops": 1, "max_transit_leg_min": 30},
+            "balanced":  {"max_cross_area_hops": 2, "max_transit_leg_min": 40},
+            "intensive": {"max_cross_area_hops": 3, "max_transit_leg_min": 50},
+        }
+        for t in tasks:
+            if not t.mobility_envelope:
+                t.mobility_envelope = dict(
+                    pace_defaults.get(t.pace, pace_defaults["balanced"])
+                )
+
+        # 4. Derive date_role (if skeleton didn't set it)
+        if tasks:
+            sorted_tasks = sorted(tasks, key=lambda x: x.day)
+            if len(sorted_tasks) == 1:
+                if sorted_tasks[0].date_role == "full_day":
+                    sorted_tasks[0].date_role = "arrival_departure_day"
+            else:
+                if sorted_tasks[0].date_role == "full_day":
+                    sorted_tasks[0].date_role = "arrival_day"
+                if sorted_tasks[-1].date_role == "full_day":
+                    sorted_tasks[-1].date_role = "departure_day"
+
+        return tasks
+
     def _global_validate(
         self, dayplans: list[dict[str, Any]]
     ) -> list[GlobalValidationIssue]:
@@ -414,6 +461,7 @@ class Phase5Orchestrator:
                 agent_status={"stage": "planning", "hint": "正在分解行程任务..."},
             )
             tasks = self._split_tasks()
+            tasks = self._compile_day_tasks(tasks)
             total_days = len(tasks)
             span.set_attribute("total_days", total_days)
 
@@ -658,7 +706,73 @@ class Phase5Orchestrator:
             )
             issues = self._global_validate(dayplans)
             for issue in issues:
-                logger.warning("Global validation: %s", issue.description)
+                logger.warning("Global validation [%s]: %s", issue.severity, issue.description)
+
+            # 8b. Re-dispatch for error-severity issues (max 1 round)
+            error_issues = [i for i in issues if i.severity == "error"]
+            if error_issues:
+                redispatch_days = set()
+                for ei in error_issues:
+                    redispatch_days.update(ei.affected_days)
+
+                task_by_day = {t.day: t for t in tasks}
+                for rd_day in sorted(redispatch_days):
+                    rd_task = task_by_day.get(rd_day)
+                    if rd_task is None:
+                        continue
+                    # Inject repair hints
+                    rd_task.repair_hints = [
+                        ei.description for ei in error_issues if rd_day in ei.affected_days
+                    ]
+                    idx = _find_worker_idx(rd_day)
+                    worker_statuses[idx].update({
+                        "status": "redispatch",
+                        "iteration": None,
+                        "current_tool": None,
+                        "error": None,
+                        "error_code": None,
+                    })
+                    yield self._build_progress_chunk(
+                        worker_statuses, total_days,
+                        f"校验发现问题，重新规划第 {rd_day} 天...",
+                    )
+                    # Re-run with updated suffix (includes repair_hints)
+                    rd_result = await run_day_worker(
+                        llm=self.llm,
+                        tool_engine=self.tool_engine,
+                        plan=self.plan,
+                        task=rd_task,
+                        shared_prefix=shared_prefix,
+                        max_iterations=self.config.worker_max_iterations,
+                        timeout_seconds=self.config.worker_timeout_seconds,
+                        on_progress=_make_progress_cb(idx),
+                    )
+                    if rd_result.success and rd_result.dayplan:
+                        # Replace in dayplans list
+                        dayplans = [
+                            dp for dp in dayplans if dp.get("day") != rd_day
+                        ]
+                        dayplans.append(rd_result.dayplan)
+                        dayplans.sort(key=lambda dp: dp.get("day", 0))
+                        worker_statuses[idx]["status"] = "done"
+                        worker_statuses[idx]["activity_count"] = len(
+                            rd_result.dayplan.get("activities", [])
+                        )
+                    else:
+                        worker_statuses[idx]["status"] = "failed"
+                        worker_statuses[idx]["error"] = _format_error(rd_result.error)
+
+                    yield self._build_progress_chunk(
+                        worker_statuses, total_days,
+                        f"第 {rd_day} 天重新规划{'完成' if rd_result.success else '失败'}",
+                    )
+
+                # Re-validate after re-dispatch
+                issues = self._global_validate(dayplans)
+                unresolved = [i for i in issues if i.severity == "error"]
+                if unresolved:
+                    for ui in unresolved:
+                        logger.warning("Unresolved after re-dispatch: %s", ui.description)
 
             # 9. Write results
             if dayplans:

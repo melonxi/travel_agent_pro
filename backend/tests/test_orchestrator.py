@@ -755,3 +755,80 @@ class TestPaceValidation:
         issues = orch._global_validate(dayplans)
         pace_issues = [i for i in issues if i.issue_type == "pace_mismatch"]
         assert len(pace_issues) == 0
+
+
+class TestCompileDayTasks:
+    def test_forbidden_pois_derived_from_other_days_locked(self):
+        plan = _make_plan_with_skeleton()
+        plan.skeleton_plans = [{
+            "id": "plan_A", "name": "平衡版",
+            "days": [
+                {"area_cluster": ["新宿"], "locked_pois": ["明治神宫"], "candidate_pois": ["竹下通"], "theme": "潮流"},
+                {"area_cluster": ["浅草"], "locked_pois": ["浅草寺"], "candidate_pois": ["仲见世"], "theme": "传统"},
+                {"area_cluster": ["涩谷"], "locked_pois": ["涩谷Sky"], "candidate_pois": ["银座"], "theme": "购物"},
+            ],
+        }]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        tasks = orch._split_tasks()
+        compiled = orch._compile_day_tasks(tasks)
+        # Day 1 should have Day 2+3's locked as forbidden
+        assert "浅草寺" in compiled[0].forbidden_pois
+        assert "涩谷Sky" in compiled[0].forbidden_pois
+        assert "明治神宫" not in compiled[0].forbidden_pois  # own locked, not forbidden
+        # Day 2 should have Day 1+3's locked as forbidden
+        assert "明治神宫" in compiled[1].forbidden_pois
+        assert "涩谷Sky" in compiled[1].forbidden_pois
+        assert "浅草寺" not in compiled[1].forbidden_pois
+
+    def test_date_role_first_last(self):
+        plan = _make_plan_with_skeleton()
+        plan.skeleton_plans = [{
+            "id": "plan_A", "name": "平衡版",
+            "days": [
+                {"area_cluster": ["A"], "locked_pois": [], "candidate_pois": ["x"]},
+                {"area_cluster": ["B"], "locked_pois": [], "candidate_pois": ["y"]},
+                {"area_cluster": ["C"], "locked_pois": [], "candidate_pois": ["z"]},
+            ],
+        }]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        tasks = orch._split_tasks()
+        compiled = orch._compile_day_tasks(tasks)
+        assert compiled[0].date_role == "arrival_day"
+        assert compiled[1].date_role == "full_day"
+        assert compiled[2].date_role == "departure_day"
+
+    def test_mobility_envelope_defaults_by_pace(self):
+        plan = _make_plan_with_skeleton()
+        plan.trip_brief = {"pace": "relaxed"}
+        plan.skeleton_plans = [{
+            "id": "plan_A", "name": "轻松版",
+            "days": [
+                {"area_cluster": ["A"], "locked_pois": [], "candidate_pois": ["x"]},
+                {"area_cluster": ["B"], "locked_pois": [], "candidate_pois": ["y"]},
+                {"area_cluster": ["C"], "locked_pois": [], "candidate_pois": ["z"]},
+            ],
+        }]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        tasks = orch._split_tasks()
+        compiled = orch._compile_day_tasks(tasks)
+        assert compiled[0].mobility_envelope["max_cross_area_hops"] == 1
+        assert compiled[0].mobility_envelope["max_transit_leg_min"] == 30
+
+    def test_skeleton_provided_envelope_preserved(self):
+        plan = _make_plan_with_skeleton()
+        plan.skeleton_plans = [{
+            "id": "plan_A", "name": "平衡版",
+            "days": [
+                {
+                    "area_cluster": ["A"], "locked_pois": [], "candidate_pois": ["x"],
+                    "mobility_envelope": {"max_cross_area_hops": 5, "max_transit_leg_min": 60},
+                },
+                {"area_cluster": ["B"], "locked_pois": [], "candidate_pois": ["y"]},
+                {"area_cluster": ["C"], "locked_pois": [], "candidate_pois": ["z"]},
+            ],
+        }]
+        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        tasks = orch._split_tasks()
+        compiled = orch._compile_day_tasks(tasks)
+        assert compiled[0].mobility_envelope["max_cross_area_hops"] == 5
+        assert compiled[0].mobility_envelope["max_transit_leg_min"] == 60
