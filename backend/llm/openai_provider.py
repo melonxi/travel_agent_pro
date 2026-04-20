@@ -158,7 +158,8 @@ class OpenAIProvider:
         tool_choice: dict | str | None = None,
     ) -> AsyncIterator[LLMChunk]:
         tracer = otel_trace.get_tracer("travel-agent-pro")
-        with tracer.start_as_current_span("llm.chat") as span:
+        span = tracer.start_span("llm.chat")
+        try:
             span.set_attribute(LLM_PROVIDER, "openai")
             span.set_attribute(LLM_MODEL, self.model)
             total_chars = sum(len(m.content or "") for m in messages)
@@ -347,6 +348,8 @@ class OpenAIProvider:
                         await _asyncio.sleep(delay)
                         continue
                     raise llm_err
+        finally:
+            span.end()
 
     async def count_tokens(self, messages: list[Message]) -> int:
         try:
