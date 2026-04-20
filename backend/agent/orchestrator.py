@@ -104,19 +104,29 @@ def _names_similar(a: str, b: str) -> bool:
 def _extract_transport_time(transport: dict[str, Any], direction: str) -> int | None:
     """Extract arrival/departure time from selected_transport dict.
 
-    direction: 'outbound' → arrival_time, 'return' → departure_time
+    direction: 'outbound' → last segment arrival_time (final destination),
+               'return'   → first segment departure_time (earliest departure)
     """
     segments = transport.get("segments")
     if isinstance(segments, list):
+        result: int | None = None
         for seg in segments:
             if not isinstance(seg, dict):
                 continue
             seg_dir = seg.get("direction", "")
             if seg_dir == direction:
                 if direction == "outbound":
-                    return _time_to_minutes(seg.get("arrival_time", ""))
+                    # Use last outbound segment's arrival (final destination)
+                    val = _time_to_minutes(seg.get("arrival_time", ""))
+                    if val is not None:
+                        result = val
                 else:
-                    return _time_to_minutes(seg.get("departure_time", ""))
+                    # Use first return segment's departure (earliest leave time)
+                    val = _time_to_minutes(seg.get("departure_time", ""))
+                    if val is not None:
+                        return val
+        if result is not None:
+            return result
     # Fallback: single-segment transport
     if direction == "outbound":
         return _time_to_minutes(transport.get("arrival_time", ""))
