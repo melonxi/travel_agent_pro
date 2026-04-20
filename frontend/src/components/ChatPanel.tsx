@@ -41,6 +41,7 @@ interface ChatMessage {
     reason: string
   }
   internalTask?: InternalTaskEvent
+  internalTaskId?: string
   memoryChip?: { count: number }
 }
 
@@ -569,34 +570,43 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
       )
     } else if (event.type === 'internal_task' && event.task) {
       const task = event.task
-      const existingMessageId = state.internalTaskMessageIds.get(task.id)
+      const mappedMessageId = state.internalTaskMessageIds.get(task.id)
       const startedAt = toClientTimestamp(task.started_at) ?? Date.now()
       const endedAt = toClientTimestamp(task.ended_at)
 
       setMessages((prev) => {
-        if (!existingMessageId) {
-          const messageId = createMessageId()
-          state.internalTaskMessageIds.set(task.id, messageId)
-          return insertBeforeAssistant(prev, state.currentAssistantId, {
-            id: messageId,
-            role: 'system',
-            content: task.message ?? '',
-            startedAt,
-            endedAt,
-            internalTask: task,
-          })
+        const fallbackMessage = mappedMessageId
+          ? undefined
+          : prev.find((message) => message.role === 'system' && message.internalTaskId === task.id)
+        const targetMessageId = mappedMessageId ?? fallbackMessage?.id
+
+        if (targetMessageId) {
+          state.internalTaskMessageIds.set(task.id, targetMessageId)
+          return prev.map((message) =>
+            message.id === targetMessageId
+              ? {
+                  ...message,
+                  content: task.message ?? message.content,
+                  startedAt: message.startedAt ?? startedAt,
+                  endedAt: endedAt ?? (task.status === 'pending' ? undefined : Date.now()),
+                  internalTask: task,
+                  internalTaskId: task.id,
+                }
+              : message,
+          )
         }
 
-        return prev.map((message) =>
-          message.id === existingMessageId
-            ? {
-                ...message,
-                content: task.message ?? message.content,
-                endedAt: endedAt ?? (task.status === 'pending' ? undefined : Date.now()),
-                internalTask: task,
-              }
-            : message,
-        )
+        const messageId = createMessageId()
+        state.internalTaskMessageIds.set(task.id, messageId)
+        return insertBeforeAssistant(prev, state.currentAssistantId, {
+          id: messageId,
+          role: 'system',
+          content: task.message ?? '',
+          startedAt,
+          endedAt,
+          internalTask: task,
+          internalTaskId: task.id,
+        })
       })
     } else if (event.type === 'state_update' && event.plan) {
       const changes = computeStateChanges(prevPlanRef.current, event.plan)
