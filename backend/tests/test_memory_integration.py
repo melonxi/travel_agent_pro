@@ -840,7 +840,7 @@ async def test_memory_extraction_reuses_primary_llm_config(app):
 
 
 @pytest.mark.asyncio
-async def test_memory_extraction_uses_forced_tool_call(app):
+async def test_memory_extraction_uses_routed_forced_tool_calls(app):
     observed = {"calls": []}
 
     async def fake_run(self, messages, phase, tools_override=None):
@@ -866,6 +866,38 @@ async def test_memory_extraction_uses_forced_tool_call(app):
                             "should_extract": True,
                             "reason": "explicit_preference_signal",
                             "message": "检测到可复用偏好信号",
+                            "routes": {"profile": True, "working_memory": True},
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            if tool_name == "extract_profile_memory":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_profile",
+                        name="extract_profile_memory",
+                        arguments={
+                            "profile_updates": {
+                                "constraints": [],
+                                "rejections": [],
+                                "stable_preferences": [
+                                    {
+                                        "domain": "food",
+                                        "key": "avoid_spicy",
+                                        "value": "不吃辣",
+                                        "polarity": "avoid",
+                                        "stability": "explicit_declared",
+                                        "confidence": 0.95,
+                                        "context": {},
+                                        "applicability": "通用旅行饮食偏好",
+                                        "recall_hints": {"keywords": ["不吃辣"]},
+                                        "source_refs": [],
+                                    }
+                                ],
+                                "preference_hypotheses": [],
+                            },
                         },
                     ),
                 )
@@ -874,27 +906,21 @@ async def test_memory_extraction_uses_forced_tool_call(app):
             yield LLMChunk(
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
-                    id="tc_memory",
-                    name="extract_memory_candidates",
+                    id="tc_working",
+                    name="extract_working_memory",
                     arguments={
-                        "profile_updates": {
-                            "constraints": [
-                                {
-                                    "domain": "hotel",
-                                    "key": "avoid_hostel",
-                                    "value": "不住青旅",
-                                    "confidence": 0.95,
-                                    "reason": "明确表达",
-                                    "evidence": "不住青旅",
-                                    "scope": "global",
-                                    "stability": "hard_constraint",
-                                }
-                            ],
-                            "rejections": [],
-                            "stable_preferences": [],
-                            "preference_hypotheses": [],
-                        },
-                        "working_memory": [],
+                        "working_memory": [
+                            {
+                                "id": "wm-avoid-disney",
+                                "type": "temporary_rejection",
+                                "domain": "attraction",
+                                "content": "这轮先别考虑迪士尼",
+                                "evidence": "这轮先别考虑迪士尼",
+                                "status": "active",
+                                "created_at": "2026-04-21T00:00:00Z",
+                                "expires_at": "2026-05-21T00:00:00Z",
+                            }
+                        ],
                     },
                 ),
             )
@@ -918,18 +944,15 @@ async def test_memory_extraction_uses_forced_tool_call(app):
     assert resp.status_code == 200
     assert [call["tool_name"] for call in observed["calls"]] == [
         "decide_memory_extraction",
-        "extract_memory_candidates",
+        "extract_profile_memory",
+        "extract_working_memory",
     ]
-    assert observed["calls"][0]["tool_choice"] == {
-        "type": "function",
-        "function": {"name": "decide_memory_extraction"},
-    }
-    assert observed["calls"][1]["tool_choice"] == {
-        "type": "function",
-        "function": {"name": "extract_memory_candidates"},
-    }
-    assert observed["calls"][0]["tools"][0]["name"] == "decide_memory_extraction"
-    assert observed["calls"][1]["tools"][0]["name"] == "extract_memory_candidates"
+    for call in observed["calls"]:
+        assert call["tool_choice"] == {
+            "type": "function",
+            "function": {"name": call["tool_name"]},
+        }
+        assert call["tools"][0]["name"] == call["tool_name"]
 
 
 @pytest.mark.asyncio
@@ -1028,7 +1051,19 @@ async def test_memory_extraction_success_when_auto_saved_items_written(app):
                             "should_extract": True,
                             "reason": "explicit_preference_signal",
                             "message": "检测到可复用偏好信号",
+                            "routes": {"profile": True, "working_memory": True},
                         },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            if tool_name == "extract_working_memory":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_working",
+                        name=tool_name,
+                        arguments={"working_memory": []},
                     ),
                 )
                 yield LLMChunk(type=ChunkType.DONE)
@@ -1036,8 +1071,8 @@ async def test_memory_extraction_success_when_auto_saved_items_written(app):
             yield LLMChunk(
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
-                    id="tc_memory",
-                    name="extract_memory_candidates",
+                    id="tc_profile",
+                    name="extract_profile_memory",
                     arguments={
                         "profile_updates": {
                             "constraints": [],
@@ -1058,7 +1093,6 @@ async def test_memory_extraction_success_when_auto_saved_items_written(app):
                             ],
                             "preference_hypotheses": [],
                         },
-                        "working_memory": [],
                     },
                 ),
             )

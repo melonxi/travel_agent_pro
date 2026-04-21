@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,12 +57,19 @@ from memory.async_jobs import (
     build_gate_user_window,
 )
 from memory.extraction import (
+    V3ExtractionResult,
     build_v3_extraction_gate_prompt,
     build_v3_extraction_gate_tool,
     build_v3_extraction_tool,
     build_v3_extraction_prompt,
+    build_v3_profile_extraction_prompt,
+    build_v3_profile_extraction_tool,
+    build_v3_working_memory_extraction_prompt,
+    build_v3_working_memory_extraction_tool,
     parse_v3_extraction_gate_tool_arguments,
     parse_v3_extraction_tool_arguments,
+    parse_v3_profile_extraction_tool_arguments,
+    parse_v3_working_memory_extraction_tool_arguments,
 )
 from memory.formatter import MemoryRecallTelemetry
 from memory.manager import MemoryManager
@@ -136,6 +143,7 @@ class MemoryExtractionGateDecision:
     should_extract: bool
     reason: str
     message: str
+    routes: dict[str, bool] = field(default_factory=dict)
     error: str | None = None
 
     @property
@@ -150,6 +158,7 @@ class MemoryExtractionGateDecision:
         result = {
             "should_extract": self.should_extract,
             "reason": self.reason,
+            "routes": dict(self.routes),
         }
         if self.error:
             result["error"] = self.error
@@ -1490,27 +1499,33 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         decision = parse_v3_extraction_gate_tool_arguments(tool_args)
         if not decision.reason:
             decision.reason = (
-                "memory_signal_detected"
+                "memory_routes_detected"
                 if decision.should_extract
-                else "no_reusable_memory_signal"
+                else "no_memory_routes"
             )
         if not decision.message:
             decision.message = (
-                "检测到可复用偏好信号"
+                "检测到需要提取的记忆信号"
                 if decision.should_extract
-                else "本轮未发现可复用记忆信号"
+                else "本轮未发现需要提取的长期画像或工作记忆信号"
             )
+        routes = {
+            "profile": decision.routes.profile,
+            "working_memory": decision.routes.working_memory,
+        }
         logger.warning(
-            "记忆提取判定完成 session=%s user=%s should_extract=%s reason=%s",
+            "记忆提取判定完成 session=%s user=%s should_extract=%s reason=%s routes=%s",
             session_id,
             user_id,
             decision.should_extract,
             decision.reason,
+            routes,
         )
         return MemoryExtractionGateDecision(
             should_extract=decision.should_extract,
             reason=decision.reason,
             message=decision.message,
+            routes=routes,
         )
 
     async def _extract_memory_candidates(
@@ -1519,6 +1534,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         user_id: str,
         user_messages: list[str],
         plan_snapshot: TravelPlanState,
+        routes: dict[str, bool] | None = None,
     ) -> MemoryExtractionOutcome:
         if not config.memory.enabled or not config.memory.extraction.enabled:
             return MemoryExtractionOutcome(
@@ -1549,6 +1565,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     user_id=user_id,
                     user_messages=user_messages,
                     plan_snapshot=plan_snapshot,
+                    routes=routes,
                 ),
                 timeout=_EXTRACTION_TIMEOUT_SECONDS,
             )
@@ -1579,17 +1596,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 error="记忆提取异常，请检查后端日志。",
             )
 
-    async def _do_extract_memory_candidates(
+    async def _extract_combined_memory_items(
         *,
         session_id: str,
         user_id: str,
         user_messages: list[str],
         plan_snapshot: TravelPlanState,
-    ) -> MemoryExtractionOutcome:
-        profile = await memory_mgr.v3_store.load_profile(user_id)
-        working_memory = await memory_mgr.v3_store.load_working_memory(
-            user_id, session_id, plan_snapshot.trip_id
-        )
+        profile: Any,
+        working_memory: Any,
+    ) -> V3ExtractionResult:
         prompt = build_v3_extraction_prompt(
             user_messages=user_messages,
             profile=profile,
@@ -1598,7 +1613,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         )
         extraction_llm = create_llm_provider(config.llm)
         logger.warning(
-            "记忆提取开始调用模型 session=%s user=%s model=%s prompt_chars=%s user_messages=%s",
+            "兼容记忆提取开始调用模型 session=%s user=%s model=%s prompt_chars=%s user_messages=%s",
             session_id,
             user_id,
             config.llm.model,
@@ -1611,14 +1626,136 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool_def=build_v3_extraction_tool(),
         )
         logger.warning(
-            "记忆提取模型返回 session=%s user=%s has_arguments=%s argument_keys=%s",
+            "兼容记忆提取模型返回 session=%s user=%s has_arguments=%s argument_keys=%s",
             session_id,
             user_id,
             bool(tool_args),
             sorted(tool_args.keys()) if isinstance(tool_args, dict) else [],
         )
+        return parse_v3_extraction_tool_arguments(tool_args)
 
-        result = parse_v3_extraction_tool_arguments(tool_args)
+    async def _extract_profile_memory_items(
+        *,
+        session_id: str,
+        user_id: str,
+        user_messages: list[str],
+        plan_snapshot: TravelPlanState,
+        profile: Any,
+    ) -> V3ExtractionResult:
+        prompt = build_v3_profile_extraction_prompt(
+            user_messages=user_messages,
+            profile=profile,
+            plan_facts=_memory_plan_facts(plan_snapshot),
+        )
+        extraction_llm = create_llm_provider(config.llm)
+        logger.warning(
+            "长期画像记忆提取开始调用模型 session=%s user=%s model=%s prompt_chars=%s user_messages=%s",
+            session_id,
+            user_id,
+            config.llm.model,
+            len(prompt),
+            len(user_messages),
+        )
+        tool_args = await _collect_forced_tool_call_arguments(
+            extraction_llm,
+            messages=[Message(role=Role.USER, content=prompt)],
+            tool_def=build_v3_profile_extraction_tool(),
+        )
+        logger.warning(
+            "长期画像记忆提取模型返回 session=%s user=%s has_arguments=%s argument_keys=%s",
+            session_id,
+            user_id,
+            bool(tool_args),
+            sorted(tool_args.keys()) if isinstance(tool_args, dict) else [],
+        )
+        return parse_v3_profile_extraction_tool_arguments(tool_args)
+
+    async def _extract_working_memory_items(
+        *,
+        session_id: str,
+        user_id: str,
+        user_messages: list[str],
+        plan_snapshot: TravelPlanState,
+        working_memory: Any,
+    ) -> V3ExtractionResult:
+        prompt = build_v3_working_memory_extraction_prompt(
+            user_messages=user_messages,
+            working_memory=working_memory,
+            plan_facts=_memory_plan_facts(plan_snapshot),
+        )
+        extraction_llm = create_llm_provider(config.llm)
+        logger.warning(
+            "工作记忆提取开始调用模型 session=%s user=%s model=%s prompt_chars=%s user_messages=%s",
+            session_id,
+            user_id,
+            config.llm.model,
+            len(prompt),
+            len(user_messages),
+        )
+        tool_args = await _collect_forced_tool_call_arguments(
+            extraction_llm,
+            messages=[Message(role=Role.USER, content=prompt)],
+            tool_def=build_v3_working_memory_extraction_tool(),
+        )
+        logger.warning(
+            "工作记忆提取模型返回 session=%s user=%s has_arguments=%s argument_keys=%s",
+            session_id,
+            user_id,
+            bool(tool_args),
+            sorted(tool_args.keys()) if isinstance(tool_args, dict) else [],
+        )
+        return parse_v3_working_memory_extraction_tool_arguments(tool_args)
+
+    async def _do_extract_memory_candidates(
+        *,
+        session_id: str,
+        user_id: str,
+        user_messages: list[str],
+        plan_snapshot: TravelPlanState,
+        routes: dict[str, bool] | None = None,
+    ) -> MemoryExtractionOutcome:
+        route_flags = routes or {"profile": True, "working_memory": True}
+        run_profile = bool(route_flags.get("profile"))
+        run_working = bool(route_flags.get("working_memory"))
+        if not run_profile and not run_working:
+            return MemoryExtractionOutcome(
+                status="skipped",
+                message="本轮没有新的可复用记忆",
+                item_ids=[],
+                reason="no_routes",
+            )
+
+        profile = await memory_mgr.v3_store.load_profile(user_id)
+        working_memory = await memory_mgr.v3_store.load_working_memory(
+            user_id, session_id, plan_snapshot.trip_id
+        )
+        logger.warning(
+            "记忆提取路由开始 session=%s user=%s routes=%s user_messages=%s",
+            session_id,
+            user_id,
+            route_flags,
+            len(user_messages),
+        )
+
+        result = V3ExtractionResult()
+        if run_profile:
+            profile_result = await _extract_profile_memory_items(
+                session_id=session_id,
+                user_id=user_id,
+                user_messages=user_messages,
+                plan_snapshot=plan_snapshot,
+                profile=profile,
+            )
+            result.profile_updates = profile_result.profile_updates
+        if run_working:
+            working_result = await _extract_working_memory_items(
+                session_id=session_id,
+                user_id=user_id,
+                user_messages=user_messages,
+                plan_snapshot=plan_snapshot,
+                working_memory=working_memory,
+            )
+            result.working_memory = working_result.working_memory
         profile_count = sum(
             len(items)
             for items in (
@@ -1631,10 +1768,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         working_count = len(result.working_memory)
         if profile_count == 0 and working_count == 0:
             logger.warning(
-                "记忆提取未产生任何结构化结果 session=%s user=%s arguments=%s",
+                "记忆提取未产生任何结构化结果 session=%s user=%s routes=%s",
                 session_id,
                 user_id,
-                _truncate_for_log(json.dumps(tool_args or {}, ensure_ascii=False)),
+                route_flags,
             )
         else:
             logger.warning(
@@ -1825,6 +1962,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             user_id=snapshot.user_id,
             user_messages=extraction_window,
             plan_snapshot=plan_snapshot,
+            routes=gate_decision.routes,
         )
         _publish_memory_task(
             snapshot.session_id,
