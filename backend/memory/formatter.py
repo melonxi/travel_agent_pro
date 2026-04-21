@@ -25,6 +25,14 @@ class MemoryRecallTelemetry:
     working_memory_ids: list[str] = field(default_factory=list)
     slice_ids: list[str] = field(default_factory=list)
     matched_reasons: list[str] = field(default_factory=list)
+    stage0_decision: str = "undecided"
+    stage0_reason: str = ""
+    gate_needs_recall: bool | None = None
+    gate_intent_type: str = ""
+    gate_confidence: float | None = None
+    gate_reason: str = ""
+    final_recall_decision: str = ""
+    fallback_used: str = "none"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -33,6 +41,14 @@ class MemoryRecallTelemetry:
             "working_memory_ids": list(self.working_memory_ids),
             "slice_ids": list(self.slice_ids),
             "matched_reasons": list(self.matched_reasons),
+            "stage0_decision": self.stage0_decision,
+            "stage0_reason": self.stage0_reason,
+            "gate_needs_recall": self.gate_needs_recall,
+            "gate_intent_type": self.gate_intent_type,
+            "gate_confidence": self.gate_confidence,
+            "gate_reason": self.gate_reason,
+            "final_recall_decision": self.final_recall_decision,
+            "fallback_used": self.fallback_used,
         }
 
 

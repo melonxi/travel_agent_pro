@@ -1,6 +1,12 @@
 import pytest
 import time
-from telemetry.stats import SessionStats, LLMCallRecord, ToolCallRecord
+from telemetry.stats import (
+    MemoryHitRecord,
+    RecallTelemetryRecord,
+    SessionStats,
+    LLMCallRecord,
+    ToolCallRecord,
+)
 
 
 def test_empty_stats():
@@ -74,3 +80,35 @@ def test_to_dict_structure():
     assert "tool_call_count" in d
     assert "by_model" in d
     assert "by_tool" in d
+
+
+def test_to_dict_keeps_memory_hit_count_for_real_hits_only():
+    stats = SessionStats()
+    stats.memory_hits.append(
+        MemoryHitRecord(
+            sources={"profile_fixed": 1},
+            profile_ids=["m1"],
+        )
+    )
+    stats.recall_telemetry.append(
+        RecallTelemetryRecord(
+            stage0_decision="force_recall",
+            stage0_reason="explicit_profile_history_query",
+            gate_needs_recall=True,
+            gate_intent_type="",
+            final_recall_decision="query_recall_enabled",
+            fallback_used="none",
+        )
+    )
+
+    d = stats.to_dict()
+
+    assert d["memory_hit_count"] == 1
+    assert d["last_memory_recall"]["stage0_decision"] == "force_recall"
+    assert d["last_memory_recall"]["stage0_reason"] == "explicit_profile_history_query"
+    assert d["last_memory_recall"]["gate_needs_recall"] is True
+    assert d["last_memory_recall"]["gate_intent_type"] == ""
+    assert (
+        d["last_memory_recall"]["final_recall_decision"]
+        == "query_recall_enabled"
+    )

@@ -216,6 +216,51 @@ parallel_tool_execution: false
     return create_app(str(config_file))
 
 
+@pytest.fixture
+def app_recall_gate_disabled(monkeypatch, tmp_path: Path):
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path / "data"
+    config_file.write_text(
+        f"""
+llm:
+  provider: openai
+  model: gpt-4o
+data_dir: "{data_dir}"
+flyai:
+  enabled: false
+memory:
+  enabled: true
+  extraction:
+    enabled: true
+    model: gpt-4o-mini
+    trigger: each_turn
+    max_user_messages: 4
+  retrieval:
+    recall_gate_enabled: false
+telemetry:
+  enabled: false
+guardrails:
+  enabled: false
+parallel_tool_execution: false
+""",
+        encoding="utf-8",
+    )
+
+    class FakeProvider:
+        async def chat(self, *args, **kwargs):
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: FakeProvider())
+    return create_app(str(config_file))
+
+
 @pytest.mark.asyncio
 async def test_get_memory_returns_empty_items(app):
     async with AsyncClient(
@@ -342,7 +387,11 @@ async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
     calls = {"context": 0, "summary": 0}
 
     async def fake_generate_context(
-        self, user_id: str, plan: TravelPlanState, user_message: str = ""
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
     ):
         calls["context"] += 1
         assert user_message == "继续规划"
@@ -388,7 +437,7 @@ async def test_chat_system_prompt_skips_memory_when_disabled(
     )
 
     async def fake_generate_context(
-        self, user_id: str, plan: TravelPlanState
+        self, user_id: str, plan: TravelPlanState, **kwargs
     ) -> tuple[str, list[str], int, int, int]:
         raise AssertionError(
             "generate_context should not be called when memory is disabled"
@@ -414,6 +463,33 @@ async def test_chat_system_prompt_skips_memory_when_disabled(
         )
 
     assert resp.status_code == 200
+    assert '"kind": "memory_recall"' not in resp.text
+    assert '"type": "memory_recall"' not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_skips_memory_recall_events_when_memory_disabled(
+    monkeypatch, app_memory_disabled
+):
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app_memory_disabled), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "继续规划", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"kind": "memory_recall"' not in resp.text
+    assert '"type": "memory_recall"' not in resp.text
 
 
 @pytest.mark.asyncio
@@ -474,7 +550,11 @@ async def test_chat_stream_emits_memory_recall_internal_task(monkeypatch, app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
 
     async def fake_generate_context(
-        self, user_id: str, plan: TravelPlanState, user_message: str = ""
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
     ):
         assert user_message == "继续规划"
         return (
@@ -508,6 +588,483 @@ async def test_chat_stream_emits_memory_recall_internal_task(monkeypatch, app):
     assert '"status": "pending"' in resp.text
     assert '"status": "success"' in resp.text
     assert '"type": "memory_recall"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_memory_recall_telemetry_without_hits(monkeypatch, app):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        return (
+            "暂无相关用户记忆",
+            MemoryRecallTelemetry(
+                stage0_decision="skip_recall",
+                stage0_reason="current_trip_fact_question",
+                gate_needs_recall=False,
+                gate_intent_type="no_recall_needed",
+                gate_confidence=0.98,
+                gate_reason="current trip fact question",
+                final_recall_decision="fixed_only",
+            ),
+        )
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "继续规划", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"kind": "memory_recall"' in resp.text
+    assert '"count": 0' in resp.text
+    assert '"gate": false' in resp.text
+    assert '"type": "memory_recall"' in resp.text
+    assert '"gate_needs_recall": false' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_keeps_conservative_recall_fields_when_gate_disabled(
+    monkeypatch, app_recall_gate_disabled
+):
+    memory_mgr = _get_closure_value(app_recall_gate_disabled, "memory_mgr")
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        return ("暂无相关用户记忆", ["legacy-ignored"], 0, 0, 0)
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app_recall_gate_disabled),
+        base_url="http://test",
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "继续规划", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"type": "memory_recall"' in resp.text
+    assert '"gate": false' in resp.text
+    assert '"gate_needs_recall": false' in resp.text
+    assert '"gate_intent_type": "no_recall_needed"' in resp.text
+    assert '"final_recall_decision": "fixed_only"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_keeps_stage0_force_recall_when_recall_gate_disabled(
+    monkeypatch, app_recall_gate_disabled
+):
+    memory_mgr = _get_closure_value(app_recall_gate_disabled, "memory_mgr")
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        assert kwargs["recall_gate"] is True
+        assert kwargs["short_circuit"] == "force_recall"
+        return "暂无相关用户记忆", MemoryRecallTelemetry()
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app_recall_gate_disabled),
+        base_url="http://test",
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "我是不是说过不坐红眼航班？", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"type": "memory_recall"' in resp.text
+    assert '"stage0_decision": "force_recall"' in resp.text
+    assert '"stage0_reason": "explicit_profile_history_query"' in resp.text
+    assert '"gate": true' in resp.text
+    assert '"gate_needs_recall": true' in resp.text
+    assert '"gate_intent_type": ""' in resp.text
+    assert '"gate_reason": "explicit_profile_history_query"' in resp.text
+    assert '"final_recall_decision": "query_recall_enabled"' in resp.text
+    assert '"fallback_used": "none"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_keeps_undecided_conservative_when_recall_gate_disabled(
+    monkeypatch, app_recall_gate_disabled
+):
+    memory_mgr = _get_closure_value(app_recall_gate_disabled, "memory_mgr")
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        assert kwargs["recall_gate"] is False
+        assert kwargs["short_circuit"] == "undecided"
+        return "暂无相关用户记忆", MemoryRecallTelemetry()
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app_recall_gate_disabled),
+        base_url="http://test",
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "还是按我常规偏好来", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"type": "memory_recall"' in resp.text
+    assert '"stage0_decision": "undecided"' in resp.text
+    assert '"stage0_reason": "needs_llm_gate"' in resp.text
+    assert '"gate": false' in resp.text
+    assert '"gate_needs_recall": false' in resp.text
+    assert '"gate_intent_type": "no_recall_needed"' in resp.text
+    assert '"gate_reason": "recall_gate_disabled"' in resp.text
+    assert '"final_recall_decision": "fixed_only"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_keeps_stage0_skip_without_polluting_gate_intent_type(
+    monkeypatch, app
+):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+
+    class NoRecallGateProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_recall":
+                raise AssertionError("stage0 skip_recall should bypass recall gate")
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        assert kwargs["recall_gate"] is False
+        assert kwargs["short_circuit"] == "skip_recall"
+        return "暂无相关用户记忆", MemoryRecallTelemetry()
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: NoRecallGateProvider())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "这次预算多少？", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"stage0_decision": "skip_recall"' in resp.text
+    assert '"stage0_reason": "current_trip_fact_question"' in resp.text
+    assert '"gate_needs_recall": false' in resp.text
+    assert '"gate_intent_type": ""' in resp.text
+    assert '"gate_reason": "current_trip_fact_question"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_uses_stage0_force_recall_for_explicit_history_query(
+    monkeypatch, app
+):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+
+    class NoRecallGateProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_recall":
+                raise AssertionError("stage0 force_recall should bypass recall gate")
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        assert kwargs["recall_gate"] is True
+        assert kwargs["short_circuit"] == "force_recall"
+        return "暂无相关用户记忆", MemoryRecallTelemetry()
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: NoRecallGateProvider())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "我是不是说过不坐红眼航班？", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"type": "memory_recall"' in resp.text
+    assert '"stage0_decision": "force_recall"' in resp.text
+    assert '"stage0_reason": "explicit_profile_history_query"' in resp.text
+    assert '"gate_needs_recall": true' in resp.text
+    assert '"gate_intent_type": ""' in resp.text
+    assert '"final_recall_decision": "query_recall_enabled"' in resp.text
+    assert '"fallback_used": "none"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_keeps_conservative_recall_fields_for_invalid_gate_payload(
+    monkeypatch, app
+):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+
+    class InvalidRecallGateProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_recall":
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        return "暂无相关用户记忆", MemoryRecallTelemetry()
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: InvalidRecallGateProvider())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "还是按我常规偏好来", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"type": "memory_recall"' in resp.text
+    assert '"gate": false' in resp.text
+    assert '"gate_needs_recall": false' in resp.text
+    assert '"gate_intent_type": "gate_decision_unavailable"' in resp.text
+    assert '"fallback_used": "invalid_tool_payload"' in resp.text
+    assert '"final_recall_decision": "fixed_only"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_falls_back_when_recall_gate_times_out(monkeypatch, app):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+    real_wait_for = asyncio.wait_for
+
+    class TimeoutRecallGateProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_recall":
+                await asyncio.sleep(0.05)
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        return "暂无相关用户记忆", MemoryRecallTelemetry()
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: TimeoutRecallGateProvider())
+    monkeypatch.setattr(
+        "main.asyncio.wait_for",
+        lambda awaitable, timeout: real_wait_for(awaitable, timeout=0.01),
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "还是按我常规偏好来", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"type": "memory_recall"' in resp.text
+    assert '"gate": false' in resp.text
+    assert '"gate_needs_recall": false' in resp.text
+    assert '"gate_intent_type": "gate_decision_unavailable"' in resp.text
+    assert '"fallback_used": "gate_timeout"' in resp.text
+    assert '"final_recall_decision": "fixed_only"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_falls_back_when_recall_gate_errors(monkeypatch, app):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+
+    class ErrorRecallGateProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_recall":
+                raise RuntimeError("gate boom")
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        return "暂无相关用户记忆", MemoryRecallTelemetry()
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: ErrorRecallGateProvider())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "还是按我常规偏好来", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"type": "memory_recall"' in resp.text
+    assert '"gate": false' in resp.text
+    assert '"gate_needs_recall": false' in resp.text
+    assert '"gate_intent_type": "gate_decision_unavailable"' in resp.text
+    assert '"fallback_used": "gate_error"' in resp.text
+    assert '"final_recall_decision": "fixed_only"' in resp.text
+
+
+def test_project_overview_documents_memory_recall_payload_fields():
+    overview = Path(__file__).resolve().parents[2] / "PROJECT_OVERVIEW.md"
+    content = overview.read_text(encoding="utf-8")
+
+    assert "| `memory_recall` |" in content
+    assert "| Memory Recall SSE |" in content
+
+    for field in (
+        "gate",
+        "stage0_decision",
+        "stage0_reason",
+        "gate_needs_recall",
+        "gate_intent_type",
+        "gate_confidence",
+        "gate_reason",
+        "final_recall_decision",
+        "fallback_used",
+    ):
+        assert field in content
 
 
 @pytest.mark.asyncio
@@ -1164,6 +1721,7 @@ async def test_memory_extraction_uses_routed_forced_tool_calls(app):
 
     assert resp.status_code == 200
     assert [call["tool_name"] for call in observed["calls"]] == [
+        "decide_memory_recall",
         "decide_memory_extraction",
         "extract_profile_memory",
         "extract_working_memory",

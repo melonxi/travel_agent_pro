@@ -85,6 +85,9 @@ class MemoryRetrievalConfig:
     core_limit: int = 10
     phase_limit: int = 8
     include_pending: bool = False
+    recall_gate_enabled: bool = True
+    recall_gate_model: str = ""
+    recall_gate_timeout_seconds: float = 6.0
 
 
 @dataclass(frozen=True)
@@ -276,6 +279,13 @@ def _build_memory_config(
             core_limit=int(retrieval_raw.get("core_limit", 10)),
             phase_limit=int(retrieval_raw.get("phase_limit", 8)),
             include_pending=_as_bool(retrieval_raw.get("include_pending"), False),
+            recall_gate_enabled=_as_bool(
+                retrieval_raw.get("recall_gate_enabled"), True
+            ),
+            recall_gate_model=(retrieval_raw.get("recall_gate_model") or ""),
+            recall_gate_timeout_seconds=float(
+                retrieval_raw.get("recall_gate_timeout_seconds", 6.0)
+            ),
         ),
         storage=MemoryStorageConfig(
             backend=str(storage_raw.get("backend", "json")),

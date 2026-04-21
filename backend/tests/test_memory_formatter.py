@@ -129,4 +129,39 @@ def test_memory_recall_telemetry_to_dict_preserves_fields():
         "working_memory_ids": ["wm-1"],
         "slice_ids": ["slice-1"],
         "matched_reasons": ["exact destination match on 京都"],
+        "stage0_decision": "undecided",
+        "stage0_reason": "",
+        "gate_needs_recall": None,
+        "gate_intent_type": "",
+        "gate_confidence": None,
+        "gate_reason": "",
+        "final_recall_decision": "",
+        "fallback_used": "none",
     }
+
+
+def test_memory_recall_telemetry_to_dict_includes_gate_fields():
+    from memory.formatter import MemoryRecallTelemetry
+
+    telemetry = MemoryRecallTelemetry(
+        sources={
+            "profile_fixed": 1,
+            "query_profile": 0,
+            "working_memory": 0,
+            "episode_slice": 0,
+        },
+        profile_ids=["profile-1"],
+        matched_reasons=["fixed profile injection"],
+        stage0_decision="force_recall",
+        stage0_reason="history_phrase",
+        gate_needs_recall=True,
+        gate_intent_type="profile_preference_recall",
+        gate_confidence=0.88,
+        gate_reason="user asks to reuse prior preference",
+        final_recall_decision="query_recall_enabled",
+        fallback_used="none",
+    )
+
+    assert telemetry.to_dict()["stage0_decision"] == "force_recall"
+    assert telemetry.to_dict()["gate_needs_recall"] is True
+    assert telemetry.to_dict()["final_recall_decision"] == "query_recall_enabled"

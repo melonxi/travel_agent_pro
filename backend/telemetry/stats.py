@@ -88,10 +88,33 @@ class MemoryHitRecord:
 
 
 @dataclass
+class RecallTelemetryRecord:
+    stage0_decision: str = "undecided"
+    stage0_reason: str = ""
+    gate_needs_recall: bool | None = None
+    gate_intent_type: str = ""
+    final_recall_decision: str = ""
+    fallback_used: str = "none"
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict:
+        return {
+            "stage0_decision": self.stage0_decision,
+            "stage0_reason": self.stage0_reason,
+            "gate_needs_recall": self.gate_needs_recall,
+            "gate_intent_type": self.gate_intent_type,
+            "final_recall_decision": self.final_recall_decision,
+            "fallback_used": self.fallback_used,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass
 class SessionStats:
     llm_calls: list[LLMCallRecord] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     memory_hits: list[MemoryHitRecord] = field(default_factory=list)
+    recall_telemetry: list[RecallTelemetryRecord] = field(default_factory=list)
 
     def record_llm_call(
         self,
@@ -204,6 +227,9 @@ class SessionStats:
             "llm_call_count": len(self.llm_calls),
             "tool_call_count": len(self.tool_calls),
             "memory_hit_count": len(self.memory_hits),
+            "last_memory_recall": (
+                self.recall_telemetry[-1].to_dict() if self.recall_telemetry else None
+            ),
             "by_model": dict(by_model),
             "by_tool": dict(by_tool),
         }

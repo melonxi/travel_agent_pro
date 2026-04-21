@@ -514,6 +514,57 @@ async def test_trace_memory_hits(app):
 
 
 @pytest.mark.asyncio
+async def test_trace_recall_telemetry_visible_without_memory_hit(app):
+    from telemetry.stats import RecallTelemetryRecord
+
+    sessions = _get_sessions(app)
+    session_id = "test-recall-telemetry"
+    stats = SessionStats()
+    stats.record_llm_call(
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        duration_ms=200.0,
+        phase=1,
+        iteration=1,
+    )
+    stats.recall_telemetry.append(
+        RecallTelemetryRecord(
+            stage0_decision="undecided",
+            stage0_reason="needs_llm_gate",
+            gate_needs_recall=False,
+            gate_intent_type="gate_decision_unavailable",
+            final_recall_decision="fixed_only",
+            fallback_used="gate_timeout",
+            timestamp=stats.llm_calls[-1].timestamp,
+        )
+    )
+    sessions[session_id] = {
+        "stats": stats,
+        "messages": [],
+        "plan": None,
+        "compression_events": [],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/api/sessions/{session_id}/trace")
+    data = resp.json()
+
+    assert data["summary"]["memory_hit_count"] == 0
+    assert data["iterations"][0]["memory_hits"] is None
+    recall = data["iterations"][0]["memory_recall"]
+    assert recall["stage0_decision"] == "undecided"
+    assert recall["stage0_reason"] == "needs_llm_gate"
+    assert recall["gate_needs_recall"] is False
+    assert recall["gate_intent_type"] == "gate_decision_unavailable"
+    assert recall["final_recall_decision"] == "fixed_only"
+    assert recall["fallback_used"] == "gate_timeout"
+
+
+@pytest.mark.asyncio
 async def test_trace_memory_hits_attach_only_to_first_matching_llm(app):
     from telemetry.stats import MemoryHitRecord
 
