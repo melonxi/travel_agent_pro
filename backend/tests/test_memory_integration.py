@@ -1353,6 +1353,136 @@ async def test_memory_extraction_partial_failure_keeps_consumed_count_unadvanced
 
 
 @pytest.mark.asyncio
+async def test_memory_extraction_partial_save_preserves_aggregate_progress(app):
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    class ExtractionProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_extraction":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_gate",
+                        name=tool_name,
+                        arguments={
+                            "should_extract": True,
+                            "routes": {"profile": True, "working_memory": False},
+                            "reason": "profile_memory_signal",
+                            "message": "检测到长期偏好信号",
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            assert tool_name == "extract_profile_memory"
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_profile",
+                    name=tool_name,
+                    arguments={
+                        "profile_updates": {
+                            "constraints": [],
+                            "rejections": [],
+                            "stable_preferences": [],
+                            "preference_hypotheses": [
+                                {
+                                    "domain": "hotel",
+                                    "key": "prefer_quiet_room",
+                                    "value": "安静房间",
+                                    "polarity": "prefer",
+                                    "stability": "pattern_observed",
+                                    "confidence": 0.65,
+                                    "reason": "用户多次提到想住安静一点",
+                                    "evidence": "想住安静一点",
+                                },
+                                {
+                                    "domain": "hotel",
+                                    "key": "prefer_high_floor",
+                                    "value": "高楼层",
+                                    "polarity": "prefer",
+                                    "stability": "pattern_observed",
+                                    "confidence": 0.62,
+                                    "reason": "用户提到想住高一些",
+                                    "evidence": "最好高一点",
+                                },
+                            ],
+                        },
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+    original_upsert_profile_item = memory_mgr.v3_store.upsert_profile_item
+    upsert_calls = {"count": 0}
+
+    async def flaky_upsert_profile_item(user_id, bucket, item):
+        upsert_calls["count"] += 1
+        if upsert_calls["count"] == 2:
+            raise RuntimeError("profile upsert failed on second item")
+        return await original_upsert_profile_item(user_id, bucket, item)
+
+    run_memory_job = app.state.run_memory_job
+    original_publish = _get_function_closure_value(run_memory_job, "_publish_memory_task")
+    published_tasks = []
+
+    def recording_publish(session_id: str, task):
+        published_tasks.append(task)
+        original_publish(session_id, task)
+
+    with pytest.MonkeyPatch.context() as mp:
+        _set_function_closure_value(
+            run_memory_job, "_publish_memory_task", recording_publish
+        )
+        mp.setattr("agent.loop.AgentLoop.run", fake_run)
+        mp.setattr("main.create_llm_provider", lambda _config: ExtractionProvider())
+        mp.setattr(
+            memory_mgr.v3_store,
+            "upsert_profile_item",
+            flaky_upsert_profile_item,
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "想住安静一点，最好高一点", "user_id": "u1"},
+            )
+            await _wait_for_memory_scheduler_idle(app, session_id)
+            profile = await client.get("/api/memory/u1/profile")
+
+    _set_function_closure_value(
+        run_memory_job, "_publish_memory_task", original_publish
+    )
+
+    assert resp.status_code == 200
+    runtime = app.state.memory_scheduler_runtimes[session_id]
+    assert runtime.last_consumed_user_count == 0
+    assert profile.status_code == 200
+    assert profile.json()["preference_hypotheses"][0]["key"] == "prefer_quiet_room"
+    extraction_tasks = [
+        task for task in published_tasks if getattr(task, "kind", None) == "memory_extraction"
+    ]
+    assert extraction_tasks[-1].status == "warning"
+    assert extraction_tasks[-1].result["reason"] == "partial_failure"
+    assert extraction_tasks[-1].result["saved_profile_count"] == 1
+    assert extraction_tasks[-1].result["item_ids"]
+    profile_tasks = [
+        task
+        for task in published_tasks
+        if getattr(task, "kind", None) == "profile_memory_extraction"
+    ]
+    assert profile_tasks[-1].result["saved_profile_count"] == 1
+    assert profile_tasks[-1].result["pending_profile_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_memory_extraction_timeout_is_emitted_as_warning(app):
     async def fake_run(self, messages, phase, tools_override=None):
         yield LLMChunk(type=ChunkType.DONE)
@@ -1428,6 +1558,17 @@ async def test_memory_extraction_timeout_is_emitted_as_warning(app):
     ]
     assert extraction_tasks[-1].status == "warning"
     assert "记忆提取超时" in extraction_tasks[-1].message
+    split_tasks = [
+        task
+        for task in published_tasks
+        if getattr(task, "kind", None) in {
+            "profile_memory_extraction",
+            "working_memory_extraction",
+        }
+        and getattr(task, "ended_at", None) is not None
+    ]
+    assert split_tasks
+    assert all("超时" not in task.message for task in split_tasks)
 
 
 @pytest.mark.asyncio
