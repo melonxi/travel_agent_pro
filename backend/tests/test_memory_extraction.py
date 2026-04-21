@@ -1,5 +1,3 @@
-import pytest
-
 from memory.extraction import (
     MemoryMerger,
     build_candidate_extraction_prompt,
@@ -394,7 +392,7 @@ class TestBuildV3ExtractionGate:
         assert result.should_extract is False
         assert result.routes.profile is False
         assert result.routes.working_memory is False
-    
+
     def test_parse_gate_tool_arguments_defaults_safely(self):
         result = parse_v3_extraction_gate_tool_arguments(
             {"should_extract": True, "reason": "explicit_preference_signal"}
