@@ -888,10 +888,8 @@ async def test_memory_extraction_profile_route_writes_profile_only(app):
                                     "polarity": "avoid",
                                     "stability": "explicit_declared",
                                     "confidence": 0.95,
-                                    "context": {},
-                                    "applicability": "通用旅行饮食偏好",
-                                    "recall_hints": {"keywords": ["不吃辣"]},
-                                    "source_refs": [],
+                                    "reason": "用户明确声明长期饮食偏好",
+                                    "evidence": "我不吃辣",
                                 }
                             ],
                             "preference_hypotheses": [],
@@ -971,7 +969,6 @@ async def test_memory_extraction_working_route_writes_working_only(app):
                                 "kind": "temporary_rejection",
                                 "domains": ["attraction"],
                                 "content": "这轮先别考虑迪士尼",
-                                "evidence": "这轮先别考虑迪士尼",
                                 "reason": "当前候选筛选需要避让",
                                 "status": "active",
                                 "expires": {
@@ -1113,10 +1110,8 @@ async def test_memory_extraction_uses_routed_forced_tool_calls(app):
                                         "polarity": "avoid",
                                         "stability": "explicit_declared",
                                         "confidence": 0.95,
-                                        "context": {},
-                                        "applicability": "通用旅行饮食偏好",
-                                        "recall_hints": {"keywords": ["不吃辣"]},
-                                        "source_refs": [],
+                                        "reason": "用户明确声明长期饮食偏好",
+                                        "evidence": "我不吃辣",
                                     }
                                 ],
                                 "preference_hypotheses": [],
@@ -1134,14 +1129,17 @@ async def test_memory_extraction_uses_routed_forced_tool_calls(app):
                     arguments={
                         "working_memory": [
                             {
-                                "id": "wm-avoid-disney",
-                                "type": "temporary_rejection",
-                                "domain": "attraction",
+                                "phase": 3,
+                                "kind": "temporary_rejection",
+                                "domains": ["attraction"],
                                 "content": "这轮先别考虑迪士尼",
-                                "evidence": "这轮先别考虑迪士尼",
+                                "reason": "当前候选筛选需要避让",
                                 "status": "active",
-                                "created_at": "2026-04-21T00:00:00Z",
-                                "expires_at": "2026-05-21T00:00:00Z",
+                                "expires": {
+                                    "on_session_end": True,
+                                    "on_trip_change": True,
+                                    "on_phase_exit": False,
+                                },
                             }
                         ],
                     },
@@ -1308,10 +1306,8 @@ async def test_memory_extraction_success_when_auto_saved_items_written(app):
                                     "polarity": "avoid",
                                     "stability": "explicit_declared",
                                     "confidence": 0.95,
-                                    "context": {},
-                                    "applicability": "通用旅行饮食偏好",
-                                    "recall_hints": {"keywords": ["不吃辣"]},
-                                    "source_refs": [],
+                                    "reason": "用户明确声明长期饮食偏好",
+                                    "evidence": "我不吃辣",
                                 }
                             ],
                             "preference_hypotheses": [],
