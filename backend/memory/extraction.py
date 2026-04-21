@@ -206,8 +206,19 @@ class V3ExtractionResult:
 
 
 @dataclass
+class V3ExtractionRoutes:
+    profile: bool = False
+    working_memory: bool = False
+
+    @property
+    def any(self) -> bool:
+        return self.profile or self.working_memory
+
+
+@dataclass
 class V3ExtractionGateResult:
     should_extract: bool = False
+    routes: V3ExtractionRoutes = field(default_factory=V3ExtractionRoutes)
     reason: str = ""
     message: str = ""
 
@@ -402,7 +413,7 @@ def build_v3_extraction_gate_tool() -> dict[str, Any]:
         "name": _V3_EXTRACTION_GATE_TOOL_NAME,
         "description": (
             "判断当前这一轮对话是否值得继续执行较重的记忆提取。"
-            "只根据当前轮上下文判断 should_extract，不要产出具体记忆条目。"
+            "只根据当前轮上下文判断 should_extract 和 routes，不要产出具体记忆条目。"
         ),
         "parameters": {
             "type": "object",
@@ -410,6 +421,21 @@ def build_v3_extraction_gate_tool() -> dict[str, Any]:
                 "should_extract": {
                     "type": "boolean",
                     "description": "当前轮是否值得继续执行正式记忆提取。",
+                },
+                "routes": {
+                    "type": "object",
+                    "properties": {
+                        "profile": {
+                            "type": "boolean",
+                            "description": "是否需要执行长期画像 profile extraction。",
+                        },
+                        "working_memory": {
+                            "type": "boolean",
+                            "description": "是否需要执行当前会话 working memory extraction。",
+                        },
+                    },
+                    "required": ["profile", "working_memory"],
+                    "additionalProperties": False,
                 },
                 "reason": {
                     "type": "string",
@@ -420,7 +446,7 @@ def build_v3_extraction_gate_tool() -> dict[str, Any]:
                     "description": "给前端展示的简短中文说明。",
                 },
             },
-            "required": ["should_extract", "reason", "message"],
+            "required": ["should_extract", "routes", "reason", "message"],
             "additionalProperties": False,
         },
     }
@@ -445,11 +471,25 @@ def parse_v3_extraction_gate_tool_arguments(
 ) -> V3ExtractionGateResult:
     if not isinstance(arguments, dict):
         return V3ExtractionGateResult()
-    should_extract = bool(arguments.get("should_extract", False))
+    legacy_should_extract = bool(arguments.get("should_extract", False))
+    routes_raw = arguments.get("routes")
+    if isinstance(routes_raw, dict):
+        routes = V3ExtractionRoutes(
+            profile=bool(routes_raw.get("profile", False)),
+            working_memory=bool(routes_raw.get("working_memory", False)),
+        )
+        if not legacy_should_extract:
+            routes = V3ExtractionRoutes()
+    else:
+        routes = V3ExtractionRoutes(
+            profile=legacy_should_extract,
+            working_memory=legacy_should_extract,
+        )
     reason = str(arguments.get("reason", "") or "").strip()
     message = str(arguments.get("message", "") or "").strip()
     return V3ExtractionGateResult(
-        should_extract=should_extract,
+        should_extract=routes.any,
+        routes=routes,
         reason=reason,
         message=message,
     )
@@ -535,7 +575,9 @@ def build_v3_extraction_gate_prompt(
 你的职责不是提取记忆条目，而是先判断：当前这一轮对话，是否值得继续执行较重的记忆提取。
 
 请调用工具 `{_V3_EXTRACTION_GATE_TOOL_NAME}` 返回：
-- `should_extract`: true / false
+- `should_extract`: true / false；只有当 `routes.profile` 或 `routes.working_memory` 其中至少一个为 true 时，`should_extract` 才应为 true
+- `routes.profile`: 是否需要执行长期画像 profile extraction
+- `routes.working_memory`: 是否需要执行当前会话 / 当前 trip 的 working memory extraction
 - `reason`: 稳定英文标识
 - `message`: 给前端看的简短中文说明
 
@@ -549,17 +591,19 @@ def build_v3_extraction_gate_prompt(
 {memory_summary_text}
 
 判定规则：
-- 如果用户表达了跨旅行可复用的长期偏好、硬约束、明确拒绝，通常应返回 `should_extract=true`
-- 如果用户表达了只对当前会话短期有用的临时信号，也可以返回 `should_extract=true`
+- 如果用户表达了跨旅行可复用的长期偏好、硬约束、明确拒绝，设置 `routes.profile=true`
+- 如果用户表达了只对当前会话短期有用的临时信号，设置 `routes.working_memory=true`
+- 如果 `routes.profile` 或 `routes.working_memory` 其中任意一个为 true，则 `should_extract=true`
 - 如果本轮只是推进当前 trip 的事实状态，例如目的地、日期、预算、候选池、骨架、每日安排，没有新的可复用偏好信号，返回 `should_extract=false`
 - 如果只是寒暄、确认、重复既有偏好、或空泛追问，返回 `should_extract=false`
 - 如果已有记忆摘要里已经明确覆盖本轮信号，且没有新增细化或冲突信息，优先返回 `should_extract=false`
 - 不要输出 JSON 正文、不要解释、不要输出具体 memory item
 
 示例：
-- “我不吃辣，也不要住青旅” -> `should_extract=true`
-- “这次五一去京都，预算 3 万” -> `should_extract=false`
-- “继续规划吧” -> `should_extract=false`
+- “我以后都不坐红眼航班” -> `routes.profile=true`, `routes.working_memory=false`
+- “这轮先别考虑迪士尼” -> `routes.profile=false`, `routes.working_memory=true`
+- “我不吃辣，这轮先别考虑迪士尼” -> `routes.profile=true`, `routes.working_memory=true`
+- “这次五一去京都，预算 3 万” -> `routes.profile=false`, `routes.working_memory=false`
 """
 
 
