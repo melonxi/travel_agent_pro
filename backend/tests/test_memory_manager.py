@@ -144,6 +144,56 @@ async def test_generate_context_skips_slice_recall_for_current_trip_question(tmp
 
 
 @pytest.mark.asyncio
+async def test_generate_context_keeps_fixed_profile_when_gate_blocks_query_recall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    await manager.v3_store.upsert_profile_item(
+        "u1",
+        "stable_preferences",
+        MemoryProfileItem(
+            id="stable_preferences:pace:preferred_pace",
+            domain="pace",
+            key="preferred_pace",
+            value="节奏轻松",
+            polarity="prefer",
+            stability="stable",
+            confidence=0.9,
+            status="active",
+            context={},
+            applicability="适用于大多数旅行。",
+            recall_hints={"domains": ["pace"], "keywords": ["节奏"]},
+            source_refs=[],
+            created_at="2026-04-19T00:00:00",
+            updated_at="2026-04-19T00:00:00",
+        ),
+    )
+
+    def fail_rank_profile_items(*args, **kwargs):
+        raise AssertionError("rank_profile_items should not run when recall gate blocks")
+
+    monkeypatch.setattr("memory.manager.rank_profile_items", fail_rank_profile_items)
+
+    text, recall = await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_kyoto_now"),
+        user_message="我上次去京都住哪里？",
+        recall_gate=False,
+        short_circuit="skip_recall",
+    )
+
+    assert "## 长期用户画像" in text
+    assert "## 本轮请求命中的历史记忆" not in text
+    assert recall.sources["profile_fixed"] == 1
+    assert recall.sources["query_profile"] == 0
+    assert recall.sources["episode_slice"] == 0
+    assert recall.profile_ids == ["stable_preferences:pace:preferred_pace"]
+    assert recall.gate_needs_recall is False
+    assert recall.stage0_decision == "skip_recall"
+    assert recall.final_recall_decision == "fixed_only"
+
+
+@pytest.mark.asyncio
 async def test_legacy_load_returns_empty_user_memory_for_missing_user(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
 
@@ -295,6 +345,46 @@ parallel_tool_execution: "false"
     assert cfg.xhs.enabled is False
     assert cfg.guardrails.enabled is False
     assert cfg.parallel_tool_execution is False
+
+
+def test_memory_config_maps_recall_gate_fields(tmp_path: Path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        """
+memory:
+  enabled: "true"
+  retrieval:
+    core_limit: 5
+    phase_limit: 3
+    include_pending: "true"
+    recall_gate_enabled: "true"
+    recall_gate_model: "gpt-4o-mini"
+    recall_gate_timeout_seconds: 6.5
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(str(cfg_file))
+
+    assert cfg.memory.retrieval.recall_gate_enabled is True
+    assert cfg.memory.retrieval.recall_gate_model == "gpt-4o-mini"
+    assert cfg.memory.retrieval.recall_gate_timeout_seconds == 6.5
+
+
+def test_memory_config_maps_empty_recall_gate_model_to_empty_string(tmp_path: Path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        """
+memory:
+  retrieval:
+    recall_gate_model:
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(str(cfg_file))
+
+    assert cfg.memory.retrieval.recall_gate_model == ""
 
 
 # --- 以下测试迁移自 test_memory.py（原文件已删除）---

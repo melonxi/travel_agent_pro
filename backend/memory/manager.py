@@ -112,6 +112,8 @@ class MemoryManager:
         user_id: str,
         plan: TravelPlanState,
         user_message: str = "",
+        recall_gate: bool | None = None,
+        short_circuit: str = "undecided",
     ) -> tuple[str, MemoryRecallTelemetry]:
         profile = await self.v3_store.load_profile(user_id)
         fixed_profile_items = self._fixed_profile_items(profile)
@@ -125,9 +127,20 @@ class MemoryManager:
         query_profile_items: list[tuple[str, MemoryProfileItem, str]] = []
         query_slices: list[tuple[EpisodeSlice, str]] = []
         recall_query = build_recall_query(user_message)
-        if user_message and (
-            should_trigger_memory_recall(user_message) or recall_query.needs_memory
-        ):
+        should_run_query_recall = False
+        final_recall_decision = "fixed_only"
+        if recall_gate is None:
+            should_run_query_recall = user_message and (
+                should_trigger_memory_recall(user_message) or recall_query.needs_memory
+            )
+            final_recall_decision = (
+                "query_recall_enabled" if should_run_query_recall else "fixed_only"
+            )
+        elif recall_gate:
+            should_run_query_recall = True
+            final_recall_decision = "query_recall_enabled"
+
+        if should_run_query_recall:
             query_profile_items = rank_profile_items(recall_query, profile)[
                 :_QUERY_PROFILE_LIMIT
             ]
@@ -145,6 +158,9 @@ class MemoryManager:
             query_profile_items,
             query_slices,
         )
+        telemetry.stage0_decision = short_circuit
+        telemetry.gate_needs_recall = recall_gate
+        telemetry.final_recall_decision = final_recall_decision
         context = format_v3_memory_context(
             profile_items=fixed_profile_items,
             working_items=working_items,
