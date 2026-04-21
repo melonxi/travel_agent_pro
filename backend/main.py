@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,12 +57,19 @@ from memory.async_jobs import (
     build_gate_user_window,
 )
 from memory.extraction import (
+    V3ExtractionResult,
     build_v3_extraction_gate_prompt,
     build_v3_extraction_gate_tool,
     build_v3_extraction_tool,
     build_v3_extraction_prompt,
+    build_v3_profile_extraction_prompt,
+    build_v3_profile_extraction_tool,
+    build_v3_working_memory_extraction_prompt,
+    build_v3_working_memory_extraction_tool,
     parse_v3_extraction_gate_tool_arguments,
     parse_v3_extraction_tool_arguments,
+    parse_v3_profile_extraction_tool_arguments,
+    parse_v3_working_memory_extraction_tool_arguments,
 )
 from memory.formatter import MemoryRecallTelemetry
 from memory.manager import MemoryManager
@@ -132,10 +139,28 @@ class MemoryExtractionOutcome:
 
 
 @dataclass
+class MemoryExtractionProgress:
+    saved_profile_count: int = 0
+    saved_working_count: int = 0
+    pending_ids: list[str] = field(default_factory=list)
+
+    @property
+    def saved_total(self) -> int:
+        return self.saved_profile_count + self.saved_working_count
+
+
+@dataclass
+class MemoryRouteSaveProgress:
+    saved_count: int = 0
+    pending_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class MemoryExtractionGateDecision:
     should_extract: bool
     reason: str
     message: str
+    routes: dict[str, bool] = field(default_factory=dict)
     error: str | None = None
 
     @property
@@ -150,6 +175,7 @@ class MemoryExtractionGateDecision:
         result = {
             "should_extract": self.should_extract,
             "reason": self.reason,
+            "routes": dict(self.routes),
         }
         if self.error:
             result["error"] = self.error
@@ -1490,27 +1516,33 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         decision = parse_v3_extraction_gate_tool_arguments(tool_args)
         if not decision.reason:
             decision.reason = (
-                "memory_signal_detected"
+                "memory_routes_detected"
                 if decision.should_extract
-                else "no_reusable_memory_signal"
+                else "no_memory_routes"
             )
         if not decision.message:
             decision.message = (
-                "检测到可复用偏好信号"
+                "检测到需要提取的记忆信号"
                 if decision.should_extract
-                else "本轮未发现可复用记忆信号"
+                else "本轮未发现需要提取的长期画像或工作记忆信号"
             )
+        routes = {
+            "profile": decision.routes.profile,
+            "working_memory": decision.routes.working_memory,
+        }
         logger.warning(
-            "记忆提取判定完成 session=%s user=%s should_extract=%s reason=%s",
+            "记忆提取判定完成 session=%s user=%s should_extract=%s reason=%s routes=%s",
             session_id,
             user_id,
             decision.should_extract,
             decision.reason,
+            routes,
         )
         return MemoryExtractionGateDecision(
             should_extract=decision.should_extract,
             reason=decision.reason,
             message=decision.message,
+            routes=routes,
         )
 
     async def _extract_memory_candidates(
@@ -1519,6 +1551,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         user_id: str,
         user_messages: list[str],
         plan_snapshot: TravelPlanState,
+        routes: dict[str, bool] | None = None,
+        turn_id: str | None = None,
     ) -> MemoryExtractionOutcome:
         if not config.memory.enabled or not config.memory.extraction.enabled:
             return MemoryExtractionOutcome(
@@ -1542,6 +1576,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 reason="no_user_messages",
             )
 
+        progress = MemoryExtractionProgress()
         try:
             return await asyncio.wait_for(
                 _do_extract_memory_candidates(
@@ -1549,6 +1584,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     user_id=user_id,
                     user_messages=user_messages,
                     plan_snapshot=plan_snapshot,
+                    routes=routes,
+                    turn_id=turn_id,
+                    progress=progress,
                 ),
                 timeout=_EXTRACTION_TIMEOUT_SECONDS,
             )
@@ -1559,10 +1597,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 user_id,
                 _EXTRACTION_TIMEOUT_SECONDS,
             )
+            message = "记忆提取超时，本轮未写入记忆。"
+            if progress.saved_total > 0:
+                message = "记忆提取超时，已保留部分写入结果，剩余内容将稍后重试。"
             return MemoryExtractionOutcome(
                 status="warning",
-                message="记忆提取超时，本轮未写入记忆。",
-                item_ids=[],
+                message=message,
+                item_ids=list(progress.pending_ids),
+                saved_profile_count=progress.saved_profile_count,
+                saved_working_count=progress.saved_working_count,
                 reason="timeout",
             )
         except Exception:
@@ -1579,17 +1622,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 error="记忆提取异常，请检查后端日志。",
             )
 
-    async def _do_extract_memory_candidates(
+    async def _extract_combined_memory_items(
         *,
         session_id: str,
         user_id: str,
         user_messages: list[str],
         plan_snapshot: TravelPlanState,
-    ) -> MemoryExtractionOutcome:
-        profile = await memory_mgr.v3_store.load_profile(user_id)
-        working_memory = await memory_mgr.v3_store.load_working_memory(
-            user_id, session_id, plan_snapshot.trip_id
-        )
+        profile: Any,
+        working_memory: Any,
+    ) -> V3ExtractionResult:
         prompt = build_v3_extraction_prompt(
             user_messages=user_messages,
             profile=profile,
@@ -1598,7 +1639,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         )
         extraction_llm = create_llm_provider(config.llm)
         logger.warning(
-            "记忆提取开始调用模型 session=%s user=%s model=%s prompt_chars=%s user_messages=%s",
+            "兼容记忆提取开始调用模型 session=%s user=%s model=%s prompt_chars=%s user_messages=%s",
             session_id,
             user_id,
             config.llm.model,
@@ -1611,54 +1652,111 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             tool_def=build_v3_extraction_tool(),
         )
         logger.warning(
-            "记忆提取模型返回 session=%s user=%s has_arguments=%s argument_keys=%s",
+            "兼容记忆提取模型返回 session=%s user=%s has_arguments=%s argument_keys=%s",
             session_id,
             user_id,
             bool(tool_args),
             sorted(tool_args.keys()) if isinstance(tool_args, dict) else [],
         )
+        return parse_v3_extraction_tool_arguments(tool_args)
 
-        result = parse_v3_extraction_tool_arguments(tool_args)
-        profile_count = sum(
+    async def _extract_profile_memory_items(
+        *,
+        session_id: str,
+        user_id: str,
+        user_messages: list[str],
+        plan_snapshot: TravelPlanState,
+        profile: Any,
+    ) -> V3ExtractionResult:
+        prompt = build_v3_profile_extraction_prompt(
+            user_messages=user_messages,
+            profile=profile,
+            plan_facts=_memory_plan_facts(plan_snapshot),
+        )
+        extraction_llm = create_llm_provider(config.llm)
+        logger.warning(
+            "长期画像记忆提取开始调用模型 session=%s user=%s model=%s prompt_chars=%s user_messages=%s",
+            session_id,
+            user_id,
+            config.llm.model,
+            len(prompt),
+            len(user_messages),
+        )
+        tool_args = await _collect_forced_tool_call_arguments(
+            extraction_llm,
+            messages=[Message(role=Role.USER, content=prompt)],
+            tool_def=build_v3_profile_extraction_tool(),
+        )
+        logger.warning(
+            "长期画像记忆提取模型返回 session=%s user=%s has_arguments=%s argument_keys=%s",
+            session_id,
+            user_id,
+            bool(tool_args),
+            sorted(tool_args.keys()) if isinstance(tool_args, dict) else [],
+        )
+        return parse_v3_profile_extraction_tool_arguments(tool_args)
+
+    async def _extract_working_memory_items(
+        *,
+        session_id: str,
+        user_id: str,
+        user_messages: list[str],
+        plan_snapshot: TravelPlanState,
+        working_memory: Any,
+    ) -> V3ExtractionResult:
+        prompt = build_v3_working_memory_extraction_prompt(
+            user_messages=user_messages,
+            working_memory=working_memory,
+            plan_facts=_memory_plan_facts(plan_snapshot),
+        )
+        extraction_llm = create_llm_provider(config.llm)
+        logger.warning(
+            "工作记忆提取开始调用模型 session=%s user=%s model=%s prompt_chars=%s user_messages=%s",
+            session_id,
+            user_id,
+            config.llm.model,
+            len(prompt),
+            len(user_messages),
+        )
+        tool_args = await _collect_forced_tool_call_arguments(
+            extraction_llm,
+            messages=[Message(role=Role.USER, content=prompt)],
+            tool_def=build_v3_working_memory_extraction_tool(),
+        )
+        logger.warning(
+            "工作记忆提取模型返回 session=%s user=%s has_arguments=%s argument_keys=%s",
+            session_id,
+            user_id,
+            bool(tool_args),
+            sorted(tool_args.keys()) if isinstance(tool_args, dict) else [],
+        )
+        return parse_v3_working_memory_extraction_tool_arguments(tool_args)
+
+    def _count_profile_updates(profile_updates: Any) -> int:
+        return sum(
             len(items)
             for items in (
-                result.profile_updates.constraints,
-                result.profile_updates.rejections,
-                result.profile_updates.stable_preferences,
-                result.profile_updates.preference_hypotheses,
+                profile_updates.constraints,
+                profile_updates.rejections,
+                profile_updates.stable_preferences,
+                profile_updates.preference_hypotheses,
             )
         )
-        working_count = len(result.working_memory)
-        if profile_count == 0 and working_count == 0:
-            logger.warning(
-                "记忆提取未产生任何结构化结果 session=%s user=%s arguments=%s",
-                session_id,
-                user_id,
-                _truncate_for_log(json.dumps(tool_args or {}, ensure_ascii=False)),
-            )
-        else:
-            logger.warning(
-                "记忆提取解析完成 session=%s user=%s profile_items=%s working_items=%s",
-                session_id,
-                user_id,
-                profile_count,
-                working_count,
-            )
 
-        policy = MemoryPolicy(
-            auto_save_low_risk=config.memory.policy.auto_save_low_risk,
-            auto_save_medium_risk=config.memory.policy.auto_save_medium_risk,
-        )
-        now = _now_iso()
-        pending_ids: list[str] = []
-        saved_profile_count = 0
-        saved_working_count = 0
-
+    async def _save_profile_updates(
+        *,
+        user_id: str,
+        profile_updates: Any,
+        policy: MemoryPolicy,
+        now: str,
+        route_progress: MemoryRouteSaveProgress,
+        aggregate_progress: MemoryExtractionProgress,
+    ) -> None:
         buckets = (
-            ("constraints", result.profile_updates.constraints),
-            ("rejections", result.profile_updates.rejections),
-            ("stable_preferences", result.profile_updates.stable_preferences),
-            ("preference_hypotheses", result.profile_updates.preference_hypotheses),
+            ("constraints", profile_updates.constraints),
+            ("rejections", profile_updates.rejections),
+            ("stable_preferences", profile_updates.stable_preferences),
+            ("preference_hypotheses", profile_updates.preference_hypotheses),
         )
         for bucket, items in buckets:
             for raw_item in items:
@@ -1674,11 +1772,24 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 await memory_mgr.v3_store.upsert_profile_item(
                     user_id, bucket, sanitized
                 )
-                saved_profile_count += 1
+                route_progress.saved_count += 1
+                aggregate_progress.saved_profile_count += 1
                 if action in {"pending", "pending_conflict"}:
-                    pending_ids.append(sanitized.id)
+                    route_progress.pending_ids.append(sanitized.id)
+                    aggregate_progress.pending_ids.append(sanitized.id)
 
-        for raw_working_item in result.working_memory:
+    async def _save_working_memory_items(
+        *,
+        user_id: str,
+        session_id: str,
+        plan_snapshot: TravelPlanState,
+        working_memory_items: list[Any],
+        policy: MemoryPolicy,
+        now: str,
+        route_progress: MemoryRouteSaveProgress,
+        aggregate_progress: MemoryExtractionProgress,
+    ) -> None:
+        for raw_working_item in working_memory_items:
             sanitized_working = policy.sanitize_working_memory_item(raw_working_item)
             if not sanitized_working.created_at:
                 sanitized_working.created_at = now
@@ -1688,9 +1799,319 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 plan_snapshot.trip_id,
                 sanitized_working,
             )
-            saved_working_count += 1
+            route_progress.saved_count += 1
+            aggregate_progress.saved_working_count += 1
 
-        saved_total = saved_profile_count + saved_working_count
+    def _publish_split_memory_task(
+        *,
+        session_id: str,
+        task_id: str,
+        kind: str,
+        label: str,
+        status: str,
+        message: str,
+        started_at: float,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        ended_at: float | None = None,
+    ) -> None:
+        _publish_memory_task(
+            session_id,
+            InternalTask(
+                id=task_id,
+                kind=kind,
+                label=label,
+                status=status,
+                message=message,
+                blocking=False,
+                scope="background",
+                result=result,
+                error=error,
+                started_at=started_at,
+                ended_at=ended_at,
+            ),
+        )
+
+    async def _do_extract_memory_candidates(
+        *,
+        session_id: str,
+        user_id: str,
+        user_messages: list[str],
+        plan_snapshot: TravelPlanState,
+        routes: dict[str, bool] | None = None,
+        turn_id: str | None = None,
+        progress: MemoryExtractionProgress | None = None,
+    ) -> MemoryExtractionOutcome:
+        route_flags = routes or {"profile": True, "working_memory": True}
+        run_profile = bool(route_flags.get("profile"))
+        run_working = bool(route_flags.get("working_memory"))
+        if not run_profile and not run_working:
+            return MemoryExtractionOutcome(
+                status="skipped",
+                message="本轮没有新的可复用记忆",
+                item_ids=[],
+                reason="no_routes",
+            )
+
+        profile = await memory_mgr.v3_store.load_profile(user_id)
+        working_memory = await memory_mgr.v3_store.load_working_memory(
+            user_id, session_id, plan_snapshot.trip_id
+        )
+        logger.warning(
+            "记忆提取路由开始 session=%s user=%s routes=%s user_messages=%s",
+            session_id,
+            user_id,
+            route_flags,
+            len(user_messages),
+        )
+
+        policy = MemoryPolicy(
+            auto_save_low_risk=config.memory.policy.auto_save_low_risk,
+            auto_save_medium_risk=config.memory.policy.auto_save_medium_risk,
+        )
+        now = _now_iso()
+        aggregate_progress = progress or MemoryExtractionProgress()
+        parsed_profile_count = 0
+        parsed_working_count = 0
+        route_failures: list[tuple[str, str]] = []
+        task_turn_id = turn_id or str(uuid.uuid4())
+
+        if run_profile:
+            profile_progress = MemoryRouteSaveProgress()
+            profile_task_id = f"profile_memory_extraction:{session_id}:{task_turn_id}"
+            profile_started_at = time.time()
+            _publish_split_memory_task(
+                session_id=session_id,
+                task_id=profile_task_id,
+                kind="profile_memory_extraction",
+                label="长期画像提取",
+                status="pending",
+                message="正在提取长期画像记忆…",
+                started_at=profile_started_at,
+            )
+            try:
+                profile_result = await _extract_profile_memory_items(
+                    session_id=session_id,
+                    user_id=user_id,
+                    user_messages=user_messages,
+                    plan_snapshot=plan_snapshot,
+                    profile=profile,
+                )
+                parsed_profile_count = _count_profile_updates(
+                    profile_result.profile_updates
+                )
+                await _save_profile_updates(
+                    user_id=user_id,
+                    profile_updates=profile_result.profile_updates,
+                    policy=policy,
+                    now=now,
+                    route_progress=profile_progress,
+                    aggregate_progress=aggregate_progress,
+                )
+                profile_status = (
+                    "success" if profile_progress.saved_count > 0 else "skipped"
+                )
+                profile_message = (
+                    f"已保存 {profile_progress.saved_count} 条长期画像记忆"
+                    if profile_progress.saved_count > 0
+                    else "本轮没有新的长期画像记忆"
+                )
+                _publish_split_memory_task(
+                    session_id=session_id,
+                    task_id=profile_task_id,
+                    kind="profile_memory_extraction",
+                    label="长期画像提取",
+                    status=profile_status,
+                    message=profile_message,
+                    result={
+                        "saved_profile_count": profile_progress.saved_count,
+                        "pending_profile_count": len(profile_progress.pending_ids),
+                        "pending_profile_ids": list(profile_progress.pending_ids),
+                        "parsed_profile_count": parsed_profile_count,
+                    },
+                    started_at=profile_started_at,
+                    ended_at=time.time(),
+                )
+            except asyncio.CancelledError:
+                _publish_split_memory_task(
+                    session_id=session_id,
+                    task_id=profile_task_id,
+                    kind="profile_memory_extraction",
+                    label="长期画像提取",
+                    status="warning",
+                    message="长期画像提取已取消，未完成部分将稍后重试。",
+                    result={
+                        "saved_profile_count": profile_progress.saved_count,
+                        "pending_profile_count": len(profile_progress.pending_ids),
+                        "pending_profile_ids": list(profile_progress.pending_ids),
+                        "parsed_profile_count": parsed_profile_count,
+                    },
+                    error="profile_memory_extraction_cancelled",
+                    started_at=profile_started_at,
+                    ended_at=time.time(),
+                )
+                raise
+            except Exception:
+                logger.exception(
+                    "长期画像记忆提取失败 session=%s user=%s",
+                    session_id,
+                    user_id,
+                )
+                route_failures.append(
+                    ("profile", "profile_memory_extraction_failed")
+                )
+                _publish_split_memory_task(
+                    session_id=session_id,
+                    task_id=profile_task_id,
+                    kind="profile_memory_extraction",
+                    label="长期画像提取",
+                    status="error",
+                    message="长期画像提取失败，本轮将稍后重试。",
+                    result={
+                        "saved_profile_count": profile_progress.saved_count,
+                        "pending_profile_count": len(profile_progress.pending_ids),
+                        "pending_profile_ids": list(profile_progress.pending_ids),
+                        "parsed_profile_count": parsed_profile_count,
+                    },
+                    error="profile_memory_extraction_failed",
+                    started_at=profile_started_at,
+                    ended_at=time.time(),
+                )
+        if run_working:
+            working_progress = MemoryRouteSaveProgress()
+            working_task_id = (
+                f"working_memory_extraction:{session_id}:{task_turn_id}"
+            )
+            working_started_at = time.time()
+            _publish_split_memory_task(
+                session_id=session_id,
+                task_id=working_task_id,
+                kind="working_memory_extraction",
+                label="工作记忆提取",
+                status="pending",
+                message="正在提取工作记忆…",
+                started_at=working_started_at,
+            )
+            try:
+                working_result = await _extract_working_memory_items(
+                    session_id=session_id,
+                    user_id=user_id,
+                    user_messages=user_messages,
+                    plan_snapshot=plan_snapshot,
+                    working_memory=working_memory,
+                )
+                parsed_working_count = len(working_result.working_memory)
+                await _save_working_memory_items(
+                    user_id=user_id,
+                    session_id=session_id,
+                    plan_snapshot=plan_snapshot,
+                    working_memory_items=working_result.working_memory,
+                    policy=policy,
+                    now=now,
+                    route_progress=working_progress,
+                    aggregate_progress=aggregate_progress,
+                )
+                working_status = (
+                    "success" if working_progress.saved_count > 0 else "skipped"
+                )
+                working_message = (
+                    f"已保存 {working_progress.saved_count} 条工作记忆"
+                    if working_progress.saved_count > 0
+                    else "本轮没有新的工作记忆"
+                )
+                _publish_split_memory_task(
+                    session_id=session_id,
+                    task_id=working_task_id,
+                    kind="working_memory_extraction",
+                    label="工作记忆提取",
+                    status=working_status,
+                    message=working_message,
+                    result={
+                        "saved_working_count": working_progress.saved_count,
+                        "parsed_working_count": parsed_working_count,
+                    },
+                    started_at=working_started_at,
+                    ended_at=time.time(),
+                )
+            except asyncio.CancelledError:
+                _publish_split_memory_task(
+                    session_id=session_id,
+                    task_id=working_task_id,
+                    kind="working_memory_extraction",
+                    label="工作记忆提取",
+                    status="warning",
+                    message="工作记忆提取已取消，未完成部分将稍后重试。",
+                    result={
+                        "saved_working_count": working_progress.saved_count,
+                        "parsed_working_count": parsed_working_count,
+                    },
+                    error="working_memory_extraction_cancelled",
+                    started_at=working_started_at,
+                    ended_at=time.time(),
+                )
+                raise
+            except Exception:
+                logger.exception(
+                    "工作记忆提取失败 session=%s user=%s",
+                    session_id,
+                    user_id,
+                )
+                route_failures.append(
+                    ("working_memory", "working_memory_extraction_failed")
+                )
+                _publish_split_memory_task(
+                    session_id=session_id,
+                    task_id=working_task_id,
+                    kind="working_memory_extraction",
+                    label="工作记忆提取",
+                    status="error",
+                    message="工作记忆提取失败，本轮将稍后重试。",
+                    result={
+                        "saved_working_count": working_progress.saved_count,
+                        "parsed_working_count": parsed_working_count,
+                    },
+                    error="working_memory_extraction_failed",
+                    started_at=working_started_at,
+                    ended_at=time.time(),
+                )
+
+        if parsed_profile_count == 0 and parsed_working_count == 0 and not route_failures:
+            logger.warning(
+                "记忆提取未产生任何结构化结果 session=%s user=%s routes=%s",
+                session_id,
+                user_id,
+                route_flags,
+            )
+        else:
+            logger.warning(
+                "记忆提取解析完成 session=%s user=%s profile_items=%s working_items=%s",
+                session_id,
+                user_id,
+                parsed_profile_count,
+                parsed_working_count,
+            )
+
+        saved_total = (
+            aggregate_progress.saved_profile_count
+            + aggregate_progress.saved_working_count
+        )
+        if route_failures:
+            failure_errors = [failure_error for _, failure_error in route_failures]
+            error = (
+                failure_errors[0]
+                if len(failure_errors) == 1
+                else "multiple_memory_extraction_routes_failed"
+            )
+            return MemoryExtractionOutcome(
+                status="warning",
+                message="部分记忆提取失败，本轮将稍后重试。",
+                item_ids=list(aggregate_progress.pending_ids),
+                saved_profile_count=aggregate_progress.saved_profile_count,
+                saved_working_count=aggregate_progress.saved_working_count,
+                reason="partial_failure",
+                error=error,
+            )
+
         if saved_total == 0:
             return MemoryExtractionOutcome(
                 status="skipped",
@@ -1699,7 +2120,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 reason="no_structured_result",
             )
 
-        pending_count = len(pending_ids)
+        pending_count = len(aggregate_progress.pending_ids)
         if pending_count == 0:
             message = f"已提取 {saved_total} 条记忆"
         elif pending_count == saved_total:
@@ -1712,9 +2133,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         return MemoryExtractionOutcome(
             status="success",
             message=message,
-            item_ids=pending_ids,
-            saved_profile_count=saved_profile_count,
-            saved_working_count=saved_working_count,
+            item_ids=list(aggregate_progress.pending_ids),
+            saved_profile_count=aggregate_progress.saved_profile_count,
+            saved_working_count=aggregate_progress.saved_working_count,
             reason="saved",
         )
 
@@ -1825,6 +2246,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             user_id=snapshot.user_id,
             user_messages=extraction_window,
             plan_snapshot=plan_snapshot,
+            routes=gate_decision.routes,
+            turn_id=snapshot.turn_id,
         )
         _publish_memory_task(
             snapshot.session_id,
