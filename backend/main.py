@@ -144,6 +144,10 @@ class MemoryExtractionProgress:
     saved_working_count: int = 0
     pending_ids: list[str] = field(default_factory=list)
 
+    @property
+    def saved_total(self) -> int:
+        return self.saved_profile_count + self.saved_working_count
+
 
 @dataclass
 class MemoryRouteSaveProgress:
@@ -1593,9 +1597,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 user_id,
                 _EXTRACTION_TIMEOUT_SECONDS,
             )
+            message = "记忆提取超时，本轮未写入记忆。"
+            if progress.saved_total > 0:
+                message = "记忆提取超时，已保留部分写入结果，剩余内容将稍后重试。"
             return MemoryExtractionOutcome(
                 status="warning",
-                message="记忆提取超时，本轮未写入记忆。",
+                message=message,
                 item_ids=list(progress.pending_ids),
                 saved_profile_count=progress.saved_profile_count,
                 saved_working_count=progress.saved_working_count,
