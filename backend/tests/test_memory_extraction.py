@@ -4,12 +4,16 @@ from memory.extraction import (
     build_v3_extraction_gate_prompt,
     build_v3_extraction_gate_tool,
     build_v3_extraction_tool,
+    build_v3_profile_extraction_tool,
+    build_v3_working_memory_extraction_tool,
     build_extraction_prompt,
     build_v3_extraction_prompt,
     parse_candidate_extraction_response,
     parse_extraction_response,
     parse_v3_extraction_gate_tool_arguments,
     parse_v3_extraction_response,
+    v3_profile_extraction_tool_name,
+    v3_working_memory_extraction_tool_name,
 )
 from memory.models import MemoryItem, MemorySource, Rejection, UserMemory
 from memory.v3_models import (
@@ -322,6 +326,30 @@ class TestBuildV3ExtractionTool:
         assert profile_item["properties"]["polarity"]["enum"]
         assert profile_item["properties"]["stability"]["enum"]
         assert "scope" not in profile_item["properties"]
+
+
+class TestSplitMemoryExtractionTools:
+    def test_profile_tool_outputs_only_profile_updates(self):
+        tool = build_v3_profile_extraction_tool()
+
+        assert tool["name"] == "extract_profile_memory"
+        properties = tool["parameters"]["properties"]
+        assert list(properties.keys()) == ["profile_updates"]
+        assert tool["parameters"]["required"] == ["profile_updates"]
+        assert "working_memory" not in properties
+
+    def test_working_memory_tool_outputs_only_working_memory(self):
+        tool = build_v3_working_memory_extraction_tool()
+
+        assert tool["name"] == "extract_working_memory"
+        properties = tool["parameters"]["properties"]
+        assert list(properties.keys()) == ["working_memory"]
+        assert tool["parameters"]["required"] == ["working_memory"]
+        assert "profile_updates" not in properties
+
+    def test_split_tool_name_helpers(self):
+        assert v3_profile_extraction_tool_name() == "extract_profile_memory"
+        assert v3_working_memory_extraction_tool_name() == "extract_working_memory"
 
 
 class TestBuildV3ExtractionGate:

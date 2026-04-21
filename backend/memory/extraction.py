@@ -232,6 +232,8 @@ _V3_PROFILE_BUCKETS = (
 
 _V3_EXTRACTION_TOOL_NAME = "extract_memory_candidates"
 _V3_EXTRACTION_GATE_TOOL_NAME = "decide_memory_extraction"
+_V3_PROFILE_EXTRACTION_TOOL_NAME = "extract_profile_memory"
+_V3_WORKING_MEMORY_EXTRACTION_TOOL_NAME = "extract_working_memory"
 
 _V3_PROFILE_DOMAINS = [
     "pace",
@@ -273,8 +275,8 @@ _V3_WORKING_KINDS = [
 ]
 
 
-def build_v3_extraction_tool() -> dict[str, Any]:
-    profile_item_schema = {
+def _build_profile_item_schema() -> dict[str, Any]:
+    return {
         "type": "object",
         "properties": {
             "domain": {
@@ -326,7 +328,10 @@ def build_v3_extraction_tool() -> dict[str, Any]:
         ],
         "additionalProperties": False,
     }
-    working_item_schema = {
+
+
+def _build_working_item_schema() -> dict[str, Any]:
+    return {
         "type": "object",
         "properties": {
             "phase": {
@@ -382,6 +387,11 @@ def build_v3_extraction_tool() -> dict[str, Any]:
         ],
         "additionalProperties": False,
     }
+
+
+def build_v3_extraction_tool() -> dict[str, Any]:
+    profile_item_schema = _build_profile_item_schema()
+    working_item_schema = _build_working_item_schema()
     return {
         "name": _V3_EXTRACTION_TOOL_NAME,
         "description": (
@@ -403,6 +413,52 @@ def build_v3_extraction_tool() -> dict[str, Any]:
                 "working_memory": {"type": "array", "items": working_item_schema},
             },
             "required": ["profile_updates", "working_memory"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def build_v3_profile_extraction_tool() -> dict[str, Any]:
+    profile_item_schema = _build_profile_item_schema()
+    return {
+        "name": _V3_PROFILE_EXTRACTION_TOOL_NAME,
+        "description": (
+            "只提取跨旅行长期用户画像 profile_updates。当前行程事实、"
+            "会话临时信号、PII、以及推测内容都不要输出。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "profile_updates": {
+                    "type": "object",
+                    "properties": {
+                        bucket: {"type": "array", "items": profile_item_schema}
+                        for bucket in _V3_PROFILE_BUCKETS
+                    },
+                    "required": list(_V3_PROFILE_BUCKETS),
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["profile_updates"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def build_v3_working_memory_extraction_tool() -> dict[str, Any]:
+    working_item_schema = _build_working_item_schema()
+    return {
+        "name": _V3_WORKING_MEMORY_EXTRACTION_TOOL_NAME,
+        "description": (
+            "只提取当前 session/trip 内短期有用的 working_memory。"
+            "长期画像、当前行程权威事实、PII、以及推测内容都不要输出。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "working_memory": {"type": "array", "items": working_item_schema},
+            },
+            "required": ["working_memory"],
             "additionalProperties": False,
         },
     }
@@ -454,6 +510,14 @@ def build_v3_extraction_gate_tool() -> dict[str, Any]:
 
 def v3_extraction_tool_name() -> str:
     return _V3_EXTRACTION_TOOL_NAME
+
+
+def v3_profile_extraction_tool_name() -> str:
+    return _V3_PROFILE_EXTRACTION_TOOL_NAME
+
+
+def v3_working_memory_extraction_tool_name() -> str:
+    return _V3_WORKING_MEMORY_EXTRACTION_TOOL_NAME
 
 
 def v3_extraction_gate_tool_name() -> str:
