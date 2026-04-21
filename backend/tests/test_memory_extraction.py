@@ -338,17 +338,63 @@ class TestBuildV3ExtractionGate:
         assert "继续规划吧" in prompt
         assert "京都" in prompt
 
-    def test_gate_tool_requires_only_decision_fields(self):
+    def test_gate_tool_requires_routes(self):
         tool = build_v3_extraction_gate_tool()
 
         assert tool["name"] == "decide_memory_extraction"
         assert tool["parameters"]["required"] == [
             "should_extract",
+            "routes",
             "reason",
             "message",
         ]
-        assert tool["parameters"]["properties"]["should_extract"]["type"] == "boolean"
+        routes = tool["parameters"]["properties"]["routes"]
+        assert routes["required"] == ["profile", "working_memory"]
+        assert routes["properties"]["profile"]["type"] == "boolean"
+        assert routes["properties"]["working_memory"]["type"] == "boolean"
 
+    def test_parse_gate_tool_arguments_reads_routes(self):
+        result = parse_v3_extraction_gate_tool_arguments(
+            {
+                "should_extract": True,
+                "routes": {"profile": True, "working_memory": False},
+                "reason": "explicit_long_term_constraint",
+                "message": "检测到长期旅行约束",
+            }
+        )
+
+        assert result.should_extract is True
+        assert result.routes.profile is True
+        assert result.routes.working_memory is False
+        assert result.reason == "explicit_long_term_constraint"
+
+    def test_parse_gate_tool_arguments_supports_legacy_boolean(self):
+        result = parse_v3_extraction_gate_tool_arguments(
+            {
+                "should_extract": True,
+                "reason": "explicit_preference_signal",
+                "message": "检测到可复用偏好信号",
+            }
+        )
+
+        assert result.should_extract is True
+        assert result.routes.profile is True
+        assert result.routes.working_memory is True
+
+    def test_parse_gate_tool_arguments_false_clears_routes(self):
+        result = parse_v3_extraction_gate_tool_arguments(
+            {
+                "should_extract": False,
+                "routes": {"profile": True, "working_memory": True},
+                "reason": "trip_state_only",
+                "message": "本轮只是当前行程事实",
+            }
+        )
+
+        assert result.should_extract is False
+        assert result.routes.profile is False
+        assert result.routes.working_memory is False
+    
     def test_parse_gate_tool_arguments_defaults_safely(self):
         result = parse_v3_extraction_gate_tool_arguments(
             {"should_extract": True, "reason": "explicit_preference_signal"}
@@ -357,6 +403,8 @@ class TestBuildV3ExtractionGate:
         assert result.should_extract is True
         assert result.reason == "explicit_preference_signal"
         assert result.message == ""
+        assert result.routes.profile is True
+        assert result.routes.working_memory is True
 
 
 class TestParseV3ExtractionResponse:
