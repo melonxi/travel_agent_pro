@@ -143,7 +143,7 @@ travel_agent_pro/
 | Reflection | 被动自省提示，会话级去重 | before_llm_call（步骤切换时） |
 | Parallel Tool Exec | 读写分离并行调度，parallel_group ID 透传到 Stats 层 | 工具批量执行时 |
 | Tool Choice (always auto) | Phase 切分后总返回 "auto"，依赖提示纪律 | LLM 调用前 |
-| Memory System | v3 profile / working memory / episode slice 分层记忆；当前旅行事实由 TravelPlanState 权威提供；query-aware symbolic recall 只在显式历史/偏好查询时触发；回答前同步执行 `memory_recall`，用户消息一进入 chat 就提交后台 `memory_extraction_gate` / `memory_extraction` job，chat 与提取彻底解耦；split 的 `extract_profile_memory` / `extract_working_memory` 工具构建器已就位，实际后台编排仍沿用现有 `memory_extraction` 路径，等待后续 routing 接线 | system prompt 构建前检索；每轮 chat 追加 user message 后立即后台排队 gate/job |
+| Memory System | v3 profile / working memory / episode slice 分层记忆；当前旅行事实由 TravelPlanState 权威提供；query-aware symbolic recall 只在显式历史/偏好查询时触发；回答前同步执行 `memory_recall`，用户消息一进入 chat 就提交后台 `memory_extraction_gate` / `memory_extraction` job，chat 与提取彻底解耦；提取采用 session 级 latest-wins coalescing queue，避免连续多条消息堆积重任务 | system prompt 构建前检索；每轮 chat 追加 user message 后立即后台排队 gate/job |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
 | Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
 
@@ -481,7 +481,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase5.par
 | Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
 | 并行工具执行 | 读写分离：搜索类并行，状态更新顺序 |
 | Tool Choice (always auto) | split 工具后移除强制逻辑，全依赖 prompt 纪律与 State Repair |
-| Memory System | v3 结构化长期画像（profile）+ 会话 working memory + episode slice；当前旅行事实由 TravelPlanState 权威提供；query-aware symbolic recall 只在显式历史/偏好查询时触发；遗留 v2 memory/item/episode API 仅保留兼容；memory extraction 已拆出 profile / working memory 专用工具构建器，但运行时仍使用现有提取路径，等待后续 routing 接线 |
+| Memory System | v3 结构化长期画像（profile）+ 会话 working memory + episode slice；当前旅行事实由 TravelPlanState 权威提供；query-aware symbolic recall 只在显式历史/偏好查询时触发；遗留 v2 memory/item/episode API 仅保留兼容 |
 | Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
 | Trace Data Pipeline | "丰富 Stats 层，Trace 只做读取"：钩子 post-hoc 写入 `ToolCallRecord`；`build_trace` 纯读取消费 |
 | Memory Recall SSE | `memory_recall` 事件透传到前端，payload 含 `sources/profile_ids/working_memory_ids/slice_ids/matched_reasons`，驱动 SessionSidebar 高亮与 ChatPanel memory chip |
