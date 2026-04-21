@@ -68,6 +68,11 @@ from memory.formatter import MemoryRecallTelemetry
 from memory.manager import MemoryManager
 from memory.models import MemoryCandidate, MemoryEvent, MemoryItem, TripEpisode
 from memory.policy import MemoryMerger as PolicyMemoryMerger, MemoryPolicy
+from memory.recall_gate import (
+    apply_recall_short_circuit,
+    build_recall_gate_tool,
+    parse_recall_gate_tool_arguments,
+)
 from memory.v3_models import generate_profile_item_id
 from phase.router import PhaseRouter
 from storage.archive_store import ArchiveStore
@@ -160,6 +165,21 @@ class MemoryExtractionGateDecision:
 class MemorySchedulerRuntime:
     scheduler: MemoryJobScheduler
     last_consumed_user_count: int = 0
+
+
+@dataclass
+class MemoryRecallDecision:
+    needs_recall: bool
+    stage0_decision: str
+    stage0_reason: str
+    intent_type: str = ""
+    reason: str = ""
+    confidence: float | None = None
+    fallback_used: str = "none"
+
+
+def _final_recall_decision_from_gate(needs_recall: bool) -> str:
+    return "query_recall_enabled" if needs_recall else "fixed_only"
 
 
 def _truncate_for_log(value: str, limit: int = 600) -> str:
@@ -368,6 +388,21 @@ def _memory_hit_record_from_recall(
         working_memory_ids=list(memory_recall.working_memory_ids),
         slice_ids=list(memory_recall.slice_ids),
         matched_reasons=list(memory_recall.matched_reasons),
+    )
+
+
+def _recall_telemetry_record_from_recall(
+    memory_recall: MemoryRecallTelemetry,
+):
+    from telemetry.stats import RecallTelemetryRecord
+
+    return RecallTelemetryRecord(
+        stage0_decision=memory_recall.stage0_decision,
+        stage0_reason=memory_recall.stage0_reason,
+        gate_needs_recall=memory_recall.gate_needs_recall,
+        gate_intent_type=memory_recall.gate_intent_type,
+        final_recall_decision=memory_recall.final_recall_decision,
+        fallback_used=memory_recall.fallback_used,
     )
 
 
@@ -1395,6 +1430,124 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             runtime.scheduler.pending_snapshot is not None,
         )
         runtime.scheduler.submit(snapshot)
+
+    async def _decide_memory_recall(
+        *,
+        session_id: str,
+        user_id: str,
+        user_messages: list[str],
+        plan_snapshot: TravelPlanState,
+    ) -> MemoryRecallDecision:
+        stage0 = apply_recall_short_circuit(user_messages[-1] if user_messages else "")
+        if stage0.decision == "force_recall":
+            return MemoryRecallDecision(
+                needs_recall=True,
+                stage0_decision=stage0.decision,
+                stage0_reason=stage0.reason,
+                intent_type="",
+                reason=stage0.reason,
+            )
+        if stage0.decision == "skip_recall":
+            return MemoryRecallDecision(
+                needs_recall=False,
+                stage0_decision=stage0.decision,
+                stage0_reason=stage0.reason,
+                intent_type="",
+                reason=stage0.reason,
+            )
+        if not config.memory.retrieval.recall_gate_enabled:
+            return MemoryRecallDecision(
+                needs_recall=False,
+                stage0_decision=stage0.decision,
+                stage0_reason=stage0.reason,
+                intent_type="no_recall_needed",
+                reason="recall_gate_disabled",
+            )
+        gate_window = build_gate_user_window(
+            user_messages=user_messages,
+            max_messages=_GATE_MAX_USER_MESSAGES,
+            max_chars=_GATE_MAX_CHARS,
+        )
+        if not gate_window:
+            return MemoryRecallDecision(
+                needs_recall=False,
+                stage0_decision=stage0.decision,
+                stage0_reason=stage0.reason,
+                intent_type="no_recall_needed",
+                reason="no_user_messages",
+            )
+
+        memory_summary = await _build_gate_memory_summary(
+            user_id=user_id,
+            session_id=session_id,
+            plan_snapshot=plan_snapshot,
+        )
+        prompt = "\n".join(
+            [
+                "你是旅行记忆召回判定器。",
+                "如果用户在问当前行程事实、继续当前规划或无需引用过往偏好/历史经历，则 needs_recall=false。",
+                "只有在需要调取长期画像、历史偏好或过往旅行经历时，needs_recall=true。",
+                f"最近用户消息：{json.dumps(gate_window, ensure_ascii=False)}",
+                f"当前旅行事实：{json.dumps(_memory_plan_facts(plan_snapshot), ensure_ascii=False)}",
+                f"现有记忆概览：{json.dumps(memory_summary, ensure_ascii=False)}",
+                "必须调用 decide_memory_recall 工具输出结果。",
+            ]
+        )
+        recall_gate_model = config.memory.retrieval.recall_gate_model or config.llm.model
+        gate_llm = create_llm_provider(replace(config.llm, model=recall_gate_model))
+        try:
+            tool_args = await asyncio.wait_for(
+                _collect_forced_tool_call_arguments(
+                    gate_llm,
+                    messages=[Message(role=Role.USER, content=prompt)],
+                    tool_def=build_recall_gate_tool(),
+                ),
+                timeout=config.memory.retrieval.recall_gate_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "记忆召回判定超时 session=%s user=%s timeout_seconds=%s",
+                session_id,
+                user_id,
+                config.memory.retrieval.recall_gate_timeout_seconds,
+            )
+            return MemoryRecallDecision(
+                needs_recall=False,
+                stage0_decision=stage0.decision,
+                stage0_reason=stage0.reason,
+                intent_type="gate_decision_unavailable",
+                reason="gate_timeout",
+                confidence=0.0,
+                fallback_used="gate_timeout",
+            )
+        except Exception:
+            logger.exception(
+                "记忆召回判定失败 session=%s user=%s",
+                session_id,
+                user_id,
+            )
+            return MemoryRecallDecision(
+                needs_recall=False,
+                stage0_decision=stage0.decision,
+                stage0_reason=stage0.reason,
+                intent_type="gate_decision_unavailable",
+                reason="gate_error",
+                confidence=0.0,
+                fallback_used="gate_error",
+            )
+        gate_decision = parse_recall_gate_tool_arguments(tool_args)
+        gate_intent_type = gate_decision.intent_type
+        if gate_decision.fallback_used == "invalid_tool_payload":
+            gate_intent_type = "gate_decision_unavailable"
+        return MemoryRecallDecision(
+            needs_recall=gate_decision.needs_recall,
+            stage0_decision=stage0.decision,
+            stage0_reason=stage0.reason,
+            intent_type=gate_intent_type,
+            reason=gate_decision.reason,
+            confidence=gate_decision.confidence,
+            fallback_used=gate_decision.fallback_used,
+        )
 
     async def _decide_memory_extraction(
         *,
@@ -3047,30 +3200,44 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 )
             )
 
-            memory_recall_task_id = f"memory_recall:{plan.session_id}:{int(time.time())}"
-            memory_recall_started_at = time.time()
-            yield json.dumps(
-                {
-                    "type": "internal_task",
-                    "task": InternalTask(
-                        id=memory_recall_task_id,
-                        kind="memory_recall",
-                        label="记忆召回",
-                        status="pending",
-                        message="正在检索本轮可用旅行记忆…",
-                        blocking=True,
-                        scope="turn",
-                        started_at=memory_recall_started_at,
-                    ).to_dict(),
-                },
-                ensure_ascii=False,
-            )
-
             if config.memory.enabled:
+                memory_recall_task_id = (
+                    f"memory_recall:{plan.session_id}:{int(time.time())}"
+                )
+                memory_recall_started_at = time.time()
+                yield json.dumps(
+                    {
+                        "type": "internal_task",
+                        "task": InternalTask(
+                            id=memory_recall_task_id,
+                            kind="memory_recall",
+                            label="记忆召回",
+                            status="pending",
+                            message="正在检索本轮可用旅行记忆…",
+                            blocking=True,
+                            scope="turn",
+                            started_at=memory_recall_started_at,
+                        ).to_dict(),
+                    },
+                    ensure_ascii=False,
+                )
+
+                recall_decision = await _decide_memory_recall(
+                    session_id=plan.session_id,
+                    user_id=req.user_id,
+                    user_messages=[
+                        message.content
+                        for message in messages
+                        if message.role == Role.USER and message.content
+                    ],
+                    plan_snapshot=plan,
+                )
                 memory_result = await memory_mgr.generate_context(
                     req.user_id,
                     plan,
                     user_message=req.message,
+                    recall_gate=recall_decision.needs_recall,
+                    short_circuit=recall_decision.stage0_decision,
                 )
                 if (
                     isinstance(memory_result, tuple)
@@ -3081,55 +3248,75 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 else:
                     memory_context = memory_result[0]
                     memory_recall = MemoryRecallTelemetry()
+                memory_recall.stage0_decision = recall_decision.stage0_decision
+                memory_recall.stage0_reason = recall_decision.stage0_reason
+                memory_recall.gate_needs_recall = recall_decision.needs_recall
+                memory_recall.gate_intent_type = recall_decision.intent_type
+                memory_recall.gate_confidence = recall_decision.confidence
+                memory_recall.gate_reason = recall_decision.reason
+                memory_recall.fallback_used = recall_decision.fallback_used
+                memory_recall.final_recall_decision = (
+                    memory_recall.final_recall_decision
+                    or _final_recall_decision_from_gate(recall_decision.needs_recall)
+                )
             else:
                 memory_context = "暂无相关用户记忆"
-                memory_recall = MemoryRecallTelemetry()
+                memory_recall = None
 
-            recalled_ids = list(
-                dict.fromkeys(
-                    [
-                        *memory_recall.profile_ids,
-                        *memory_recall.working_memory_ids,
-                        *memory_recall.slice_ids,
-                    ]
+            if memory_recall is not None:
+                recalled_ids = list(
+                    dict.fromkeys(
+                        [
+                            *memory_recall.profile_ids,
+                            *memory_recall.working_memory_ids,
+                            *memory_recall.slice_ids,
+                        ]
+                    )
                 )
-            )
 
-            yield json.dumps(
-                {
-                    "type": "internal_task",
-                    "task": InternalTask(
-                        id=memory_recall_task_id,
-                        kind="memory_recall",
-                        label="记忆召回",
-                        status="success" if recalled_ids else "skipped",
-                        message=(
-                            f"本轮使用 {len(recalled_ids)} 条旅行记忆"
-                            if recalled_ids
-                            else "未找到本轮可用记忆"
-                        ),
-                        blocking=True,
-                        scope="turn",
-                        result={
-                            "item_ids": recalled_ids,
-                            "count": len(recalled_ids),
-                            "sources": dict(memory_recall.sources),
-                        },
-                        started_at=memory_recall_started_at,
-                        ended_at=time.time(),
-                    ).to_dict(),
-                },
-                ensure_ascii=False,
-            )
-
-            if recalled_ids:
-                memory_hit_record = _memory_hit_record_from_recall(memory_recall)
-                if memory_hit_record is not None:
-                    session_stats = session.get("stats")
-                    if session_stats is not None:
-                        session_stats.memory_hits.append(memory_hit_record)
                 yield json.dumps(
-                    {"type": "memory_recall", **memory_recall.to_dict()},
+                    {
+                        "type": "internal_task",
+                        "task": InternalTask(
+                            id=memory_recall_task_id,
+                            kind="memory_recall",
+                            label="记忆召回",
+                            status="success" if recalled_ids else "skipped",
+                            message=(
+                                f"本轮使用 {len(recalled_ids)} 条旅行记忆"
+                                if recalled_ids
+                                else "未找到本轮可用记忆"
+                            ),
+                            blocking=True,
+                            scope="turn",
+                            result={
+                                "item_ids": recalled_ids,
+                                "count": len(recalled_ids),
+                                "sources": dict(memory_recall.sources),
+                                "gate": memory_recall.gate_needs_recall,
+                            },
+                            started_at=memory_recall_started_at,
+                            ended_at=time.time(),
+                        ).to_dict(),
+                    },
+                    ensure_ascii=False,
+                )
+
+                session_stats = session.get("stats")
+                if session_stats is not None:
+                    session_stats.recall_telemetry.append(
+                        _recall_telemetry_record_from_recall(memory_recall)
+                    )
+                    memory_hit_record = _memory_hit_record_from_recall(memory_recall)
+                    if memory_hit_record is not None:
+                        session_stats.memory_hits.append(memory_hit_record)
+
+                yield json.dumps(
+                    {
+                        "type": "memory_recall",
+                        "gate": memory_recall.gate_needs_recall,
+                        **memory_recall.to_dict(),
+                    },
                     ensure_ascii=False,
                 )
 

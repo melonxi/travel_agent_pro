@@ -3,6 +3,7 @@ from telemetry.stats import (
     SessionStats,
     ToolCallRecord,
     MemoryHitRecord,
+    RecallTelemetryRecord,
     LLMCallRecord,
     lookup_pricing,
 )
@@ -55,6 +56,17 @@ def _serialize_memory_hit(hit: MemoryHitRecord) -> dict:
     }
 
 
+def _serialize_recall_telemetry(hit: RecallTelemetryRecord) -> dict:
+    return {
+        "stage0_decision": hit.stage0_decision,
+        "stage0_reason": hit.stage0_reason,
+        "gate_needs_recall": hit.gate_needs_recall,
+        "gate_intent_type": hit.gate_intent_type,
+        "final_recall_decision": hit.final_recall_decision,
+        "fallback_used": hit.fallback_used,
+    }
+
+
 def _classify_significance(iteration: dict) -> str:
     """Classify iteration significance for frontend display priority.
 
@@ -73,7 +85,11 @@ def _classify_significance(iteration: dict) -> str:
     if tool_calls:
         has_write = any(tc.get("side_effect") == "write" for tc in tool_calls)
         return "high" if has_write else "medium"
-    if iteration.get("compression_event") or iteration.get("memory_hits"):
+    if (
+        iteration.get("compression_event")
+        or iteration.get("memory_hits")
+        or iteration.get("memory_recall")
+    ):
         return "low"
     return "none"
 
@@ -115,9 +131,11 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
     llm_calls = stats.llm_calls
     tool_calls = list(stats.tool_calls)
     memory_hits = list(stats.memory_hits)
+    recall_telemetry = list(stats.recall_telemetry)
 
     tool_idx = 0
     memory_idx = 0
+    recall_idx = 0
     for i, llm in enumerate(llm_calls):
         prev_llm_ts = llm_calls[i - 1].timestamp if i > 0 else float("-inf")
         next_llm_ts = (
@@ -160,6 +178,13 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
                 memory_hit = _serialize_memory_hit(candidate)
                 memory_idx += 1
 
+        memory_recall = None
+        if recall_idx < len(recall_telemetry):
+            candidate = recall_telemetry[recall_idx]
+            if prev_llm_ts < candidate.timestamp <= llm.timestamp + 5.0:
+                memory_recall = _serialize_recall_telemetry(candidate)
+                recall_idx += 1
+
         iter_dict = {
             "index": i + 1,
             "phase": llm.phase,
@@ -175,6 +200,7 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
             "state_changes": _collect_state_changes(iter_tools),
             "compression_event": _match_compression_event(llm, compression_events),
             "memory_hits": memory_hit,
+            "memory_recall": memory_recall,
         }
         iter_dict["significance"] = _classify_significance(iter_dict)
         iterations.append(iter_dict)
@@ -211,6 +237,7 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
             "state_changes": _collect_state_changes(remaining_tools),
             "compression_event": None,
             "memory_hits": None,
+            "memory_recall": None,
         }
         orphan_dict["significance"] = _classify_significance(orphan_dict)
         iterations.append(orphan_dict)
