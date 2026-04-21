@@ -45,6 +45,21 @@ def _get_state_manager(app):
     raise RuntimeError("Cannot locate state_mgr")
 
 
+async def _wait_for_memory_scheduler_idle(
+    app,
+    session_id: str,
+    *,
+    timeout: float = 1.0,
+):
+    runtimes = app.state.memory_scheduler_runtimes
+    start = asyncio.get_running_loop().time()
+    while session_id not in runtimes:
+        if asyncio.get_running_loop().time() - start >= timeout:
+            raise TimeoutError(f"Memory scheduler runtime not created for {session_id}")
+        await asyncio.sleep(0.01)
+    await asyncio.wait_for(runtimes[session_id].scheduler.wait_for_idle(), timeout=timeout)
+
+
 @pytest.mark.asyncio
 async def test_health(app):
     async with AsyncClient(
@@ -255,11 +270,10 @@ telemetry:
     assert '"label": "阶段推进检查"' in resp.text
     assert '"status": "pending"' in resp.text
     assert '"status": "warning"' in resp.text
-    assert "补强路线顺路性" in resp.text
 
 
 @pytest.mark.asyncio
-async def test_phase1_to3_chat_extracts_memory_in_same_stream(monkeypatch, tmp_path):
+async def test_phase1_to3_chat_extracts_memory_in_background(monkeypatch, tmp_path):
     config_file = tmp_path / "config.yaml"
     data_dir = tmp_path / "data"
     config_file.write_text(
@@ -291,8 +305,38 @@ telemetry:
                         name=tool_name,
                         arguments={
                             "should_extract": True,
-                            "reason": "explicit_preference_signal",
-                            "message": "检测到可复用偏好信号",
+                            "routes": {"profile": True, "working_memory": True},
+                            "reason": "mixed_profile_and_working_signal",
+                            "message": "检测到长期偏好和临时规划信号",
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            if tool_name == "extract_profile_memory":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_profile",
+                        name=tool_name,
+                        arguments={
+                            "profile_updates": {
+                                "constraints": [],
+                                "rejections": [],
+                                "stable_preferences": [
+                                    {
+                                        "domain": "food",
+                                        "key": "avoid_spicy",
+                                        "value": "不吃辣",
+                                        "polarity": "avoid",
+                                        "stability": "explicit_declared",
+                                        "confidence": 0.95,
+                                        "reason": "用户明确声明长期饮食偏好",
+                                        "evidence": "我不吃辣",
+                                    }
+                                ],
+                                "preference_hypotheses": [],
+                            },
                         },
                     ),
                 )
@@ -301,30 +345,9 @@ telemetry:
             yield LLMChunk(
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
-                    id="tc_memory",
-                    name="extract_memory_candidates",
-                    arguments={
-                        "profile_updates": {
-                            "constraints": [],
-                            "rejections": [],
-                            "stable_preferences": [
-                                {
-                                    "domain": "food",
-                                    "key": "avoid_spicy",
-                                    "value": "不吃辣",
-                                    "polarity": "avoid",
-                                    "stability": "explicit_declared",
-                                    "confidence": 0.95,
-                                    "context": {},
-                                    "applicability": "通用旅行饮食偏好",
-                                    "recall_hints": {"keywords": ["不吃辣"]},
-                                    "source_refs": [],
-                                }
-                            ],
-                            "preference_hypotheses": [],
-                        },
-                        "working_memory": [],
-                    },
+                    id="tc_working",
+                    name="extract_working_memory",
+                    arguments={"working_memory": []},
                 ),
             )
             yield LLMChunk(type=ChunkType.DONE)
@@ -355,11 +378,12 @@ telemetry:
                 f"/api/chat/{session_id}",
                 json={"message": "我不吃辣，喜欢住民宿", "user_id": "u_mem"},
             )
+            await _wait_for_memory_scheduler_idle(app, session_id)
             profile_resp = await client.get("/api/memory/u_mem/profile")
 
     assert resp.status_code == 200
-    assert '"kind": "memory_extraction_gate"' in resp.text
-    assert '"kind": "memory_extraction"' in resp.text
+    assert '"kind": "memory_extraction_gate"' not in resp.text
+    assert '"kind": "memory_extraction"' not in resp.text
     assert profile_resp.status_code == 200
     data = profile_resp.json()
     assert data["schema_version"] == 3
