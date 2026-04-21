@@ -143,7 +143,7 @@ travel_agent_pro/
 | Reflection | 被动自省提示，会话级去重 | before_llm_call（步骤切换时） |
 | Parallel Tool Exec | 读写分离并行调度，parallel_group ID 透传到 Stats 层 | 工具批量执行时 |
 | Tool Choice (always auto) | Phase 切分后总返回 "auto"，依赖提示纪律 | LLM 调用前 |
-| Memory System | v3 profile / working memory / episode slice 分层记忆；当前旅行事实由 TravelPlanState 权威提供；query-aware symbolic recall 只在显式历史/偏好查询时触发；回答前同步执行 `memory_recall`，用户消息一进入 chat 就提交后台 `memory_extraction_gate` / `memory_extraction` job，chat 与提取彻底解耦；后台提取使用 route-aware gate 决策按需调用长期画像 `extract_profile_memory` 和会话工作记忆 `extract_working_memory` split extractors；提取采用 session 级 latest-wins coalescing queue，避免连续多条消息堆积重任务 | system prompt 构建前检索；每轮 chat 追加 user message 后立即后台排队 gate/job |
+| Memory System | v3 profile / working memory / episode slice 分层记忆；当前旅行事实由 TravelPlanState 权威提供；query-aware symbolic recall 只在显式历史/偏好查询时触发；回答前同步执行 `memory_recall`，用户消息一进入 chat 就提交后台 `memory_extraction_gate` / `memory_extraction` job，chat 与提取彻底解耦；后台提取使用 route-aware gate 决策按需调用长期画像 `extract_profile_memory` 和会话工作记忆 `extract_working_memory` split extractors，并在保留兼容聚合任务的同时发布 `profile_memory_extraction` / `working_memory_extraction` 子任务；提取采用 session 级 latest-wins coalescing queue，避免连续多条消息堆积重任务 | system prompt 构建前检索；每轮 chat 追加 user message 后立即后台排队 gate/job |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
 | Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
 
@@ -197,11 +197,11 @@ travel_agent_pro/
 ### Internal task stream
 后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务。当前有两条通道：
 - chat SSE `/api/chat/{id}`：承载与当前回答强绑定的任务，例如 `memory_recall`、`soft_judge`、`quality_gate`
-- background internal-task SSE `/api/internal-tasks/{id}/stream`：承载与回答解耦的后台任务，例如 `memory_extraction_gate`、`memory_extraction`
+- background internal-task SSE `/api/internal-tasks/{id}/stream`：承载与回答解耦的后台任务，例如 `memory_extraction_gate`、兼容聚合 `memory_extraction`、按路由发布的 `profile_memory_extraction` / `working_memory_extraction`
 
 前端 `ChatPanel` 按 `task.id` 合并生命周期更新，并维护跨流共享的 `task.id -> message.id` 映射；这样同一个后台任务即使在 chat `done` 之后才结束，也会回写到原卡片，而不是再长出一张重复卡。`MessageBubble` 渲染为系统任务卡，和真实工具卡保持视觉与语义区隔。
 
-进入聊天流的内部任务包括：`soft_judge`（工具结果后的行程质量评审）、`quality_gate`（阶段推进检查）、`context_compaction`（上下文整理）、`reflection`（自检提示注入）、`phase5_orchestration`（Phase 5 并行编排）和 `memory_recall`（本轮记忆召回）。进入后台 internal-task 流的任务包括：`memory_extraction_gate`（轻量判断是否值得提取）和 `memory_extraction`（正式记忆候选提取）。`save_day_plan` / `replace_all_day_plans` 等真实工具的 `TOOL_RESULT` 会先到达前端并结束工具卡，随后才显示软评审或后台记忆任务，避免用户误以为真实工具仍在执行。
+进入聊天流的内部任务包括：`soft_judge`（工具结果后的行程质量评审）、`quality_gate`（阶段推进检查）、`context_compaction`（上下文整理）、`reflection`（自检提示注入）、`phase5_orchestration`（Phase 5 并行编排）和 `memory_recall`（本轮记忆召回）。进入后台 internal-task 流的任务包括：`memory_extraction_gate`（轻量判断是否值得提取）、`memory_extraction`（兼容聚合记忆提取）以及按 gate 路由出现的 `profile_memory_extraction` / `working_memory_extraction`。任一路由提取失败会让聚合任务以 `warning` / `partial_failure` 结束，已成功写入的另一类记忆不回滚，且本轮 `last_consumed_user_count` 不前进以便后续重试。`save_day_plan` / `replace_all_day_plans` 等真实工具的 `TOOL_RESULT` 会先到达前端并结束工具卡，随后才显示软评审或后台记忆任务，避免用户误以为真实工具仍在执行。
 
 ### 文档沉淀约定
 - `docs/phase*.md`、`docs/*fix*.md`：专题修复记录与设计说明
@@ -504,7 +504,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase5.par
 
 - **后端单元测试**：覆盖 Agent 循环（含白名单前瞻容错、跨阶段状态修复、重复搜索拦截）、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 通道、RunRecord/IterationProgress；plan tools 回归集中位于 `backend/tests/test_plan_tools/`（含 `test_phase3_tools.py`、`test_trip_basics.py` 与 `test_daily_plans.py`），`infer_phase3_step_from_state` 对污染的 `skeleton_plans` 具备 reader-side 过滤防御
 - **测试基线语义**：未知 Anthropic 异常遵循共享 `classify_opaque_api_error` 逻辑，默认归类为 `LLM_TRANSIENT_ERROR`；`validate_lock_budget` 的占比提示基于 `DateRange.total_days` 的 inclusive 天数语义；并行 `add_constraints` 用 `items` 作为增量状态写入参数，约束提示通过 `_pending_system_notes` 在下一轮 LLM 调用前 flush
-- **Memory 集成测试策略**：`backend/tests/test_memory_integration.py` 以公开 chat 流程和 schema-conformant fake tool payload 验证 Phase 7 episode 归档幂等、chat 与 memory extraction 解耦、route-aware split extractor forced tool call 语义、profile-only / working-only / no-route 三类路由写入与跳过行为、timeout/warning 语义，以及 session 级 each-turn memory extraction 排队行为；需要观测后台调度器时通过 `app.state` 暴露的测试钩子读取，而不是依赖路由闭包捕获细节
+- **Memory 集成测试策略**：`backend/tests/test_memory_integration.py` 以公开 chat 流程和 schema-conformant fake tool payload 验证 Phase 7 episode 归档幂等、chat 与 memory extraction 解耦、route-aware split extractor forced tool call 语义、profile-only / working-only / no-route 三类路由写入与跳过行为、split internal-task 生命周期、timeout/warning/partial-failure 语义，以及 session 级 each-turn memory extraction 排队行为；需要观测后台调度器时通过 `app.state` 暴露的测试钩子读取，而不是依赖路由闭包捕获细节
 - **记忆/遥测测试整理**：遗留的 `test_memory.py` 与 `test_telemetry_integration.py` 已并入 `test_memory_manager.py`、`test_telemetry_setup.py`；记忆文档同步补充了 `memory_recall` / `memory_hits` 的可观测性现状与 `TripEpisode` 仍未进入主召回链路的限制
 - **Phase 7 交付物契约草案**：仓库内已新增 dual-deliverables 设计/计划文档，以及 `backend/tests/test_state_models.py`、`backend/tests/test_state_manager.py` 中针对 `plan.deliverables` 与 deliverable 文件读写/清理的待实现测试；当前主干实现尚未支持这些能力
 - **评估管线**：golden cases（YAML）+ 断言评估 + 离线 runner；断言类型包含 `phase_reached`/`state_field_set`/`tool_called`/`tool_not_called`/`contains_text`/`not_contains_text`/`budget_within`（其中 `not_contains_text` 用于回归"机器感 checklist"类文案违规）；`scripts/eval-stability.py` 生成 pass@k 稳定性报告（JSON + Markdown）；`scripts/failure-analysis/` 对 live backend 执行失败场景并产出分析报告
