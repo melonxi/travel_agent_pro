@@ -622,6 +622,82 @@ def build_v3_extraction_prompt(
 如果没有可提取内容，就调用工具并传入空数组。"""
 
 
+def build_v3_profile_extraction_prompt(
+    user_messages: list[str],
+    profile: UserMemoryProfile,
+    plan_facts: dict[str, Any],
+) -> str:
+    messages_text = "\n".join(f"- {message}" for message in user_messages)
+    profile_text = json.dumps(profile.to_dict(), ensure_ascii=False, indent=2)
+    facts_text = json.dumps(plan_facts, ensure_ascii=False, indent=2)
+    return f"""你在执行一个内部长期画像提取任务。你的目标只有 `profile_updates`。
+
+请调用工具 `{_V3_PROFILE_EXTRACTION_TOOL_NAME}` 提交结果，不要输出 JSON 正文、不要输出解释文字、不要输出代码块。
+
+用户消息：
+{messages_text}
+
+当前解析出的本次行程事实：
+{facts_text}
+
+已有长期画像：
+{profile_text}
+
+分类规则：
+- `constraints`：跨旅行硬约束，例如“不坐红眼航班”“不住青旅”。
+- `rejections`：明确拒绝的对象，要带 value。
+- `stable_preferences`：多次观察到，或用户明确声明为长期成立的稳定偏好。
+- `preference_hypotheses`：单次观察得到的偏好假设。
+
+硬性要求：
+- 本次目的地、日期、预算、旅客人数、候选池、骨架、每日计划都属于当前 trip state，不要输出。
+- 当前会话临时信号不要输出；这些由会话工作记忆提取器处理。
+- 支付信息、会员信息、身份证号、护照号、手机号、邮箱、银行卡号等敏感信息直接忽略，不要输出。
+- 不要推测用户没说过的偏好。
+- 不要重复已有 profile 条目。
+
+如果没有可提取内容，就调用工具并传入空数组。"""
+
+
+def build_v3_working_memory_extraction_prompt(
+    user_messages: list[str],
+    working_memory: SessionWorkingMemory,
+    plan_facts: dict[str, Any],
+) -> str:
+    messages_text = "\n".join(f"- {message}" for message in user_messages)
+    working_text = json.dumps(working_memory.to_dict(), ensure_ascii=False, indent=2)
+    facts_text = json.dumps(plan_facts, ensure_ascii=False, indent=2)
+    return f"""你在执行一个内部会话工作记忆提取任务。你的目标只有 `working_memory`。
+
+请调用工具 `{_V3_WORKING_MEMORY_EXTRACTION_TOOL_NAME}` 提交结果，不要输出 JSON 正文、不要输出解释文字、不要输出代码块。
+
+用户消息：
+{messages_text}
+
+当前解析出的本次行程事实：
+{facts_text}
+
+已有会话工作记忆：
+{working_text}
+
+分类规则：
+- `temporary_preference`：只在当前 session/trip 内成立的临时偏好。
+- `temporary_rejection`：只在当前 session/trip 内成立的临时否决。
+- `decision_hint`：当前规划后续应记住的决策线索。
+- `open_question`：用户还没有回答、后续需要追问的问题。
+- `watchout`：当前 trip 后续需要避开的风险提醒。
+- `note`：无法归入以上类型但当前会话有用的短期备注。
+
+硬性要求：
+- 当前 trip 的目的地、日期、预算、旅客人数、候选池、骨架、每日计划属于 TravelPlanState，不要输出。
+- 长期偏好、长期约束、永久拒绝不要输出；这些由 profile extractor 处理。
+- 支付信息、会员信息、身份证号、护照号、手机号、邮箱、银行卡号等敏感信息直接忽略，不要输出。
+- 不要重复已有 working memory 条目。
+- 每条 item 必须设置 `status=active`，并设置完整 expires。
+
+如果没有可提取内容，就调用工具并传入空数组。"""
+
+
 def build_v3_extraction_gate_prompt(
     user_messages: list[str],
     plan_facts: dict[str, Any],
@@ -717,6 +793,43 @@ def parse_v3_extraction_response(response: str) -> V3ExtractionResult:
             if isinstance(raw, dict)
         ],
         drop=[raw for raw in _as_list(data.get("drop")) if isinstance(raw, dict)],
+    )
+
+
+def parse_v3_profile_extraction_tool_arguments(
+    arguments: dict[str, Any] | None,
+) -> V3ExtractionResult:
+    if not isinstance(arguments, dict):
+        return V3ExtractionResult()
+    return parse_v3_extraction_response(
+        json.dumps(
+            {
+                "profile_updates": arguments.get("profile_updates", {}),
+                "working_memory": [],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def parse_v3_working_memory_extraction_tool_arguments(
+    arguments: dict[str, Any] | None,
+) -> V3ExtractionResult:
+    if not isinstance(arguments, dict):
+        return V3ExtractionResult()
+    return parse_v3_extraction_response(
+        json.dumps(
+            {
+                "profile_updates": {
+                    "constraints": [],
+                    "rejections": [],
+                    "stable_preferences": [],
+                    "preference_hypotheses": [],
+                },
+                "working_memory": arguments.get("working_memory", []),
+            },
+            ensure_ascii=False,
+        )
     )
 
 

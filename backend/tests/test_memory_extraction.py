@@ -4,7 +4,9 @@ from memory.extraction import (
     build_v3_extraction_gate_prompt,
     build_v3_extraction_gate_tool,
     build_v3_extraction_tool,
+    build_v3_profile_extraction_prompt,
     build_v3_profile_extraction_tool,
+    build_v3_working_memory_extraction_prompt,
     build_v3_working_memory_extraction_tool,
     build_extraction_prompt,
     build_v3_extraction_prompt,
@@ -12,6 +14,8 @@ from memory.extraction import (
     parse_extraction_response,
     parse_v3_extraction_gate_tool_arguments,
     parse_v3_extraction_response,
+    parse_v3_profile_extraction_tool_arguments,
+    parse_v3_working_memory_extraction_tool_arguments,
     v3_profile_extraction_tool_name,
     v3_working_memory_extraction_tool_name,
 )
@@ -350,6 +354,80 @@ class TestSplitMemoryExtractionTools:
     def test_split_tool_name_helpers(self):
         assert v3_profile_extraction_tool_name() == "extract_profile_memory"
         assert v3_working_memory_extraction_tool_name() == "extract_working_memory"
+
+    def test_profile_prompt_excludes_working_memory_target(self):
+        prompt = build_v3_profile_extraction_prompt(
+            user_messages=["以后我都不坐红眼航班"],
+            profile=UserMemoryProfile.empty("u1"),
+            plan_facts={"destination": "京都"},
+        )
+
+        assert "extract_profile_memory" in prompt
+        assert "profile_updates" in prompt
+        assert "working_memory" not in prompt
+        assert "本次目的地、日期、预算" in prompt
+
+    def test_working_prompt_excludes_profile_updates_target(self):
+        prompt = build_v3_working_memory_extraction_prompt(
+            user_messages=["这轮先别考虑迪士尼"],
+            working_memory=SessionWorkingMemory.empty("u1", "s1", "trip_1"),
+            plan_facts={"destination": "东京"},
+        )
+
+        assert "extract_working_memory" in prompt
+        assert "working_memory" in prompt
+        assert "profile_updates" not in prompt
+        assert "长期偏好" in prompt
+
+    def test_parse_profile_tool_arguments(self):
+        result = parse_v3_profile_extraction_tool_arguments(
+            {
+                "profile_updates": {
+                    "constraints": [
+                        {
+                            "domain": "flight",
+                            "key": "avoid_red_eye",
+                            "value": True,
+                            "polarity": "avoid",
+                            "stability": "explicit_declared",
+                            "confidence": 0.95,
+                            "reason": "明确表达",
+                            "evidence": "以后不坐红眼航班",
+                        }
+                    ],
+                    "rejections": [],
+                    "stable_preferences": [],
+                    "preference_hypotheses": [],
+                }
+            }
+        )
+
+        assert result.profile_updates.constraints[0].key == "avoid_red_eye"
+        assert result.working_memory == []
+
+    def test_parse_working_memory_tool_arguments(self):
+        result = parse_v3_working_memory_extraction_tool_arguments(
+            {
+                "working_memory": [
+                    {
+                        "phase": 3,
+                        "kind": "temporary_rejection",
+                        "domains": ["attraction"],
+                        "content": "这轮先别考虑迪士尼",
+                        "reason": "当前候选筛选需要避让",
+                        "status": "active",
+                        "expires": {
+                            "on_session_end": True,
+                            "on_trip_change": True,
+                            "on_phase_exit": False,
+                        },
+                    }
+                ]
+            }
+        )
+
+        assert result.profile_updates.constraints == []
+        assert result.working_memory[0].kind == "temporary_rejection"
 
 
 class TestBuildV3ExtractionGate:
