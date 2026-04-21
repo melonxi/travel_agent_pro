@@ -691,7 +691,7 @@ async def test_tool_backtrack_reset_rotates_trip_memory(monkeypatch, app):
 
 @pytest.mark.asyncio
 async def test_chat_stream_does_not_embed_background_memory_tasks(app):
-    observed = {"extraction_called": False}
+    observed = {"extraction_calls": []}
 
     async def fake_run(self, messages, phase, tools_override=None):
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="助手回复")
@@ -713,8 +713,12 @@ async def test_chat_stream_does_not_embed_background_memory_tasks(app):
                         },
                     ),
                 )
-            elif tool_name == "extract_memory_candidates":
-                observed["extraction_called"] = True
+            elif tool_name in {
+                "extract_memory_candidates",
+                "extract_profile_memory",
+                "extract_working_memory",
+            }:
+                observed["extraction_calls"].append(tool_name)
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
@@ -753,7 +757,7 @@ async def test_chat_stream_does_not_embed_background_memory_tasks(app):
     assert '"kind": "memory_recall"' in resp.text
     assert '"kind": "memory_extraction_gate"' not in resp.text
     assert '"kind": "memory_extraction"' not in resp.text
-    assert observed["extraction_called"] is False
+    assert observed["extraction_calls"] == []
 
 
 @pytest.mark.asyncio
@@ -837,6 +841,225 @@ async def test_memory_extraction_reuses_primary_llm_config(app):
     assert resp.status_code == 200
     assert seen_configs
     assert seen_configs[-1] == config.llm
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_profile_route_writes_profile_only(app):
+    observed = {"calls": []}
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    class ExtractionProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            observed["calls"].append(tool_name)
+            if tool_name == "decide_memory_extraction":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_gate",
+                        name=tool_name,
+                        arguments={
+                            "should_extract": True,
+                            "routes": {"profile": True, "working_memory": False},
+                            "reason": "profile_memory_signal",
+                            "message": "检测到长期旅行偏好信号",
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            assert tool_name == "extract_profile_memory"
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_profile",
+                    name="extract_profile_memory",
+                    arguments={
+                        "profile_updates": {
+                            "constraints": [],
+                            "rejections": [],
+                            "stable_preferences": [
+                                {
+                                    "domain": "food",
+                                    "key": "avoid_spicy",
+                                    "value": "不吃辣",
+                                    "polarity": "avoid",
+                                    "stability": "explicit_declared",
+                                    "confidence": 0.95,
+                                    "context": {},
+                                    "applicability": "通用旅行饮食偏好",
+                                    "recall_hints": {"keywords": ["不吃辣"]},
+                                    "source_refs": [],
+                                }
+                            ],
+                            "preference_hypotheses": [],
+                        },
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("agent.loop.AgentLoop.run", fake_run)
+        mp.setattr("main.create_llm_provider", lambda _config: ExtractionProvider())
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "我不吃辣", "user_id": "u1"},
+            )
+            await _wait_for_memory_scheduler_idle(app, session_id)
+            profile = await client.get("/api/memory/u1/profile")
+            working = await client.get(
+                f"/api/memory/u1/sessions/{session_id}/working-memory"
+            )
+
+    assert resp.status_code == 200
+    assert profile.status_code == 200
+    assert working.status_code == 200
+    assert observed["calls"] == [
+        "decide_memory_extraction",
+        "extract_profile_memory",
+    ]
+    assert profile.json()["stable_preferences"][0]["key"] == "avoid_spicy"
+    assert working.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_working_route_writes_working_only(app):
+    observed = {"calls": []}
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    class ExtractionProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            observed["calls"].append(tool_name)
+            if tool_name == "decide_memory_extraction":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_gate",
+                        name=tool_name,
+                        arguments={
+                            "should_extract": True,
+                            "routes": {"profile": False, "working_memory": True},
+                            "reason": "working_memory_signal",
+                            "message": "检测到当前会话临时记忆信号",
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            assert tool_name == "extract_working_memory"
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_working",
+                    name="extract_working_memory",
+                    arguments={
+                        "working_memory": [
+                            {
+                                "phase": 3,
+                                "kind": "temporary_rejection",
+                                "domains": ["attraction"],
+                                "content": "这轮先别考虑迪士尼",
+                                "evidence": "这轮先别考虑迪士尼",
+                                "reason": "当前候选筛选需要避让",
+                                "status": "active",
+                                "expires": {
+                                    "on_session_end": True,
+                                    "on_trip_change": True,
+                                    "on_phase_exit": False,
+                                },
+                            }
+                        ],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("agent.loop.AgentLoop.run", fake_run)
+        mp.setattr("main.create_llm_provider", lambda _config: ExtractionProvider())
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "这轮先别考虑迪士尼", "user_id": "u1"},
+            )
+            await _wait_for_memory_scheduler_idle(app, session_id)
+            profile = await client.get("/api/memory/u1/profile")
+            working = await client.get(
+                f"/api/memory/u1/sessions/{session_id}/working-memory"
+            )
+
+    assert resp.status_code == 200
+    assert profile.status_code == 200
+    assert working.status_code == 200
+    assert observed["calls"] == [
+        "decide_memory_extraction",
+        "extract_working_memory",
+    ]
+    assert profile.json()["stable_preferences"] == []
+    assert working.json()["items"][0]["content"] == "这轮先别考虑迪士尼"
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_no_routes_skips_extractors(app):
+    observed = {"calls": []}
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    class ExtractionProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            observed["calls"].append(tool_name)
+            assert tool_name == "decide_memory_extraction"
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_gate",
+                    name=tool_name,
+                    arguments={
+                        "should_extract": False,
+                        "routes": {"profile": False, "working_memory": False},
+                        "reason": "trip_state_only",
+                        "message": "本轮只是当前行程事实",
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("agent.loop.AgentLoop.run", fake_run)
+        mp.setattr("main.create_llm_provider", lambda _config: ExtractionProvider())
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "预算还是三万", "user_id": "u1"},
+            )
+            await _wait_for_memory_scheduler_idle(app, session_id)
+
+    assert resp.status_code == 200
+    assert observed["calls"] == ["decide_memory_extraction"]
 
 
 @pytest.mark.asyncio
