@@ -139,6 +139,19 @@ class MemoryExtractionOutcome:
 
 
 @dataclass
+class MemoryExtractionProgress:
+    saved_profile_count: int = 0
+    saved_working_count: int = 0
+    pending_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MemoryRouteSaveProgress:
+    saved_count: int = 0
+    pending_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class MemoryExtractionGateDecision:
     should_extract: bool
     reason: str
@@ -1559,6 +1572,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 reason="no_user_messages",
             )
 
+        progress = MemoryExtractionProgress()
         try:
             return await asyncio.wait_for(
                 _do_extract_memory_candidates(
@@ -1568,6 +1582,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     plan_snapshot=plan_snapshot,
                     routes=routes,
                     turn_id=turn_id,
+                    progress=progress,
                 ),
                 timeout=_EXTRACTION_TIMEOUT_SECONDS,
             )
@@ -1581,7 +1596,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             return MemoryExtractionOutcome(
                 status="warning",
                 message="记忆提取超时，本轮未写入记忆。",
-                item_ids=[],
+                item_ids=list(progress.pending_ids),
+                saved_profile_count=progress.saved_profile_count,
+                saved_working_count=progress.saved_working_count,
                 reason="timeout",
             )
         except Exception:
@@ -1725,9 +1742,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         profile_updates: Any,
         policy: MemoryPolicy,
         now: str,
-    ) -> tuple[int, list[str]]:
-        pending_ids: list[str] = []
-        saved_profile_count = 0
+        route_progress: MemoryRouteSaveProgress,
+        aggregate_progress: MemoryExtractionProgress,
+    ) -> None:
         buckets = (
             ("constraints", profile_updates.constraints),
             ("rejections", profile_updates.rejections),
@@ -1748,10 +1765,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 await memory_mgr.v3_store.upsert_profile_item(
                     user_id, bucket, sanitized
                 )
-                saved_profile_count += 1
+                route_progress.saved_count += 1
+                aggregate_progress.saved_profile_count += 1
                 if action in {"pending", "pending_conflict"}:
-                    pending_ids.append(sanitized.id)
-        return saved_profile_count, pending_ids
+                    route_progress.pending_ids.append(sanitized.id)
+                    aggregate_progress.pending_ids.append(sanitized.id)
 
     async def _save_working_memory_items(
         *,
@@ -1761,8 +1779,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         working_memory_items: list[Any],
         policy: MemoryPolicy,
         now: str,
-    ) -> int:
-        saved_working_count = 0
+        route_progress: MemoryRouteSaveProgress,
+        aggregate_progress: MemoryExtractionProgress,
+    ) -> None:
         for raw_working_item in working_memory_items:
             sanitized_working = policy.sanitize_working_memory_item(raw_working_item)
             if not sanitized_working.created_at:
@@ -1773,8 +1792,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 plan_snapshot.trip_id,
                 sanitized_working,
             )
-            saved_working_count += 1
-        return saved_working_count
+            route_progress.saved_count += 1
+            aggregate_progress.saved_working_count += 1
 
     def _publish_split_memory_task(
         *,
@@ -1814,6 +1833,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         plan_snapshot: TravelPlanState,
         routes: dict[str, bool] | None = None,
         turn_id: str | None = None,
+        progress: MemoryExtractionProgress | None = None,
     ) -> MemoryExtractionOutcome:
         route_flags = routes or {"profile": True, "working_memory": True}
         run_profile = bool(route_flags.get("profile"))
@@ -1843,15 +1863,14 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             auto_save_medium_risk=config.memory.policy.auto_save_medium_risk,
         )
         now = _now_iso()
-        pending_ids: list[str] = []
-        saved_profile_count = 0
-        saved_working_count = 0
+        aggregate_progress = progress or MemoryExtractionProgress()
         parsed_profile_count = 0
         parsed_working_count = 0
         route_failures: list[tuple[str, str]] = []
         task_turn_id = turn_id or str(uuid.uuid4())
 
         if run_profile:
+            profile_progress = MemoryRouteSaveProgress()
             profile_task_id = f"profile_memory_extraction:{session_id}:{task_turn_id}"
             profile_started_at = time.time()
             _publish_split_memory_task(
@@ -1874,17 +1893,20 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 parsed_profile_count = _count_profile_updates(
                     profile_result.profile_updates
                 )
-                saved_profile_count, profile_pending_ids = await _save_profile_updates(
+                await _save_profile_updates(
                     user_id=user_id,
                     profile_updates=profile_result.profile_updates,
                     policy=policy,
                     now=now,
+                    route_progress=profile_progress,
+                    aggregate_progress=aggregate_progress,
                 )
-                pending_ids.extend(profile_pending_ids)
-                profile_status = "success" if saved_profile_count > 0 else "skipped"
+                profile_status = (
+                    "success" if profile_progress.saved_count > 0 else "skipped"
+                )
                 profile_message = (
-                    f"已保存 {saved_profile_count} 条长期画像记忆"
-                    if saved_profile_count > 0
+                    f"已保存 {profile_progress.saved_count} 条长期画像记忆"
+                    if profile_progress.saved_count > 0
                     else "本轮没有新的长期画像记忆"
                 )
                 _publish_split_memory_task(
@@ -1895,8 +1917,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     status=profile_status,
                     message=profile_message,
                     result={
-                        "saved_profile_count": saved_profile_count,
-                        "pending_profile_count": len(profile_pending_ids),
+                        "saved_profile_count": profile_progress.saved_count,
+                        "pending_profile_count": len(profile_progress.pending_ids),
+                        "pending_profile_ids": list(profile_progress.pending_ids),
                         "parsed_profile_count": parsed_profile_count,
                     },
                     started_at=profile_started_at,
@@ -1909,10 +1932,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     kind="profile_memory_extraction",
                     label="长期画像提取",
                     status="warning",
-                    message="长期画像提取超时，本轮将稍后重试。",
+                    message="长期画像提取已取消，未完成部分将稍后重试。",
                     result={
-                        "saved_profile_count": saved_profile_count,
-                        "pending_profile_count": 0,
+                        "saved_profile_count": profile_progress.saved_count,
+                        "pending_profile_count": len(profile_progress.pending_ids),
+                        "pending_profile_ids": list(profile_progress.pending_ids),
                         "parsed_profile_count": parsed_profile_count,
                     },
                     error="profile_memory_extraction_cancelled",
@@ -1937,8 +1961,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     status="error",
                     message="长期画像提取失败，本轮将稍后重试。",
                     result={
-                        "saved_profile_count": saved_profile_count,
-                        "pending_profile_count": 0,
+                        "saved_profile_count": profile_progress.saved_count,
+                        "pending_profile_count": len(profile_progress.pending_ids),
+                        "pending_profile_ids": list(profile_progress.pending_ids),
                         "parsed_profile_count": parsed_profile_count,
                     },
                     error="profile_memory_extraction_failed",
@@ -1946,6 +1971,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     ended_at=time.time(),
                 )
         if run_working:
+            working_progress = MemoryRouteSaveProgress()
             working_task_id = (
                 f"working_memory_extraction:{session_id}:{task_turn_id}"
             )
@@ -1968,18 +1994,22 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     working_memory=working_memory,
                 )
                 parsed_working_count = len(working_result.working_memory)
-                saved_working_count = await _save_working_memory_items(
+                await _save_working_memory_items(
                     user_id=user_id,
                     session_id=session_id,
                     plan_snapshot=plan_snapshot,
                     working_memory_items=working_result.working_memory,
                     policy=policy,
                     now=now,
+                    route_progress=working_progress,
+                    aggregate_progress=aggregate_progress,
                 )
-                working_status = "success" if saved_working_count > 0 else "skipped"
+                working_status = (
+                    "success" if working_progress.saved_count > 0 else "skipped"
+                )
                 working_message = (
-                    f"已保存 {saved_working_count} 条工作记忆"
-                    if saved_working_count > 0
+                    f"已保存 {working_progress.saved_count} 条工作记忆"
+                    if working_progress.saved_count > 0
                     else "本轮没有新的工作记忆"
                 )
                 _publish_split_memory_task(
@@ -1990,7 +2020,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     status=working_status,
                     message=working_message,
                     result={
-                        "saved_working_count": saved_working_count,
+                        "saved_working_count": working_progress.saved_count,
                         "parsed_working_count": parsed_working_count,
                     },
                     started_at=working_started_at,
@@ -2003,9 +2033,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     kind="working_memory_extraction",
                     label="工作记忆提取",
                     status="warning",
-                    message="工作记忆提取超时，本轮将稍后重试。",
+                    message="工作记忆提取已取消，未完成部分将稍后重试。",
                     result={
-                        "saved_working_count": saved_working_count,
+                        "saved_working_count": working_progress.saved_count,
                         "parsed_working_count": parsed_working_count,
                     },
                     error="working_memory_extraction_cancelled",
@@ -2030,7 +2060,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     status="error",
                     message="工作记忆提取失败，本轮将稍后重试。",
                     result={
-                        "saved_working_count": saved_working_count,
+                        "saved_working_count": working_progress.saved_count,
                         "parsed_working_count": parsed_working_count,
                     },
                     error="working_memory_extraction_failed",
@@ -2054,7 +2084,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 parsed_working_count,
             )
 
-        saved_total = saved_profile_count + saved_working_count
+        saved_total = (
+            aggregate_progress.saved_profile_count
+            + aggregate_progress.saved_working_count
+        )
         if route_failures:
             failure_errors = [failure_error for _, failure_error in route_failures]
             error = (
@@ -2065,9 +2098,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             return MemoryExtractionOutcome(
                 status="warning",
                 message="部分记忆提取失败，本轮将稍后重试。",
-                item_ids=pending_ids,
-                saved_profile_count=saved_profile_count,
-                saved_working_count=saved_working_count,
+                item_ids=list(aggregate_progress.pending_ids),
+                saved_profile_count=aggregate_progress.saved_profile_count,
+                saved_working_count=aggregate_progress.saved_working_count,
                 reason="partial_failure",
                 error=error,
             )
@@ -2080,7 +2113,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 reason="no_structured_result",
             )
 
-        pending_count = len(pending_ids)
+        pending_count = len(aggregate_progress.pending_ids)
         if pending_count == 0:
             message = f"已提取 {saved_total} 条记忆"
         elif pending_count == saved_total:
@@ -2093,9 +2126,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         return MemoryExtractionOutcome(
             status="success",
             message=message,
-            item_ids=pending_ids,
-            saved_profile_count=saved_profile_count,
-            saved_working_count=saved_working_count,
+            item_ids=list(aggregate_progress.pending_ids),
+            saved_profile_count=aggregate_progress.saved_profile_count,
+            saved_working_count=aggregate_progress.saved_working_count,
             reason="saved",
         )
 
