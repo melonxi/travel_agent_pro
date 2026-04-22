@@ -486,10 +486,11 @@ async def test_trace_memory_hits(app):
     )
     stats.memory_hits.append(
         MemoryHitRecord(
-            sources={"profile_fixed": 1, "working_memory": 1},
+            sources={"profile_fixed": 1, "working_memory": 1, "episode_slice": 1},
             profile_ids=["m1"],
             working_memory_ids=["m2"],
-            matched_reasons=["历史上的偏好"],
+            slice_ids=["slice-1"],
+            matched_reasons=["历史上的偏好", "上次京都住宿"],
             timestamp=stats.llm_calls[-1].timestamp,
         )
     )
@@ -510,7 +511,10 @@ async def test_trace_memory_hits(app):
     assert hits is not None
     assert hits["profile_ids"] == ["m1"]
     assert hits["working_memory_ids"] == ["m2"]
+    assert hits["slice_ids"] == ["slice-1"]
+    assert hits["matched_reasons"] == ["历史上的偏好", "上次京都住宿"]
     assert hits["sources"]["profile_fixed"] == 1
+    assert hits["sources"]["episode_slice"] == 1
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from memory.formatter import MemoryRecallTelemetry, format_v3_memory_context
+from memory.retrieval_candidates import RecallCandidate
 from memory.models import MemoryItem, Rejection, UserMemory
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_query_adapter import plan_to_legacy_recall_query
@@ -127,8 +128,7 @@ class MemoryManager:
         )
         working_items = self._active_working_memory_items(working_memory.items)
 
-        query_profile_items: list[tuple[str, MemoryProfileItem, str]] = []
-        query_slices: list[tuple[EpisodeSlice, str]] = []
+        recall_candidates: list[RecallCandidate] = []
         legacy_recall_query = build_recall_query(user_message) if user_message else None
         profile_recall_query = None
         slice_recall_query = None
@@ -164,23 +164,24 @@ class MemoryManager:
                 retrieval_plan.top_k if retrieval_plan is not None else _QUERY_PROFILE_LIMIT
             )
             if profile_recall_query.include_profile:
-                query_profile_items = rank_profile_items(profile_recall_query, profile)[
-                    :query_profile_limit
-                ]
+                recall_candidates.extend(
+                    rank_profile_items(profile_recall_query, profile)[:query_profile_limit]
+                )
             if slice_recall_query is not None and slice_recall_query.include_slices:
                 candidate_slices = await self.v3_store.list_episode_slices(
                     user_id,
                     destination=slice_recall_query.entities.get("destination"),
                 )
-                query_slices = rank_episode_slices(slice_recall_query, candidate_slices)[
-                    :_QUERY_SLICE_LIMIT
-                ]
+                recall_candidates.extend(
+                    rank_episode_slices(slice_recall_query, candidate_slices)[
+                        :_QUERY_SLICE_LIMIT
+                    ]
+                )
 
         telemetry = self._build_v3_telemetry(
             fixed_profile_items,
             working_items,
-            query_profile_items,
-            query_slices,
+            recall_candidates,
         )
         telemetry.stage0_decision = short_circuit
         telemetry.gate_needs_recall = recall_gate
@@ -196,8 +197,7 @@ class MemoryManager:
         context = format_v3_memory_context(
             profile_items=fixed_profile_items,
             working_items=working_items,
-            query_profile_items=query_profile_items,
-            query_slices=query_slices,
+            recall_candidates=recall_candidates,
         )
         return context, telemetry
 
@@ -224,21 +224,21 @@ class MemoryManager:
         self,
         fixed_profile_items: list[tuple[str, MemoryProfileItem]],
         working_items: list[WorkingMemoryItem],
-        query_profile_items: list[tuple[str, MemoryProfileItem, str]],
-        query_slices: list[tuple[EpisodeSlice, str]],
+        recall_candidates: list[RecallCandidate],
     ) -> MemoryRecallTelemetry:
         fixed_profile_ids = self._dedupe_ids(
             [item.id for _, item in fixed_profile_items]
         )
         query_profile_ids = self._dedupe_ids(
-            [item.id for _, item, _ in query_profile_items]
+            [candidate.item_id for candidate in recall_candidates if candidate.source == "profile"]
         )
         profile_ids = self._dedupe_ids(fixed_profile_ids + query_profile_ids)
         working_memory_ids = self._dedupe_ids([item.id for item in working_items])
-        slice_ids = self._dedupe_ids([slice_.id for slice_, _ in query_slices])
+        slice_ids = self._dedupe_ids(
+            [candidate.item_id for candidate in recall_candidates if candidate.source == "episode_slice"]
+        )
         matched_reasons = self._dedupe_values(
-            [reason for _, _, reason in query_profile_items]
-            + [reason for _, reason in query_slices]
+            [reason for candidate in recall_candidates for reason in candidate.matched_reason]
         )
         return MemoryRecallTelemetry(
             sources={

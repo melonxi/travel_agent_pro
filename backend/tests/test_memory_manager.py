@@ -215,6 +215,61 @@ async def test_generate_context_includes_fixed_profile_and_slice_recall(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_generate_context_merges_profile_and_slice_candidates(tmp_path: Path):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    await manager.v3_store.upsert_profile_item(
+        "u1",
+        "stable_preferences",
+        MemoryProfileItem(
+            id="stable_preferences:hotel:preferred_area",
+            domain="hotel",
+            key="preferred_area",
+            value="京都住四条附近",
+            polarity="prefer",
+            stability="stable",
+            confidence=0.9,
+            status="active",
+            context={},
+            applicability="适用于大多数住宿选择。",
+            recall_hints={"domains": ["hotel"], "keywords": ["住宿", "住哪里"]},
+            source_refs=[],
+            created_at="2026-04-19T00:00:00",
+            updated_at="2026-04-19T00:00:00",
+        ),
+    )
+    await manager.v3_store.append_episode_slice(
+        EpisodeSlice(
+            id="slice_1",
+            user_id="u1",
+            source_episode_id="ep_1",
+            source_trip_id="trip_kyoto_old",
+            slice_type="accommodation_decision",
+            domains=["hotel", "accommodation"],
+            entities={"destination": "京都"},
+            keywords=["住宿", "酒店"],
+            content="上次京都住四条附近的町屋。",
+            applicability="仅供住宿选择参考。",
+            created_at="2026-04-19T00:00:00",
+        )
+    )
+
+    text, recall = await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_kyoto_now"),
+        user_message="我上次去京都住哪里？",
+    )
+
+    assert "## 本轮请求命中的历史记忆" in text
+    assert "京都住四条附近" in text
+    assert "上次京都住四条附近的町屋。" in text
+    assert recall.sources["query_profile"] == 1
+    assert recall.sources["episode_slice"] == 1
+    assert recall.profile_ids == ["stable_preferences:hotel:preferred_area"]
+    assert recall.slice_ids == ["slice_1"]
+    assert recall.matched_reasons
+
+
+@pytest.mark.asyncio
 async def test_generate_context_skips_slice_recall_for_current_trip_question(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
     await manager.v3_store.upsert_profile_item(

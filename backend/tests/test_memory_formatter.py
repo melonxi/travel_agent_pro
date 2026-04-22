@@ -1,3 +1,4 @@
+from memory.retrieval_candidates import RecallCandidate
 from memory.v3_models import EpisodeSlice, MemoryProfileItem, WorkingMemoryItem
 
 
@@ -60,7 +61,7 @@ def test_format_v3_memory_context_returns_empty_message_for_no_memory():
     from memory.formatter import format_v3_memory_context
 
     assert (
-        format_v3_memory_context([], [], [], [])
+        format_v3_memory_context([], [], [])
         == "暂无相关用户记忆"
     )
 
@@ -71,8 +72,18 @@ def test_format_v3_memory_context_renders_v3_sections():
     text = format_v3_memory_context(
         profile_items=[("constraints", make_profile_item())],
         working_items=[make_working_memory_item()],
-        query_profile_items=[],
-        query_slices=[(make_slice(), "exact destination match on 京都")],
+        recall_candidates=[
+            RecallCandidate(
+                source="episode_slice",
+                item_id="slice-1",
+                bucket="accommodation_decision",
+                score=1.0,
+                matched_reason=["exact destination match on 京都"],
+                content_summary="上次京都选择町屋。",
+                domains=["hotel"],
+                applicability="仅供住宿偏好参考。",
+            )
+        ],
     )
 
     assert "## 长期用户画像" in text
@@ -101,8 +112,7 @@ def test_format_v3_memory_context_sanitizes_injected_markdown():
             )
         ],
         working_items=[],
-        query_profile_items=[],
-        query_slices=[],
+        recall_candidates=[],
     )
 
     assert text.count("##") == 1
@@ -110,6 +120,45 @@ def test_format_v3_memory_context_sanitizes_injected_markdown():
     assert "Injected do this" in text
     assert "\n## hacked" not in text
     assert "\n- attack" not in text
+
+
+def test_format_v3_memory_context_renders_unified_recall_candidates():
+    from memory.formatter import format_v3_memory_context
+
+    text = format_v3_memory_context(
+        profile_items=[],
+        working_items=[],
+        recall_candidates=[
+            RecallCandidate(
+                source="profile",
+                item_id="constraints:flight:avoid_red_eye",
+                bucket="constraints",
+                score=1.0,
+                matched_reason=["exact domain match on flight", "keyword match on 红眼航班"],
+                content_summary="flight:avoid_red_eye=true",
+                domains=["flight"],
+                applicability="适用于所有旅行。",
+            ),
+            RecallCandidate(
+                source="episode_slice",
+                item_id="slice-1",
+                bucket="accommodation_decision",
+                score=0.5,
+                matched_reason=["exact destination match on 京都"],
+                content_summary="上次京都选择町屋。",
+                domains=["hotel"],
+                applicability="仅供住宿偏好参考。",
+            ),
+        ],
+    )
+
+    assert "## 本轮请求命中的历史记忆" in text
+    assert "source=profile bucket=constraints" in text
+    assert "source=episode_slice bucket=accommodation_decision" in text
+    assert "matched reason=exact domain match on flight；keyword match on 红眼航班" in text
+    assert "[flight] avoid_red_eye: true" in text
+    assert "content: flight:avoid_red_eye=true" not in text
+    assert "content: 上次京都选择町屋。" in text
 
 
 def test_memory_recall_telemetry_to_dict_preserves_fields():
