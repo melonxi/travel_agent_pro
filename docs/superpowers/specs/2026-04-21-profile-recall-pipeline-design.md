@@ -580,11 +580,164 @@ Reranker 只处理规则层筛出的小候选集合。
 ### Milestone B：Stage 2
 
 - 引入 `recall_query` tool
-- 用结构化 retrieval plan 替换现有规则 query builder
+- 用结构化 retrieval plan 替换现有规则 `build_recall_query()`
+- 保留现有 `rank_profile_items()` / `rank_episode_slices()` 主体逻辑，通过 adapter 兼容新 plan
 
 目标：
 
 - 提高 query 质量，减少规则拆词上限
+- 让 Stage 2 先收敛到目标 contract，但不在本阶段重写 Stage 3
+
+#### Milestone B 细化边界
+
+Milestone B 是“**只替换 query builder，不重写 retriever**”的阶段。目标链路为：
+
+```text
+Stage 0 硬规则短路
+  ↓
+Stage 1 Recall Gate
+  ↓
+Stage 2 Recall Query Tool
+  输出 RecallRetrievalPlan
+  ↓
+Plan Adapter
+  ↓
+现有 rank_profile_items / rank_episode_slices
+```
+
+本阶段明确：
+
+- 继续复用 Phase A 已落地的 Stage 0 / Stage 1
+- `Recall Query Tool` 输入只看：
+  - `user_message`
+  - `gate_intent_type`
+- 不让 query tool 读取 profile 摘要、trip summary 或历史消息
+- 不让 query tool 重新输出 `needs_recall`
+- 不在本阶段引入 reranker
+- 不在本阶段统一 Profile / EpisodeSlice 双 source plan
+
+#### Milestone B 推荐文件边界
+
+- 新增 `backend/memory/recall_query.py`
+  - `RecallRetrievalPlan`
+  - `build_recall_query_tool()`
+  - `build_recall_query_prompt()`
+  - `parse_recall_query_tool_arguments()`
+  - `fallback_retrieval_plan()`
+- 新增 `backend/memory/recall_query_adapter.py`
+  - `plan_to_legacy_recall_query()`
+  - 只做 plan -> 旧规则召回输入的翻译，不做命中判断
+- 修改 `backend/main.py`
+  - gate 放行后调用 query tool
+  - 处理 timeout / error / invalid payload -> fallback plan
+  - 在 `memory_recall` telemetry 中记录 query plan 摘要与 fallback 来源
+- 修改 `backend/memory/manager.py`
+  - 接收 `retrieval_plan` 或 adapter result
+  - 优先走新 plan 路径
+  - 无 plan 时兼容旧路径
+
+#### Milestone B 数据契约
+
+Stage 2 输出的 `RecallRetrievalPlan` 维持本设计文档 §6.2 的结构：
+
+```json
+{
+  "source": "profile",
+  "buckets": ["stable_preferences", "constraints", "rejections"],
+  "domains": ["hotel", "accommodation"],
+  "keywords": ["住宿", "酒店", "常规偏好"],
+  "aliases": ["住哪里", "酒店偏好", "住宿偏好"],
+  "strictness": "soft",
+  "top_k": 8,
+  "reason": "user wants to reuse long-term accommodation preference"
+}
+```
+
+Milestone B 限制：
+
+- `source` 第一版只允许 `profile`
+- `strictness` 只允许 `strict | soft`
+- `top_k` 在解析层做 clamp，建议区间 `1~10`
+- `reason` 必填但限长
+
+adapter 输出建议为临时兼容对象，而不是直接污染旧 `RecallQuery`：
+
+```python
+@dataclass
+class LegacyRecallQueryAdapterResult:
+    domains: list[str]
+    keywords: list[str]
+    entities: dict[str, str]
+    include_profile: bool
+    include_slices: bool
+    allowed_buckets: list[str]
+    strictness: str
+    matched_reason: str
+```
+
+其中：
+
+- `aliases` 在本阶段并入 `keywords`
+- `source=profile` -> `include_profile=true`
+- `include_slices=false`
+- `buckets` 通过 `allowed_buckets` 传给现有规则召回器
+- `strictness` 通过轻量兼容字段传递，不在本阶段重写排序模型
+
+#### Milestone B 决策口径
+
+- query tool 只回答“怎么查”，不回答“要不要查”
+- `strict`
+  - 适用于“我是不是说过 X”这类核对明确记忆的请求
+- `soft`
+  - 适用于“按我常规偏好/习惯来”这类借用整体画像的请求
+- `preference_hypotheses` 默认少用，仅在 query 很泛且其他 bucket 不足时进入 plan
+
+#### Milestone B 失败降级
+
+- gate=false：不进入 Stage 2
+- gate=true + query tool 成功：使用 query tool plan
+- gate=true + query tool timeout / error / invalid payload：使用 fallback retrieval plan
+
+fallback retrieval plan 建议为：
+
+```json
+{
+  "source": "profile",
+  "buckets": ["constraints", "rejections", "stable_preferences"],
+  "domains": [],
+  "keywords": [],
+  "aliases": [],
+  "strictness": "soft",
+  "top_k": 5,
+  "reason": "fallback_default_plan"
+}
+```
+
+约束：
+
+- fallback 只在 gate 已经判定 `needs_recall=true` 时使用
+- fallback 默认不带 `preference_hypotheses`
+- fallback 不得让 query tool 越权决定最终命中项
+
+#### Milestone B 测试策略
+
+至少覆盖四层测试：
+
+1. query tool schema / parser 单测
+   - 合法 payload
+   - 非法 enum
+   - `top_k` clamp
+   - `source != profile` 降级
+2. adapter 单测
+   - `keywords + aliases` 合并
+   - `buckets -> allowed_buckets`
+   - `strictness` 透传
+3. manager / recall 路由测试
+   - gate 放行后优先走 query tool，不再走旧 `build_recall_query()`
+   - query tool 失败时 fallback 生效
+4. 集成测试
+   - query tool 成功路径
+   - query tool 失败但请求成功路径
 
 ### Milestone C：Stage 3
 
