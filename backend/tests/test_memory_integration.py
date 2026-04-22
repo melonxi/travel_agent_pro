@@ -325,7 +325,7 @@ async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
         **kwargs,
     ):
         calls["context"] += 1
-        assert user_message == "继续规划"
+        assert user_message == "住宿怎么安排比较好"
         return "memory-context-marker", MemoryRecallTelemetry()
 
     async def fake_run(self, messages, phase, tools_override=None):
@@ -344,7 +344,7 @@ async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "继续规划", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -381,7 +381,7 @@ async def test_chat_system_prompt_skips_memory_when_disabled(
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "继续规划", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -406,7 +406,7 @@ async def test_chat_stream_skips_memory_recall_events_when_memory_disabled(
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "继续规划", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -450,7 +450,7 @@ async def test_chat_stream_does_not_emit_legacy_memory_pending_events(monkeypatc
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "继续规划", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     body = resp.text
@@ -468,7 +468,7 @@ async def test_chat_stream_emits_memory_recall_internal_task(monkeypatch, app):
         user_message: str = "",
         **kwargs,
     ):
-        assert user_message == "继续规划"
+        assert user_message == "住宿怎么安排比较好"
         return (
             "用户偏好：喜欢轻松行程",
             MemoryRecallTelemetry(
@@ -491,7 +491,7 @@ async def test_chat_stream_emits_memory_recall_internal_task(monkeypatch, app):
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "继续规划", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -544,7 +544,7 @@ async def test_chat_stream_emits_memory_recall_telemetry_without_hits(monkeypatc
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "继续规划", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -588,7 +588,7 @@ async def test_chat_stream_keeps_conservative_recall_fields_when_gate_disabled(
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "继续规划", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -685,7 +685,7 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "住宿还是按我常规偏好来", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -748,7 +748,7 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "住宿还是按我常规偏好来", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert observed["recall_calls"] == [
@@ -815,7 +815,7 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "住宿还是按我常规偏好来", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert observed["recall_calls"] == [
@@ -908,7 +908,7 @@ async def test_chat_stream_keeps_undecided_conservative_when_recall_gate_disable
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "还是按我常规偏好来", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -1079,7 +1079,7 @@ async def test_chat_stream_keeps_conservative_recall_fields_for_invalid_gate_pay
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "还是按我常规偏好来", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -1136,7 +1136,7 @@ async def test_chat_stream_falls_back_when_recall_gate_times_out(monkeypatch, ap
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "还是按我常规偏好来", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -1188,7 +1188,7 @@ async def test_chat_stream_falls_back_when_recall_gate_errors(monkeypatch, app):
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "还是按我常规偏好来", "user_id": "u1"},
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -1542,7 +1542,7 @@ async def test_chat_stream_does_not_embed_background_memory_tasks(app):
             session_id = session_resp.json()["session_id"]
             resp = await client.post(
                 f"/api/chat/{session_id}",
-                json={"message": "继续规划", "user_id": "u1"},
+                json={"message": "住宿怎么安排比较好", "user_id": "u1"},
             )
             await _wait_for_memory_scheduler_idle(app, session_id)
 

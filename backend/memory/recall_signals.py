@@ -45,6 +45,7 @@ RECOMMEND_SIGNALS: tuple[str, ...] = (
     "适合我",
     "换一家",
     "换一个",
+    "哪里",
 )
 
 FACT_SCOPE_SIGNALS: tuple[str, ...] = (
