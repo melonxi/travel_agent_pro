@@ -59,3 +59,7 @@ def test_extract_signals_multi_hits_same_category():
 def test_extract_signals_whitespace_only_returns_empty():
     out = extract_signals("   \t\n")
     assert all(v == () for v in out.values())
+
+
+def test_extract_signals_recommend_hits_zenmeding():
+    assert "怎么订" in extract_signals("这次航班怎么订？")["recommend"]
