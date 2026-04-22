@@ -27,6 +27,35 @@ from state.models import (
 )
 
 
+def _append_decision_event(
+    plan: TravelPlanState,
+    *,
+    category: str,
+    value: Any,
+    reason: str,
+    now: str = "",
+) -> None:
+    plan.decision_events.append(
+        {
+            "type": "accepted",
+            "category": category,
+            "value": value,
+            "reason": reason,
+            "timestamp": now,
+        }
+    )
+
+
+def record_phase7_lesson(
+    plan: TravelPlanState,
+    *,
+    kind: str,
+    note: str,
+    now: str,
+) -> None:
+    plan.lesson_events.append({"kind": kind, "content": note, "timestamp": now})
+
+
 # ---------------------------------------------------------------------------
 # Category A: high-risk structured writes
 # ---------------------------------------------------------------------------
@@ -44,6 +73,12 @@ def write_selected_skeleton_id(plan: TravelPlanState, skeleton_id: str) -> None:
         f"Expected str, got {type(skeleton_id).__name__}"
     )
     plan.selected_skeleton_id = skeleton_id
+    _append_decision_event(
+        plan,
+        category="skeleton",
+        value={"id": skeleton_id},
+        reason="selected_skeleton_id updated in plan state",
+    )
 
 
 def clear_selected_skeleton_id(plan: TravelPlanState) -> None:
@@ -69,6 +104,12 @@ def write_transport_options(plan: TravelPlanState, options: list[dict]) -> None:
 def write_selected_transport(plan: TravelPlanState, choice: dict) -> None:
     assert isinstance(choice, dict), f"Expected dict, got {type(choice).__name__}"
     plan.selected_transport = choice
+    _append_decision_event(
+        plan,
+        category="transport",
+        value=dict(choice),
+        reason="selected_transport updated in plan state",
+    )
 
 
 def write_accommodation_options(plan: TravelPlanState, options: list[dict]) -> None:
@@ -81,6 +122,12 @@ def write_accommodation(
 ) -> None:
     assert isinstance(area, str), f"Expected str for area, got {type(area).__name__}"
     plan.accommodation = Accommodation(area=area, hotel=hotel)
+    _append_decision_event(
+        plan,
+        category="accommodation",
+        value=plan.accommodation.to_dict(),
+        reason="accommodation updated in plan state",
+    )
 
 
 def write_risks(plan: TravelPlanState, risks: list[dict]) -> None:
@@ -122,6 +169,12 @@ def replace_all_daily_plans(plan: TravelPlanState, days: list[dict]) -> None:
     assert isinstance(days, list), f"Expected list, got {type(days).__name__}"
     plan.daily_plans = [DayPlan.from_dict(day) for day in days]
     _sort_daily_plans(plan)
+    _append_decision_event(
+        plan,
+        category="daily_plan",
+        value={"days": [day.day for day in plan.daily_plans]},
+        reason="daily_plans replaced in plan state",
+    )
 
 
 def replace_one_day_plan(plan: TravelPlanState, day_dict: dict) -> None:

@@ -3,7 +3,9 @@ import json
 import pytest
 
 from memory.v3_models import (
+    ArchivedTripEpisode,
     EpisodeSlice,
+    MemoryAuditEvent,
     MemoryProfileItem,
     WorkingMemoryItem,
 )
@@ -74,7 +76,7 @@ async def test_working_memory_is_session_scoped(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_working_memory_upsert_rejects_trip_mismatch_without_overwrite(tmp_path):
+async def test_working_memory_upsert_isolated_across_trip_ids(tmp_path):
     store = FileMemoryV3Store(tmp_path)
     original = WorkingMemoryItem(
         id="wm_1",
@@ -100,12 +102,12 @@ async def test_working_memory_upsert_rejects_trip_mismatch_without_overwrite(tmp
     )
 
     await store.upsert_working_memory_item("u1", "s1", "trip_1", original)
+    await store.upsert_working_memory_item("u1", "s1", "trip_2", replacement)
 
-    with pytest.raises(ValueError):
-        await store.upsert_working_memory_item("u1", "s1", "trip_2", replacement)
-
-    memory = await store.load_working_memory("u1", "s1", "trip_1")
-    assert [item.id for item in memory.items] == ["wm_1"]
+    trip_1_memory = await store.load_working_memory("u1", "s1", "trip_1")
+    trip_2_memory = await store.load_working_memory("u1", "s1", "trip_2")
+    assert [item.id for item in trip_1_memory.items] == ["wm_1"]
+    assert [item.id for item in trip_2_memory.items] == ["wm_2"]
 
 
 @pytest.mark.asyncio
@@ -182,3 +184,115 @@ async def test_episode_slice_append_is_idempotent(tmp_path):
 
     slices = await store.list_episode_slices("u1")
     assert [item.id for item in slices] == ["slice_1"]
+
+
+@pytest.mark.asyncio
+async def test_append_and_list_archived_episodes_is_idempotent(tmp_path):
+    store = FileMemoryV3Store(tmp_path)
+    episode = ArchivedTripEpisode(
+        id="ep_trip_123",
+        user_id="u1",
+        session_id="s1",
+        trip_id="trip_123",
+        destination="京都",
+        dates={"start": "2026-05-01", "end": "2026-05-05", "total_days": 5},
+        travelers={"adults": 2, "children": 0},
+        budget={"total": 20000, "currency": "CNY"},
+        selected_skeleton=None,
+        selected_transport=None,
+        accommodation=None,
+        daily_plan_summary=[],
+        final_plan_summary="京都慢游。",
+        decision_log=[],
+        lesson_log=[],
+        created_at="2026-05-05T00:00:00+00:00",
+        completed_at="2026-05-05T00:00:00+00:00",
+    )
+
+    await store.append_episode(episode)
+    await store.append_episode(episode)
+
+    episodes = await store.list_episodes("u1")
+    assert [item.id for item in episodes] == ["ep_trip_123"]
+
+
+@pytest.mark.asyncio
+async def test_working_memory_path_is_session_and_trip_scoped(tmp_path):
+    store = FileMemoryV3Store(tmp_path)
+    item = WorkingMemoryItem(
+        id="wm_1",
+        phase=3,
+        kind="temporary_rejection",
+        domains=["attraction"],
+        content="先别考虑迪士尼。",
+        reason="当前候选筛选需要避让。",
+        status="active",
+        expires={"on_session_end": False, "on_trip_change": True, "on_phase_exit": False},
+        created_at="2026-04-19T00:00:00",
+    )
+
+    await store.upsert_working_memory_item("u1", "s1", "trip_1", item)
+    await store.upsert_working_memory_item(
+        "u1",
+        "s1",
+        "trip_2",
+        WorkingMemoryItem(
+            id="wm_2",
+            phase=3,
+            kind="temporary_rejection",
+            domains=["attraction"],
+            content="先别考虑环球影城。",
+            reason="新 trip 的临时避让。",
+            status="active",
+            expires={"on_session_end": False, "on_trip_change": True, "on_phase_exit": False},
+            created_at="2026-04-19T00:00:00",
+        ),
+    )
+
+    trip_1 = await store.load_working_memory("u1", "s1", "trip_1")
+    trip_2 = await store.load_working_memory("u1", "s1", "trip_2")
+
+    assert [item.id for item in trip_1.items] == ["wm_1"]
+    assert [item.id for item in trip_2.items] == ["wm_2"]
+
+
+@pytest.mark.asyncio
+async def test_append_memory_audit_event_writes_v3_events_jsonl(tmp_path):
+    store = FileMemoryV3Store(tmp_path)
+    event = MemoryAuditEvent(
+        id="evt_1",
+        user_id="u1",
+        session_id="s1",
+        event_type="reject",
+        object_type="phase_output",
+        object_payload={"to_phase": 3},
+        reason_text="用户要求回退",
+        created_at="2026-05-05T00:00:00+00:00",
+    )
+
+    await store.append_event(event)
+
+    path = tmp_path / "users" / "u1" / "memory" / "events.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows == [event.to_dict()]
+
+
+@pytest.mark.asyncio
+async def test_delete_all_legacy_memory_files_removes_v2_files(tmp_path):
+    user_dir = tmp_path / "users" / "u1"
+    user_dir.mkdir(parents=True)
+    for filename in ("memory.json", "memory_events.jsonl", "trip_episodes.jsonl"):
+        (user_dir / filename).write_text("legacy", encoding="utf-8")
+    keep = user_dir / "memory" / "profile.json"
+    keep.parent.mkdir(parents=True)
+    keep.write_text("{}", encoding="utf-8")
+    store = FileMemoryV3Store(tmp_path)
+
+    removed = await store.delete_all_legacy_memory_files()
+
+    assert sorted(path.name for path in removed) == [
+        "memory.json",
+        "memory_events.jsonl",
+        "trip_episodes.jsonl",
+    ]
+    assert keep.exists()

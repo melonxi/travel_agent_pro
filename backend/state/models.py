@@ -399,6 +399,8 @@ class TravelPlanState:
     deliverables: dict[str, str] | None = None
     constraints: list[Constraint] = field(default_factory=list)
     preferences: list[Preference] = field(default_factory=list)
+    decision_events: list[dict[str, Any]] = field(default_factory=list)
+    lesson_events: list[dict[str, Any]] = field(default_factory=list)
     backtrack_history: list[BacktrackEvent] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     last_updated: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -438,6 +440,8 @@ class TravelPlanState:
             "deliverables": self.deliverables,
             "constraints": [c.to_dict() for c in self.constraints],
             "preferences": [p.to_dict() for p in self.preferences],
+            "decision_events": [dict(ev) for ev in self.decision_events],
+            "lesson_events": [dict(ev) for ev in self.lesson_events],
             "backtrack_history": [b.to_dict() for b in self.backtrack_history],
             "created_at": self.created_at,
             "last_updated": self.last_updated,
@@ -497,6 +501,8 @@ class TravelPlanState:
             deliverables=d.get("deliverables"),
             constraints=[Constraint.from_dict(c) for c in d.get("constraints", [])],
             preferences=[Preference.from_dict(p) for p in d.get("preferences", [])],
+            decision_events=[dict(ev) for ev in d.get("decision_events", [])],
+            lesson_events=[dict(ev) for ev in d.get("lesson_events", [])],
             backtrack_history=[
                 BacktrackEvent.from_dict(b) for b in d.get("backtrack_history", [])
             ],

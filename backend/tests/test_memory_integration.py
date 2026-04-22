@@ -11,20 +11,10 @@ from httpx import ASGITransport, AsyncClient
 from agent.internal_tasks import InternalTask
 from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
-from main import (
-    _memory_pending_event,
-    _memory_pending_event_from_items,
-    create_app,
-)
+from main import create_app
 from memory.formatter import MemoryRecallTelemetry
 from memory.recall_query import RecallRetrievalPlan
-from memory.models import (
-    MemoryCandidate,
-    MemoryEvent,
-    MemoryItem,
-    MemorySource,
-    TripEpisode,
-)
+from memory.v3_models import ArchivedTripEpisode, MemoryAuditEvent, WorkingMemoryItem
 from state.models import Budget, DateRange, TravelPlanState
 
 
@@ -70,26 +60,6 @@ async def _wait_for_memory_scheduler_idle(
             raise TimeoutError(f"Memory scheduler runtime not created for {session_id}")
         await asyncio.sleep(0.01)
     await asyncio.wait_for(runtimes[session_id].scheduler.wait_for_idle(), timeout=timeout)
-
-
-def _make_item(**overrides) -> MemoryItem:
-    base = dict(
-        id="mem-1",
-        user_id="u1",
-        type="preference",
-        domain="pace",
-        key="preferred_pace",
-        value="节奏轻松",
-        scope="global",
-        polarity="neutral",
-        confidence=0.8,
-        status="pending",
-        source=MemorySource(kind="message", session_id="s1"),
-        created_at="2026-04-11T00:00:00",
-        updated_at="2026-04-11T00:00:00",
-    )
-    base.update(overrides)
-    return MemoryItem(**base)
 
 
 @pytest.mark.asyncio
@@ -263,129 +233,89 @@ parallel_tool_execution: false
 
 
 @pytest.mark.asyncio
-async def test_get_memory_returns_empty_items(app):
+async def test_legacy_memory_routes_are_removed_in_integration_app(app):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.get("/api/memory/u1")
-
-    assert resp.status_code == 200
-    assert resp.json() == {"items": []}
-
-
-@pytest.mark.asyncio
-async def test_memory_status_endpoints_update_items(app):
-    memory_mgr = _get_closure_value(app, "memory_mgr")
-    await memory_mgr.store.upsert_item(_make_item(status="pending"))
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        confirm = await client.post(
+        list_resp = await client.get("/api/memory/u1")
+        confirm_resp = await client.post(
             "/api/memory/u1/confirm",
             json={"item_id": "mem-1"},
         )
-        confirm_again = await client.post(
-            "/api/memory/u1/confirm",
-            json={"item_id": "mem-1"},
-        )
-        reject = await client.post(
+        reject_resp = await client.post(
             "/api/memory/u1/reject",
             json={"item_id": "mem-1"},
         )
-        reject_again = await client.post(
-            "/api/memory/u1/reject",
-            json={"item_id": "mem-1"},
+        events_resp = await client.post(
+            "/api/memory/u1/events",
+            json={
+                "event_type": "accept",
+                "object_type": "skeleton",
+                "object_payload": {"id": "sk1"},
+                "reason_text": "用户确认",
+            },
         )
-        delete = await client.delete("/api/memory/u1/mem-1")
-        delete_again = await client.delete("/api/memory/u1/mem-1")
+        delete_resp = await client.delete("/api/memory/u1/mem-1")
 
-    assert confirm.status_code == 200
-    assert confirm_again.status_code == 200
-    assert reject.status_code == 200
-    assert reject_again.status_code == 200
-    assert delete.status_code == 200
-    assert delete_again.status_code == 200
-    items = await memory_mgr.store.list_items("u1")
-    assert items[0].status == "obsolete"
+    assert list_resp.status_code == 404
+    assert confirm_resp.status_code == 404
+    assert reject_resp.status_code == 404
+    assert events_resp.status_code == 404
+    assert delete_resp.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_memory_events_and_episodes_endpoints(app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
-    event_payload = {
-        "event_type": "accept",
-        "object_type": "skeleton",
-        "object_payload": {"id": "sk1"},
-        "reason_text": "用户确认",
-    }
-    episode = TripEpisode(
+    event = MemoryAuditEvent(
+        id="evt1",
+        user_id="u1",
+        session_id="s1",
+        event_type="accept",
+        object_type="skeleton",
+        object_payload={"id": "sk1"},
+        reason_text="用户确认",
+        created_at="2026-04-11T00:00:00",
+    )
+    await memory_mgr.v3_store.append_event(event)
+    episode = ArchivedTripEpisode(
         id="ep1",
         user_id="u1",
         session_id="s1",
         trip_id="trip1",
         destination="Tokyo",
-        dates="2026-05",
+        dates={"start": "2026-05-01", "end": "2026-05-03", "total_days": 3},
         travelers={"adults": 2},
         budget={"total": 30000, "currency": "CNY"},
         selected_skeleton={"id": "sk1"},
+        selected_transport=None,
+        accommodation=None,
+        daily_plan_summary=[],
         final_plan_summary="Tokyo trip",
-        accepted_items=[{"type": "skeleton", "id": "sk1"}],
-        rejected_items=[],
-        lessons=["user confirmed skeleton"],
-        satisfaction=5,
+        decision_log=[{"type": "accepted", "category": "skeleton", "value": {"id": "sk1"}}],
+        lesson_log=[],
         created_at="2026-04-11T00:00:00",
+        completed_at="2026-04-11T00:00:00",
     )
-    await memory_mgr.store.append_episode(episode)
+    await memory_mgr.v3_store.append_episode(episode)
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        event_resp = await client.post("/api/memory/u1/events", json=event_payload)
         episodes_resp = await client.get("/api/memory/u1/episodes")
 
-    assert event_resp.status_code == 200
     assert episodes_resp.status_code == 200
     assert episodes_resp.json()["episodes"] == [episode.to_dict()]
-    path = Path(memory_mgr.store.data_dir) / "users" / "u1" / "memory_events.jsonl"
+    path = Path(memory_mgr.v3_store.data_dir) / "users" / "u1" / "memory" / "events.jsonl"
     assert path.exists()
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert rows[0]["event_type"] == "accept"
 
 
 @pytest.mark.asyncio
-async def test_memory_pending_event_helpers_shape():
-    candidate = MemoryCandidate(
-        type="preference",
-        domain="food",
-        key="avoid_spicy",
-        value="不吃辣",
-        scope="global",
-        polarity="avoid",
-        confidence=0.92,
-        risk="low",
-        evidence="我不吃辣",
-        reason="明确表达",
-    )
-    payload = json.loads(_memory_pending_event([candidate], ["mem-1"]))
-    assert payload["type"] == "memory_pending"
-    assert payload["item_ids"] == ["mem-1"]
-    assert payload["items"][0]["summary"].startswith("[food] avoid_spicy")
-
-
-@pytest.mark.asyncio
-async def test_memory_pending_event_from_items_shape():
-    item = _make_item(status="pending_conflict", key="preferred_pace")
-    payload = json.loads(_memory_pending_event_from_items([item]))
-    assert payload["type"] == "memory_pending"
-    assert payload["item_ids"] == ["mem-1"]
-    assert payload["items"][0]["status"] == "pending_conflict"
-
-
-@pytest.mark.asyncio
 async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
-    calls = {"context": 0, "summary": 0}
+    calls = {"context": 0}
 
     async def fake_generate_context(
         self,
@@ -398,10 +328,6 @@ async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
         assert user_message == "继续规划"
         return "memory-context-marker", MemoryRecallTelemetry()
 
-    def fake_generate_summary(self, memory):
-        calls["summary"] += 1
-        raise AssertionError("generate_summary should not be used for chat prompts")
-
     async def fake_run(self, messages, phase, tools_override=None):
         assert messages[0].role == Role.SYSTEM
         assert "memory-context-marker" in messages[0].content
@@ -409,7 +335,6 @@ async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
         yield LLMChunk(type=ChunkType.DONE)
 
     monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
-    monkeypatch.setattr(type(memory_mgr), "generate_summary", fake_generate_summary)
     monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
 
     async with AsyncClient(
@@ -424,7 +349,6 @@ async def test_chat_system_prompt_uses_generate_context(monkeypatch, app):
 
     assert resp.status_code == 200
     assert calls["context"] >= 1
-    assert calls["summary"] == 0
 
 
 @pytest.mark.asyncio
@@ -433,9 +357,6 @@ async def test_chat_system_prompt_skips_memory_when_disabled(
     app_memory_disabled,
 ):
     memory_mgr = _get_closure_value(app_memory_disabled, "memory_mgr")
-    await memory_mgr.store.upsert_item(
-        _make_item(status="active", value="secret-memory")
-    )
 
     async def fake_generate_context(
         self, user_id: str, plan: TravelPlanState, **kwargs
@@ -494,9 +415,28 @@ async def test_chat_stream_skips_memory_recall_events_when_memory_disabled(
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_emits_pending_memory_before_agent_run(monkeypatch, app):
+async def test_chat_stream_does_not_emit_legacy_memory_pending_events(monkeypatch, app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
-    await memory_mgr.store.upsert_item(_make_item(status="pending_conflict"))
+    await memory_mgr.v3_store.upsert_working_memory_item(
+        "u1",
+        "s1",
+        "trip-1",
+        WorkingMemoryItem(
+            id="wm-1",
+            phase=3,
+            kind="temporary_rejection",
+            domains=["attraction"],
+            content="先别考虑迪士尼。",
+            reason="当前候选筛选需要避让。",
+            status="active",
+            expires={
+                "on_session_end": False,
+                "on_trip_change": True,
+                "on_phase_exit": False,
+            },
+            created_at="2026-04-11T00:00:00",
+        ),
+    )
 
     async def fake_run(self, messages, phase, tools_override=None):
         yield LLMChunk(type=ChunkType.DONE)
@@ -514,36 +454,7 @@ async def test_chat_stream_emits_pending_memory_before_agent_run(monkeypatch, ap
         )
 
     body = resp.text
-    assert body.startswith('data: {"type": "memory_pending"')
-    assert '"memory_pending"' in body
-
-
-@pytest.mark.asyncio
-async def test_chat_stream_dedupes_pending_memory_per_session(monkeypatch, app):
-    memory_mgr = _get_closure_value(app, "memory_mgr")
-    await memory_mgr.store.upsert_item(_make_item(status="pending_conflict"))
-
-    async def fake_run(self, messages, phase, tools_override=None):
-        yield LLMChunk(type=ChunkType.DONE)
-
-    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        session_resp = await client.post("/api/sessions")
-        session_id = session_resp.json()["session_id"]
-        first = await client.post(
-            f"/api/chat/{session_id}",
-            json={"message": "继续规划", "user_id": "u1"},
-        )
-        second = await client.post(
-            f"/api/chat/{session_id}",
-            json={"message": "继续规划", "user_id": "u1"},
-        )
-
-    assert '"memory_pending"' in first.text
-    assert '"memory_pending"' not in second.text
+    assert '"memory_pending"' not in body
 
 
 @pytest.mark.asyncio
@@ -703,9 +614,11 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
     ):
         retrieval_plan = kwargs["retrieval_plan"]
         assert isinstance(retrieval_plan, RecallRetrievalPlan)
-        assert retrieval_plan.fallback_used == "invalid_query_plan"
+        assert retrieval_plan.fallback_used == "none"
+        assert retrieval_plan.source == "episode_slice"
         return "暂无相关用户记忆", MemoryRecallTelemetry(
             query_plan={
+                "source": retrieval_plan.source,
                 "buckets": list(retrieval_plan.buckets),
                 "domains": list(retrieval_plan.domains),
                 "strictness": retrieval_plan.strictness,
@@ -777,9 +690,9 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
 
     assert resp.status_code == 200
     assert '"type": "memory_recall"' in resp.text
-    assert '"query_plan_fallback": "invalid_query_plan"' in resp.text
-    assert '"fallback_used": "invalid_query_plan"' in resp.text
-    assert '"query_plan": {"buckets": ["constraints", "rejections", "stable_preferences"]' in resp.text
+    assert '"query_plan_fallback": "none"' in resp.text
+    assert '"fallback_used": "none"' in resp.text
+    assert '"query_plan": {"source": "episode_slice", "buckets": ["stable_preferences"]' in resp.text
 
 
 @pytest.mark.asyncio
@@ -1309,7 +1222,7 @@ def test_project_overview_documents_memory_recall_payload_fields():
 
 
 @pytest.mark.asyncio
-async def test_append_trip_episode_once_is_idempotent(app):
+async def test_append_archived_trip_episode_once_is_idempotent(app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
     sessions = _get_closure_value(app, "sessions")
 
@@ -1324,23 +1237,16 @@ async def test_append_trip_episode_once_is_idempotent(app):
         plan = sessions[session_id]["plan"]
         plan.phase = 7
         plan.destination = "Tokyo"
-        await memory_mgr.store.upsert_item(
-            _make_item(
-                id="same-session",
-                status="active",
-                session_id=session_id,
-                trip_id=None,
-            )
-        )
-        await memory_mgr.store.upsert_item(
-            _make_item(
-                id="unrelated-global",
-                status="active",
-                session_id="other-session",
-                trip_id=None,
-                value="should-not-enter-episode",
-            )
-        )
+        plan.trip_id = "trip_tokyo"
+        plan.decision_events = [
+            {
+                "type": "accepted",
+                "category": "skeleton",
+                "value": {"id": "balanced"},
+                "reason": "selected",
+                "timestamp": "2026-05-03T00:00:00+00:00",
+            }
+        ]
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("agent.loop.AgentLoop.run", fake_run)
@@ -1353,13 +1259,46 @@ async def test_append_trip_episode_once_is_idempotent(app):
                 json={"message": "再次确认", "user_id": "u1"},
             )
 
-    episodes = await memory_mgr.store.list_episodes("u1")
+    episodes = await memory_mgr.v3_store.list_episodes("u1")
     assert first.status_code == 200
     assert second.status_code == 200
     assert len(episodes) == 1
     assert episodes[0].session_id == session_id
-    accepted_ids = {item["id"] for item in episodes[0].accepted_items}
-    assert accepted_ids == {"same-session"}
+    assert episodes[0].id == "ep_trip_tokyo"
+    assert episodes[0].trip_id == "trip_tokyo"
+    assert episodes[0].decision_log
+
+
+@pytest.mark.asyncio
+async def test_memory_audit_events_write_to_v3_store(app):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+    await memory_mgr.v3_store.append_event(
+        MemoryAuditEvent(
+            id="evt-reject-phase-output",
+            user_id="u1",
+            session_id="sess-1",
+            event_type="reject",
+            object_type="phase_output",
+            object_payload={"to_phase": 3},
+            reason_text="用户要求回退",
+            created_at="2026-04-22T10:00:00Z",
+        )
+    )
+
+    path = Path(memory_mgr.v3_store.data_dir) / "users" / "u1" / "memory" / "events.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows == [
+        MemoryAuditEvent(
+            id="evt-reject-phase-output",
+            user_id="u1",
+            session_id="sess-1",
+            event_type="reject",
+            object_type="phase_output",
+            object_payload={"to_phase": 3},
+            reason_text="用户要求回退",
+            created_at="2026-04-22T10:00:00Z",
+        ).to_dict()
+    ]
 
 
 @pytest.mark.asyncio
@@ -1377,6 +1316,7 @@ async def test_phase7_archive_generates_episode_slices_once(app):
         session_id = session_resp.json()["session_id"]
         plan = sessions[session_id]["plan"]
         plan.phase = 7
+        plan.trip_id = "trip_tokyo"
         plan.destination = "Tokyo"
         plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
         plan.budget = Budget(total=12000, currency="CNY")
@@ -1387,6 +1327,29 @@ async def test_phase7_archive_generates_episode_slices_once(app):
             }
         ]
         plan.selected_skeleton_id = "balanced"
+        plan.decision_events = [
+            {
+                "type": "accepted",
+                "category": "skeleton",
+                "value": {"id": "balanced"},
+                "reason": "selected",
+                "timestamp": "2026-05-03T00:00:00+00:00",
+            },
+            {
+                "type": "rejected",
+                "category": "hotel",
+                "value": {"name": "远离地铁的酒店"},
+                "reason": "移动不方便",
+                "timestamp": "2026-05-03T00:00:00+00:00",
+            },
+        ]
+        plan.lesson_events = [
+            {
+                "kind": "pitfall",
+                "content": "晚上跨区移动太累。",
+                "timestamp": "2026-05-03T00:00:00+00:00",
+            }
+        ]
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("agent.loop.AgentLoop.run", fake_run)
@@ -1399,41 +1362,48 @@ async def test_phase7_archive_generates_episode_slices_once(app):
                 json={"message": "再次确认", "user_id": "u1"},
             )
 
+    episodes = await memory_mgr.v3_store.list_episodes("u1")
     slices = await memory_mgr.v3_store.list_episode_slices("u1")
     assert first.status_code == 200
     assert second.status_code == 200
-    assert [slice_.source_episode_id for slice_ in slices] == [
-        f"{session_id}:episode",
-        f"{session_id}:episode",
-    ]
+    assert len(episodes) == 1
+    assert episodes[0].decision_log
+    assert all(slice_.source_episode_id == episodes[0].id for slice_ in slices)
     assert {slice_.slice_type for slice_ in slices} == {
-        "accepted_pattern",
+        "itinerary_pattern",
         "budget_signal",
+        "rejected_option",
+        "pitfall",
     }
     assert all(slice_.entities["destination"] == "Tokyo" for slice_ in slices)
+    legacy_path = Path(memory_mgr.v3_store.data_dir) / "users" / "u1" / "trip_episodes.jsonl"
+    assert not legacy_path.exists()
 
 
 @pytest.mark.asyncio
-async def test_reset_backtrack_rotates_trip_and_obsoletes_old_trip_memory(app):
+async def test_v3_memory_cutover_cleanup_once_removes_legacy_files(app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
+    cleanup_once = app.state._run_v3_memory_cutover_cleanup_once
+    user_dir = Path(memory_mgr.v3_store.data_dir) / "users" / "u1"
+    user_dir.mkdir(parents=True, exist_ok=True)
+    for filename in ("memory.json", "memory_events.jsonl", "trip_episodes.jsonl"):
+        (user_dir / filename).write_text("legacy", encoding="utf-8")
+    keep = user_dir / "memory" / "profile.json"
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    keep.write_text("{}", encoding="utf-8")
+
+    await cleanup_once()
+
+    assert not (user_dir / "memory.json").exists()
+    assert not (user_dir / "memory_events.jsonl").exists()
+    assert not (user_dir / "trip_episodes.jsonl").exists()
+    assert keep.exists()
+
+
+@pytest.mark.asyncio
+async def test_reset_backtrack_rotates_trip_id(app):
     rotate_trip = _get_closure_value(app, "_rotate_trip_on_reset_backtrack")
     plan = TravelPlanState(session_id="s1", trip_id="trip-old", phase=1)
-    await memory_mgr.store.upsert_item(
-        _make_item(
-            id="old-trip",
-            status="active",
-            scope="trip",
-            trip_id="trip-old",
-        )
-    )
-    await memory_mgr.store.upsert_item(
-        _make_item(
-            id="global",
-            status="active",
-            scope="global",
-            trip_id=None,
-        )
-    )
 
     changed = await rotate_trip(
         user_id="u1",
@@ -1442,26 +1412,14 @@ async def test_reset_backtrack_rotates_trip_and_obsoletes_old_trip_memory(app):
         reason_text="重新开始，换个目的地",
     )
 
-    items = {item.id: item for item in await memory_mgr.store.list_items("u1")}
     assert changed is True
     assert plan.trip_id != "trip-old"
-    assert items["old-trip"].status == "obsolete"
-    assert items["global"].status == "active"
 
 
 @pytest.mark.asyncio
 async def test_non_reset_backtrack_reuses_trip_memory(app):
-    memory_mgr = _get_closure_value(app, "memory_mgr")
     rotate_trip = _get_closure_value(app, "_rotate_trip_on_reset_backtrack")
     plan = TravelPlanState(session_id="s1", trip_id="trip-old", phase=3)
-    await memory_mgr.store.upsert_item(
-        _make_item(
-            id="old-trip",
-            status="active",
-            scope="trip",
-            trip_id="trip-old",
-        )
-    )
 
     changed = await rotate_trip(
         user_id="u1",
@@ -1470,15 +1428,12 @@ async def test_non_reset_backtrack_reuses_trip_memory(app):
         reason_text="改日期",
     )
 
-    items = {item.id: item for item in await memory_mgr.store.list_items("u1")}
     assert changed is False
     assert plan.trip_id == "trip-old"
-    assert items["old-trip"].status == "active"
 
 
 @pytest.mark.asyncio
 async def test_tool_backtrack_reset_rotates_trip_memory(monkeypatch, app):
-    memory_mgr = _get_closure_value(app, "memory_mgr")
     sessions = _get_closure_value(app, "sessions")
 
     async def fake_run(self, messages, phase, tools_override=None):
@@ -1519,23 +1474,13 @@ async def test_tool_backtrack_reset_rotates_trip_memory(monkeypatch, app):
         plan = sessions[session_id]["plan"]
         plan.phase = 3
         plan.trip_id = "trip-old"
-        await memory_mgr.store.upsert_item(
-            _make_item(
-                id="old-trip",
-                status="active",
-                scope="trip",
-                trip_id="trip-old",
-            )
-        )
         resp = await client.post(
             f"/api/chat/{session_id}",
             json={"message": "换个目的地", "user_id": "u1"},
         )
 
-    items = {item.id: item for item in await memory_mgr.store.list_items("u1")}
     assert resp.status_code == 200
     assert plan.trip_id != "trip-old"
-    assert items["old-trip"].status == "obsolete"
 
 
 @pytest.mark.asyncio
@@ -1622,6 +1567,7 @@ async def test_memory_extraction_logs_non_structured_response(app, caplog):
                         name=tool_name,
                         arguments={
                             "should_extract": True,
+                            "routes": {"profile": True, "working_memory": False},
                             "reason": "explicit_preference_signal",
                             "message": "检测到可复用偏好信号",
                         },
@@ -2802,6 +2748,7 @@ async def test_memory_extraction_timeout_is_emitted_as_warning(app):
                         name=tool_name,
                         arguments={
                             "should_extract": True,
+                            "routes": {"profile": True, "working_memory": False},
                             "reason": "explicit_preference_signal",
                             "message": "检测到可复用偏好信号",
                         },

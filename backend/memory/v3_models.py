@@ -248,6 +248,113 @@ class SessionWorkingMemory:
 
 
 @dataclass
+class ArchivedTripEpisode:
+    id: str
+    user_id: str
+    session_id: str
+    trip_id: str | None
+    destination: str | None
+    dates: dict[str, Any]
+    travelers: dict[str, Any] | None
+    budget: dict[str, Any] | None
+    selected_skeleton: dict[str, Any] | None
+    selected_transport: dict[str, Any] | None
+    accommodation: dict[str, Any] | None
+    daily_plan_summary: list[dict[str, Any]]
+    final_plan_summary: str
+    decision_log: list[dict[str, Any]] = field(default_factory=list)
+    lesson_log: list[dict[str, Any]] = field(default_factory=list)
+    created_at: str = ""
+    completed_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "session_id": self.session_id,
+            "trip_id": self.trip_id,
+            "destination": self.destination,
+            "dates": dict(self.dates),
+            "travelers": dict(self.travelers) if self.travelers is not None else None,
+            "budget": dict(self.budget) if self.budget is not None else None,
+            "selected_skeleton": dict(self.selected_skeleton)
+            if self.selected_skeleton is not None
+            else None,
+            "selected_transport": dict(self.selected_transport)
+            if self.selected_transport is not None
+            else None,
+            "accommodation": dict(self.accommodation)
+            if self.accommodation is not None
+            else None,
+            "daily_plan_summary": [dict(item) for item in self.daily_plan_summary],
+            "final_plan_summary": self.final_plan_summary,
+            "decision_log": [dict(item) for item in self.decision_log],
+            "lesson_log": [dict(item) for item in self.lesson_log],
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ArchivedTripEpisode":
+        return cls(
+            id=str(data.get("id", "")),
+            user_id=str(data.get("user_id", "")),
+            session_id=str(data.get("session_id", "")),
+            trip_id=data.get("trip_id"),
+            destination=data.get("destination"),
+            dates=_as_dict(data.get("dates")),
+            travelers=_as_dict(data.get("travelers")) or None,
+            budget=_as_dict(data.get("budget")) or None,
+            selected_skeleton=_as_dict(data.get("selected_skeleton")) or None,
+            selected_transport=_as_dict(data.get("selected_transport")) or None,
+            accommodation=_as_dict(data.get("accommodation")) or None,
+            daily_plan_summary=[dict(item) for item in _as_list(data.get("daily_plan_summary"))],
+            final_plan_summary=str(data.get("final_plan_summary", "")),
+            decision_log=[dict(item) for item in _as_list(data.get("decision_log"))],
+            lesson_log=[dict(item) for item in _as_list(data.get("lesson_log"))],
+            created_at=str(data.get("created_at", "")),
+            completed_at=str(data.get("completed_at", "")),
+        )
+
+
+@dataclass
+class MemoryAuditEvent:
+    id: str
+    user_id: str
+    session_id: str
+    event_type: str
+    object_type: str
+    object_payload: dict[str, Any]
+    reason_text: str
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "session_id": self.session_id,
+            "event_type": self.event_type,
+            "object_type": self.object_type,
+            "object_payload": dict(self.object_payload),
+            "reason_text": self.reason_text,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MemoryAuditEvent":
+        return cls(
+            id=str(data.get("id", "")),
+            user_id=str(data.get("user_id", "")),
+            session_id=str(data.get("session_id", "")),
+            event_type=str(data.get("event_type", "")),
+            object_type=str(data.get("object_type", "")),
+            object_payload=_as_dict(data.get("object_payload")),
+            reason_text=str(data.get("reason_text", "")),
+            created_at=str(data.get("created_at", "")),
+        )
+
+
+@dataclass
 class EpisodeSlice:
     id: str
     user_id: str

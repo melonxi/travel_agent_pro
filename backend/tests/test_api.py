@@ -671,11 +671,21 @@ telemetry:
 
     assert resp.status_code == 200
     assert observed["judge_calls"]
-    assert observed["judge_calls"][0]["tool_choice"] == {
+    soft_judge_calls = [
+        call
+        for call in observed["judge_calls"]
+        if call["tool_choice"]
+        == {
+            "type": "function",
+            "function": {"name": "emit_soft_judge_score"},
+        }
+    ]
+    assert soft_judge_calls
+    assert soft_judge_calls[0]["tool_choice"] == {
         "type": "function",
         "function": {"name": "emit_soft_judge_score"},
     }
-    assert observed["judge_calls"][0]["tools"][0]["name"] == "emit_soft_judge_score"
+    assert soft_judge_calls[0]["tools"][0]["name"] == "emit_soft_judge_score"
 
 
 @pytest.mark.asyncio

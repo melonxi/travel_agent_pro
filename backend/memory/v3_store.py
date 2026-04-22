@@ -7,7 +7,9 @@ import uuid
 from pathlib import Path
 
 from memory.v3_models import (
+    ArchivedTripEpisode,
     EpisodeSlice,
+    MemoryAuditEvent,
     MemoryProfileItem,
     SessionWorkingMemory,
     UserMemoryProfile,
@@ -33,11 +35,39 @@ class FileMemoryV3Store:
     def _profile_path(self, user_id: str) -> Path:
         return self._user_memory_dir(user_id) / "profile.json"
 
-    def _working_memory_path(self, user_id: str, session_id: str) -> Path:
-        return self._user_memory_dir(user_id) / "sessions" / session_id / "working_memory.json"
+    def _working_memory_path(
+        self, user_id: str, session_id: str, trip_id: str | None
+    ) -> Path:
+        trip_key = trip_id or "_none"
+        return (
+            self._user_memory_dir(user_id)
+            / "sessions"
+            / session_id
+            / "trips"
+            / trip_key
+            / "working_memory.json"
+        )
+
+    def _episodes_path(self, user_id: str) -> Path:
+        return self._user_memory_dir(user_id) / "episodes.jsonl"
+
+    def _events_path(self, user_id: str) -> Path:
+        return self._user_memory_dir(user_id) / "events.jsonl"
 
     def _episode_slices_path(self, user_id: str) -> Path:
         return self._user_memory_dir(user_id) / "episode_slices.jsonl"
+
+    def _delete_all_legacy_memory_files_sync(self) -> list[Path]:
+        removed: list[Path] = []
+        for user_dir in (self.data_dir / "users").glob("*"):
+            if not user_dir.is_dir():
+                continue
+            for filename in ("memory.json", "memory_events.jsonl", "trip_episodes.jsonl"):
+                path = user_dir / filename
+                if path.exists():
+                    path.unlink()
+                    removed.append(path)
+        return removed
 
     def _write_json_atomic_sync(self, path: Path, payload: dict[str, object]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,12 +143,10 @@ class FileMemoryV3Store:
     def _load_working_memory_sync(
         self, user_id: str, session_id: str, trip_id: str | None
     ) -> SessionWorkingMemory:
-        path = self._working_memory_path(user_id, session_id)
+        path = self._working_memory_path(user_id, session_id, trip_id)
         if not path.exists():
             return SessionWorkingMemory.empty(user_id, session_id, trip_id)
         memory = SessionWorkingMemory.from_dict(self._read_json_sync(path))
-        if memory.trip_id != trip_id:
-            return SessionWorkingMemory.empty(user_id, session_id, trip_id)
         memory.user_id = user_id
         memory.session_id = session_id
         memory.trip_id = trip_id
@@ -144,24 +172,54 @@ class FileMemoryV3Store:
                 memory.items.append(item)
             await asyncio.to_thread(
                 self._write_json_atomic_sync,
-                self._working_memory_path(user_id, session_id),
+                self._working_memory_path(user_id, session_id, trip_id),
                 memory.to_dict(),
             )
 
     def _load_working_memory_for_write_sync(
         self, user_id: str, session_id: str, trip_id: str | None
     ) -> SessionWorkingMemory:
-        path = self._working_memory_path(user_id, session_id)
+        path = self._working_memory_path(user_id, session_id, trip_id)
         if not path.exists():
             return SessionWorkingMemory.empty(user_id, session_id, trip_id)
+        return SessionWorkingMemory.from_dict(self._read_json_sync(path))
 
-        memory = SessionWorkingMemory.from_dict(self._read_json_sync(path))
-        if memory.trip_id != trip_id:
-            raise ValueError(
-                "working memory trip_id mismatch for session "
-                f"{session_id!r}: stored={memory.trip_id!r} requested={trip_id!r}"
-            )
-        return memory
+    async def append_episode(self, episode: ArchivedTripEpisode) -> None:
+        async with self._lock_for(episode.user_id):
+            await asyncio.to_thread(self._append_episode_sync, episode)
+
+    def _append_episode_sync(self, episode: ArchivedTripEpisode) -> None:
+        path = self._episodes_path(episode.user_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            for row in self._read_jsonl_sync(path):
+                if row.get("id") == episode.id:
+                    return
+        with path.open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(episode.to_dict(), ensure_ascii=False) + "\n")
+
+    async def list_episodes(self, user_id: str) -> list[ArchivedTripEpisode]:
+        async with self._lock_for(user_id):
+            return await asyncio.to_thread(self._list_episodes_sync, user_id)
+
+    def _list_episodes_sync(self, user_id: str) -> list[ArchivedTripEpisode]:
+        return [
+            ArchivedTripEpisode.from_dict(row)
+            for row in self._read_jsonl_sync(self._episodes_path(user_id))
+        ]
+
+    async def append_event(self, event: MemoryAuditEvent) -> None:
+        async with self._lock_for(event.user_id):
+            await asyncio.to_thread(self._append_event_sync, event)
+
+    def _append_event_sync(self, event: MemoryAuditEvent) -> None:
+        path = self._events_path(event.user_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
+
+    async def delete_all_legacy_memory_files(self) -> list[Path]:
+        return await asyncio.to_thread(self._delete_all_legacy_memory_files_sync)
 
     async def append_episode_slice(self, slice_: EpisodeSlice) -> None:
         async with self._lock_for(slice_.user_id):

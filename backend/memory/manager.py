@@ -1,18 +1,12 @@
 # backend/memory/manager.py
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from memory.formatter import MemoryRecallTelemetry, format_v3_memory_context
 from memory.retrieval_candidates import RecallCandidate
-from memory.models import MemoryItem, Rejection, UserMemory
 from memory.recall_query import RecallRetrievalPlan
-from memory.recall_query_adapter import plan_to_legacy_recall_query
 from memory.recall_reranker import RecallRerankResult, choose_reranker_path
-from memory.store import FileMemoryStore
 from memory.symbolic_recall import (
-    build_recall_query,
+    heuristic_retrieval_plan_from_message,
     rank_episode_slices,
     rank_profile_items,
     should_trigger_memory_recall,
@@ -66,86 +60,7 @@ async def select_recall_candidates(
 
 class MemoryManager:
     def __init__(self, data_dir: str = "./data"):
-        self.data_dir = Path(data_dir)
-        self.store = FileMemoryStore(data_dir)
         self.v3_store = FileMemoryV3Store(data_dir)
-
-    def _user_dir(self, user_id: str) -> Path:
-        return self.data_dir / "users" / user_id
-
-    async def save(self, memory: UserMemory) -> None:
-        user_dir = self._user_dir(memory.user_id)
-        user_dir.mkdir(parents=True, exist_ok=True)
-        path = user_dir / "memory.json"
-        if path.exists():
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if data.get("schema_version") == 2:
-                data["legacy"] = memory.to_dict()
-                path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-                return
-        path.write_text(json.dumps(memory.to_dict(), ensure_ascii=False, indent=2))
-
-    async def load(self, user_id: str) -> UserMemory:
-        path = self._user_dir(user_id) / "memory.json"
-        if not path.exists():
-            return UserMemory(user_id=user_id)
-        data = json.loads(path.read_text())
-        if data.get("schema_version") == 2:
-            legacy = data.get("legacy") or {}
-            if legacy:
-                return UserMemory.from_dict(legacy)
-            return self._legacy_memory_from_items(user_id, data.get("items", []))
-        return UserMemory.from_dict(data)
-
-    def _legacy_memory_from_items(
-        self, user_id: str, raw_items: list[dict]
-    ) -> UserMemory:
-        memory = UserMemory(user_id=user_id)
-        for raw_item in raw_items:
-            try:
-                item = MemoryItem.from_dict(raw_item)
-            except (KeyError, TypeError, ValueError):
-                continue
-            if item.status != "active":
-                continue
-            if item.type == "rejection":
-                memory.rejections.append(
-                    Rejection(
-                        item=str(item.value),
-                        reason=str(item.attributes.get("reason", "")),
-                        permanent=item.scope == "global",
-                        context=str(item.attributes.get("context", "")),
-                    )
-                )
-                continue
-            if item.type == "preference":
-                memory.explicit_preferences[item.key] = item.value
-        return memory
-
-    def generate_summary(self, memory: UserMemory) -> str:
-        parts: list[str] = []
-
-        if memory.explicit_preferences:
-            prefs = ", ".join(
-                f"{k}: {v}" for k, v in memory.explicit_preferences.items()
-            )
-            parts.append(f"偏好：{prefs}")
-
-        if memory.trip_history:
-            trips = "; ".join(
-                f"{t.destination}({t.dates}, 满意度{t.satisfaction}/5)"
-                if t.satisfaction
-                else f"{t.destination}({t.dates})"
-                for t in memory.trip_history
-            )
-            parts.append(f"出行历史：{trips}")
-
-        permanent_rejections = [r for r in memory.rejections if r.permanent]
-        if permanent_rejections:
-            rejects = ", ".join(f"{r.item}({r.reason})" for r in permanent_rejections)
-            parts.append(f"永久排除：{rejects}")
-
-        return "\n".join(parts) if parts else "暂无用户画像"
 
     async def generate_context(
         self,
@@ -165,23 +80,15 @@ class MemoryManager:
         working_items = self._active_working_memory_items(working_memory.items)
 
         recall_candidates: list[RecallCandidate] = []
-        legacy_recall_query = build_recall_query(user_message) if user_message else None
-        profile_recall_query = None
-        slice_recall_query = None
+        active_plan = retrieval_plan or (
+            heuristic_retrieval_plan_from_message(user_message) if user_message else None
+        )
         should_run_query_recall = False
         final_recall_decision = "no_recall_applied"
         if recall_gate is None:
-            should_run_query_recall = user_message and (
-                should_trigger_memory_recall(user_message)
-                or (legacy_recall_query.needs_memory if legacy_recall_query else False)
+            should_run_query_recall = bool(
+                user_message and should_trigger_memory_recall(user_message)
             )
-            if should_run_query_recall:
-                profile_recall_query = (
-                    plan_to_legacy_recall_query(retrieval_plan)
-                    if retrieval_plan is not None
-                    else legacy_recall_query
-                )
-                slice_recall_query = legacy_recall_query
             final_recall_decision = (
                 "query_recall_enabled"
                 if should_run_query_recall
@@ -189,29 +96,22 @@ class MemoryManager:
             )
         elif recall_gate:
             should_run_query_recall = True
-            profile_recall_query = (
-                plan_to_legacy_recall_query(retrieval_plan)
-                if retrieval_plan is not None
-                else legacy_recall_query
-            )
-            slice_recall_query = legacy_recall_query
             final_recall_decision = "query_recall_enabled"
 
-        if should_run_query_recall and profile_recall_query is not None:
+        if should_run_query_recall and active_plan is not None:
             query_profile_limit = (
-                retrieval_plan.top_k if retrieval_plan is not None else _QUERY_PROFILE_LIMIT
+                active_plan.top_k if active_plan is not None else _QUERY_PROFILE_LIMIT
             )
-            if profile_recall_query.include_profile:
-                recall_candidates.extend(
-                    rank_profile_items(profile_recall_query, profile)[:query_profile_limit]
-                )
-            if slice_recall_query is not None and slice_recall_query.include_slices:
+            recall_candidates.extend(
+                rank_profile_items(active_plan, profile)[:query_profile_limit]
+            )
+            if active_plan.source in {"episode_slice", "hybrid_history"}:
                 candidate_slices = await self.v3_store.list_episode_slices(
                     user_id,
-                    destination=slice_recall_query.entities.get("destination"),
+                    destination=active_plan.entities.get("destination"),
                 )
                 recall_candidates.extend(
-                    rank_episode_slices(slice_recall_query, candidate_slices)[
+                    rank_episode_slices(active_plan, candidate_slices)[
                         :_QUERY_SLICE_LIMIT
                     ]
                 )

@@ -36,7 +36,7 @@ travel_agent_pro/
 │   ├── agent/                  # Agent 循环：loop / compaction / hooks / internal_tasks / reflection / tool_choice / narration / types / orchestrator / day_worker / worker_prompt
 │   ├── llm/                    # LLM 抽象：base Protocol / errors / factory / openai_provider / anthropic_provider
 │   ├── state/                  # 旅行状态模型：models / manager / intake / plan_writers
-│   ├── memory/                 # v3 分层记忆：profile / working memory / episode slice + 兼容层：models / store / manager / extraction / policy / retriever / formatter
+│   ├── memory/                 # v3 分层记忆：v3_models / v3_store / archival / episode_slices / manager / extraction / policy / formatter / symbolic_recall
 │   ├── context/                # 上下文：manager（系统提示/压缩决策）+ soul.md（人格）
 │   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，GLOBAL_RED_FLAGS + PHASE{1,3,5,7}_PROMPT + build_phase3_prompt）/ backtrack
 │   ├── tools/                  # 领域工具：base / engine / plan_tools(聚合导出 + Phase 1/3 trip_basics + append_tools + Phase 3 强 schema + Phase 5 daily_plans + 回退工具) / 搜索类 / 规划类 / normalizers
@@ -143,7 +143,7 @@ travel_agent_pro/
 | Reflection | 被动自省提示，会话级去重 | before_llm_call（步骤切换时） |
 | Parallel Tool Exec | 读写分离并行调度，parallel_group ID 透传到 Stats 层 | 工具批量执行时 |
 | Tool Choice (always auto) | Phase 切分后总返回 "auto"，依赖提示纪律 | LLM 调用前 |
-| Memory System | v3 profile / working memory / episode slice 分层记忆；当前旅行事实由 TravelPlanState 权威提供；同步 recall 采用 `Stage 0` 硬规则短路 + `Stage 1` 单层 recall gate，只有判定需要历史偏好/过往经历时才进入 `Stage 2 Recall Query Tool` 生成结构化 `retrieval plan`，再经 `recall_query_adapter` 适配到现有规则召回器完成 symbolic recall；长期 profile 不再作为固定画像常驻注入 prompt，而是和 EpisodeSlice 一样只通过 recall candidate 进入上下文；Stage 3 已把 Profile / EpisodeSlice 规则召回统一收敛到 `RecallCandidate` 输出 contract，manager、formatter、trace/stats 都消费统一 candidate，不再区分 profile tuple / slice tuple 两套输出；profile extraction 写入前会先规范化高价值画像 domain/key（如出行方式、住宿、饮食等偏好域），再持久化为可直接召回的 profile item；写入项除 `domain/key/value` 外还会补齐 `applicability`、`recall_hints`、`source_refs` 等 recall-ready metadata，供 symbolic recall 与 formatter 使用；当新的偏好仍是 hypothesis 且与既有 profile 证据重复印证时，提取链路会把 repeated preference hypothesis 升级为 stable preference，再进入持久层；Milestone D 起在 candidate 数超过短路阈值时进入 `Stage 4` reranker 做最终筛选，最终只把选中的 candidate 注入 prompt，并把 `candidate_count`、`reranker_selected_ids`、`reranker_final_reason`、`reranker_fallback` 暴露到 SSE / stats / trace；query tool 超时、异常或 payload 非法时回退到保守 `fallback retrieval plan`，`recall_gate_enabled=false` 只关闭 `Stage 1` LLM gate，不影响 `Stage 0` 的 `force_recall` / `skip_recall` 短路；gate 关闭、超时或异常且最终未应用 recall 时，telemetry 用 `final_recall_decision=no_recall_applied` 标记本轮没有任何 recall 结果进入 prompt，并保留 `fallback_used=gate_timeout/gate_error` 便于排障；回答前同步执行 `memory_recall`，用户消息一进入 chat 就提交后台 `memory_extraction_gate` / `memory_extraction` job，chat 与提取彻底解耦；后台提取使用 route-aware gate 决策按需调用长期画像 `extract_profile_memory` 和会话工作记忆 `extract_working_memory` split extractors，并在保留兼容聚合任务的同时发布 `profile_memory_extraction` / `working_memory_extraction` 子任务；提取采用 session 级 latest-wins coalescing queue，避免连续多条消息堆积重任务 | system prompt 构建前检索；每轮 chat 追加 user message 后立即后台排队 gate/job |
+| Memory System | v3 只保留四类权威记忆：`profile.json`、trip-scoped `working_memory.json`、`episodes.jsonl`、`episode_slices.jsonl`；当前旅行事实始终由 `TravelPlanState` 权威提供，working memory 只服务当前 session/trip，不参与 historical recall。同步 recall 采用 `Stage 0` 硬规则短路 + `Stage 1` recall gate + `Stage 2 Recall Query Tool` 生成 `RecallRetrievalPlan`，随后由 native symbolic recall 直接在 profile / episode slice 上检索，不再经过 adapter 或 legacy query 结构；长期 profile 不再固定常驻 prompt，而是和 episode slice 一样只在命中时以 recall candidate 注入上下文。profile extraction 会先规范化高价值 domain/key，再写成 recall-ready 的 `MemoryProfileItem`；route-aware gate 只按需触发 `extract_profile_memory` 与 `extract_working_memory` 两条 v3 extractor，后台提取采用 session 级 latest-wins coalescing queue。Phase 7 结束后直接归档 `ArchivedTripEpisode`，并派生新的 slice taxonomy：`itinerary_pattern`、`stay_choice`、`transport_choice`、`budget_signal`、`rejected_option`、`pitfall`。 | system prompt 构建前检索；每轮 chat 追加 user message 后立即后台排队 gate/job |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
 | Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
 
@@ -197,11 +197,11 @@ travel_agent_pro/
 ### Internal task stream
 后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务。当前有两条通道：
 - chat SSE `/api/chat/{id}`：承载与当前回答强绑定的任务，例如 `memory_recall`、`soft_judge`、`quality_gate`
-- background internal-task SSE `/api/internal-tasks/{id}/stream`：承载与回答解耦的后台任务，例如 `memory_extraction_gate`、兼容聚合 `memory_extraction`、按路由发布的 `profile_memory_extraction` / `working_memory_extraction`
+- background internal-task SSE `/api/internal-tasks/{id}/stream`：承载与回答解耦的后台任务，例如 `memory_extraction_gate`、聚合态 `memory_extraction`、按路由发布的 `profile_memory_extraction` / `working_memory_extraction`
 
 前端 `ChatPanel` 按 `task.id` 合并生命周期更新，并维护跨流共享的 `task.id -> message.id` 映射；这样同一个后台任务即使在 chat `done` 之后才结束，也会回写到原卡片，而不是再长出一张重复卡。`MessageBubble` 渲染为系统任务卡，和真实工具卡保持视觉与语义区隔。
 
-进入聊天流的内部任务包括：`soft_judge`（工具结果后的行程质量评审）、`quality_gate`（阶段推进检查）、`context_compaction`（上下文整理）、`reflection`（自检提示注入）、`phase5_orchestration`（Phase 5 并行编排）和 `memory_recall`（本轮记忆召回）。进入后台 internal-task 流的任务包括：`memory_extraction_gate`（轻量判断是否值得提取）、`memory_extraction`（兼容聚合记忆提取）以及按 gate 路由出现的 `profile_memory_extraction` / `working_memory_extraction`。任一路由提取失败会让聚合任务以 `warning` / `partial_failure` 结束，已成功写入的另一类记忆不回滚，且本轮 `last_consumed_user_count` 不前进以便后续重试。`save_day_plan` / `replace_all_day_plans` 等真实工具的 `TOOL_RESULT` 会先到达前端并结束工具卡，随后才显示软评审或后台记忆任务，避免用户误以为真实工具仍在执行。
+进入聊天流的内部任务包括：`soft_judge`（工具结果后的行程质量评审）、`quality_gate`（阶段推进检查）、`context_compaction`（上下文整理）、`reflection`（自检提示注入）、`phase5_orchestration`（Phase 5 并行编排）和 `memory_recall`（本轮记忆召回）。进入后台 internal-task 流的任务包括：`memory_extraction_gate`（轻量判断是否值得提取）、`memory_extraction`（聚合态提取结果）以及按 gate 路由出现的 `profile_memory_extraction` / `working_memory_extraction`。任一路由提取失败会让聚合任务以 `warning` / `partial_failure` 结束，已成功写入的另一类记忆不回滚，且本轮 `last_consumed_user_count` 不前进以便后续重试。`save_day_plan` / `replace_all_day_plans` 等真实工具的 `TOOL_RESULT` 会先到达前端并结束工具卡，随后才显示软评审或后台记忆任务，避免用户误以为真实工具仍在执行。
 
 ### 文档沉淀约定
 - `docs/phase*.md`、`docs/*fix*.md`：专题修复记录与设计说明
@@ -209,7 +209,7 @@ travel_agent_pro/
 - `docs/postmortems/2026-04-19-phase5-parallel-guard-refactor.md`：记录 Phase 5 并行入口守卫重构的主路径等价性、`max_retries` 边界风险与外部 agent runtime 设计参照
 - `docs/learning/interview-stress-test/`、`docs/mind/`：学习型架构评审与阶段性洞察，当前包含记忆系统写入语境、稳定性、TripEpisode 职责边界与 working memory 取舍分析
 - `docs/learning/2026-04-19-Phase*.md` 与 `docs/learning/assets/phase5-parallel-orchestration/`：面向初学者的 Phase 转换机制、Phase 5 并行 Orchestrator-Workers 生命周期说明和配图
-- `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划，包含待实现的 Memory Storage v3 分层重构规格与实施计划（profile / working memory / episode slice / events）、Memory Extraction Routing 设计（把 combined extraction 拆成 routing gate + profile / working memory 专用 extractor），以及 Phase 3 `candidate_pois` 全局唯一性设计与实施计划（把重复 POI 拦截在 `set_skeleton_plans` 写入边界，而不是留给 Phase 5 并行 worker 事后去重）
+- `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划，包含 v3-only memory cutover、Memory Extraction Routing 设计，以及 Phase 3 `candidate_pois` 全局唯一性设计与实施计划（把重复 POI 拦截在 `set_skeleton_plans` 写入边界，而不是留给 Phase 5 并行 worker 事后去重）
 - `docs/superpowers/specs/2026-04-19-internal-task-visibility-design.md`：内部耗时任务可见性设计，定义 `internal_task` SSE、系统任务卡片、soft judge / quality gate / memory / compaction / reflection / Phase 5 orchestration 的统一聊天流展示模型
 - `docs/agent-tool-design-guide.md`：Agent 工具设计评审准则，新增或重塑工具前应对照其命名、schema、返回值、错误反馈与评估清单
 
@@ -334,7 +334,7 @@ LLM API 异常
 - **TraceViewer** — 分阶段分组的 Trace 视图，按 significance 分级展示，连续 thinking 自动折叠
 - **Phase3Workbench** — 旅行画像/候选池/骨架/锁定/风险 五卡片
 - **ThinkingBubble** — stage-aware 等待气泡，展示 narration hint
-- **MemoryCenter** — 右滑抽屉；当前同时读取 v3 `profile` / `working-memory` / `episode-slices` 与遗留 v2 pending/episode 数据
+- **MemoryCenter** — 右滑抽屉；只展示 v3 `profile`、当前 session/trip 的 `working-memory`、`episodes` 与 `episode-slices`
 - **MapView / Timeline / BudgetChart** — 地图、时间线、预算可视化
 - **useSSE / useMemory / useTrace** — SSE 连接、记忆 CRUD、Trace 拉取三个 Hook
 
@@ -355,14 +355,20 @@ archives       → id, session_id, plan_json, summary, created_at
 
 `TravelPlanState.deliverables` 保存 Phase 7 冻结后的元数据，指向 `travel_plan.md` 与 `checklist.md` 的文件名。
 
-Phase 7 会把完成会话归档为兼容层 `TripEpisode`，并同步派生 v3 `EpisodeSlice` 写入 `users/{user_id}/memory/episode_slices.jsonl`；slice 写入按 id 幂等，重复归档或补写旧 episode 时不会产生重复切片。
+Phase 7 会把完成会话归档为 v3 `ArchivedTripEpisode`，并同步派生 `EpisodeSlice` 写入 `users/{user_id}/memory/episode_slices.jsonl`；slice 写入按 id 幂等，重复归档不会产生重复切片。
 
 ### 文件系统
 ```
 backend/data/
 ├── sessions.db
 ├── sessions/sess_*/          # plan.json + snapshots/ + tool_results/ + deliverables/
-└── users/{user_id}/          # memory/（profile.json、sessions/*/working_memory.json、episode_slices.jsonl） + memory.json + memory_events.jsonl + trip_episodes.jsonl
+└── users/{user_id}/
+   └── memory/
+      ├── profile.json
+      ├── events.jsonl
+      ├── episodes.jsonl
+      ├── episode_slices.jsonl
+      └── sessions/{session_id}/trips/{trip_id}/working_memory.json
 ```
 
 ---
@@ -385,15 +391,13 @@ GET    /api/messages/{id}                   消息历史
 POST   /api/backtrack/{id}                  回退阶段
 GET    /api/sessions/{id}/trace             Trace 视图
 GET    /api/sessions/{id}/stats             成本与延迟
-GET    /api/memory/{user_id}                v2 记忆项（deprecated）
 GET    /api/memory/{user_id}/profile        v3 长期画像
 GET    /api/memory/{user_id}/episode-slices v3 历史切片
 GET    /api/memory/{user_id}/sessions/{session_id}/working-memory v3 会话工作记忆
-POST   /api/memory/{user_id}/confirm        兼容确认入口（legacy pending / v3 profile）
-POST   /api/memory/{user_id}/reject         兼容拒绝入口（legacy pending / v3 profile）
-POST   /api/memory/{user_id}/events         追加事件
-GET    /api/memory/{user_id}/episodes       v2 旅行 episode（deprecated）
-DELETE /api/memory/{user_id}/{item_id}      兼容删除入口（legacy / v3 profile）
+POST   /api/memory/{user_id}/profile/{item_id}/confirm  确认长期画像项
+POST   /api/memory/{user_id}/profile/{item_id}/reject   拒绝长期画像项
+DELETE /api/memory/{user_id}/profile/{item_id}          删除长期画像项
+GET    /api/memory/{user_id}/episodes       v3 历史旅行 episodes
 ```
 
 ---
@@ -483,7 +487,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase5.par
 | Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
 | 并行工具执行 | 读写分离：搜索类并行，状态更新顺序 |
 | Tool Choice (always auto) | split 工具后移除强制逻辑，全依赖 prompt 纪律与 State Repair |
-| Memory System | v3 结构化长期画像（profile）+ 会话 working memory + episode slice；当前旅行事实由 TravelPlanState 权威提供；同步 recall 第一阶段采用 `Stage 0` 硬规则短路 + `Stage 1` 单层 recall gate，只有判定需要历史偏好/过往经历时才进入 `Stage 2 Recall Query Tool` 生成结构化 `retrieval plan`，再经 `recall_query_adapter` 适配到现有规则召回器完成 symbolic recall；Stage 3 已把 Profile / EpisodeSlice 规则召回统一收敛到 `RecallCandidate` 输出 contract，manager、formatter、trace/stats 都消费统一 candidate，不再区分 profile tuple / slice tuple 两套输出；长期 profile 已不再作为固定画像常驻注入，只有 query recall 命中后才以 candidate 进入上下文，当前有效来源只保留 `query_profile`、`working_memory`、`episode_slice`；profile extraction 持久化前会先规范化高价值画像 domain/key，并把 `applicability`、`recall_hints`、`source_refs` 一起写成 recall-ready metadata；若新的偏好假设得到既有 profile 证据反复印证，会升级为 stable preference 后再写入长期画像；在 candidate 数超过短路阈值时进入 `Stage 4` reranker 做最终筛选，并把 reranker 选中结果与 fallback telemetry 统一暴露给 SSE / trace / stats；query tool 超时、异常或 payload 非法时保守回退到 `fallback retrieval plan`，gate 超时或异常且最终未应用 recall 时以 `no_recall_applied` 标记本轮没有任何 recall 结果进入 prompt，并在 telemetry 标记 `fallback_used=gate_timeout/gate_error`；遗留 v2 memory/item/episode API 仅保留兼容 |
+| Memory System | v3 结构化长期画像（profile）+ 当前 session/trip 的 working memory + historical episodes / episode slices；当前旅行事实由 `TravelPlanState` 权威提供，working memory 不参与 historical recall。同步 recall 采用 `Stage 0` 硬规则短路 + `Stage 1` recall gate；只有判定需要历史偏好/过往经历时，才进入 `Stage 2 Recall Query Tool` 生成 `RecallRetrievalPlan`，随后由 native symbolic recall 直接在 profile / episode slice 上检索并统一收敛到 `RecallCandidate` 输出 contract。长期 profile 不再固定常驻注入，只有 query recall 命中后才以 candidate 进入上下文；当前有效来源只保留 `query_profile`、`working_memory`、`episode_slice`。profile extraction 持久化前会先规范化高价值画像 domain/key，并把 `applicability`、`recall_hints`、`source_refs` 一起写成 recall-ready metadata；若新的偏好假设得到既有 profile 证据反复印证，会升级为 stable preference 后再写入长期画像；在 candidate 数超过短路阈值时进入 `Stage 4` reranker 做最终筛选，并把 reranker 选中结果与 fallback telemetry 统一暴露给 SSE / trace / stats；query tool 超时、异常或 payload 非法时保守回退到 `fallback retrieval plan`，gate 超时或异常且最终未应用 recall 时以 `no_recall_applied` 标记本轮没有任何 recall 结果进入 prompt，并在 telemetry 标记 `fallback_used=gate_timeout/gate_error`。 |
 | Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
 | Trace Data Pipeline | "丰富 Stats 层，Trace 只做读取"：钩子 post-hoc 写入 `ToolCallRecord`；`build_trace` 纯读取消费 |
 | Memory Recall SSE | `memory_recall` 事件透传到前端，payload 含 `gate`、`sources`、`profile_ids`、`working_memory_ids`、`slice_ids`、`matched_reasons`、`stage0_decision`、`stage0_reason`、`gate_needs_recall`、`gate_intent_type`、`gate_confidence`、`gate_reason`、`final_recall_decision`、`fallback_used`、`query_plan`、`query_plan_fallback`，以及 `candidate_count`、`reranker_selected_ids`、`reranker_final_reason`、`reranker_fallback`；其中 `sources` 只保留 `query_profile`、`working_memory`、`episode_slice`，`profile_ids` 表示本轮最终命中的 profile recall item ids；真实召回命中仍只进入 `SessionStats.memory_hits`，而 recall gate / reranker 摘要单独进入 `SessionStats.recall_telemetry` / `/api/sessions/{id}/trace.iterations[].memory_recall`，这样零命中时仍保留可见性且不污染 `memory_hit_count` |

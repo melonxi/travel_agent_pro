@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 
 from memory.demo_seed import seed_demo_memory
-from memory.models import MemoryItem, MemorySource, TripEpisode
-from memory.store import FileMemoryStore
+from memory.v3_store import FileMemoryV3Store
 
 
 @pytest.mark.asyncio
@@ -21,20 +21,32 @@ async def test_seed_demo_memory_creates_active_items_and_episode(tmp_path: Path)
     assert summary.items_seeded == 3
     assert summary.episodes_seeded == 1
 
-    store = FileMemoryStore(tmp_path)
-    items = await store.list_items("default_user", status="active")
+    store = FileMemoryV3Store(tmp_path)
+    profile = await store.load_profile("default_user")
     episodes = await store.list_episodes("default_user")
+    slices = await store.list_episode_slices("default_user")
 
-    assert {(item.domain, item.key, item.value) for item in items} == {
+    assert {
+        (item.domain, item.key, item.value)
+        for item in profile.stable_preferences
+    } == {
         ("travel", "travel_style", "文化体验为主，适度冒险"),
         ("accommodation", "accommodation_preference", "偏好精品民宿和设计酒店"),
         ("travel", "pace_preference", "不赶路，每天2-3个景点"),
     }
-    assert all(item.scope == "global" for item in items)
+    assert all(item.status == "active" for item in profile.stable_preferences)
     assert len(episodes) == 1
     assert episodes[0].destination == "京都"
-    assert episodes[0].dates == "2025-03"
-    assert episodes[0].satisfaction == 5
+    assert episodes[0].dates == {
+        "start": "2025-03-01",
+        "end": "2025-03-31",
+        "label": "2025-03",
+    }
+    assert {slice_.slice_type for slice_ in slices} == {
+        "itinerary_pattern",
+        "budget_signal",
+        "pitfall",
+    }
 
 
 @pytest.mark.asyncio
@@ -51,8 +63,9 @@ async def test_seed_demo_memory_is_idempotent(tmp_path: Path):
     assert second.items_seeded == 0
     assert second.episodes_seeded == 0
 
-    store = FileMemoryStore(tmp_path)
-    assert len(await store.list_items("default_user", status="active")) == 3
+    store = FileMemoryV3Store(tmp_path)
+    profile = await store.load_profile("default_user")
+    assert len(profile.stable_preferences) == 3
     assert len(await store.list_episodes("default_user")) == 1
 
 
@@ -61,44 +74,9 @@ async def test_seed_demo_memory_can_reset_existing_demo_user(tmp_path: Path):
     seed_file = (
         Path(__file__).resolve().parents[2] / "scripts" / "demo" / "seed-memory.json"
     )
-    store = FileMemoryStore(tmp_path)
-
-    await store.upsert_item(
-        MemoryItem(
-            id="stale-item",
-            user_id="default_user",
-            type="preference",
-            domain="travel",
-            key="old_pref",
-            value="旧数据",
-            scope="global",
-            polarity="neutral",
-            confidence=0.3,
-            status="active",
-            source=MemorySource(kind="seed", session_id=""),
-            created_at="2026-01-01T00:00:00",
-            updated_at="2026-01-01T00:00:00",
-        )
-    )
-    await store.append_episode(
-        TripEpisode(
-            id="stale-episode",
-            user_id="default_user",
-            session_id="stale-session",
-            trip_id=None,
-            destination="旧行程",
-            dates="2024-01",
-            travelers=None,
-            budget=None,
-            selected_skeleton=None,
-            final_plan_summary="旧摘要",
-            accepted_items=[],
-            rejected_items=[],
-            lessons=["旧 lesson"],
-            satisfaction=1,
-            created_at="2026-01-01T00:00:00",
-        )
-    )
+    user_dir = tmp_path / "users" / "default_user"
+    user_dir.mkdir(parents=True)
+    (user_dir / "memory.json").write_text(json.dumps({"stale": True}), encoding="utf-8")
 
     summary = await seed_demo_memory(
         seed_file=seed_file,
@@ -109,10 +87,11 @@ async def test_seed_demo_memory_can_reset_existing_demo_user(tmp_path: Path):
     assert summary.items_seeded == 3
     assert summary.episodes_seeded == 1
 
-    items = await store.list_items("default_user", status="active")
+    store = FileMemoryV3Store(tmp_path)
+    profile = await store.load_profile("default_user")
     episodes = await store.list_episodes("default_user")
 
-    assert {item.key for item in items} == {
+    assert {item.key for item in profile.stable_preferences} == {
         "travel_style",
         "accommodation_preference",
         "pace_preference",
