@@ -561,7 +561,7 @@ async def test_chat_stream_emits_memory_recall_internal_task(monkeypatch, app):
         return (
             "用户偏好：喜欢轻松行程",
             MemoryRecallTelemetry(
-                sources={"profile_fixed": 1},
+                sources={"query_profile": 1},
                 profile_ids=["mem_1"],
             ),
         )

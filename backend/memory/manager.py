@@ -17,12 +17,11 @@ from memory.symbolic_recall import (
     rank_profile_items,
     should_trigger_memory_recall,
 )
-from memory.v3_models import EpisodeSlice, MemoryProfileItem, WorkingMemoryItem
+from memory.v3_models import EpisodeSlice, WorkingMemoryItem
 from memory.v3_store import FileMemoryV3Store
 from state.models import TravelPlanState
 
 
-_FIXED_PROFILE_LIMIT = 10
 _WORKING_MEMORY_LIMIT = 10
 _QUERY_PROFILE_LIMIT = 5
 _QUERY_SLICE_LIMIT = 5
@@ -158,7 +157,6 @@ class MemoryManager:
         retrieval_plan: RecallRetrievalPlan | None = None,
     ) -> tuple[str, MemoryRecallTelemetry]:
         profile = await self.v3_store.load_profile(user_id)
-        fixed_profile_items: list[tuple[str, MemoryProfileItem]] = []
         working_memory = await self.v3_store.load_working_memory(
             user_id,
             plan.session_id,
@@ -234,7 +232,6 @@ class MemoryManager:
             )
 
         telemetry = self._build_v3_telemetry(
-            fixed_profile_items,
             working_items,
             selected_candidates,
         )
@@ -254,7 +251,6 @@ class MemoryManager:
             }
             telemetry.query_plan_fallback = retrieval_plan.fallback_used
         context = format_v3_memory_context(
-            profile_items=fixed_profile_items,
             working_items=working_items,
             recall_candidates=selected_candidates,
         )
@@ -268,17 +264,12 @@ class MemoryManager:
 
     def _build_v3_telemetry(
         self,
-        fixed_profile_items: list[tuple[str, MemoryProfileItem]],
         working_items: list[WorkingMemoryItem],
         recall_candidates: list[RecallCandidate],
     ) -> MemoryRecallTelemetry:
-        fixed_profile_ids = self._dedupe_ids(
-            [item.id for _, item in fixed_profile_items]
-        )
         query_profile_ids = self._dedupe_ids(
             [candidate.item_id for candidate in recall_candidates if candidate.source == "profile"]
         )
-        profile_ids = self._dedupe_ids(fixed_profile_ids + query_profile_ids)
         working_memory_ids = self._dedupe_ids([item.id for item in working_items])
         slice_ids = self._dedupe_ids(
             [candidate.item_id for candidate in recall_candidates if candidate.source == "episode_slice"]
@@ -288,12 +279,11 @@ class MemoryManager:
         )
         return MemoryRecallTelemetry(
             sources={
-                "profile_fixed": len(fixed_profile_ids),
                 "query_profile": len(query_profile_ids),
                 "working_memory": len(working_memory_ids),
                 "episode_slice": len(slice_ids),
             },
-            profile_ids=profile_ids,
+            profile_ids=query_profile_ids,
             working_memory_ids=working_memory_ids,
             slice_ids=slice_ids,
             matched_reasons=matched_reasons,

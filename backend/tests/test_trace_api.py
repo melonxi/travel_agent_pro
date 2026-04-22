@@ -275,7 +275,7 @@ def test_memory_hit_record():
     from telemetry.stats import MemoryHitRecord
 
     rec = MemoryHitRecord(
-        sources={"profile_fixed": 1, "working_memory": 0, "episode_slice": 1},
+        sources={"query_profile": 1, "working_memory": 0, "episode_slice": 1},
         profile_ids=["mem-1"],
         slice_ids=["slice-1"],
         matched_reasons=["上次京都住宿"],
@@ -299,7 +299,7 @@ def test_session_stats_to_dict_includes_memory_hits():
     stats = SessionStats()
     stats.memory_hits.append(
         MemoryHitRecord(
-            sources={"profile_fixed": 1},
+            sources={"query_profile": 1},
             profile_ids=["m1"],
         )
     )
@@ -486,7 +486,7 @@ async def test_trace_memory_hits(app):
     )
     stats.memory_hits.append(
         MemoryHitRecord(
-            sources={"profile_fixed": 1, "working_memory": 1, "episode_slice": 1},
+            sources={"query_profile": 1, "working_memory": 1, "episode_slice": 1},
             profile_ids=["m1"],
             working_memory_ids=["m2"],
             slice_ids=["slice-1"],
@@ -513,7 +513,8 @@ async def test_trace_memory_hits(app):
     assert hits["working_memory_ids"] == ["m2"]
     assert hits["slice_ids"] == ["slice-1"]
     assert hits["matched_reasons"] == ["历史上的偏好", "上次京都住宿"]
-    assert hits["sources"]["profile_fixed"] == 1
+    assert hits["sources"]["query_profile"] == 1
+    assert len(hits["sources"]) == 3
     assert hits["sources"]["episode_slice"] == 1
 
 
@@ -539,7 +540,7 @@ async def test_trace_recall_telemetry_visible_without_memory_hit(app):
             stage0_reason="needs_llm_gate",
             gate_needs_recall=False,
             gate_intent_type="gate_decision_unavailable",
-            final_recall_decision="fixed_only",
+            final_recall_decision="no_recall_applied",
             fallback_used="gate_timeout",
             candidate_count=4,
             reranker_selected_ids=["profile_1", "slice_2"],
@@ -568,7 +569,7 @@ async def test_trace_recall_telemetry_visible_without_memory_hit(app):
     assert recall["stage0_reason"] == "needs_llm_gate"
     assert recall["gate_needs_recall"] is False
     assert recall["gate_intent_type"] == "gate_decision_unavailable"
-    assert recall["final_recall_decision"] == "fixed_only"
+    assert recall["final_recall_decision"] == "no_recall_applied"
     assert recall["fallback_used"] == "gate_timeout"
     assert recall["candidate_count"] == 4
     assert recall["reranker_selected_ids"] == ["profile_1", "slice_2"]
@@ -605,7 +606,7 @@ async def test_trace_memory_hits_attach_only_to_first_matching_llm(app):
     stats.llm_calls[-1].timestamp = first_ts + 1
     stats.memory_hits.append(
         MemoryHitRecord(
-            sources={"profile_fixed": 1},
+            sources={"query_profile": 1},
             profile_ids=["m1"],
             timestamp=first_ts - 0.1,
         )

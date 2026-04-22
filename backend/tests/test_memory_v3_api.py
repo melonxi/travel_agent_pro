@@ -266,7 +266,6 @@ def test_memory_hit_record_includes_v3_sources():
 
     record = MemoryHitRecord(
         sources={
-            "profile_fixed": 1,
             "working_memory": 0,
             "query_profile": 1,
             "episode_slice": 1,
@@ -279,7 +278,8 @@ def test_memory_hit_record_includes_v3_sources():
 
     payload = record.to_dict()
     assert payload["sources"]["episode_slice"] == 1
-    assert payload["sources"]["profile_fixed"] == 1
+    assert payload["sources"]["query_profile"] == 1
+    assert len(payload["sources"]) == 3
     assert payload["profile_ids"] == ["constraints:flight:avoid_red_eye"]
     assert payload["slice_ids"] == ["slice_1"]
     assert payload["matched_reasons"] == ["用户询问上次京都住宿"]
@@ -289,7 +289,7 @@ def test_memory_hit_record_includes_v3_sources():
 def test_memory_hit_record_defaults_are_empty():
     from telemetry.stats import MemoryHitRecord
 
-    record = MemoryHitRecord(sources={"profile_fixed": 1})
+    record = MemoryHitRecord(sources={"query_profile": 1})
     payload = record.to_dict()
     assert payload["profile_ids"] == []
     assert payload["working_memory_ids"] == []

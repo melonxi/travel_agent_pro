@@ -23,7 +23,6 @@ export interface MemoryHit {
   slice_ids: string[]
   matched_reasons?: string[]
   sources?: {
-    profile_fixed?: number
     query_profile?: number
     working_memory?: number
     episode_slice?: number

@@ -284,7 +284,7 @@ function EventRow({ iteration }: { iteration: TraceIteration }) {
           {iteration.memory_hits && (
             <div className="trace-memory-hits">
               命中 {memoryHitCount} 条记忆
-              （profile {memorySources.profile_fixed ?? 0} / working {memorySources.working_memory ?? 0} / query {memorySources.query_profile ?? 0} / slice {memorySources.episode_slice ?? 0}）
+              （query {memorySources.query_profile ?? 0} / working {memorySources.working_memory ?? 0} / slice {memorySources.episode_slice ?? 0}）
             </div>
           )}
           {iteration.memory_recall && (

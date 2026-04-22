@@ -202,11 +202,11 @@ async def test_generate_context_uses_slice_recall_without_fixed_profile_injectio
         user_message="我上次去京都住哪里？",
     )
 
-    assert "## 长期用户画像" not in text
+    assert "长期用户画像" not in text
     assert "## 本轮请求命中的历史记忆" in text
     assert "## 本次旅行记忆" not in text
     assert "上次京都住四条附近的町屋。" in text
-    assert recall.sources["profile_fixed"] == 0
+    assert "query_profile" in recall.sources
     assert recall.sources["query_profile"] == 0
     assert recall.sources["episode_slice"] == 1
     assert recall.sources["working_memory"] == 0
@@ -315,9 +315,9 @@ async def test_generate_context_skips_all_profile_injection_for_current_trip_que
         user_message="这次预算多少？",
     )
 
-    assert "## 长期用户画像" not in text
+    assert "长期用户画像" not in text
     assert "## 本轮请求命中的历史记忆" not in text
-    assert recall.sources["profile_fixed"] == 0
+    assert "query_profile" in recall.sources
     assert recall.sources["query_profile"] == 0
     assert recall.sources["episode_slice"] == 0
     assert recall.profile_ids == []
@@ -364,9 +364,9 @@ async def test_generate_context_drops_fixed_profile_when_gate_blocks_query_recal
         short_circuit="skip_recall",
     )
 
-    assert "## 长期用户画像" not in text
+    assert "长期用户画像" not in text
     assert "## 本轮请求命中的历史记忆" not in text
-    assert recall.sources["profile_fixed"] == 0
+    assert "query_profile" in recall.sources
     assert recall.sources["query_profile"] == 0
     assert recall.sources["episode_slice"] == 0
     assert recall.profile_ids == []
