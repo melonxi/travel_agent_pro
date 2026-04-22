@@ -210,7 +210,7 @@ class MemoryRecallDecision:
 
 
 def _final_recall_decision_from_gate(needs_recall: bool) -> str:
-    return "query_recall_enabled" if needs_recall else "fixed_only"
+    return "query_recall_enabled" if needs_recall else "no_recall_applied"
 
 
 def _build_recall_query_tool() -> dict[str, Any]:

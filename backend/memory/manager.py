@@ -158,7 +158,7 @@ class MemoryManager:
         retrieval_plan: RecallRetrievalPlan | None = None,
     ) -> tuple[str, MemoryRecallTelemetry]:
         profile = await self.v3_store.load_profile(user_id)
-        fixed_profile_items = self._fixed_profile_items(profile)
+        fixed_profile_items: list[tuple[str, MemoryProfileItem]] = []
         working_memory = await self.v3_store.load_working_memory(
             user_id,
             plan.session_id,
@@ -171,7 +171,7 @@ class MemoryManager:
         profile_recall_query = None
         slice_recall_query = None
         should_run_query_recall = False
-        final_recall_decision = "fixed_only"
+        final_recall_decision = "no_recall_applied"
         if recall_gate is None:
             should_run_query_recall = user_message and (
                 should_trigger_memory_recall(user_message)
@@ -185,7 +185,9 @@ class MemoryManager:
                 )
                 slice_recall_query = legacy_recall_query
             final_recall_decision = (
-                "query_recall_enabled" if should_run_query_recall else "fixed_only"
+                "query_recall_enabled"
+                if should_run_query_recall
+                else "no_recall_applied"
             )
         elif recall_gate:
             should_run_query_recall = True
@@ -257,19 +259,6 @@ class MemoryManager:
             recall_candidates=selected_candidates,
         )
         return context, telemetry
-
-    def _fixed_profile_items(
-        self, profile
-    ) -> list[tuple[str, MemoryProfileItem]]:
-        items: list[tuple[str, MemoryProfileItem]] = []
-        for bucket in ("constraints", "rejections", "stable_preferences"):
-            for item in getattr(profile, bucket, []):
-                if item.status != "active":
-                    continue
-                items.append((bucket, item))
-                if len(items) >= _FIXED_PROFILE_LIMIT:
-                    return items
-        return items
 
     def _active_working_memory_items(
         self, items: list[WorkingMemoryItem]

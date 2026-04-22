@@ -158,7 +158,7 @@ async def test_generate_context_keeps_legacy_slice_recall_when_retrieval_plan_is
 
 
 @pytest.mark.asyncio
-async def test_generate_context_includes_fixed_profile_and_slice_recall(tmp_path: Path):
+async def test_generate_context_uses_slice_recall_without_fixed_profile_injection(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
     await manager.v3_store.upsert_profile_item(
         "u1",
@@ -202,15 +202,15 @@ async def test_generate_context_includes_fixed_profile_and_slice_recall(tmp_path
         user_message="我上次去京都住哪里？",
     )
 
-    assert "## 长期用户画像" in text
+    assert "## 长期用户画像" not in text
     assert "## 本轮请求命中的历史记忆" in text
     assert "## 本次旅行记忆" not in text
     assert "上次京都住四条附近的町屋。" in text
-    assert recall.sources["profile_fixed"] == 1
+    assert recall.sources["profile_fixed"] == 0
     assert recall.sources["query_profile"] == 0
     assert recall.sources["episode_slice"] == 1
     assert recall.sources["working_memory"] == 0
-    assert recall.profile_ids == ["stable_preferences:pace:preferred_pace"]
+    assert recall.profile_ids == []
     assert recall.slice_ids == ["slice_1"]
     assert recall.matched_reasons
 
@@ -271,7 +271,7 @@ async def test_generate_context_merges_profile_and_slice_candidates(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_generate_context_skips_slice_recall_for_current_trip_question(tmp_path: Path):
+async def test_generate_context_skips_all_profile_injection_for_current_trip_question(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
     await manager.v3_store.upsert_profile_item(
         "u1",
@@ -315,17 +315,18 @@ async def test_generate_context_skips_slice_recall_for_current_trip_question(tmp
         user_message="这次预算多少？",
     )
 
-    assert "## 长期用户画像" in text
+    assert "## 长期用户画像" not in text
     assert "## 本轮请求命中的历史记忆" not in text
-    assert recall.sources["profile_fixed"] == 1
+    assert recall.sources["profile_fixed"] == 0
     assert recall.sources["query_profile"] == 0
     assert recall.sources["episode_slice"] == 0
+    assert recall.profile_ids == []
     assert recall.slice_ids == []
     assert recall.matched_reasons == []
 
 
 @pytest.mark.asyncio
-async def test_generate_context_keeps_fixed_profile_when_gate_blocks_query_recall(
+async def test_generate_context_drops_fixed_profile_when_gate_blocks_query_recall(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     manager = MemoryManager(data_dir=str(tmp_path))
@@ -363,15 +364,15 @@ async def test_generate_context_keeps_fixed_profile_when_gate_blocks_query_recal
         short_circuit="skip_recall",
     )
 
-    assert "## 长期用户画像" in text
+    assert "## 长期用户画像" not in text
     assert "## 本轮请求命中的历史记忆" not in text
-    assert recall.sources["profile_fixed"] == 1
+    assert recall.sources["profile_fixed"] == 0
     assert recall.sources["query_profile"] == 0
     assert recall.sources["episode_slice"] == 0
-    assert recall.profile_ids == ["stable_preferences:pace:preferred_pace"]
+    assert recall.profile_ids == []
     assert recall.gate_needs_recall is False
     assert recall.stage0_decision == "skip_recall"
-    assert recall.final_recall_decision == "fixed_only"
+    assert recall.final_recall_decision == "no_recall_applied"
 
 
 @pytest.mark.asyncio
