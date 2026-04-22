@@ -5,6 +5,11 @@ from datetime import datetime
 import json
 from typing import Any
 
+from memory.retrieval_candidates import (
+    RecallCandidate,
+    build_episode_slice_candidates,
+    build_profile_candidates,
+)
 from memory.v3_models import EpisodeSlice, MemoryProfileItem, UserMemoryProfile
 
 
@@ -152,7 +157,7 @@ def build_recall_query(message: str) -> RecallQuery:
 
 def rank_profile_items(
     query: RecallQuery, profile: UserMemoryProfile
-) -> list[tuple[str, MemoryProfileItem, str]]:
+) -> list[RecallCandidate]:
     if not query.needs_memory or not query.include_profile:
         return []
 
@@ -169,7 +174,9 @@ def rank_profile_items(
             ranked.append((score, bucket_name, item, reason))
 
     ranked.sort(key=lambda entry: entry[0])
-    return [(bucket, item, reason) for _, bucket, item, reason in ranked]
+    return build_profile_candidates(
+        [(bucket, item, reason) for _, bucket, item, reason in ranked]
+    )
 
 
 def _normalized_profile_buckets(allowed_buckets: list[str]) -> set[str]:
@@ -181,7 +188,7 @@ def _normalized_profile_buckets(allowed_buckets: list[str]) -> set[str]:
 
 def rank_episode_slices(
     query: RecallQuery, slices: list[EpisodeSlice]
-) -> list[tuple[EpisodeSlice, str]]:
+) -> list[RecallCandidate]:
     if not query.needs_memory or not query.include_slices:
         return []
 
@@ -193,7 +200,9 @@ def rank_episode_slices(
         ranked.append((score, slice_, reason))
 
     ranked.sort(key=lambda entry: entry[0])
-    return [(slice_, reason) for _, slice_, reason in ranked]
+    return build_episode_slice_candidates(
+        [(slice_, reason) for _, slice_, reason in ranked]
+    )
 
 
 def _score_profile_item(
