@@ -147,6 +147,16 @@ travel_agent_pro/
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
 | Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
 
+#### 召回门控三层结构
+
+召回判定分三层：
+
+1. **Layer 1 信号抽取** (`backend/memory/recall_signals.py`)：对用户消息进行 6 类词表匹配（history / style / recommend / fact_scope / fact_field / ack_sys），纯字符串匹配、无决策。
+2. **Layer 2 规则引擎** (`backend/memory/recall_gate.py::apply_recall_short_circuit`)：按显式优先级 P1–P6 输出三值决策。P1 profile signal → force_recall；P2 recommend → undecided；P3 纯事实问句 → skip_recall；P4 ACK → skip；P5 空消息 → undecided；P6 兜底 → undecided。
+3. **Layer 3 LLM gate** (`decide_memory_recall` tool)：仅处理 Layer 2 放行的 undecided 样本，输出 `intent_type` 精细分类。
+
+决策对象携带 `matched_rule` 与 `signals`，便于 trace 与回归。
+
 ---
 
 ## 5. 核心数据流
