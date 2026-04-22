@@ -33,6 +33,8 @@ class MemoryRecallTelemetry:
     gate_reason: str = ""
     final_recall_decision: str = ""
     fallback_used: str = "none"
+    query_plan: dict[str, Any] = field(default_factory=dict)
+    query_plan_fallback: str = "none"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -49,6 +51,8 @@ class MemoryRecallTelemetry:
             "gate_reason": self.gate_reason,
             "final_recall_decision": self.final_recall_decision,
             "fallback_used": self.fallback_used,
+            "query_plan": dict(self.query_plan),
+            "query_plan_fallback": self.query_plan_fallback,
         }
 
 

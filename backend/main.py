@@ -75,6 +75,11 @@ from memory.formatter import MemoryRecallTelemetry
 from memory.manager import MemoryManager
 from memory.models import MemoryCandidate, MemoryEvent, MemoryItem, TripEpisode
 from memory.policy import MemoryMerger as PolicyMemoryMerger, MemoryPolicy
+from memory.recall_query import (
+    RecallRetrievalPlan,
+    fallback_retrieval_plan,
+    parse_recall_query_tool_arguments,
+)
 from memory.recall_gate import (
     apply_recall_short_circuit,
     build_recall_gate_tool,
@@ -206,6 +211,72 @@ class MemoryRecallDecision:
 
 def _final_recall_decision_from_gate(needs_recall: bool) -> str:
     return "query_recall_enabled" if needs_recall else "fixed_only"
+
+
+def _build_recall_query_tool() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "name": "build_recall_retrieval_plan",
+        "description": "为本轮记忆召回生成 profile retrieval plan",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "enum": ["profile"]},
+                "buckets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "constraints",
+                            "rejections",
+                            "stable_preferences",
+                            "preference_hypotheses",
+                        ],
+                    },
+                },
+                "domains": {"type": "array", "items": {"type": "string"}},
+                "keywords": {"type": "array", "items": {"type": "string"}},
+                "aliases": {"type": "array", "items": {"type": "string"}},
+                "strictness": {"type": "string", "enum": ["soft", "strict"]},
+                "top_k": {"type": "integer", "minimum": 1, "maximum": 10},
+                "reason": {"type": "string"},
+            },
+            "required": [
+                "source",
+                "buckets",
+                "domains",
+                "keywords",
+                "aliases",
+                "strictness",
+                "top_k",
+                "reason",
+            ],
+            "additionalProperties": False,
+        },
+    }
+
+
+def _build_recall_query_prompt(*, user_message: str, gate_intent_type: str) -> str:
+    return "\n".join(
+        [
+            "你是旅行记忆召回规划器。",
+            "只基于 user_message 和 gate_intent_type 生成 retrieval plan。",
+            "source 必须是 profile。优先给出保守、可解释的 buckets/domains/keywords/aliases。",
+            "如果不确定，使用 constraints、rejections、stable_preferences 的保守组合。",
+            f"user_message={json.dumps(user_message, ensure_ascii=False)}",
+            f"gate_intent_type={json.dumps(gate_intent_type, ensure_ascii=False)}",
+            "必须调用 build_recall_retrieval_plan 工具输出结果。",
+        ]
+    )
+
+
+def _query_plan_summary(plan: RecallRetrievalPlan) -> dict[str, Any]:
+    return {
+        "buckets": list(plan.buckets),
+        "domains": list(plan.domains),
+        "strictness": plan.strictness,
+        "top_k": plan.top_k,
+    }
 
 
 def _truncate_for_log(value: str, limit: int = 600) -> str:
@@ -1574,6 +1645,46 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             confidence=gate_decision.confidence,
             fallback_used=gate_decision.fallback_used,
         )
+
+    async def _build_recall_retrieval_plan(
+        *,
+        user_message: str,
+        gate_intent_type: str,
+    ) -> RecallRetrievalPlan:
+        query_llm = create_llm_provider(config.llm)
+        try:
+            tool_args = await asyncio.wait_for(
+                _collect_forced_tool_call_arguments(
+                    query_llm,
+                    messages=[
+                        Message(
+                            role=Role.USER,
+                            content=_build_recall_query_prompt(
+                                user_message=user_message,
+                                gate_intent_type=gate_intent_type,
+                            ),
+                        )
+                    ],
+                    tool_def=_build_recall_query_tool(),
+                ),
+                timeout=config.memory.retrieval.recall_gate_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            plan = fallback_retrieval_plan()
+            plan.reason = "query_plan_timeout"
+            plan.fallback_used = "query_plan_timeout"
+            return plan
+        except Exception:
+            logger.exception("记忆召回 query tool 调用失败")
+            plan = fallback_retrieval_plan()
+            plan.reason = "query_plan_error"
+            plan.fallback_used = "query_plan_error"
+            return plan
+
+        plan = parse_recall_query_tool_arguments(tool_args)
+        if not plan.reason:
+            plan.reason = "query_plan_generated"
+        return plan
 
     async def _decide_memory_extraction(
         *,
@@ -3655,12 +3766,19 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     ],
                     plan_snapshot=plan,
                 )
+                retrieval_plan = None
+                if recall_decision.needs_recall:
+                    retrieval_plan = await _build_recall_retrieval_plan(
+                        user_message=req.message,
+                        gate_intent_type=recall_decision.intent_type,
+                    )
                 memory_result = await memory_mgr.generate_context(
                     req.user_id,
                     plan,
                     user_message=req.message,
                     recall_gate=recall_decision.needs_recall,
                     short_circuit=recall_decision.stage0_decision,
+                    retrieval_plan=retrieval_plan,
                 )
                 if (
                     isinstance(memory_result, tuple)
@@ -3678,6 +3796,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 memory_recall.gate_confidence = recall_decision.confidence
                 memory_recall.gate_reason = recall_decision.reason
                 memory_recall.fallback_used = recall_decision.fallback_used
+                if retrieval_plan is not None:
+                    if not memory_recall.query_plan:
+                        memory_recall.query_plan = _query_plan_summary(retrieval_plan)
+                    memory_recall.query_plan_fallback = retrieval_plan.fallback_used
+                    if retrieval_plan.fallback_used != "none":
+                        memory_recall.fallback_used = retrieval_plan.fallback_used
                 memory_recall.final_recall_decision = (
                     memory_recall.final_recall_decision
                     or _final_recall_decision_from_gate(recall_decision.needs_recall)

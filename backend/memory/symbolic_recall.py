@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 import json
 from typing import Any
@@ -84,6 +84,8 @@ _BUCKET_ORDER = {
     "stable_preferences": 2,
     "preference_hypotheses": 3,
 }
+_CONSERVATIVE_PROFILE_BUCKETS = ("constraints", "rejections", "stable_preferences")
+_KNOWN_PROFILE_BUCKETS = _CONSERVATIVE_PROFILE_BUCKETS + ("preference_hypotheses",)
 
 
 @dataclass
@@ -96,6 +98,8 @@ class RecallQuery:
     include_slices: bool
     include_working_memory: bool
     matched_reason: str
+    allowed_buckets: list[str] = field(default_factory=list)
+    strictness: str = "soft"
 
 
 def should_trigger_memory_recall(message: str) -> bool:
@@ -152,8 +156,11 @@ def rank_profile_items(
     if not query.needs_memory or not query.include_profile:
         return []
 
+    allowed_buckets = _normalized_profile_buckets(query.allowed_buckets)
     ranked: list[tuple[tuple[Any, ...], str, MemoryProfileItem, str]] = []
     for bucket_name in ("constraints", "rejections", "stable_preferences", "preference_hypotheses"):
+        if bucket_name not in allowed_buckets:
+            continue
         items = getattr(profile, bucket_name, [])
         for item in items:
             score, reason = _score_profile_item(query, bucket_name, item)
@@ -163,6 +170,13 @@ def rank_profile_items(
 
     ranked.sort(key=lambda entry: entry[0])
     return [(bucket, item, reason) for _, bucket, item, reason in ranked]
+
+
+def _normalized_profile_buckets(allowed_buckets: list[str]) -> set[str]:
+    normalized = {bucket for bucket in allowed_buckets if bucket in _KNOWN_PROFILE_BUCKETS}
+    if normalized:
+        return normalized
+    return set(_CONSERVATIVE_PROFILE_BUCKETS)
 
 
 def rank_episode_slices(

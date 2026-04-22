@@ -143,7 +143,7 @@ travel_agent_pro/
 | Reflection | 被动自省提示，会话级去重 | before_llm_call（步骤切换时） |
 | Parallel Tool Exec | 读写分离并行调度，parallel_group ID 透传到 Stats 层 | 工具批量执行时 |
 | Tool Choice (always auto) | Phase 切分后总返回 "auto"，依赖提示纪律 | LLM 调用前 |
-| Memory System | v3 profile / working memory / episode slice 分层记忆；当前旅行事实由 TravelPlanState 权威提供；同步 recall 采用 `Stage 0` 硬规则短路 + `Stage 1` 单层 recall gate，只有判定需要历史偏好/过往经历时才放行 query-aware symbolic recall；`recall_gate_enabled=false` 只关闭 `Stage 1` LLM gate，不影响 `Stage 0` 的 `force_recall` / `skip_recall` 短路；gate 超时或异常时保守降级为 `fixed_only`，请求继续并在 telemetry 标记 `fallback_used=gate_timeout/gate_error`；回答前同步执行 `memory_recall`，用户消息一进入 chat 就提交后台 `memory_extraction_gate` / `memory_extraction` job，chat 与提取彻底解耦；后台提取使用 route-aware gate 决策按需调用长期画像 `extract_profile_memory` 和会话工作记忆 `extract_working_memory` split extractors，并在保留兼容聚合任务的同时发布 `profile_memory_extraction` / `working_memory_extraction` 子任务；提取采用 session 级 latest-wins coalescing queue，避免连续多条消息堆积重任务 | system prompt 构建前检索；每轮 chat 追加 user message 后立即后台排队 gate/job |
+| Memory System | v3 profile / working memory / episode slice 分层记忆；当前旅行事实由 TravelPlanState 权威提供；同步 recall 采用 `Stage 0` 硬规则短路 + `Stage 1` 单层 recall gate，只有判定需要历史偏好/过往经历时才进入 `Stage 2 Recall Query Tool` 生成结构化 `retrieval plan`，再经 `recall_query_adapter` 适配到现有规则召回器完成 symbolic recall；query tool 超时、异常或 payload 非法时回退到保守 `fallback retrieval plan`，`recall_gate_enabled=false` 只关闭 `Stage 1` LLM gate，不影响 `Stage 0` 的 `force_recall` / `skip_recall` 短路；gate 超时或异常时保守降级为 `fixed_only`，请求继续并在 telemetry 标记 `fallback_used=gate_timeout/gate_error`；回答前同步执行 `memory_recall`，用户消息一进入 chat 就提交后台 `memory_extraction_gate` / `memory_extraction` job，chat 与提取彻底解耦；后台提取使用 route-aware gate 决策按需调用长期画像 `extract_profile_memory` 和会话工作记忆 `extract_working_memory` split extractors，并在保留兼容聚合任务的同时发布 `profile_memory_extraction` / `working_memory_extraction` 子任务；提取采用 session 级 latest-wins coalescing queue，避免连续多条消息堆积重任务 | system prompt 构建前检索；每轮 chat 追加 user message 后立即后台排队 gate/job |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
 | Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖 | 离线/批量评估 |
 
@@ -323,7 +323,7 @@ LLM API 异常
 | `state_update` | 完整 TravelPlanState（含 `deliverables` 冻结元数据） |
 | `context_compression` | 压缩通知 |
 | `internal_task` | 内部任务生命周期更新（chat 流与后台 internal-task 流共用 payload） |
-| `memory_recall` | 本轮结构化记忆召回结果；payload 除 `sources`、`profile_ids`、`working_memory_ids`、`slice_ids`、`matched_reasons` 外，还包含 `gate`、`stage0_decision`、`stage0_reason`、`gate_needs_recall`、`gate_intent_type`、`gate_confidence`、`gate_reason`、`final_recall_decision`、`fallback_used`，用于前端与遥测区分短路、gate 放行与 fail-closed 降级 |
+| `memory_recall` | 本轮结构化记忆召回结果；payload 除 `sources`、`profile_ids`、`working_memory_ids`、`slice_ids`、`matched_reasons` 外，还包含 `gate`、`stage0_decision`、`stage0_reason`、`gate_needs_recall`、`gate_intent_type`、`gate_confidence`、`gate_reason`、`final_recall_decision`、`fallback_used`、`query_plan`、`query_plan_fallback`，用于前端与遥测区分短路、gate 放行、Stage 2 query plan 与 fail-closed 降级 |
 | `error` | LLM 错误（含 retryable / can_continue） |
 | `keepalive` | 心跳 |
 | `done` | 流结束（含 run 状态 + can_continue） |
@@ -481,10 +481,10 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase5.par
 | Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
 | 并行工具执行 | 读写分离：搜索类并行，状态更新顺序 |
 | Tool Choice (always auto) | split 工具后移除强制逻辑，全依赖 prompt 纪律与 State Repair |
-| Memory System | v3 结构化长期画像（profile）+ 会话 working memory + episode slice；当前旅行事实由 TravelPlanState 权威提供；同步 recall 第一阶段采用 `Stage 0` 硬规则短路 + `Stage 1` 单层 recall gate，只有判定需要历史偏好/过往经历时才放行 query-aware symbolic recall；gate 超时或异常时保守降级为 `fixed_only` 并在 telemetry 标记 `fallback_used=gate_timeout/gate_error`；遗留 v2 memory/item/episode API 仅保留兼容 |
+| Memory System | v3 结构化长期画像（profile）+ 会话 working memory + episode slice；当前旅行事实由 TravelPlanState 权威提供；同步 recall 第一阶段采用 `Stage 0` 硬规则短路 + `Stage 1` 单层 recall gate，只有判定需要历史偏好/过往经历时才进入 `Stage 2 Recall Query Tool` 生成结构化 `retrieval plan`，再经 `recall_query_adapter` 适配到现有规则召回器完成 symbolic recall；query tool 超时、异常或 payload 非法时保守回退到 `fallback retrieval plan`，gate 超时或异常时保守降级为 `fixed_only` 并在 telemetry 标记 `fallback_used=gate_timeout/gate_error`；遗留 v2 memory/item/episode API 仅保留兼容 |
 | Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
 | Trace Data Pipeline | "丰富 Stats 层，Trace 只做读取"：钩子 post-hoc 写入 `ToolCallRecord`；`build_trace` 纯读取消费 |
-| Memory Recall SSE | `memory_recall` 事件透传到前端，payload 含 `gate`、`sources`、`profile_ids`、`working_memory_ids`、`slice_ids`、`matched_reasons`、`stage0_decision`、`stage0_reason`、`gate_needs_recall`、`gate_intent_type`、`gate_confidence`、`gate_reason`、`final_recall_decision`、`fallback_used`；真实召回命中仍只进入 `SessionStats.memory_hits`，而 recall gate 决策单独进入 `SessionStats.recall_telemetry` / `/api/sessions/{id}/trace.iterations[].memory_recall`，这样零命中时仍保留可见性且不污染 `memory_hit_count` |
+| Memory Recall SSE | `memory_recall` 事件透传到前端，payload 含 `gate`、`sources`、`profile_ids`、`working_memory_ids`、`slice_ids`、`matched_reasons`、`stage0_decision`、`stage0_reason`、`gate_needs_recall`、`gate_intent_type`、`gate_confidence`、`gate_reason`、`final_recall_decision`、`fallback_used`、`query_plan`、`query_plan_fallback`；真实召回命中仍只进入 `SessionStats.memory_hits`，而 recall gate 决策单独进入 `SessionStats.recall_telemetry` / `/api/sessions/{id}/trace.iterations[].memory_recall`，这样零命中时仍保留可见性且不污染 `memory_hit_count` |
 | LLM 韧性三层架构 | 错误归一化 → 停止生成（cancel_event + 取消检查点 + RunRecord）→ 安全继续（continuation_context + continue endpoint） |
 | 工具白名单前瞻容错 | 每个 Phase 3 子阶段向前开放下一阶段写入工具，防止 LLM 跳阶时工具不可用导致状态丢失和死循环 |
 | 四段式工具描述 | 功能说明 / 触发条件 / 禁止行为 / 写入后效果结构化模板，引导 LLM 正确选择工具而非混用 |
