@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from memory.retrieval_candidates import RecallCandidate
-from memory.v3_models import EpisodeSlice, MemoryProfileItem, WorkingMemoryItem
+from memory.v3_models import EpisodeSlice, WorkingMemoryItem
 
 
 _MAX_VALUE_LENGTH = 160
@@ -16,7 +16,6 @@ _WHITESPACE_RE = re.compile(r"\s+")
 class MemoryRecallTelemetry:
     sources: dict[str, int] = field(
         default_factory=lambda: {
-            "profile_fixed": 0,
             "query_profile": 0,
             "working_memory": 0,
             "episode_slice": 0,
@@ -66,17 +65,10 @@ class MemoryRecallTelemetry:
 
 
 def format_v3_memory_context(
-    profile_items: list[tuple[str, MemoryProfileItem]],
     working_items: list[WorkingMemoryItem],
     recall_candidates: list[RecallCandidate],
 ) -> str:
     sections: list[str] = []
-
-    if profile_items:
-        lines = ["## 长期用户画像"]
-        for bucket, item in profile_items:
-            lines.append(_format_v3_profile_item(bucket, item))
-        sections.append("\n".join(lines))
 
     if working_items:
         lines = ["## 当前会话工作记忆"]
@@ -89,24 +81,6 @@ def format_v3_memory_context(
         sections.append("\n".join(["## 本轮请求命中的历史记忆", *history_lines]))
 
     return "\n\n".join(sections) if sections else "暂无相关用户记忆"
-
-
-def _format_v3_profile_item(
-    bucket: str,
-    item: MemoryProfileItem,
-    matched_reason: str | None = None,
-) -> str:
-    details = _format_details(
-        source="profile",
-        bucket=bucket,
-        matched_reason=matched_reason,
-        applicability=item.applicability,
-    )
-    return (
-        f"- {_sanitize_text(details)} "
-        f"[{_sanitize_text(item.domain)}] {_sanitize_text(item.key)}: "
-        f"{_format_value(item.value)}"
-    )
 
 
 def _format_v3_working_memory_item(item: WorkingMemoryItem) -> str:

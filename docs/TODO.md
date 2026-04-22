@@ -99,75 +99,35 @@ trip_id    = trip_xxxxxx
 
 让 `session_id` 和 `trip_id` 的职责边界成为清晰的架构约定：聊天连续性归 session，旅行语义隔离归 trip，避免后续 memory / archive / frontend 状态治理出现隐性耦合。
 
-## 5. recall-first 后前端 `profile_fixed` 展示语义收敛
+## 5. recall-first 后前端旧来源展示语义收敛
 
-### 背景
+### 状态
 
-本轮已将记忆召回主链路调整为 recall-first：长期 profile 不再每轮固定注入 system prompt，而是只在 recall 命中后作为 candidate 进入上下文。
+- 已完成
 
-同时，为了降低改动风险，后端暂时保留了 `MemoryRecallTelemetry.sources.profile_fixed` 这个字段结构，但其运行时值现在应稳定为 `0`。这意味着前端当前仍沿用旧展示语义时，会出现两类问题：
+### 完成结果
 
-- UI 仍把 `profile_fixed` 当成一个有业务意义的来源维度展示
-- 用户或开发者在看 Trace / ChatPanel 时，容易误以为系统还存在“固定长期画像常驻注入”这条路径
+- `frontend/src/components/TraceViewer.tsx` 不再展示已移除的旧来源维度
+- `frontend/src/types/trace.ts` 已删除对应的旧来源类型定义
+- `ChatPanel` 继续保留 `profile_ids` 聚合逻辑，但其语义已收敛为“命中的 profile recall ids”，不再暗示 fixed profile 常驻注入
 
-前因后果是：
+### 结论
 
-- 之前系统同时存在两条长期画像进入 prompt 的路径：
-  - 固定注入 `fixed_profile_items`
-  - query recall 命中的 `query_profile`
-- 现在已经移除了第一条路径，只保留 recall candidate 路径
-- 但前端展示模型尚未随之收敛，存在“后端行为已改、前端解释仍旧”的语义滞后
-
-### 待办项
-
-- 检查 `frontend/src/components/ChatPanel.tsx` 中记忆召回摘要、memory chip、internal task 文案是否仍隐含 `profile_fixed` 语义
-- 检查 `frontend/src/components/TraceViewer.tsx` 中 recall 来源分解是否仍把 `profile_fixed` 作为一等来源展示
-- 决定前端策略：
-  - 彻底隐藏 `profile_fixed`
-  - 或仅在 debug/trace 模式保留，但明确标注“当前链路未使用”
-- 调整相关文案，避免继续把“长期画像常驻注入”描述成当前行为
-- 补充前端测试或至少补充后端-前端联动测试，确保 recall-first 语义在 UI 层表达一致
-
-### 目标
-
-让前端显示的记忆来源与当前后端真实行为一致：长期 profile 只通过 recall 命中进入上下文，避免用户和开发者被历史字段名误导。
+前端展示已与 recall-first 主链路对齐：长期 profile 只通过 recall 命中进入上下文，不再保留旧的固定画像来源语义。
 
 ## 6. recall-first 后 trace / stats / API 旧语义清理
 
-### 背景
+### 状态
 
-本轮改动已把后端运行时语义切到 recall-first，并把“未应用任何 recall 结果”的 `final_recall_decision` 从旧的 `fixed_only` 改成了 `no_recall_applied`。
+- 已完成
 
-这次只做了最小闭环修正：
+### 完成结果
 
-- `backend/main.py`
-- `backend/memory/manager.py`
-- 相关 manager / integration 测试
-- `PROJECT_OVERVIEW.md`
+- `MemoryRecallTelemetry.sources` 已删除旧的固定画像来源字段
+- `MemoryHitRecord` / trace API / stats / memory v3 API 测试样例已收口到 `query_profile`、`working_memory`、`episode_slice`
+- `final_recall_decision` 的旧语义已从相关测试中移除，统一收口到当前真实语义 `no_recall_applied`
+- `PROJECT_OVERVIEW.md` 已同步说明新的 recall payload 和来源定义
 
-但代码库里仍可能残留基于旧机制的观测与接口语义，例如：
+### 结论
 
-- trace/stats 测试仍手工构造 `profile_fixed=1` 或 `final_recall_decision="fixed_only"`
-- API 返回结构虽然兼容，但字段解释已经变了
-- 文档、统计看板、排障习惯仍可能默认认为“未 recall = fixed_only”
-
-前因后果是：
-
-- 旧模型里，未触发 query recall 时，prompt 里仍可能只有固定 profile，因此 `fixed_only` 有意义
-- 新模型里，fixed profile 常驻注入已不存在，所以“未 recall”不再等于“只用了 fixed profile”
-- 如果 trace / stats / API 解释层不跟进，就会继续传播错误心智模型，影响后续排障和数据分析
-
-### 待办项
-
-- 全局扫描 `fixed_only`、`profile_fixed` 在 trace / stats / API / 测试中的残留使用
-- 区分哪些是“字段结构兼容保留”，哪些是“业务语义仍在使用”
-- 将 `final_recall_decision` 的合法值和解释统一到新语义，补充枚举说明
-- 评估 `sources.profile_fixed` 是否应继续保留：
-  - 若保留，明确为兼容字段，值预期为 0
-  - 若不保留，设计一次可控的字段清理计划
-- 更新相关 trace/stats 测试，使其表达当前 recall-first 语义，而不是复用旧 fixture
-- 必要时补充 API 文档或 telemetry 字段说明，避免下游消费者误解
-
-### 目标
-
-让 trace、stats、API、测试和文档对记忆召回的解释保持一致，彻底消除 `fixed_only` 时代遗留的观测语义偏差。
+trace、stats、API、测试和文档现在都以 recall-first 的真实行为为准，不再传播历史遗留的固定画像 / 固定注入观测语义。

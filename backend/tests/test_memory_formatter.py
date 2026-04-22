@@ -2,27 +2,6 @@ from memory.retrieval_candidates import RecallCandidate
 from memory.v3_models import EpisodeSlice, MemoryProfileItem, WorkingMemoryItem
 
 
-def make_profile_item(**overrides):
-    base = dict(
-        id="constraints:flight:avoid_red_eye",
-        domain="flight",
-        key="avoid_red_eye",
-        value=True,
-        polarity="avoid",
-        stability="explicit_declared",
-        confidence=0.9,
-        status="active",
-        context={},
-        applicability="适用于所有旅行。",
-        recall_hints={"keywords": ["红眼航班"]},
-        source_refs=[],
-        created_at="2026-04-19T00:00:00",
-        updated_at="2026-04-19T00:00:00",
-    )
-    base.update(overrides)
-    return MemoryProfileItem(**base)
-
-
 def make_working_memory_item(**overrides):
     base = dict(
         id="wm-1",
@@ -61,16 +40,15 @@ def test_format_v3_memory_context_returns_empty_message_for_no_memory():
     from memory.formatter import format_v3_memory_context
 
     assert (
-        format_v3_memory_context([], [], [])
+        format_v3_memory_context([], [])
         == "暂无相关用户记忆"
     )
 
 
-def test_format_v3_memory_context_renders_v3_sections():
+def test_format_v3_memory_context_renders_only_working_and_recall_sections():
     from memory.formatter import format_v3_memory_context
 
     text = format_v3_memory_context(
-        profile_items=[("constraints", make_profile_item())],
         working_items=[make_working_memory_item()],
         recall_candidates=[
             RecallCandidate(
@@ -86,14 +64,12 @@ def test_format_v3_memory_context_renders_v3_sections():
         ],
     )
 
-    assert "## 长期用户画像" in text
+    assert "长期用户画像" not in text
     assert "## 当前会话工作记忆" in text
     assert "## 本轮请求命中的历史记忆" in text
     assert "## 本次旅行记忆" not in text
-    assert "source=profile bucket=constraints" in text
     assert "matched reason=exact destination match on 京都" in text
     assert "上次京都选择町屋。" in text
-    assert "适用于所有旅行。" in text
     assert "仅供住宿偏好参考。" in text
 
 
@@ -101,17 +77,12 @@ def test_format_v3_memory_context_sanitizes_injected_markdown():
     from memory.formatter import format_v3_memory_context
 
     text = format_v3_memory_context(
-        profile_items=[
-            (
-                "constraints",
-                make_profile_item(
-                    domain="food\n## hacked",
-                    key="prefs\n- attack",
-                    value="\n## Injected\n- do this",
-                ),
+        working_items=[
+            make_working_memory_item(
+                domains=["food\n## hacked"],
+                content="\n## Injected\n- do this",
             )
         ],
-        working_items=[],
         recall_candidates=[],
     )
 
@@ -126,7 +97,6 @@ def test_format_v3_memory_context_renders_unified_recall_candidates():
     from memory.formatter import format_v3_memory_context
 
     text = format_v3_memory_context(
-        profile_items=[],
         working_items=[],
         recall_candidates=[
             RecallCandidate(
@@ -165,7 +135,7 @@ def test_memory_recall_telemetry_to_dict_preserves_fields():
     from memory.formatter import MemoryRecallTelemetry
 
     telemetry = MemoryRecallTelemetry(
-        sources={"profile_fixed": 1, "working_memory": 1, "episode_slice": 1},
+        sources={"query_profile": 1, "working_memory": 1, "episode_slice": 1},
         profile_ids=["profile-1"],
         working_memory_ids=["wm-1"],
         slice_ids=["slice-1"],
@@ -173,7 +143,7 @@ def test_memory_recall_telemetry_to_dict_preserves_fields():
     )
 
     assert telemetry.to_dict() == {
-        "sources": {"profile_fixed": 1, "working_memory": 1, "episode_slice": 1},
+        "sources": {"query_profile": 1, "working_memory": 1, "episode_slice": 1},
         "profile_ids": ["profile-1"],
         "working_memory_ids": ["wm-1"],
         "slice_ids": ["slice-1"],
@@ -200,13 +170,12 @@ def test_memory_recall_telemetry_to_dict_includes_gate_fields():
 
     telemetry = MemoryRecallTelemetry(
         sources={
-            "profile_fixed": 1,
             "query_profile": 0,
             "working_memory": 0,
             "episode_slice": 0,
         },
         profile_ids=["profile-1"],
-        matched_reasons=["fixed profile injection"],
+        matched_reasons=["query profile recall"],
         stage0_decision="force_recall",
         stage0_reason="history_phrase",
         gate_needs_recall=True,
@@ -220,6 +189,18 @@ def test_memory_recall_telemetry_to_dict_includes_gate_fields():
     assert telemetry.to_dict()["stage0_decision"] == "force_recall"
     assert telemetry.to_dict()["gate_needs_recall"] is True
     assert telemetry.to_dict()["final_recall_decision"] == "query_recall_enabled"
+
+
+def test_memory_recall_telemetry_to_dict_keeps_only_active_sources_by_default():
+    from memory.formatter import MemoryRecallTelemetry
+
+    payload = MemoryRecallTelemetry().to_dict()
+
+    assert payload["sources"] == {
+        "query_profile": 0,
+        "working_memory": 0,
+        "episode_slice": 0,
+    }
 
 
 def test_memory_recall_telemetry_to_dict_includes_reranker_fields():

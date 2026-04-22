@@ -86,7 +86,7 @@ def test_to_dict_keeps_memory_hit_count_for_real_hits_only():
     stats = SessionStats()
     stats.memory_hits.append(
         MemoryHitRecord(
-            sources={"profile_fixed": 1},
+            sources={"query_profile": 1},
             profile_ids=["m1"],
         )
     )
