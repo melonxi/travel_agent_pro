@@ -25,7 +25,7 @@ from memory.models import (
     MemorySource,
     TripEpisode,
 )
-from state.models import TravelPlanState
+from state.models import Budget, DateRange, TravelPlanState
 
 
 def _get_closure_value(app, name: str):
@@ -1360,6 +1360,57 @@ async def test_append_trip_episode_once_is_idempotent(app):
     assert episodes[0].session_id == session_id
     accepted_ids = {item["id"] for item in episodes[0].accepted_items}
     assert accepted_ids == {"same-session"}
+
+
+@pytest.mark.asyncio
+async def test_phase7_archive_generates_episode_slices_once(app):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+    sessions = _get_closure_value(app, "sessions")
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        plan = sessions[session_id]["plan"]
+        plan.phase = 7
+        plan.destination = "Tokyo"
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
+        plan.budget = Budget(total=12000, currency="CNY")
+        plan.skeleton_plans = [
+            {
+                "id": "balanced",
+                "summary": "住新宿，白天分区游览，晚上控制移动距离。",
+            }
+        ]
+        plan.selected_skeleton_id = "balanced"
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("agent.loop.AgentLoop.run", fake_run)
+            first = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "完成规划", "user_id": "u1"},
+            )
+            second = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "再次确认", "user_id": "u1"},
+            )
+
+    slices = await memory_mgr.v3_store.list_episode_slices("u1")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert [slice_.source_episode_id for slice_ in slices] == [
+        f"{session_id}:episode",
+        f"{session_id}:episode",
+    ]
+    assert {slice_.slice_type for slice_ in slices} == {
+        "accepted_pattern",
+        "budget_signal",
+    }
+    assert all(slice_.entities["destination"] == "Tokyo" for slice_ in slices)
 
 
 @pytest.mark.asyncio

@@ -71,6 +71,7 @@ from memory.extraction import (
     parse_v3_profile_extraction_tool_arguments,
     parse_v3_working_memory_extraction_tool_arguments,
 )
+from memory.episode_slices import build_episode_slices
 from memory.formatter import MemoryRecallTelemetry
 from memory.manager import MemoryManager
 from memory.models import MemoryCandidate, MemoryEvent, MemoryItem, TripEpisode
@@ -2743,7 +2744,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         plan: TravelPlanState,
     ) -> bool:
         episodes = await memory_mgr.store.list_episodes(user_id)
-        if any(episode.session_id == session_id for episode in episodes):
+        existing_episode = next(
+            (episode for episode in episodes if episode.session_id == session_id),
+            None,
+        )
+        if existing_episode is not None:
+            await _append_episode_slices(existing_episode)
             return False
         episode = await _build_trip_episode(
             user_id=user_id,
@@ -2751,7 +2757,13 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             plan=plan,
         )
         await memory_mgr.store.append_episode(episode)
+        await _append_episode_slices(episode)
         return True
+
+    async def _append_episode_slices(episode: TripEpisode) -> None:
+        now = _now_iso()
+        for slice_ in build_episode_slices(episode, now=now):
+            await memory_mgr.v3_store.append_episode_slice(slice_)
 
     # Backtrack detection patterns
     _BACKTRACK_PATTERNS: dict[int, list[str]] = {
