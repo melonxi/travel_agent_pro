@@ -75,6 +75,10 @@ from memory.formatter import MemoryRecallTelemetry
 from memory.manager import MemoryManager
 from memory.models import MemoryCandidate, MemoryEvent, MemoryItem, TripEpisode
 from memory.policy import MemoryMerger as PolicyMemoryMerger, MemoryPolicy
+from memory.profile_normalization import (
+    merge_profile_item_with_existing,
+    normalize_profile_item,
+)
 from memory.recall_query import (
     RecallRetrievalPlan,
     fallback_retrieval_plan,
@@ -2020,6 +2024,56 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         route_progress: MemoryRouteSaveProgress,
         aggregate_progress: MemoryExtractionProgress,
     ) -> None:
+        def _profile_items_match(
+            comparison_bucket: str,
+            existing_item: Any,
+            incoming_item: Any,
+        ) -> bool:
+            if comparison_bucket in {"constraints", "stable_preferences"}:
+                return (
+                    existing_item.domain == incoming_item.domain
+                    and existing_item.key == incoming_item.key
+                )
+            return (
+                existing_item.domain == incoming_item.domain
+                and existing_item.key == incoming_item.key
+                and existing_item.value == incoming_item.value
+            )
+
+        def _candidate_profile_buckets(
+            bucket_name: str,
+        ) -> tuple[str, ...]:
+            if bucket_name == "preference_hypotheses":
+                return ("preference_hypotheses", "stable_preferences")
+            return (bucket_name,)
+
+        def _find_matching_profile_item_location(
+            comparison_bucket: str,
+            candidate_buckets: tuple[str, ...],
+            incoming_item: Any,
+        ) -> tuple[str, int] | None:
+            for candidate_bucket in candidate_buckets:
+                candidate_items = getattr(profile, candidate_bucket)
+                for index, existing_item in enumerate(candidate_items):
+                    if _profile_items_match(
+                        comparison_bucket, existing_item, incoming_item
+                    ):
+                        return candidate_bucket, index
+            return None
+
+        def _upsert_profile_item_in_memory(
+            bucket_name: str,
+            item: Any,
+        ) -> None:
+            bucket_items = getattr(profile, bucket_name)
+            for index, existing_item in enumerate(bucket_items):
+                if existing_item.id == item.id:
+                    bucket_items[index] = item
+                    break
+            else:
+                bucket_items.append(item)
+
+        profile = await memory_mgr.v3_store.load_profile(user_id)
         buckets = (
             ("constraints", profile_updates.constraints),
             ("rejections", profile_updates.rejections),
@@ -2028,18 +2082,46 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         )
         for bucket, items in buckets:
             for raw_item in items:
-                action = policy.classify_v3_profile_item(bucket, raw_item)
+                normalized = normalize_profile_item(bucket, raw_item)
+                match_location = _find_matching_profile_item_location(
+                    bucket,
+                    _candidate_profile_buckets(bucket),
+                    normalized,
+                )
+                matched_bucket_name: str | None = None
+                matched_index: int | None = None
+                if match_location is not None:
+                    matched_bucket_name, matched_index = match_location
+                existing_items = (
+                    [getattr(profile, matched_bucket_name)[matched_index]]
+                    if matched_bucket_name is not None and matched_index is not None
+                    else []
+                )
+                merged_bucket, merged_item = merge_profile_item_with_existing(
+                    bucket,
+                    normalized,
+                    existing_items,
+                )
+                action = policy.classify_v3_profile_item(merged_bucket, merged_item)
                 if action == "drop":
                     continue
-                sanitized = policy.sanitize_v3_profile_item(raw_item)
+                sanitized = policy.sanitize_v3_profile_item(merged_item)
                 sanitized.status = action
                 sanitized.updated_at = now
                 if not sanitized.created_at:
                     sanitized.created_at = now
-                sanitized.id = generate_profile_item_id(bucket, sanitized)
+                sanitized.id = generate_profile_item_id(merged_bucket, sanitized)
+                if (
+                    matched_bucket_name is not None
+                    and matched_index is not None
+                    and matched_bucket_name != merged_bucket
+                ):
+                    del getattr(profile, matched_bucket_name)[matched_index]
+                    await memory_mgr.v3_store.save_profile(profile)
                 await memory_mgr.v3_store.upsert_profile_item(
-                    user_id, bucket, sanitized
+                    user_id, merged_bucket, sanitized
                 )
+                _upsert_profile_item_in_memory(merged_bucket, sanitized)
                 route_progress.saved_count += 1
                 aggregate_progress.saved_profile_count += 1
                 if action in {"pending", "pending_conflict"}:

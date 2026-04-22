@@ -1745,6 +1745,125 @@ async def test_memory_extraction_profile_route_writes_profile_only(app):
 
 
 @pytest.mark.asyncio
+async def test_memory_extraction_profile_route_normalizes_recall_metadata(app):
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    class ExtractionProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_recall":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_recall_gate",
+                        name=tool_name,
+                        arguments={
+                            "needs_recall": False,
+                            "intent_type": "no_recall_needed",
+                            "reason": "current_preference_statement",
+                            "confidence": 0.91,
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            if tool_name == "decide_memory_extraction":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_gate",
+                        name=tool_name,
+                        arguments={
+                            "should_extract": True,
+                            "routes": {"profile": True, "working_memory": False},
+                            "reason": "profile_memory_signal",
+                            "message": "检测到长期饮食偏好信号",
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            assert tool_name == "extract_profile_memory"
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_profile",
+                    name="extract_profile_memory",
+                    arguments={
+                        "profile_updates": {
+                            "constraints": [],
+                            "rejections": [],
+                            "stable_preferences": [
+                                {
+                                    "domain": "food",
+                                    "key": "dislike_spicy_food",
+                                    "value": "不吃辣",
+                                    "polarity": "avoid",
+                                    "stability": "explicit_declared",
+                                    "confidence": 0.95,
+                                    "reason": "用户明确声明长期饮食偏好",
+                                    "evidence": "我不吃辣",
+                                    "applicability": "",
+                                    "recall_hints": {
+                                        "domains": [],
+                                        "keywords": ["不吃辣"],
+                                        "aliases": ["忌辣", "不能吃辣"],
+                                    },
+                                    "source_refs": [
+                                        {
+                                            "kind": "message",
+                                            "session_id": "s1",
+                                            "quote": "我不吃辣",
+                                        },
+                                        {
+                                            "kind": "message",
+                                            "session_id": "s1",
+                                            "quote": "以后都别推荐辣的",
+                                        },
+                                    ],
+                                }
+                            ],
+                            "preference_hypotheses": [],
+                        },
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("agent.loop.AgentLoop.run", fake_run)
+        mp.setattr("main.create_llm_provider", lambda _config: ExtractionProvider())
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "我不吃辣，以后都别推荐辣的", "user_id": "u1"},
+            )
+            await _wait_for_memory_scheduler_idle(app, session_id)
+            profile = await client.get("/api/memory/u1/profile")
+
+    assert resp.status_code == 200
+    assert profile.status_code == 200
+    item = profile.json()["stable_preferences"][0]
+    assert item["key"] == "avoid_spicy"
+    assert item["applicability"] == "适用于大多数旅行。"
+    assert item["recall_hints"] == {
+        "domains": ["food"],
+        "keywords": ["不吃辣"],
+        "aliases": ["忌辣", "不能吃辣", "不吃辣", "避开辣味"],
+    }
+    assert item["source_refs"] == [
+        {"kind": "message", "session_id": "s1", "quote": "我不吃辣"},
+        {"kind": "message", "session_id": "s1", "quote": "以后都别推荐辣的"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_memory_extraction_working_route_writes_working_only(app):
     observed = {"calls": []}
 
@@ -1843,6 +1962,291 @@ async def test_memory_extraction_working_route_writes_working_only(app):
     ]
     assert profile.json()["stable_preferences"] == []
     assert working.json()["items"][0]["content"] == "这轮先别考虑迪士尼"
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_repeated_hypothesis_promotes_to_stable_preferences(app):
+    extraction_quotes = iter(["想住安静一点", "还是想住安静一点"])
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    class ExtractionProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_recall":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_recall_gate",
+                        name=tool_name,
+                        arguments={
+                            "needs_recall": False,
+                            "intent_type": "no_recall_needed",
+                            "reason": "current_preference_statement",
+                            "confidence": 0.88,
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            if tool_name == "decide_memory_extraction":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_gate",
+                        name=tool_name,
+                        arguments={
+                            "should_extract": True,
+                            "routes": {"profile": True, "working_memory": False},
+                            "reason": "profile_memory_signal",
+                            "message": "检测到住宿偏好信号",
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            assert tool_name == "extract_profile_memory"
+            quote = next(extraction_quotes)
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id=f"tc_profile_{quote}",
+                    name="extract_profile_memory",
+                    arguments={
+                        "profile_updates": {
+                            "constraints": [],
+                            "rejections": [],
+                            "stable_preferences": [],
+                            "preference_hypotheses": [
+                                {
+                                    "domain": "hotel",
+                                    "key": "prefer_quiet_room",
+                                    "value": True,
+                                    "polarity": "prefer",
+                                    "stability": "soft_constraint",
+                                    "confidence": 0.82,
+                                    "reason": "用户提到住宿想要安静一些",
+                                    "evidence": quote,
+                                    "applicability": "",
+                                    "recall_hints": {
+                                        "domains": ["hotel"],
+                                        "keywords": ["安静房间"],
+                                        "aliases": [],
+                                    },
+                                    "source_refs": [
+                                        {
+                                            "kind": "message",
+                                            "session_id": "s1",
+                                            "quote": quote,
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("agent.loop.AgentLoop.run", fake_run)
+        mp.setattr("main.create_llm_provider", lambda _config: ExtractionProvider())
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            first = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "想住安静一点", "user_id": "u1"},
+            )
+            await _wait_for_memory_scheduler_idle(app, session_id)
+            second = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "还是想住安静一点", "user_id": "u1"},
+            )
+            await _wait_for_memory_scheduler_idle(app, session_id)
+            profile = await client.get("/api/memory/u1/profile")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert profile.status_code == 200
+    body = profile.json()
+    assert body["preference_hypotheses"] == []
+    assert len(body["stable_preferences"]) == 1
+    item = body["stable_preferences"][0]
+    assert item["key"] == "prefer_quiet_room"
+    assert item["stability"] == "pattern_observed"
+    assert item["status"] == "active"
+    assert item["context"]["observation_count"] == 2
+    assert item["source_refs"] == [
+        {"kind": "message", "session_id": "s1", "quote": "想住安静一点"},
+        {"kind": "message", "session_id": "s1", "quote": "还是想住安静一点"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_stable_preference_reuses_matching_hypothesis_signal(app):
+    second_turn_quote = "这次住宿也想安静一点"
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    class ExtractionProvider:
+        def __init__(self):
+            self.profile_calls = 0
+
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_recall":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_recall_gate",
+                        name=tool_name,
+                        arguments={
+                            "needs_recall": False,
+                            "intent_type": "no_recall_needed",
+                            "reason": "current_preference_statement",
+                            "confidence": 0.9,
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            if tool_name == "decide_memory_extraction":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_gate",
+                        name=tool_name,
+                        arguments={
+                            "should_extract": True,
+                            "routes": {"profile": True, "working_memory": False},
+                            "reason": "profile_memory_signal",
+                            "message": "检测到住宿偏好信号",
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            assert tool_name == "extract_profile_memory"
+            self.profile_calls += 1
+            if self.profile_calls == 1:
+                arguments = {
+                    "profile_updates": {
+                        "constraints": [],
+                        "rejections": [],
+                        "stable_preferences": [
+                            {
+                                "domain": "hotel",
+                                "key": "prefer_quiet_room",
+                                "value": True,
+                                "polarity": "prefer",
+                                "stability": "explicit_declared",
+                                "confidence": 0.93,
+                                "reason": "用户明确说住宿想安静",
+                                "evidence": "我住酒店想安静一点",
+                                "applicability": "适用于大多数住宿选择。",
+                                "recall_hints": {
+                                    "domains": ["hotel"],
+                                    "keywords": ["安静房间"],
+                                    "aliases": ["安静一点"],
+                                },
+                                "source_refs": [
+                                    {
+                                        "kind": "message",
+                                        "session_id": "s1",
+                                        "quote": "我住酒店想安静一点",
+                                    }
+                                ],
+                            }
+                        ],
+                        "preference_hypotheses": [],
+                    }
+                }
+            else:
+                arguments = {
+                    "profile_updates": {
+                        "constraints": [],
+                        "rejections": [],
+                        "stable_preferences": [],
+                        "preference_hypotheses": [
+                            {
+                                "domain": "hotel",
+                                "key": "prefer_quiet_room",
+                                "value": True,
+                                "polarity": "prefer",
+                                "stability": "soft_constraint",
+                                "confidence": 0.8,
+                                "reason": "用户再次提到想要安静住宿",
+                                "evidence": second_turn_quote,
+                                "applicability": "",
+                                "recall_hints": {
+                                    "domains": ["hotel"],
+                                    "keywords": ["安静房间"],
+                                    "aliases": [],
+                                },
+                                "source_refs": [
+                                    {
+                                        "kind": "message",
+                                        "session_id": "s1",
+                                        "quote": second_turn_quote,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                }
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id=f"tc_profile_{self.profile_calls}",
+                    name="extract_profile_memory",
+                    arguments=arguments,
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+    provider = ExtractionProvider()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("agent.loop.AgentLoop.run", fake_run)
+        mp.setattr("main.create_llm_provider", lambda _config: provider)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            first = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "我住酒店想安静一点", "user_id": "u1"},
+            )
+            await _wait_for_memory_scheduler_idle(app, session_id)
+            second = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": second_turn_quote, "user_id": "u1"},
+            )
+            await _wait_for_memory_scheduler_idle(app, session_id)
+            profile = await client.get("/api/memory/u1/profile")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert profile.status_code == 200
+    body = profile.json()
+    assert body["preference_hypotheses"] == []
+    assert len(body["stable_preferences"]) == 1
+    item = body["stable_preferences"][0]
+    assert item["key"] == "prefer_quiet_room"
+    assert item["status"] == "active"
+    assert item["context"]["observation_count"] == 2
+    assert item["source_refs"] == [
+        {"kind": "message", "session_id": "s1", "quote": "我住酒店想安静一点"},
+        {"kind": "message", "session_id": "s1", "quote": second_turn_quote},
+    ]
 
 
 @pytest.mark.asyncio
