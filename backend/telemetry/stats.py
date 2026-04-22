@@ -95,6 +95,10 @@ class RecallTelemetryRecord:
     gate_intent_type: str = ""
     final_recall_decision: str = ""
     fallback_used: str = "none"
+    candidate_count: int = 0
+    reranker_selected_ids: list[str] = field(default_factory=list)
+    reranker_final_reason: str = ""
+    reranker_fallback: str = "none"
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
@@ -105,6 +109,10 @@ class RecallTelemetryRecord:
             "gate_intent_type": self.gate_intent_type,
             "final_recall_decision": self.final_recall_decision,
             "fallback_used": self.fallback_used,
+            "candidate_count": self.candidate_count,
+            "reranker_selected_ids": list(self.reranker_selected_ids),
+            "reranker_final_reason": self.reranker_final_reason,
+            "reranker_fallback": self.reranker_fallback,
             "timestamp": self.timestamp,
         }
 

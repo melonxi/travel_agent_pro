@@ -36,6 +36,10 @@ class MemoryRecallTelemetry:
     fallback_used: str = "none"
     query_plan: dict[str, Any] = field(default_factory=dict)
     query_plan_fallback: str = "none"
+    candidate_count: int = 0
+    reranker_selected_ids: list[str] = field(default_factory=list)
+    reranker_final_reason: str = ""
+    reranker_fallback: str = "none"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +58,10 @@ class MemoryRecallTelemetry:
             "fallback_used": self.fallback_used,
             "query_plan": dict(self.query_plan),
             "query_plan_fallback": self.query_plan_fallback,
+            "candidate_count": self.candidate_count,
+            "reranker_selected_ids": list(self.reranker_selected_ids),
+            "reranker_final_reason": self.reranker_final_reason,
+            "reranker_fallback": self.reranker_fallback,
         }
 
 

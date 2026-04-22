@@ -541,6 +541,10 @@ async def test_trace_recall_telemetry_visible_without_memory_hit(app):
             gate_intent_type="gate_decision_unavailable",
             final_recall_decision="fixed_only",
             fallback_used="gate_timeout",
+            candidate_count=4,
+            reranker_selected_ids=["profile_1", "slice_2"],
+            reranker_final_reason="two items directly answer the user's question",
+            reranker_fallback="none",
             timestamp=stats.llm_calls[-1].timestamp,
         )
     )
@@ -566,6 +570,10 @@ async def test_trace_recall_telemetry_visible_without_memory_hit(app):
     assert recall["gate_intent_type"] == "gate_decision_unavailable"
     assert recall["final_recall_decision"] == "fixed_only"
     assert recall["fallback_used"] == "gate_timeout"
+    assert recall["candidate_count"] == 4
+    assert recall["reranker_selected_ids"] == ["profile_1", "slice_2"]
+    assert recall["reranker_final_reason"] == "two items directly answer the user's question"
+    assert recall["reranker_fallback"] == "none"
 
 
 @pytest.mark.asyncio
