@@ -611,7 +611,7 @@ async def test_chat_stream_emits_memory_recall_telemetry_without_hits(monkeypatc
                 gate_intent_type="no_recall_needed",
                 gate_confidence=0.98,
                 gate_reason="current trip fact question",
-                final_recall_decision="fixed_only",
+                final_recall_decision="no_recall_applied",
                 candidate_count=4,
                 reranker_selected_ids=["profile_1", "slice_2"],
                 reranker_final_reason="two items directly answer the user's question",
@@ -685,7 +685,7 @@ async def test_chat_stream_keeps_conservative_recall_fields_when_gate_disabled(
     assert '"gate": false' in resp.text
     assert '"gate_needs_recall": false' in resp.text
     assert '"gate_intent_type": "no_recall_needed"' in resp.text
-    assert '"final_recall_decision": "fixed_only"' in resp.text
+    assert '"final_recall_decision": "no_recall_applied"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -1006,7 +1006,7 @@ async def test_chat_stream_keeps_undecided_conservative_when_recall_gate_disable
     assert '"gate_needs_recall": false' in resp.text
     assert '"gate_intent_type": "no_recall_needed"' in resp.text
     assert '"gate_reason": "recall_gate_disabled"' in resp.text
-    assert '"final_recall_decision": "fixed_only"' in resp.text
+    assert '"final_recall_decision": "no_recall_applied"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -1175,7 +1175,7 @@ async def test_chat_stream_keeps_conservative_recall_fields_for_invalid_gate_pay
     assert '"gate_needs_recall": false' in resp.text
     assert '"gate_intent_type": "gate_decision_unavailable"' in resp.text
     assert '"fallback_used": "invalid_tool_payload"' in resp.text
-    assert '"final_recall_decision": "fixed_only"' in resp.text
+    assert '"final_recall_decision": "no_recall_applied"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -1232,7 +1232,7 @@ async def test_chat_stream_falls_back_when_recall_gate_times_out(monkeypatch, ap
     assert '"gate_needs_recall": false' in resp.text
     assert '"gate_intent_type": "gate_decision_unavailable"' in resp.text
     assert '"fallback_used": "gate_timeout"' in resp.text
-    assert '"final_recall_decision": "fixed_only"' in resp.text
+    assert '"final_recall_decision": "no_recall_applied"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -1284,7 +1284,7 @@ async def test_chat_stream_falls_back_when_recall_gate_errors(monkeypatch, app):
     assert '"gate_needs_recall": false' in resp.text
     assert '"gate_intent_type": "gate_decision_unavailable"' in resp.text
     assert '"fallback_used": "gate_error"' in resp.text
-    assert '"final_recall_decision": "fixed_only"' in resp.text
+    assert '"final_recall_decision": "no_recall_applied"' in resp.text
 
 
 def test_project_overview_documents_memory_recall_payload_fields():
