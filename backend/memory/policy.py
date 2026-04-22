@@ -4,7 +4,6 @@ import copy
 import re
 from typing import Any
 
-from memory.models import MemoryCandidate, MemoryItem, MemorySource, generate_memory_id
 from memory.v3_models import MemoryProfileItem, WorkingMemoryItem
 
 
@@ -25,82 +24,6 @@ class MemoryPolicy:
     ) -> None:
         self.auto_save_low_risk = auto_save_low_risk
         self.auto_save_medium_risk = auto_save_medium_risk
-
-    def classify(self, candidate: MemoryCandidate) -> str:
-        if candidate.domain in _DENIED_DOMAINS:
-            return "drop"
-        if self._candidate_contains_forbidden_pii(candidate):
-            return "drop"
-        if candidate.risk == "high":
-            return "pending"
-        if candidate.risk == "low":
-            if candidate.confidence >= 0.7 and self.auto_save_low_risk:
-                return "auto_save"
-            return "pending"
-        if candidate.risk == "medium":
-            if candidate.confidence >= 0.8 and self.auto_save_medium_risk:
-                return "auto_save"
-            return "pending"
-        return "pending"
-
-    def to_item(
-        self,
-        candidate: MemoryCandidate,
-        user_id: str,
-        session_id: str,
-        now: str,
-        trip_id: str | None = None,
-    ) -> MemoryItem:
-        status = self.classify(candidate)
-        if status == "drop":
-            raise ValueError("drop candidates cannot be converted to MemoryItem")
-        persistent_status = "active" if status == "auto_save" else status
-        item_trip_id = trip_id if candidate.scope == "trip" else None
-        safe_value = self._redact_for_storage(candidate.value)
-        safe_attributes = self._redact_for_storage(candidate.attributes)
-        safe_evidence = self._redact_text(candidate.evidence)[:120]
-        return MemoryItem(
-            id=generate_memory_id(
-                user_id=user_id,
-                type=candidate.type,
-                domain=candidate.domain,
-                key=candidate.key,
-                scope=candidate.scope,
-                trip_id=item_trip_id,
-                value=safe_value,
-            ),
-            user_id=user_id,
-            type=candidate.type,
-            domain=candidate.domain,
-            key=candidate.key,
-            value=safe_value,
-            scope=candidate.scope,
-            polarity=candidate.polarity,
-            confidence=candidate.confidence,
-            status=persistent_status,
-            source=MemorySource(
-                kind="message",
-                session_id=session_id,
-                quote=safe_evidence,
-            ),
-            created_at=now,
-            updated_at=now,
-            trip_id=item_trip_id,
-            attributes=safe_attributes,
-        )
-
-    def _candidate_contains_forbidden_pii(self, candidate: MemoryCandidate) -> bool:
-        return any(
-            self._contains_forbidden_pii(value)
-            for value in (
-                candidate.domain,
-                candidate.key,
-                candidate.value,
-                candidate.evidence,
-                candidate.reason,
-                candidate.attributes,
-            )
-        )
 
     def _contains_forbidden_pii(self, value: Any) -> bool:
         if value is None:
@@ -237,69 +160,3 @@ class MemoryPolicy:
                 item.source_refs,
             )
         )
-
-
-class MemoryMerger:
-    def merge(
-        self,
-        existing_items: list[MemoryItem],
-        incoming: MemoryItem,
-    ) -> list[MemoryItem]:
-        merged = [copy.deepcopy(item) for item in existing_items]
-        matches = [index for index, item in enumerate(merged) if item.id == incoming.id]
-
-        if not matches:
-            merged.append(copy.deepcopy(incoming))
-            return merged
-
-        first_index = matches[0]
-        current = merged[first_index]
-        same_id_items = [merged[index] for index in matches]
-
-        if self._same_value(current.value, incoming.value):
-            current.confidence = max(
-                *(item.confidence for item in same_id_items),
-                incoming.confidence,
-            )
-            current.updated_at = incoming.updated_at
-            return self._keep_primary_and_drop_duplicates(merged, matches)
-
-        if isinstance(current.value, list) and isinstance(incoming.value, list):
-            current.value = self._union_lists(
-                [value for item in same_id_items for value in item.value],
-                incoming.value,
-            )
-            current.confidence = max(
-                *(item.confidence for item in same_id_items),
-                incoming.confidence,
-            )
-            current.updated_at = incoming.updated_at
-            return self._keep_primary_and_drop_duplicates(merged, matches)
-
-        for index in matches:
-            merged[index].status = "obsolete"
-
-        conflict = copy.deepcopy(incoming)
-        conflict.status = "pending_conflict"
-        merged.append(conflict)
-        return merged
-
-    def _same_value(self, left: Any, right: Any) -> bool:
-        return left == right
-
-    def _union_lists(self, left: list[Any], right: list[Any]) -> list[Any]:
-        merged: list[Any] = []
-        for value in list(left) + list(right):
-            if value not in merged:
-                merged.append(copy.deepcopy(value))
-        return merged
-
-    def _keep_primary_and_drop_duplicates(
-        self, merged: list[MemoryItem], matches: list[int]
-    ) -> list[MemoryItem]:
-        primary_index = matches[0]
-        return [
-            item
-            for index, item in enumerate(merged)
-            if index == primary_index or index not in matches
-        ]

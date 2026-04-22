@@ -1,5 +1,5 @@
-from memory.models import TripEpisode
 from memory.episode_slices import build_episode_slices
+from memory.v3_models import ArchivedTripEpisode
 
 
 def _episode(**overrides):
@@ -9,7 +9,7 @@ def _episode(**overrides):
         "session_id": "s1",
         "trip_id": "trip_123",
         "destination": "京都",
-        "dates": "2026-05-01 to 2026-05-05",
+        "dates": {"start": "2026-05-01", "end": "2026-05-05", "total_days": 5},
         "travelers": {"adults": 2},
         "budget": {"amount": 20000, "currency": "CNY"},
         "selected_skeleton": {
@@ -17,73 +17,91 @@ def _episode(**overrides):
             "name": "轻松版",
             "summary": "节奏舒适，保留自由活动时间。",
         },
+        "selected_transport": {"mode": "train", "arrival_station": "京都站"},
+        "accommodation": {"area": "四条", "hotel": "町屋"},
+        "daily_plan_summary": [
+            {
+                "day": 1,
+                "date": "2026-05-01",
+                "areas": ["锦市场"],
+                "activity_count": 1,
+                "notes": "抵达后轻松安排。",
+            }
+        ],
         "final_plan_summary": "这次京都之行选择了轻松节奏和町屋住宿。",
-        "accepted_items": [
-            {"type": "skeleton", "id": "balanced", "name": "轻松版"},
-            {"type": "hotel", "name": "町屋"},
+        "decision_log": [
+            {"type": "accepted", "category": "skeleton", "value": {"id": "balanced"}},
+            {"type": "rejected", "category": "hotel", "value": {"name": "商务连锁酒店"}},
+            {"type": "rejected", "category": "activity", "value": {"name": "高强度打卡行程"}},
         ],
-        "rejected_items": [
-            {"type": "hotel", "name": "商务连锁酒店"},
-            {"type": "activity", "name": "高强度打卡行程"},
+        "lesson_log": [
+            {"kind": "pitfall", "content": "上午安排太满会让后半天疲劳。"},
+            {"kind": "pitfall", "content": "交通衔接要给步行留余量。"},
         ],
-        "lessons": [
-            "上午安排太满会让后半天疲劳。",
-            "交通衔接要给步行留余量。",
-        ],
-        "satisfaction": 5,
         "created_at": "2026-04-19T00:00:00",
+        "completed_at": "2026-04-19T00:00:00",
     }
     base.update(overrides)
-    return TripEpisode(**base)
+    return ArchivedTripEpisode(**base)
 
 
-def test_build_episode_slices_generates_expected_core_slices():
+def test_build_episode_slices_generates_v3_taxonomy():
     episode = _episode()
 
     slices = build_episode_slices(episode, now="2026-04-19T00:00:00")
+    slice_types = {item.slice_type for item in slices}
 
-    assert any(item.slice_type == "accepted_pattern" for item in slices)
-    assert any(item.slice_type == "pitfall" for item in slices)
+    assert "itinerary_pattern" in slice_types
+    assert "stay_choice" in slice_types
+    assert "transport_choice" in slice_types
+    assert "budget_signal" in slice_types
+    assert "rejected_option" in slice_types
+    assert "pitfall" in slice_types
+    assert "accepted_pattern" not in slice_types
     assert all(item.source_episode_id == episode.id for item in slices)
-    assert all(
-        "京都" in item.entities.values() or item.entities.get("destination") == "京都"
-        for item in slices
+
+
+def test_rejected_option_only_comes_from_rejected_decision_log_entries():
+    episode = _episode(
+        decision_log=[
+            {"type": "accepted", "category": "hotel", "value": {"name": "町屋"}},
+            {"type": "rejected", "category": "hotel", "value": {"name": "商务连锁酒店"}},
+        ]
     )
-    assert len(slices) <= 8
-
-
-def test_build_episode_slices_creates_rejected_option():
-    episode = _episode()
 
     slices = build_episode_slices(episode, now="2026-04-19T00:00:00")
 
     rejected_slices = [item for item in slices if item.slice_type == "rejected_option"]
-    assert len(rejected_slices) == 2
-    assert rejected_slices[0].id == "slice_ep_kyoto_2026_rejected_option_01"
+    assert len(rejected_slices) == 1
     assert "商务连锁酒店" in rejected_slices[0].content
+    assert "町屋" not in rejected_slices[0].content
 
 
-def test_build_episode_slices_creates_budget_signal():
-    episode = _episode()
+def test_pitfall_only_comes_from_lesson_log():
+    episode = _episode(
+        lesson_log=[{"kind": "pitfall", "content": "交通衔接要给步行留余量。"}],
+        decision_log=[
+            {"type": "rejected", "category": "hotel", "value": {"name": "商务连锁酒店"}},
+            {"type": "rejected", "category": "pace", "value": {"note": "上午安排太满会累"}},
+        ],
+    )
 
     slices = build_episode_slices(episode, now="2026-04-19T00:00:00")
 
-    budget_slices = [item for item in slices if item.slice_type == "budget_signal"]
-    assert len(budget_slices) == 1
-    assert budget_slices[0].domains == ["budget"]
-    assert "预算" in budget_slices[0].content
+    pitfall_slices = [item for item in slices if item.slice_type == "pitfall"]
+    assert len(pitfall_slices) == 1
+    assert "交通衔接要给步行留余量" in pitfall_slices[0].content
+    assert "上午安排太满会累" not in pitfall_slices[0].content
 
 
 def test_build_episode_slices_truncates_long_content_to_180_chars():
     episode = _episode(
-        selected_skeleton={
-            "id": "balanced",
-            "summary": "A" * 220,
-        },
-        accepted_items=[{"type": "skeleton", "id": "balanced", "summary": "B" * 220}],
-        rejected_items=[{"type": "hotel", "name": "C" * 220}],
-        lessons=["D" * 220],
-        final_plan_summary="E" * 220,
+        selected_skeleton={"id": "balanced", "summary": "A" * 220},
+        accommodation={"area": "B" * 220, "hotel": "C" * 220},
+        selected_transport={"mode": "train", "notes": "D" * 220},
+        decision_log=[{"type": "rejected", "category": "hotel", "value": {"name": "E" * 220}}],
+        lesson_log=[{"kind": "pitfall", "content": "F" * 220}],
+        final_plan_summary="G" * 220,
     )
 
     slices = build_episode_slices(episode, now="2026-04-19T00:00:00")
@@ -91,69 +109,22 @@ def test_build_episode_slices_truncates_long_content_to_180_chars():
     assert all(len(item.content) <= 180 for item in slices)
 
 
-def test_build_episode_slices_handles_missing_optional_lists():
-    episode = TripEpisode(
-        id="ep_missing_lists",
-        user_id="default_user",
-        session_id="s1",
-        trip_id="trip_123",
-        destination="京都",
-        dates="2026-05-01 to 2026-05-05",
-        travelers={"adults": 2},
-        budget={"amount": 20000, "currency": "CNY"},
-        selected_skeleton={"id": "balanced", "name": "轻松版"},
-        final_plan_summary="这次京都之行选择了轻松节奏。",
-        accepted_items=None,  # type: ignore[arg-type]
-        rejected_items=None,  # type: ignore[arg-type]
-        lessons=None,  # type: ignore[arg-type]
-        satisfaction=5,
-        created_at="2026-04-19T00:00:00",
-    )
-
-    slices = build_episode_slices(episode, now="2026-04-19T00:00:00")
-
-    assert any(item.slice_type == "accepted_pattern" for item in slices)
-    assert any(item.slice_type == "budget_signal" for item in slices)
-
-
-def test_build_episode_slices_handles_non_list_optional_inputs():
-    episode = _episode(
-        accepted_items="bad",  # type: ignore[arg-type]
-        rejected_items={"bad": True},  # type: ignore[arg-type]
-        lessons="bad",  # type: ignore[arg-type]
-    )
-
-    slices = build_episode_slices(episode, now="2026-04-19T00:00:00")
-
-    assert any(item.slice_type == "accepted_pattern" for item in slices)
-    assert any(item.slice_type == "budget_signal" for item in slices)
-    assert not any(item.slice_type == "rejected_option" for item in slices)
-    assert not any(item.slice_type == "pitfall" for item in slices)
-
-
 def test_episode_slice_entities_do_not_store_unbounded_rendered_values():
     episode = _episode(
         selected_skeleton={f"k{i}": f"v{i}" for i in range(220)},
-        rejected_items=[
-            {f"field{i}": f"value{i}" for i in range(220)},
+        accommodation={f"field{i}": f"value{i}" for i in range(220)},
+        selected_transport={f"route{i}": f"value{i}" for i in range(220)},
+        decision_log=[
+            {"type": "rejected", "category": "hotel", "value": {f"field{i}": f"value{i}" for i in range(220)}}
         ],
-        lessons=["D" * 220],
+        lesson_log=[{"kind": "pitfall", "content": "D" * 220}],
         budget={"amount": 20000, "currency": "CNY", **{f"meta{i}": f"value{i}" for i in range(220)}},
     )
 
     slices = build_episode_slices(episode, now="2026-04-19T00:00:00")
 
     for slice_ in slices:
-        for key in ("selected_skeleton", "rejected_item", "lesson", "budget"):
-            value = slice_.entities.get(key)
-            if value is None:
-                continue
-            assert isinstance(value, str)
-            assert len(value) <= 180
         for key, value in slice_.entities.items():
-            if key in {"selected_skeleton", "rejected_item", "lesson", "budget"}:
-                assert not isinstance(value, (dict, list, tuple))
-                continue
             if isinstance(value, str):
                 assert len(value) <= 180
 

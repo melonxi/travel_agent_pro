@@ -112,20 +112,19 @@ Episode / Slice = 过去旅行留下来的经验档案
 backend/data/users/{user_id}/memory/
   profile.json                    # v3 长期画像
   episode_slices.jsonl            # v3 历史经验切片
-  sessions/{session_id}/working_memory.json  # 当前 session 的 working memory
+  sessions/{session_id}/trips/{trip_id}/working_memory.json  # 当前 trip 的 working memory
 
-backend/data/users/{user_id}/
-  memory.json                     # v2 兼容层 envelope
-  trip_episodes.jsonl             # 历史完整旅行归档
-  memory_events.jsonl             # 记忆事件流
+backend/data/users/{user_id}/memory/
+  episodes.jsonl                  # v3 历史完整旅行归档
+  events.jsonl                    # v3 记忆审计事件流
 ```
 
 这里要特别注意：
 
-- **现在主线是 v3**：`profile + working memory + episode slices`
-- **仓库里仍然保留 v2 兼容层**：`memory.json`、`MemoryItem`、`TripEpisode`
+- **现在主线是 v3-only**：`profile + trip-scoped working memory + episode slices`
+- 旧的 `memory.json`、`MemoryItem`、v2 `TripEpisode` 已退出 runtime，不再作为兼容资产保留。
 
-也就是说，这个项目现在是“**v3 主链路 + v2 兼容资产并存**”的状态，不是一个完全只有新系统、没有旧包袱的理想化系统。
+也就是说，这个项目现在是“**v3-only 分层记忆**”的状态：长期画像、当前 trip 工作记忆、历史归档与切片各自有明确边界。
 
 ### 1.5 当前的数据模型长什么样
 
@@ -361,13 +360,13 @@ MemoryManager.generate_context()
 - 提取异步、召回同步
 - query-aware recall 只在显式历史/偏好查询时触发
 
-但如果回到代码现实，也要看到它还没有完全长齐：
+但如果回到代码现实，也要看到它仍有后续增强空间：
 
 1. 长期画像真正能稳定进入 `active` 的东西还偏少
 2. `applicability` 字段还没有被充分用起来
 3. `episode_evidence / episode_slices` 这条经验通道还偏弱
-4. 当前召回还是以 symbolic recall 为主，没有 rewrite / rerank
-5. v2 兼容层还在，说明系统仍处在演进中，不是“已经最终定型”
+4. 当前召回仍以 native symbolic recall 为主，rewrite / rerank 还有继续增强空间
+5. v3-only cutover 已完成，后续重点是提升画像质量、证据切片质量和召回排序质量
 
 理解完这一层，就能明白本文后面讨论的重点：
 

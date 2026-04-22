@@ -8,10 +8,10 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-from memory.models import MemoryItem, MemorySource, TripEpisode, generate_memory_id
-from memory.store import FileMemoryStore
+from memory.episode_slices import build_episode_slices
+from memory.v3_models import ArchivedTripEpisode, MemoryProfileItem, generate_profile_item_id
+from memory.v3_store import FileMemoryV3Store
 
 
 @dataclass
@@ -31,6 +31,14 @@ def _episode_id(user_id: str, destination: str, dates: str) -> str:
     return f"demo-episode-{digest}"
 
 
+def _month_dates(label: str) -> dict[str, str]:
+    return {
+        "start": f"{label}-01",
+        "end": f"{label}-31",
+        "label": label,
+    }
+
+
 async def seed_demo_memory(
     *,
     seed_file: Path,
@@ -40,15 +48,25 @@ async def seed_demo_memory(
     payload = json.loads(seed_file.read_text(encoding="utf-8"))
     user_id = str(payload["user_id"])
     events = payload.get("events", [])
-    store = FileMemoryStore(data_dir)
+    store = FileMemoryV3Store(data_dir)
 
     if reset_user:
         user_dir = data_dir / "users" / user_id
         if user_dir.exists():
             shutil.rmtree(user_dir)
 
-    existing_items = {item.id for item in await store.list_items(user_id)}
-    existing_episodes = {episode.id for episode in await store.list_episodes(user_id)}
+    profile = await store.load_profile(user_id)
+    existing_profile_ids = {
+        item.id
+        for bucket in (
+            profile.constraints,
+            profile.rejections,
+            profile.stable_preferences,
+            profile.preference_hypotheses,
+        )
+        for item in bucket
+    }
+    existing_episode_ids = {episode.id for episode in await store.list_episodes(user_id)}
 
     items_seeded = 0
     episodes_seeded = 0
@@ -60,60 +78,68 @@ async def seed_demo_memory(
         timestamp = _now_iso()
 
         if event_type == "preference_learned":
-            domain = str(object_payload["domain"])
-            key = str(object_payload["key"])
-            item = MemoryItem(
-                id=generate_memory_id(
-                    user_id=user_id,
-                    type="preference",
-                    domain=domain,
-                    key=key,
-                    scope="global",
-                ),
-                user_id=user_id,
-                type="preference",
-                domain=domain,
-                key=key,
+            item = MemoryProfileItem(
+                id="",
+                domain=str(object_payload["domain"]),
+                key=str(object_payload["key"]),
                 value=object_payload.get("value"),
-                scope="global",
-                polarity="neutral",
+                polarity="prefer",
+                stability="stable",
                 confidence=1.0,
                 status="active",
-                source=MemorySource(kind="seed", session_id=""),
+                context={},
+                applicability=reason_text or "适用于后续相似旅行。",
+                recall_hints={
+                    "domains": [str(object_payload["domain"])],
+                    "keywords": [str(object_payload["key"])],
+                },
+                source_refs=[{"kind": "seed", "quote": reason_text}] if reason_text else [],
                 created_at=timestamp,
                 updated_at=timestamp,
-                attributes={"reason": reason_text},
             )
-            await store.upsert_item(item)
-            if item.id not in existing_items:
-                existing_items.add(item.id)
+            item.id = generate_profile_item_id("stable_preferences", item)
+            await store.upsert_profile_item(user_id, "stable_preferences", item)
+            if item.id not in existing_profile_ids:
+                existing_profile_ids.add(item.id)
                 items_seeded += 1
             continue
 
         if event_type == "trip_completed":
             destination = str(object_payload["destination"])
-            dates = str(object_payload["date"])
-            episode = TripEpisode(
-                id=_episode_id(user_id, destination, dates),
+            date_label = str(object_payload["date"])
+            episode = ArchivedTripEpisode(
+                id=_episode_id(user_id, destination, date_label),
                 user_id=user_id,
                 session_id="seeded-demo-session",
                 trip_id=None,
                 destination=destination,
-                dates=dates,
+                dates=_month_dates(date_label),
                 travelers=None,
                 budget=None,
-                selected_skeleton=None,
+                selected_skeleton={"id": "seeded-history", "name": str(object_payload.get("highlight", destination))},
+                selected_transport=None,
+                accommodation=None,
+                daily_plan_summary=[],
                 final_plan_summary=str(object_payload.get("highlight", destination)),
-                accepted_items=[],
-                rejected_items=[],
-                lessons=[str(object_payload.get("lesson", ""))] if object_payload.get("lesson") else [],
-                satisfaction=object_payload.get("rating"),
+                decision_log=[],
+                lesson_log=[
+                    {
+                        "kind": "pitfall",
+                        "content": str(object_payload.get("lesson", "")),
+                        "timestamp": timestamp,
+                    }
+                ]
+                if object_payload.get("lesson")
+                else [],
                 created_at=timestamp,
+                completed_at=timestamp,
             )
             await store.append_episode(episode)
-            if episode.id not in existing_episodes:
-                existing_episodes.add(episode.id)
+            if episode.id not in existing_episode_ids:
+                existing_episode_ids.add(episode.id)
                 episodes_seeded += 1
+            for slice_ in build_episode_slices(episode, now=timestamp):
+                await store.append_episode_slice(slice_)
 
     return SeedSummary(
         user_id=user_id,

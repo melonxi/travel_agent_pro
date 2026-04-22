@@ -1,5 +1,7 @@
 from memory.v3_models import (
+    ArchivedTripEpisode,
     EpisodeSlice,
+    MemoryAuditEvent,
     MemoryProfileItem,
     SessionWorkingMemory,
     WorkingMemoryItem,
@@ -101,6 +103,55 @@ def test_episode_slice_round_trip():
 
     assert restored.source_episode_id == "ep_kyoto"
     assert restored.keywords == ["住宿", "酒店"]
+
+
+def test_archived_trip_episode_round_trip():
+    episode = ArchivedTripEpisode(
+        id="ep_trip_123",
+        user_id="u1",
+        session_id="s1",
+        trip_id="trip_123",
+        destination="京都",
+        dates={"start": "2026-05-01", "end": "2026-05-05", "total_days": 5},
+        travelers={"adults": 2, "children": 0},
+        budget={"total": 20000, "currency": "CNY"},
+        selected_skeleton={"id": "slow", "name": "慢游"},
+        selected_transport={"mode": "train"},
+        accommodation={"area": "四条", "hotel": "町屋"},
+        daily_plan_summary=[],
+        final_plan_summary="京都慢游。",
+        decision_log=[{"type": "accepted", "category": "skeleton", "value": {"id": "slow"}}],
+        lesson_log=[
+            {
+                "kind": "pitfall",
+                "content": "交通衔接要留余量。",
+                "timestamp": "2026-05-05T00:00:00+00:00",
+            }
+        ],
+        created_at="2026-05-05T00:00:00+00:00",
+        completed_at="2026-05-05T00:00:00+00:00",
+    )
+
+    restored = ArchivedTripEpisode.from_dict(episode.to_dict())
+
+    assert restored == episode
+
+
+def test_memory_audit_event_round_trip():
+    event = MemoryAuditEvent(
+        id="evt_1",
+        user_id="u1",
+        session_id="s1",
+        event_type="reject",
+        object_type="phase_output",
+        object_payload={"to_phase": 3},
+        reason_text="用户要求回退",
+        created_at="2026-05-05T00:00:00+00:00",
+    )
+
+    restored = MemoryAuditEvent.from_dict(event.to_dict())
+
+    assert restored == event
 
 
 def test_null_collection_fields_deserialize_safely():

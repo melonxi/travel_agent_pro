@@ -1,35 +1,5 @@
 // frontend/src/types/memory.ts
 
-export interface MemorySource {
-  kind: string;
-  session_id: string;
-  message_id?: string | null;
-  tool_call_id?: string | null;
-  quote?: string | null;
-}
-
-// Legacy v2 memory item kept for pending/profile compatibility actions.
-export interface MemoryItem {
-  id: string;
-  user_id: string;
-  type: string;
-  domain: string;
-  key: string;
-  value: unknown;
-  scope: string;
-  polarity: string;
-  confidence: number;
-  status: 'active' | 'pending' | 'rejected' | 'obsolete';
-  source: MemorySource;
-  created_at: string;
-  updated_at: string;
-  expires_at?: string | null;
-  destination?: string | null;
-  session_id?: string | null;
-  trip_id?: string | null;
-  attributes: Record<string, unknown>;
-}
-
 export interface MemoryProfileItem {
   id: string;
   domain: string;
@@ -76,22 +46,24 @@ export interface SessionWorkingMemory {
   items: WorkingMemoryItem[];
 }
 
-export interface TripEpisode {
+export interface ArchivedTripEpisode {
   id: string;
   user_id: string;
   session_id: string;
   trip_id?: string | null;
   destination?: string | null;
-  dates?: string | null;
+  dates?: Record<string, unknown> | null;
   travelers?: Record<string, unknown> | null;
   budget?: Record<string, unknown> | null;
   selected_skeleton?: Record<string, unknown> | null;
+  selected_transport?: Record<string, unknown> | null;
+  accommodation?: Record<string, unknown> | null;
+  daily_plan_summary: Array<Record<string, unknown>>;
   final_plan_summary: string;
-  accepted_items: Array<Record<string, unknown>>;
-  rejected_items: Array<Record<string, unknown>>;
-  lessons: string[];
-  satisfaction?: number | null;
+  decision_log: Array<Record<string, unknown>>;
+  lesson_log: Array<Record<string, unknown>>;
   created_at: string;
+  completed_at: string;
 }
 
 export interface EpisodeSlice {
@@ -125,11 +97,9 @@ export interface MemoryActions {
 export interface UseMemoryReturn {
   profile: UserMemoryProfile;
   profileBuckets: MemoryProfileBuckets;
-  sessionWorkingMemory: SessionWorkingMemory;
-  episodes: TripEpisode[];
-  slices: EpisodeSlice[];
-  legacyMemories: MemoryItem[];
-  pendingMemories: MemoryItem[];
+  workingMemory: SessionWorkingMemory;
+  episodes: ArchivedTripEpisode[];
+  episodeSlices: EpisodeSlice[];
   loading: boolean;
   error: string | null;
   actions: MemoryActions;

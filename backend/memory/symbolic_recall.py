@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 from typing import Any
 
+from memory.recall_query import RecallRetrievalPlan, fallback_retrieval_plan
 from memory.retrieval_candidates import (
     RecallCandidate,
     build_episode_slice_candidates,
@@ -93,20 +94,6 @@ _CONSERVATIVE_PROFILE_BUCKETS = ("constraints", "rejections", "stable_preference
 _KNOWN_PROFILE_BUCKETS = _CONSERVATIVE_PROFILE_BUCKETS + ("preference_hypotheses",)
 
 
-@dataclass
-class RecallQuery:
-    needs_memory: bool
-    domains: list[str]
-    entities: dict[str, str]
-    keywords: list[str]
-    include_profile: bool
-    include_slices: bool
-    include_working_memory: bool
-    matched_reason: str
-    allowed_buckets: list[str] = field(default_factory=list)
-    strictness: str = "soft"
-
-
 def should_trigger_memory_recall(message: str) -> bool:
     text = _normalize_text(message)
     if not text:
@@ -128,9 +115,15 @@ def should_trigger_memory_recall(message: str) -> bool:
     return False
 
 
-def build_recall_query(message: str) -> RecallQuery:
+def heuristic_retrieval_plan_from_message(message: str) -> RecallRetrievalPlan:
     text = _normalize_text(message)
     trigger = should_trigger_memory_recall(text)
+    if not trigger:
+        fallback = fallback_retrieval_plan()
+        fallback.reason = "no_historical_recall_cue"
+        fallback.fallback_used = "no_historical_recall_cue"
+        return fallback
+
     domains = _extract_domains(text)
     entities: dict[str, str] = {}
     destination = _extract_destination(text)
@@ -138,30 +131,37 @@ def build_recall_query(message: str) -> RecallQuery:
         entities["destination"] = destination
 
     keywords = _extract_keywords(text)
-    include_profile = trigger and _should_include_profile(text, domains)
-    include_slices = trigger and _should_include_slices(text, domains, destination)
-    include_working_memory = False
-    matched_reason = _build_matched_reason(text, trigger, domains, destination, include_profile, include_slices)
+    include_profile = _should_include_profile(text, domains)
+    include_slices = _should_include_slices(text, domains, destination)
+    source = "hybrid_history"
+    if include_profile and not include_slices:
+        source = "profile"
+    elif include_slices and not include_profile:
+        source = "episode_slice"
+    elif include_profile and include_slices:
+        if _is_direct_profile_recall_query(text, domains):
+            source = "profile"
 
-    return RecallQuery(
-        needs_memory=trigger,
+    return RecallRetrievalPlan(
+        source=source,
+        buckets=list(_CONSERVATIVE_PROFILE_BUCKETS),
         domains=domains,
         entities=entities,
         keywords=keywords,
-        include_profile=include_profile,
-        include_slices=include_slices,
-        include_working_memory=include_working_memory,
-        matched_reason=matched_reason,
+        aliases=[],
+        strictness="soft",
+        top_k=5,
+        reason=_build_matched_reason(text, trigger, domains, destination, include_profile, include_slices),
     )
 
 
 def rank_profile_items(
-    query: RecallQuery, profile: UserMemoryProfile
+    query: RecallRetrievalPlan, profile: UserMemoryProfile
 ) -> list[RecallCandidate]:
-    if not query.needs_memory or not query.include_profile:
+    if query.source not in {"profile", "hybrid_history"}:
         return []
 
-    allowed_buckets = _normalized_profile_buckets(query.allowed_buckets)
+    allowed_buckets = _normalized_profile_buckets(query.buckets)
     ranked: list[tuple[tuple[Any, ...], str, MemoryProfileItem, str]] = []
     for bucket_name in ("constraints", "rejections", "stable_preferences", "preference_hypotheses"):
         if bucket_name not in allowed_buckets:
@@ -187,9 +187,9 @@ def _normalized_profile_buckets(allowed_buckets: list[str]) -> set[str]:
 
 
 def rank_episode_slices(
-    query: RecallQuery, slices: list[EpisodeSlice]
+    query: RecallRetrievalPlan, slices: list[EpisodeSlice]
 ) -> list[RecallCandidate]:
-    if not query.needs_memory or not query.include_slices:
+    if query.source not in {"episode_slice", "hybrid_history"}:
         return []
 
     ranked: list[tuple[tuple[Any, ...], EpisodeSlice, str]] = []
@@ -206,7 +206,7 @@ def rank_episode_slices(
 
 
 def _score_profile_item(
-    query: RecallQuery, bucket: str, item: MemoryProfileItem
+    query: RecallRetrievalPlan, bucket: str, item: MemoryProfileItem
 ) -> tuple[tuple[Any, ...] | None, str]:
     item_domains = _profile_item_domains(item)
     matched_domains = [domain for domain in query.domains if domain in item_domains]
@@ -240,7 +240,7 @@ def _score_profile_item(
 
 
 def _score_episode_slice(
-    query: RecallQuery, slice_: EpisodeSlice
+    query: RecallRetrievalPlan, slice_: EpisodeSlice
 ) -> tuple[tuple[Any, ...] | None, str]:
     matched_destination = _match_destination(query, slice_)
     matched_domains = [domain for domain in query.domains if domain in slice_.domains]
@@ -274,8 +274,11 @@ def _should_include_profile(text: str, domains: list[str]) -> bool:
 
 
 def _should_include_slices(text: str, domains: list[str], destination: str | None) -> bool:
-    if any(word in text for word in _SLICES_HINT_WORDS):
-        if "上次" in text:
+    explicit_stay_lookup = any(
+        word in text for word in ("住哪里", "住哪", "住哪家", "哪里住")
+    )
+    if explicit_stay_lookup:
+        if any(word in text for word in ("上次", "之前", "以前")):
             return True
         return bool(destination) or any(
             domain in {"hotel", "accommodation", "train"} for domain in domains
@@ -387,7 +390,7 @@ def _slice_search_terms(slice_: EpisodeSlice) -> list[str]:
     return [term for term in terms if term]
 
 
-def _match_destination(query: RecallQuery, slice_: EpisodeSlice) -> str | None:
+def _match_destination(query: RecallRetrievalPlan, slice_: EpisodeSlice) -> str | None:
     destination = query.entities.get("destination")
     if destination and _stringify(slice_.entities.get("destination")) == destination:
         return destination

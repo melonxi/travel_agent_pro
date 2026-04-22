@@ -7,6 +7,7 @@ def test_parse_recall_query_tool_arguments_honors_schema_fields():
             "source": "profile",
             "buckets": ["stable_preferences", "constraints"],
             "domains": ["hotel", "accommodation"],
+            "entities": {"destination": "京都"},
             "keywords": ["住宿", "酒店"],
             "aliases": ["住哪里", "住宿偏好"],
             "strictness": "soft",
@@ -18,6 +19,7 @@ def test_parse_recall_query_tool_arguments_honors_schema_fields():
     assert plan.source == "profile"
     assert plan.buckets == ["stable_preferences", "constraints"]
     assert plan.domains == ["hotel", "accommodation"]
+    assert plan.entities == {"destination": "京都"}
     assert plan.aliases == ["住哪里", "住宿偏好"]
     assert plan.strictness == "soft"
     assert plan.top_k == 8
@@ -29,6 +31,7 @@ def test_parse_recall_query_tool_arguments_rejects_invalid_strictness():
             "source": "profile",
             "buckets": ["stable_preferences"],
             "domains": ["hotel"],
+            "entities": {"destination": "京都"},
             "keywords": ["住宿"],
             "aliases": ["住哪里"],
             "strictness": "aggressive",
@@ -40,24 +43,60 @@ def test_parse_recall_query_tool_arguments_rejects_invalid_strictness():
     assert plan.strictness == "soft"
 
 
-def test_parse_recall_query_tool_arguments_rejects_non_profile_source():
-    plan = parse_recall_query_tool_arguments(
+def test_parse_recall_query_tool_arguments_allows_v3_history_sources():
+    slice_plan = parse_recall_query_tool_arguments(
         {
             "source": "episode_slice",
             "buckets": ["stable_preferences"],
-            "domains": [],
-            "keywords": [],
-            "aliases": [],
+            "domains": ["hotel"],
+            "entities": {"destination": "京都"},
+            "keywords": ["住宿"],
+            "aliases": ["住哪里"],
             "strictness": "soft",
             "top_k": 5,
-            "reason": "bad source",
+            "reason": "slice source",
+        }
+    )
+    hybrid_plan = parse_recall_query_tool_arguments(
+        {
+            "source": "hybrid_history",
+            "buckets": ["stable_preferences"],
+            "domains": ["hotel"],
+            "entities": {"destination": "京都"},
+            "keywords": ["住宿"],
+            "aliases": ["住哪里"],
+            "strictness": "soft",
+            "top_k": 5,
+            "reason": "hybrid source",
         }
     )
 
-    assert plan.fallback_used == "invalid_query_plan"
-    assert plan.reason == "invalid_query_plan"
-    assert plan.source == "profile"
+    assert slice_plan.source == "episode_slice"
+    assert slice_plan.entities == {"destination": "京都"}
+    assert hybrid_plan.source == "hybrid_history"
+
+
+def test_parse_recall_query_tool_arguments_rejects_legacy_sources_to_hybrid_history():
+    for source in ("working_memory", "legacy", "profile_fixed"):
+        plan = parse_recall_query_tool_arguments(
+            {
+                "source": source,
+                "buckets": ["stable_preferences"],
+                "domains": [],
+                "entities": {},
+                "keywords": [],
+                "aliases": [],
+                "strictness": "soft",
+                "top_k": 5,
+                "reason": "bad source",
+            }
+        )
+
+        assert plan.fallback_used == "invalid_query_plan"
+        assert plan.reason == "invalid_query_plan"
+        assert plan.source == "hybrid_history"
     assert plan.buckets == ["constraints", "rejections", "stable_preferences"]
+    assert plan.entities == {}
     assert plan.domains == []
     assert plan.keywords == []
     assert plan.aliases == []
@@ -77,6 +116,7 @@ def test_parse_recall_query_tool_arguments_uses_safe_default_for_invalid_top_k()
             "source": "profile",
             "buckets": ["stable_preferences"],
             "domains": ["hotel"],
+            "entities": {},
             "keywords": ["住宿"],
             "aliases": ["住哪里"],
             "strictness": "soft",
@@ -94,6 +134,7 @@ def test_parse_recall_query_tool_arguments_rejects_bool_top_k():
             "source": "profile",
             "buckets": ["stable_preferences"],
             "domains": ["hotel"],
+            "entities": {},
             "keywords": ["住宿"],
             "aliases": ["住哪里"],
             "strictness": "soft",
@@ -111,6 +152,7 @@ def test_parse_recall_query_tool_arguments_rejects_non_positive_top_k():
             "source": "profile",
             "buckets": ["stable_preferences"],
             "domains": ["hotel"],
+            "entities": {},
             "keywords": ["住宿"],
             "aliases": ["住哪里"],
             "strictness": "soft",
@@ -123,6 +165,7 @@ def test_parse_recall_query_tool_arguments_rejects_non_positive_top_k():
             "source": "profile",
             "buckets": ["stable_preferences"],
             "domains": ["hotel"],
+            "entities": {},
             "keywords": ["住宿"],
             "aliases": ["住哪里"],
             "strictness": "soft",
@@ -171,6 +214,7 @@ def test_parse_recall_query_tool_arguments_ignores_invalid_collection_types():
             "source": "profile",
             "buckets": "stable_preferences",
             "domains": ["hotel"],
+            "entities": {},
             "keywords": ["住宿"],
             "aliases": {"name": "住哪里"},
             "strictness": "soft",
@@ -189,6 +233,7 @@ def test_parse_recall_query_tool_arguments_rejects_mixed_type_lists():
             "source": "profile",
             "buckets": ["stable_preferences", 123],
             "domains": ["hotel"],
+            "entities": {},
             "keywords": ["住宿"],
             "aliases": ["住哪里", 123],
             "strictness": "soft",
@@ -204,7 +249,8 @@ def test_parse_recall_query_tool_arguments_rejects_mixed_type_lists():
 def test_fallback_retrieval_plan_is_conservative():
     plan = fallback_retrieval_plan()
 
-    assert plan.source == "profile"
+    assert plan.source == "hybrid_history"
     assert plan.buckets == ["constraints", "rejections", "stable_preferences"]
+    assert plan.entities == {}
     assert plan.strictness == "soft"
     assert plan.top_k == 5

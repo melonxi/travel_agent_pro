@@ -1,10 +1,9 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
 import type {
+  ArchivedTripEpisode,
   EpisodeSlice,
-  MemoryItem,
   MemoryProfileItem,
-  TripEpisode,
   UseMemoryReturn,
   WorkingMemoryItem,
 } from '../types/memory';
@@ -163,112 +162,36 @@ function ProfileCard({
   );
 }
 
-function LegacyMemoryCard({
-  item,
-  recalled,
-  onConfirm,
-  onReject,
-  onDelete,
-}: {
-  item: MemoryItem;
-  recalled?: boolean;
-  onConfirm?: (id: string) => void;
-  onReject?: (id: string) => void;
-  onDelete?: (id: string) => void;
-}) {
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const cardClass = [
-    'memory-card',
-    item.status === 'pending' && 'is-pending',
-    (item.status === 'rejected' || item.status === 'obsolete') && 'is-archived',
-    recalled && 'is-recalled',
-  ]
-    .filter(Boolean)
-    .join(' ');
-  const level = confidenceLevel(item.confidence);
-
-  return (
-    <div className={cardClass}>
-      <div className="memory-card-body">
-        <span className="memory-domain-tag">{getDomainLabel(item.domain)}</span>
-        <div className="memory-content">{formatValue(item.value)}</div>
-        {item.source?.quote && <div className="memory-source">{item.source.quote}</div>}
-      </div>
-
-      <div className="memory-meta">
-        <span
-          className={`memory-badge scope-${item.scope === 'trip' ? 'trip' : 'global'}`}
-        >
-          {item.scope === 'trip' ? '旧版旅程' : '旧版画像'}
-        </span>
-        <span className="memory-badge domain">{item.key}</span>
-        <span className="memory-confidence">
-          <span className={`memory-confidence-dot ${level}`} />
-          {level === 'high' ? '高' : level === 'medium' ? '中' : '低'}
-        </span>
-        <span className="memory-badge domain">{item.status}</span>
-        {item.scope === 'trip' && item.trip_id && (
-          <span className="memory-trip-id">Trip: {item.trip_id.slice(0, 8)}</span>
-        )}
-        <span className="memory-time">{formatRelativeTime(item.created_at)}</span>
-      </div>
-
-      {item.status === 'pending' && (
-        <div className="memory-actions">
-          <button className="memory-action-btn confirm" onClick={() => onConfirm?.(item.id)}>
-            ✓ 确认
-          </button>
-          <button className="memory-action-btn reject" onClick={() => onReject?.(item.id)}>
-            ✗ 拒绝
-          </button>
-        </div>
-      )}
-
-      {item.status === 'active' && !confirmingDelete && (
-        <div className="memory-actions">
-          <button className="memory-action-btn delete" onClick={() => setConfirmingDelete(true)}>
-            删除
-          </button>
-        </div>
-      )}
-
-      {item.status === 'active' && confirmingDelete && (
-        <div className="memory-delete-confirm">
-          <span>确定删除此记忆？</span>
-          <button
-            className="confirm-yes"
-            onClick={() => {
-              onDelete?.(item.id);
-              setConfirmingDelete(false);
-            }}
-          >
-            确定
-          </button>
-          <button onClick={() => setConfirmingDelete(false)}>取消</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EpisodeCard({ episode, recalled }: { episode: TripEpisode; recalled?: boolean }) {
+function EpisodeCard({ episode, recalled }: { episode: ArchivedTripEpisode; recalled?: boolean }) {
   const cardClass = ['memory-card', recalled && 'is-recalled'].filter(Boolean).join(' ');
+  const dateLabel =
+    episode.dates && typeof episode.dates.start === 'string' && typeof episode.dates.end === 'string'
+      ? `${episode.dates.start} - ${episode.dates.end}`
+      : null;
+  const lessonCount = Array.isArray(episode.lesson_log) ? episode.lesson_log.length : 0;
+  const decisionCount = Array.isArray(episode.decision_log) ? episode.decision_log.length : 0;
 
   return (
     <div className={cardClass}>
       <div className="memory-card-body">
         <span className="memory-domain-tag">{episode.destination ?? '历史旅行'}</span>
         <div className="memory-content">{episode.final_plan_summary || '暂无摘要'}</div>
-        {episode.lessons.length > 0 && (
-          <div className="memory-source">复盘：{episode.lessons.join('；')}</div>
+        {lessonCount > 0 && (
+          <div className="memory-source">
+            复盘：
+            {episode.lesson_log
+              .map((lesson) => String(lesson.content ?? lesson.kind ?? ''))
+              .filter(Boolean)
+              .join('；')}
+          </div>
         )}
       </div>
 
       <div className="memory-meta">
         <span className="memory-badge scope-trip">历史旅行</span>
-        {episode.dates && <span className="memory-badge domain">{episode.dates}</span>}
-        <span className="memory-badge domain">接受 {episode.accepted_items.length}</span>
-        <span className="memory-badge domain">拒绝 {episode.rejected_items.length}</span>
+        {dateLabel && <span className="memory-badge domain">{dateLabel}</span>}
+        <span className="memory-badge domain">决策 {decisionCount}</span>
+        <span className="memory-badge domain">复盘 {lessonCount}</span>
         <span className="memory-time">{formatRelativeTime(episode.created_at)}</span>
       </div>
     </div>
@@ -390,11 +313,9 @@ export default function MemoryCenter({
 
   const {
     profileBuckets,
-    sessionWorkingMemory,
+    workingMemory,
     episodes,
-    slices,
-    legacyMemories,
-    pendingMemories,
+    episodeSlices,
     loading,
     error,
     actions,
@@ -426,21 +347,11 @@ export default function MemoryCenter({
     };
   }, [open]);
 
-  const legacyProfileMemories = useMemo(
-    () => legacyMemories.filter((item) => item.scope !== 'trip' && item.status === 'active'),
-    [legacyMemories],
-  );
-  const legacyTripMemories = useMemo(
-    () => legacyMemories.filter((item) => item.scope === 'trip' && item.status === 'active'),
-    [legacyMemories],
-  );
   const profilePendingCount =
     profileBuckets.constraints.filter((item) => item.status === 'pending').length +
     profileBuckets.rejections.filter((item) => item.status === 'pending').length +
     profileBuckets.stable_preferences.filter((item) => item.status === 'pending').length;
-  const hypothesisPendingCount =
-    profileBuckets.preference_hypotheses.filter((item) => item.status === 'pending').length +
-    pendingMemories.length;
+  const hypothesisPendingCount = profileBuckets.preference_hypotheses.filter((item) => item.status === 'pending').length;
 
   const handleOverlayClick = useCallback(
     (e: MouseEvent) => {
@@ -456,26 +367,24 @@ export default function MemoryCenter({
       count:
         profileBuckets.constraints.length +
         profileBuckets.rejections.length +
-        profileBuckets.stable_preferences.length +
-        legacyProfileMemories.length,
+        profileBuckets.stable_preferences.length,
       pending: profilePendingCount,
     },
     {
       key: 'hypotheses',
       label: '偏好假设',
-      count: profileBuckets.preference_hypotheses.length + pendingMemories.length,
+      count: profileBuckets.preference_hypotheses.length,
       pending: hypothesisPendingCount,
     },
-    { key: 'episodes', label: '历史旅行', count: episodes.length + legacyTripMemories.length },
-    { key: 'slices', label: '历史切片', count: slices.length },
+    { key: 'episodes', label: '历史旅行', count: episodes.length },
+    { key: 'slices', label: '历史切片', count: episodeSlices.length },
   ];
 
   const renderProfileTab = () => {
     const hasContent =
       profileBuckets.constraints.length > 0 ||
       profileBuckets.rejections.length > 0 ||
-      profileBuckets.stable_preferences.length > 0 ||
-      legacyProfileMemories.length > 0;
+      profileBuckets.stable_preferences.length > 0;
 
     if (!hasContent) {
       return <EmptyState text="暂无长期画像。系统会在多轮对话后沉淀稳定偏好、约束和明确拒绝。" />;
@@ -524,28 +433,12 @@ export default function MemoryCenter({
             ))}
           </Section>
         )}
-
-        {legacyProfileMemories.length > 0 && (
-          <Section title="旧版画像兼容" count={legacyProfileMemories.length}>
-            {legacyProfileMemories.map((item) => (
-              <LegacyMemoryCard
-                key={item.id}
-                item={item}
-                recalled={recalledIds.includes(item.id)}
-                onConfirm={actions.confirmMemory}
-                onReject={actions.rejectMemory}
-                onDelete={actions.deleteMemory}
-              />
-            ))}
-          </Section>
-        )}
       </>
     );
   };
 
   const renderHypothesesTab = () => {
-    const hasContent =
-      profileBuckets.preference_hypotheses.length > 0 || pendingMemories.length > 0;
+    const hasContent = profileBuckets.preference_hypotheses.length > 0;
 
     if (!hasContent) {
       return <EmptyState text="暂无偏好假设。系统有不确定但值得观察的信号时，会先记录在这里。" />;
@@ -568,27 +461,12 @@ export default function MemoryCenter({
             ))}
           </Section>
         )}
-
-        {pendingMemories.length > 0 && (
-          <Section title="旧版待确认记忆" count={pendingMemories.length}>
-            {pendingMemories.map((item) => (
-              <LegacyMemoryCard
-                key={item.id}
-                item={item}
-                recalled={recalledIds.includes(item.id)}
-                onConfirm={actions.confirmMemory}
-                onReject={actions.rejectMemory}
-                onDelete={actions.deleteMemory}
-              />
-            ))}
-          </Section>
-        )}
       </>
     );
   };
 
   const renderEpisodesTab = () => {
-    const hasContent = episodes.length > 0 || legacyTripMemories.length > 0;
+    const hasContent = episodes.length > 0;
 
     if (!hasContent) {
       return <EmptyState text="暂无历史旅行。完成更多行程后，这里会沉淀整段旅行的决策结果。" />;
@@ -607,33 +485,18 @@ export default function MemoryCenter({
             ))}
           </Section>
         )}
-
-        {legacyTripMemories.length > 0 && (
-          <Section title="旧版旅程记忆兼容" count={legacyTripMemories.length}>
-            {legacyTripMemories.map((item) => (
-              <LegacyMemoryCard
-                key={item.id}
-                item={item}
-                recalled={recalledIds.includes(item.id)}
-                onConfirm={actions.confirmMemory}
-                onReject={actions.rejectMemory}
-                onDelete={actions.deleteMemory}
-              />
-            ))}
-          </Section>
-        )}
       </>
     );
   };
 
   const renderSlicesTab = () => {
-    if (slices.length === 0) {
+    if (episodeSlices.length === 0) {
       return <EmptyState text="暂无历史切片。与当前问题相关的旅行片段沉淀后，会优先展示在这里。" />;
     }
 
     return (
-      <Section title="历史切片" count={slices.length}>
-        {slices.map((slice) => (
+      <Section title="历史切片" count={episodeSlices.length}>
+        {episodeSlices.map((slice) => (
           <SliceCard
             key={slice.id}
             slice={slice}
@@ -682,9 +545,9 @@ export default function MemoryCenter({
 
         <div className="memory-list">
           {loading && <SkeletonCards />}
-          {!loading && !error && sessionWorkingMemory.items.length > 0 && (
-            <Section title="当前会话工作记忆" count={sessionWorkingMemory.items.length}>
-              {sessionWorkingMemory.items.map((item) => (
+          {!loading && !error && (workingMemory?.items?.length ?? 0) > 0 && (
+            <Section title="当前会话工作记忆" count={workingMemory?.items.length ?? 0}>
+              {(workingMemory?.items ?? []).map((item) => (
                 <WorkingMemoryCard
                   key={item.id}
                   item={item}

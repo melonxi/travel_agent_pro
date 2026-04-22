@@ -1,6 +1,6 @@
+from memory.recall_query import RecallRetrievalPlan
 from memory.symbolic_recall import (
-    RecallQuery,
-    build_recall_query,
+    heuristic_retrieval_plan_from_message,
     rank_episode_slices,
     rank_profile_items,
     should_trigger_memory_recall,
@@ -48,6 +48,22 @@ def _slice(**overrides):
     return EpisodeSlice(**base)
 
 
+def _plan(**overrides):
+    base = dict(
+        source="hybrid_history",
+        buckets=["constraints", "rejections", "stable_preferences"],
+        domains=["hotel"],
+        entities={"destination": "京都"},
+        keywords=["住宿", "青旅"],
+        aliases=["住哪里"],
+        strictness="soft",
+        top_k=5,
+        reason="test plan",
+    )
+    base.update(overrides)
+    return RecallRetrievalPlan(**base)
+
+
 def test_history_question_triggers_recall():
     assert should_trigger_memory_recall("我上次去京都住哪里？") is True
 
@@ -57,61 +73,55 @@ def test_current_trip_question_does_not_trigger_recall():
 
 
 def test_mixed_current_and_history_query_still_triggers_recall():
-    query = build_recall_query("这次和上次一样住哪里？")
+    plan = heuristic_retrieval_plan_from_message("这次和上次一样住哪里？")
 
-    assert query.needs_memory is True
-    assert query.include_slices is True
+    assert plan.source == "hybrid_history"
 
 
 def test_hotel_query_maps_domains_and_destination():
-    query = build_recall_query("我上次去京都住哪里？")
-    assert query.needs_memory is True
-    assert "hotel" in query.domains
-    assert query.entities["destination"] == "京都"
-    assert query.include_slices is True
+    plan = heuristic_retrieval_plan_from_message("我上次去京都住哪里？")
+    assert "hotel" in plan.domains
+    assert plan.entities["destination"] == "京都"
+    assert plan.source == "hybrid_history"
 
 
 def test_long_term_preference_query_includes_profile():
-    query = build_recall_query("我是不是说过不坐红眼航班？")
-    assert query.include_profile is True
-    assert "flight" in query.domains
+    plan = heuristic_retrieval_plan_from_message("我是不是说过不坐红眼航班？")
+    assert plan.source == "profile"
+    assert "flight" in plan.domains
 
 
 def test_lodging_preference_query_includes_profile_and_hotel_domain():
-    query = build_recall_query("我以前不住青旅吗？")
+    plan = heuristic_retrieval_plan_from_message("我以前不住青旅吗？")
 
-    assert query.needs_memory is True
-    assert query.include_profile is True
-    assert "hotel" in query.domains or "accommodation" in query.domains
+    assert plan.source == "profile"
+    assert "hotel" in plan.domains or "accommodation" in plan.domains
 
 
 def test_hospitalization_query_does_not_trigger_lodging_domain():
-    query = build_recall_query("我之前住院了吗？")
+    plan = heuristic_retrieval_plan_from_message("我之前住院了吗？")
 
-    assert "hotel" not in query.domains
-    assert "accommodation" not in query.domains
-    assert query.include_slices is False
+    assert "hotel" not in plan.domains
+    assert "accommodation" not in plan.domains
+    assert plan.source == "hybrid_history"
 
 
 def test_direct_lodging_preference_query_triggers_profile_recall():
-    query = build_recall_query("我不住青旅吗？")
+    plan = heuristic_retrieval_plan_from_message("我不住青旅吗？")
 
-    assert query.needs_memory is True
-    assert query.include_profile is True
-    assert "hotel" in query.domains or "accommodation" in query.domains
+    assert plan.source == "profile"
+    assert "hotel" in plan.domains or "accommodation" in plan.domains
 
 
 def test_direct_train_preference_query_triggers_profile_recall():
-    query = build_recall_query("我不坐高铁吗？")
+    plan = heuristic_retrieval_plan_from_message("我不坐高铁吗？")
 
-    assert query.needs_memory is True
-    assert query.include_profile is True
-    assert "train" in query.domains
+    assert plan.source == "profile"
+    assert "train" in plan.domains
 
 
 def test_rank_profile_items_returns_recall_candidates():
-    query = build_recall_query("我是不是说过不坐红眼航班？")
-    query.allowed_buckets = ["constraints", "preference_hypotheses"]
+    query = _plan(domains=["flight"], keywords=["红眼航班"], aliases=[], buckets=["constraints", "preference_hypotheses"], source="profile")
     profile = UserMemoryProfile(
         schema_version=3,
         user_id="u1",
@@ -150,7 +160,7 @@ def test_rank_profile_items_returns_recall_candidates():
 
 
 def test_rank_profile_items_prefers_rejections_over_stable_preferences():
-    query = build_recall_query("我是不是说过不住青旅？")
+    query = _plan(source="profile", domains=["hotel"], keywords=["青旅"], aliases=[])
     profile = UserMemoryProfile(
         schema_version=3,
         user_id="u1",
@@ -187,18 +197,7 @@ def test_rank_profile_items_prefers_rejections_over_stable_preferences():
 
 
 def test_rank_profile_items_respects_allowed_buckets():
-    query = RecallQuery(
-        needs_memory=True,
-        domains=["hotel"],
-        entities={},
-        keywords=["青旅"],
-        include_profile=True,
-        include_slices=False,
-        include_working_memory=False,
-        matched_reason="adapter generated",
-        allowed_buckets=["rejections"],
-        strictness="strict",
-    )
+    query = _plan(source="profile", buckets=["rejections"], domains=["hotel"], entities={}, keywords=["青旅"], aliases=[], strictness="strict")
     profile = UserMemoryProfile(
         schema_version=3,
         user_id="u1",
@@ -234,18 +233,7 @@ def test_rank_profile_items_respects_allowed_buckets():
 
 
 def test_rank_profile_items_uses_conservative_default_when_allowed_buckets_is_empty():
-    query = RecallQuery(
-        needs_memory=True,
-        domains=["flight"],
-        entities={},
-        keywords=["红眼航班"],
-        include_profile=True,
-        include_slices=False,
-        include_working_memory=False,
-        matched_reason="adapter generated",
-        allowed_buckets=[],
-        strictness="soft",
-    )
+    query = _plan(source="profile", buckets=[], domains=["flight"], entities={}, keywords=["红眼航班"], aliases=[])
     profile = UserMemoryProfile(
         schema_version=3,
         user_id="u1",
@@ -280,7 +268,7 @@ def test_rank_profile_items_uses_conservative_default_when_allowed_buckets_is_em
 
 
 def test_rank_episode_slices_returns_recall_candidates():
-    query = build_recall_query("我上次去京都住哪里？")
+    query = _plan(source="episode_slice", domains=["hotel"], entities={"destination": "京都"}, keywords=["住宿"], aliases=[])
     slices = [
         _slice(
             id="slice_keyword_only",
@@ -307,10 +295,9 @@ def test_rank_episode_slices_returns_recall_candidates():
 
 
 def test_current_trip_question_produces_no_recall_hits():
-    query = build_recall_query("这次预算多少？")
+    query = _plan(source="episode_slice", domains=[], entities={}, keywords=[], aliases=[])
     profile = UserMemoryProfile.empty("u1")
     slices = [_slice()]
 
-    assert query.needs_memory is False
-    assert rank_profile_items(query, profile) == []
-    assert rank_episode_slices(query, slices) == []
+    assert rank_profile_items(_plan(source="episode_slice"), profile) == []
+    assert rank_episode_slices(_plan(source="profile"), slices) == []

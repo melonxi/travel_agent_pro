@@ -2,15 +2,26 @@ from __future__ import annotations
 
 from typing import Any
 
-from memory.models import TripEpisode
-from memory.v3_models import EpisodeSlice
+from memory.v3_models import ArchivedTripEpisode, EpisodeSlice
 
 _MAX_CONTENT_LEN = 180
 
 _SLICE_META: dict[str, dict[str, list[str]]] = {
-    "accepted_pattern": {
-        "domains": ["planning_style", "pace"],
-        "keywords": ["pattern", "骨架", "节奏", "方案"],
+    "itinerary_pattern": {
+        "domains": ["planning_style", "pace", "itinerary"],
+        "keywords": ["骨架", "节奏", "路线", "区域", "天数"],
+    },
+    "stay_choice": {
+        "domains": ["hotel", "accommodation"],
+        "keywords": ["住宿", "酒店", "民宿", "区域"],
+    },
+    "transport_choice": {
+        "domains": ["transport", "train", "flight"],
+        "keywords": ["交通", "航班", "高铁", "火车", "到达"],
+    },
+    "budget_signal": {
+        "domains": ["budget"],
+        "keywords": ["预算", "花费", "成本", "分配"],
     },
     "rejected_option": {
         "domains": ["general"],
@@ -18,42 +29,77 @@ _SLICE_META: dict[str, dict[str, list[str]]] = {
     },
     "pitfall": {
         "domains": ["general", "pace"],
-        "keywords": ["坑", "教训", "注意", "疲劳"],
-    },
-    "budget_signal": {
-        "domains": ["budget"],
-        "keywords": ["预算", "花费", "成本", "分配"],
+        "keywords": ["坑", "教训", "注意", "疲劳", "风险"],
     },
 }
 
 
-def build_episode_slices(episode: TripEpisode, *, now: str) -> list[EpisodeSlice]:
-    accepted_items = _as_list_or_empty(episode.accepted_items)
-    rejected_items = _as_list_or_empty(episode.rejected_items)
-    lessons = _as_list_or_empty(episode.lessons)
+def build_episode_slices(episode: ArchivedTripEpisode, *, now: str) -> list[EpisodeSlice]:
     slices: list[EpisodeSlice] = []
     base_entities = _base_entities(episode)
 
-    if episode.selected_skeleton is not None:
+    slices.append(
+        _build_slice(
+            episode=episode,
+            now=now,
+            slice_type="itinerary_pattern",
+            index=1,
+            content=_itinerary_pattern_content(episode),
+            entities={
+                **base_entities,
+                "selected_skeleton": _entity_text(episode.selected_skeleton),
+                "daily_plan_summary": _entity_text(episode.daily_plan_summary),
+            },
+            applicability="仅供行程结构参考；当前日期、体力和预算变化时需重排。",
+        )
+    )
+
+    if episode.accommodation is not None:
         slices.append(
             _build_slice(
                 episode=episode,
                 now=now,
-                slice_type="accepted_pattern",
+                slice_type="stay_choice",
                 index=1,
-                content=_accepted_pattern_content(episode, accepted_items),
-                entities={
-                    **base_entities,
-                    "selected_skeleton": _entity_text(episode.selected_skeleton),
-                    "accepted_items_count": len(accepted_items),
-                },
-                applicability=(
-                    "仅供规划骨架参考；当前预算、同行人或时间变化时不能直接套用。"
-                ),
+                content=_stay_choice_content(episode),
+                entities={**base_entities, "accommodation": _entity_text(episode.accommodation)},
+                applicability="仅供住宿偏好参考；库存和价格变化时需重新选择。",
             )
         )
 
-    for index, rejected_item in enumerate(rejected_items[:2], start=1):
+    if episode.selected_transport is not None:
+        slices.append(
+            _build_slice(
+                episode=episode,
+                now=now,
+                slice_type="transport_choice",
+                index=1,
+                content=_transport_choice_content(episode),
+                entities={
+                    **base_entities,
+                    "selected_transport": _entity_text(episode.selected_transport),
+                },
+                applicability="仅供交通方式参考；班次和出发条件变化时需重新判断。",
+            )
+        )
+
+    if episode.budget is not None or episode.final_plan_summary:
+        slices.append(
+            _build_slice(
+                episode=episode,
+                now=now,
+                slice_type="budget_signal",
+                index=1,
+                content=_budget_signal_content(episode),
+                entities={**base_entities, "budget": _entity_text(episode.budget)},
+                applicability="仅供预算分配参考；当前价格变化时需重新计算。",
+            )
+        )
+
+    rejected_entries = [
+        item for item in _as_list_or_empty(episode.decision_log) if item.get("type") == "rejected"
+    ]
+    for index, rejected_item in enumerate(rejected_entries[:2], start=1):
         slices.append(
             _build_slice(
                 episode=episode,
@@ -63,14 +109,14 @@ def build_episode_slices(episode: TripEpisode, *, now: str) -> list[EpisodeSlice
                 content=_rejected_option_content(rejected_item),
                 entities={
                     **base_entities,
-                    "rejected_item": _entity_text(rejected_item),
-                    "rejected_index": index,
+                    "decision_category": _entity_text(rejected_item.get("category")),
+                    "rejected_value": _entity_text(rejected_item.get("value")),
                 },
                 applicability="仅供避让相似选项；不代表所有同类选项都要排除。",
             )
         )
 
-    for index, lesson in enumerate(lessons[:2], start=1):
+    for index, lesson in enumerate(_as_list_or_empty(episode.lesson_log)[:2], start=1):
         slices.append(
             _build_slice(
                 episode=episode,
@@ -80,27 +126,10 @@ def build_episode_slices(episode: TripEpisode, *, now: str) -> list[EpisodeSlice
                 content=_pitfall_content(lesson),
                 entities={
                     **base_entities,
+                    "lesson_kind": _entity_text(lesson.get("kind")),
                     "lesson": _entity_text(lesson),
-                    "lesson_index": index,
                 },
                 applicability="仅供风险提醒；具体行程需结合当前节奏和体力。",
-            )
-        )
-
-    if episode.budget is not None:
-        slices.append(
-            _build_slice(
-                episode=episode,
-                now=now,
-                slice_type="budget_signal",
-                index=1,
-                content=_budget_signal_content(episode),
-                entities={
-                    **base_entities,
-                    "budget": _entity_text(episode.budget),
-                    "budget_present": True,
-                },
-                applicability="仅供预算分配参考；当前预算或物价变化时需重新计算。",
             )
         )
 
@@ -109,7 +138,7 @@ def build_episode_slices(episode: TripEpisode, *, now: str) -> list[EpisodeSlice
 
 def _build_slice(
     *,
-    episode: TripEpisode,
+    episode: ArchivedTripEpisode,
     now: str,
     slice_type: str,
     index: int,
@@ -133,7 +162,7 @@ def _build_slice(
     )
 
 
-def _base_entities(episode: TripEpisode) -> dict[str, Any]:
+def _base_entities(episode: ArchivedTripEpisode) -> dict[str, Any]:
     return {
         "destination": _entity_text(episode.destination) or "",
         "trip_id": _entity_text(episode.trip_id),
@@ -141,54 +170,53 @@ def _base_entities(episode: TripEpisode) -> dict[str, Any]:
     }
 
 
-def _accepted_pattern_content(
-    episode: TripEpisode, accepted_items: list[Any]
-) -> str:
+def _itinerary_pattern_content(episode: ArchivedTripEpisode) -> str:
     parts: list[str] = []
-    skeleton = episode.selected_skeleton
+    skeleton = _render_value(episode.selected_skeleton)
     if skeleton:
-        rendered_skeleton = _render_value(skeleton)
-        if rendered_skeleton:
-            parts.append(f"已选骨架：{rendered_skeleton}")
-    if accepted_items:
-        rendered_items = "；".join(
-            rendered
-            for rendered in (_render_value(item) for item in accepted_items[:2])
-            if rendered
-        )
-        if rendered_items:
-            parts.append(f"接受项：{rendered_items}")
+        parts.append(f"行程骨架：{skeleton}")
+    daily = _render_value(episode.daily_plan_summary)
+    if daily:
+        parts.append(f"每日节奏：{daily}")
     if not parts:
-        parts.append("已选骨架。")
+        parts.append("历史行程骨架。")
     return "；".join(parts)
 
 
-def _rejected_option_content(rejected_item: Any) -> str:
-    rendered = _render_value(rejected_item)
-    if rendered:
-        return f"已拒绝选项：{rendered}"
-    return "已拒绝选项。"
+def _stay_choice_content(episode: ArchivedTripEpisode) -> str:
+    rendered = _render_value(episode.accommodation)
+    return f"住宿选择：{rendered}" if rendered else "住宿选择。"
 
 
-def _pitfall_content(lesson: Any) -> str:
-    rendered = _render_value(lesson)
-    if rendered:
-        return f"教训：{rendered}"
-    return "教训。"
+def _transport_choice_content(episode: ArchivedTripEpisode) -> str:
+    rendered = _render_value(episode.selected_transport)
+    return f"交通选择：{rendered}" if rendered else "交通选择。"
 
 
-def _budget_signal_content(episode: TripEpisode) -> str:
+def _rejected_option_content(rejected_item: dict[str, Any]) -> str:
+    category = _render_value(rejected_item.get("category"))
+    value = _render_value(rejected_item.get("value"))
+    reason = _render_value(rejected_item.get("reason"))
+    parts = [part for part in [category, value, reason] if part]
+    if not parts:
+        return "已拒绝选项。"
+    return f"已拒绝选项：{'；'.join(parts)}"
+
+
+def _pitfall_content(lesson: dict[str, Any]) -> str:
+    rendered = _render_value(lesson.get("content") or lesson)
+    return f"教训：{rendered}" if rendered else "教训。"
+
+
+def _budget_signal_content(episode: ArchivedTripEpisode) -> str:
     parts: list[str] = []
     budget = episode.budget or {}
-    amount = budget.get("amount", budget.get("total"))
-    currency = budget.get("currency")
+    amount = budget.get("total", budget.get("amount")) if isinstance(budget, dict) else None
+    currency = budget.get("currency") if isinstance(budget, dict) else None
     if amount is not None:
         amount_text = _render_value(amount)
-        if currency:
-            parts.append(f"预算：{amount_text} {currency}")
-        else:
-            parts.append(f"预算：{amount_text}")
-    else:
+        parts.append(f"预算：{amount_text} {currency}" if currency else f"预算：{amount_text}")
+    elif budget:
         parts.append(f"预算：{_render_value(budget)}")
     summary = _render_value(episode.final_plan_summary)
     if summary:
@@ -222,8 +250,6 @@ def _render_value(value: Any) -> str:
 def _entity_text(value: Any) -> Any:
     if value is None:
         return None
-    if isinstance(value, bool) or isinstance(value, int) or isinstance(value, float):
-        return _truncate(_render_value(value))
     return _truncate(_render_value(value))
 
 

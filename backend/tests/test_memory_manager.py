@@ -6,38 +6,14 @@ import pytest
 
 from config import load_config
 from memory.manager import MemoryManager
-from memory.models import MemoryItem, MemorySource, Rejection, TripSummary, UserMemory
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import RecallRerankResult
-from memory.symbolic_recall import RecallQuery
 from memory.v3_models import EpisodeSlice, MemoryProfileItem
 from state.models import TravelPlanState
 
 
-def make_item(**overrides):
-    base = dict(
-        id="mem-1",
-        user_id="u1",
-        type="preference",
-        domain="pace",
-        key="preferred_pace",
-        value="节奏轻松",
-        scope="global",
-        polarity="neutral",
-        confidence=0.8,
-        status="active",
-        source=MemorySource(kind="message", session_id="s1"),
-        created_at="2026-04-11T00:00:00",
-        updated_at="2026-04-11T00:00:00",
-    )
-    base.update(overrides)
-    return MemoryItem(**base)
-
-
 @pytest.mark.asyncio
-async def test_generate_context_prefers_retrieval_plan_over_legacy_query(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_generate_context_uses_retrieval_plan_for_profile_recall(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
     await manager.v3_store.upsert_profile_item(
         "u1",
@@ -60,21 +36,6 @@ async def test_generate_context_prefers_retrieval_plan_over_legacy_query(
         ),
     )
 
-    def fake_build_recall_query(message: str) -> RecallQuery:
-        assert message == "住宿还是按我常规偏好来"
-        return RecallQuery(
-            needs_memory=True,
-            domains=["food"],
-            entities={},
-            keywords=["辣"],
-            include_profile=False,
-            include_slices=False,
-            include_working_memory=False,
-            matched_reason="legacy query should not drive profile recall here",
-        )
-
-    monkeypatch.setattr("memory.manager.build_recall_query", fake_build_recall_query)
-
     text, recall = await manager.generate_context(
         "u1",
         TravelPlanState(session_id="s1", trip_id="trip_now"),
@@ -85,6 +46,7 @@ async def test_generate_context_prefers_retrieval_plan_over_legacy_query(
             source="profile",
             buckets=["stable_preferences"],
             domains=["hotel"],
+            entities={},
             keywords=["住宿"],
             aliases=["住哪里"],
             strictness="soft",
@@ -99,9 +61,7 @@ async def test_generate_context_prefers_retrieval_plan_over_legacy_query(
 
 
 @pytest.mark.asyncio
-async def test_generate_context_keeps_legacy_slice_recall_when_retrieval_plan_is_present(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_generate_context_uses_retrieval_plan_for_slice_recall(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
     await manager.v3_store.append_episode_slice(
         EpisodeSlice(
@@ -119,21 +79,6 @@ async def test_generate_context_keeps_legacy_slice_recall_when_retrieval_plan_is
         )
     )
 
-    def fake_build_recall_query(message: str) -> RecallQuery:
-        assert message == "还记得去年京都订的那家旅馆吗？"
-        return RecallQuery(
-            needs_memory=True,
-            domains=["hotel", "accommodation"],
-            entities={"destination": "京都"},
-            keywords=["旅馆"],
-            include_profile=True,
-            include_slices=True,
-            include_working_memory=False,
-            matched_reason="legacy slice recall query",
-        )
-
-    monkeypatch.setattr("memory.manager.build_recall_query", fake_build_recall_query)
-
     text, recall = await manager.generate_context(
         "u1",
         TravelPlanState(session_id="s1", trip_id="trip_kyoto_now"),
@@ -141,9 +86,10 @@ async def test_generate_context_keeps_legacy_slice_recall_when_retrieval_plan_is
         recall_gate=True,
         short_circuit="force_recall",
         retrieval_plan=RecallRetrievalPlan(
-            source="profile",
+            source="episode_slice",
             buckets=["stable_preferences"],
             domains=["hotel"],
+            entities={"destination": "京都"},
             keywords=["住宿"],
             aliases=["住哪里"],
             strictness="soft",
@@ -460,75 +406,13 @@ async def test_generate_context_keeps_empty_reranker_fields_when_no_candidates(
     assert recall.reranker_final_reason == ""
 
 
-@pytest.mark.asyncio
-async def test_legacy_load_returns_empty_user_memory_for_missing_user(tmp_path: Path):
+def test_memory_manager_does_not_expose_legacy_store_api(tmp_path: Path):
     manager = MemoryManager(data_dir=str(tmp_path))
 
-    memory = await manager.load("missing-user")
-
-    assert memory == UserMemory(user_id="missing-user")
-
-
-@pytest.mark.asyncio
-async def test_legacy_load_reads_v2_legacy_envelope(tmp_path: Path):
-    user_dir = tmp_path / "users" / "u1"
-    user_dir.mkdir(parents=True)
-    (user_dir / "memory.json").write_text(
-        """
-{
-  "schema_version": 2,
-  "user_id": "u1",
-  "items": [],
-  "legacy": {
-    "user_id": "u1",
-    "explicit_preferences": {"住宿": "民宿"},
-    "implicit_preferences": {},
-    "trip_history": [],
-    "rejections": []
-  }
-}
-""",
-        encoding="utf-8",
-    )
-    manager = MemoryManager(data_dir=str(tmp_path))
-
-    memory = await manager.load("u1")
-
-    assert memory.explicit_preferences == {"住宿": "民宿"}
-
-
-@pytest.mark.asyncio
-async def test_legacy_load_reads_v2_items_when_legacy_empty(tmp_path: Path):
-    manager = MemoryManager(data_dir=str(tmp_path))
-    await manager.store.upsert_item(
-        make_item(key="preferred_pace", value="轻松", status="active")
-    )
-
-    memory = await manager.load("u1")
-
-    assert memory.explicit_preferences == {"preferred_pace": "轻松"}
-
-
-@pytest.mark.asyncio
-async def test_legacy_save_preserves_v2_items(tmp_path: Path):
-    manager = MemoryManager(data_dir=str(tmp_path))
-    await manager.store.upsert_item(
-        make_item(key="preferred_pace", value="轻松", status="active")
-    )
-
-    await manager.save(
-        UserMemory(
-            user_id="u1",
-            explicit_preferences={"住宿": "民宿"},
-            rejections=[Rejection(item="红眼航班", reason="休息不好", permanent=True)],
-        )
-    )
-
-    items = await manager.store.list_items("u1")
-    loaded = await manager.load("u1")
-    assert len(items) == 1
-    assert loaded.explicit_preferences == {"住宿": "民宿"}
-    assert loaded.rejections[0].item == "红眼航班"
+    assert not hasattr(manager, "store")
+    assert not hasattr(manager, "load")
+    assert not hasattr(manager, "save")
+    assert not hasattr(manager, "generate_summary")
 
 
 def test_travel_plan_state_round_trips_trip_id():
@@ -653,29 +537,3 @@ memory:
 
     assert cfg.memory.retrieval.recall_gate_model == ""
 
-
-# --- 以下测试迁移自 test_memory.py（原文件已删除）---
-
-
-def test_user_memory_defaults():
-    mem = UserMemory(user_id="u1")
-    assert mem.explicit_preferences == {}
-    assert mem.rejections == []
-    assert mem.trip_history == []
-
-
-def test_generate_summary(tmp_path: Path):
-    manager = MemoryManager(data_dir=str(tmp_path))
-    mem = UserMemory(
-        user_id="u1",
-        explicit_preferences={"no_red_eye": True, "private_bathroom": True},
-        trip_history=[
-            TripSummary(
-                destination="Kyoto", dates="2025-10", satisfaction=4, notes="节奏好"
-            )
-        ],
-        rejections=[Rejection(item="红眼航班", reason="不坐", permanent=True)],
-    )
-    summary = manager.generate_summary(mem)
-    assert "红眼" in summary or "no_red_eye" in summary
-    assert "Kyoto" in summary

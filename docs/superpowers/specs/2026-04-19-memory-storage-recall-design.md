@@ -76,7 +76,7 @@ ContextAssembler
 ```text
 ExtractionResult
   ├─ profile_updates          -> profile.json
-  ├─ working_memory           -> sessions/{session_id}/working_memory.json
+  ├─ working_memory           -> sessions/{session_id}/trips/{trip_id}/working_memory.json
   ├─ episode_evidence         -> Phase 7 episode/slice 生成素材
   ├─ state_observations       -> 不写 memory，只用于诊断或 plan writer 校验
   └─ drop                     -> 不落库
@@ -94,7 +94,7 @@ data/users/{user_id}/memory/
   events.jsonl
   episodes.jsonl
   episode_slices.jsonl
-  sessions/{session_id}/working_memory.json
+  sessions/{session_id}/trips/{trip_id}/working_memory.json
 ```
 
 旧格式：
@@ -477,7 +477,7 @@ Layer 3：本地 symbolic retrieval。
 | `profile_updates.rejections` | `profile.json.rejections` |
 | `profile_updates.stable_preferences` | `profile.json.stable_preferences` |
 | `profile_updates.preference_hypotheses` | `profile.json.preference_hypotheses` |
-| `working_memory` | `sessions/{session_id}/working_memory.json` |
+| `working_memory` | `sessions/{session_id}/trips/{trip_id}/working_memory.json` |
 | `episode_evidence` | 当前 session 暂存，Phase 7 生成 episode/slice 时消费 |
 | `state_observations` | 不写 memory，用于诊断或 plan writer 校验 |
 | `drop` | 不落库 |

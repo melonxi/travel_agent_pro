@@ -130,7 +130,7 @@ Stage 5: 格式化注入
 当前实现状态：
 
 - 已完成 `Stage 0 + Stage 1 + Stage 2 + Stage 3`
-- `Stage 2` 通过 `recall_query_adapter` 兼容到当前规则召回器
+- `Stage 2` 产出的 `RecallRetrievalPlan` 由 native symbolic recall 直接消费
 - `Stage 3` 已统一输出 `RecallCandidate[]`
 - `Stage 4/5` 仍为后续工作
 

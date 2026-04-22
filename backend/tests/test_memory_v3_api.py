@@ -6,8 +6,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from main import create_app
-from memory.models import TripEpisode
 from memory.v3_models import (
+    ArchivedTripEpisode,
     EpisodeSlice,
     MemoryProfileItem,
     SessionWorkingMemory,
@@ -94,26 +94,26 @@ async def _seed_episode_slice(data_dir: Path, user_id: str) -> EpisodeSlice:
     return slice_
 
 
-async def _seed_legacy_episode(data_dir: Path, user_id: str) -> TripEpisode:
-    from memory.store import FileMemoryStore
-
-    store = FileMemoryStore(data_dir)
-    episode = TripEpisode(
-        id="episode-legacy-1",
+async def _seed_episode(data_dir: Path, user_id: str) -> ArchivedTripEpisode:
+    store = FileMemoryV3Store(data_dir)
+    episode = ArchivedTripEpisode(
+        id="episode-v3-1",
         user_id=user_id,
-        session_id="session-legacy",
-        trip_id="trip-legacy",
+        session_id="session-v3",
+        trip_id="trip-v3",
         destination="京都",
-        dates="2026-03-01/2026-03-05",
+        dates={"start": "2026-03-01", "end": "2026-03-05", "total_days": 5},
         travelers={"adults": 2},
         budget={"amount": 8000, "currency": "CNY"},
         selected_skeleton={"id": "sk-1", "title": "京都慢游"},
+        selected_transport=None,
+        accommodation=None,
+        daily_plan_summary=[],
         final_plan_summary="一次轻松的京都旅行。",
-        accepted_items=[],
-        rejected_items=[],
-        lessons=["町屋住宿体验很好"],
-        satisfaction=5,
+        decision_log=[],
+        lesson_log=[{"kind": "pitfall", "content": "町屋住宿体验很好"}],
         created_at="2026-03-06T00:00:00",
+        completed_at="2026-03-06T00:00:00",
     )
     await store.append_episode(episode)
     return episode
@@ -226,11 +226,10 @@ async def test_profile_item_actions_update_v3_profile(v3_app):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         confirm_resp = await client.post(
-            f"/api/memory/{user_id}/confirm",
-            json={"item_id": "constraints:flight:avoid_red_eye"},
+            f"/api/memory/{user_id}/profile/constraints:flight:avoid_red_eye/confirm",
         )
         delete_resp = await client.delete(
-            f"/api/memory/{user_id}/constraints:flight:avoid_red_eye"
+            f"/api/memory/{user_id}/profile/constraints:flight:avoid_red_eye"
         )
         profile_resp = await client.get(f"/api/memory/{user_id}/profile")
 
@@ -241,24 +240,57 @@ async def test_profile_item_actions_update_v3_profile(v3_app):
 
 
 @pytest.mark.asyncio
-async def test_legacy_memory_routes_are_marked_deprecated(v3_app):
+async def test_v3_episodes_route_returns_v3_payload_without_deprecated(v3_app):
     app, data_dir = v3_app
     user_id = "default_user"
-    await _seed_legacy_episode(data_dir, user_id)
+    await _seed_episode(data_dir, user_id)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        episodes_resp = await client.get(f"/api/memory/{user_id}/episodes")
+
+    assert episodes_resp.status_code == 200
+    episodes_payload = episodes_resp.json()
+    assert "deprecated" not in episodes_payload
+    assert episodes_payload["episodes"][0]["id"] == "episode-v3-1"
+
+
+@pytest.mark.asyncio
+async def test_legacy_memory_routes_are_removed(v3_app):
+    app, _ = v3_app
+    user_id = "default_user"
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         items_resp = await client.get(f"/api/memory/{user_id}")
-        episodes_resp = await client.get(f"/api/memory/{user_id}/episodes")
+        confirm_resp = await client.post(
+            f"/api/memory/{user_id}/confirm",
+            json={"item_id": "constraints:flight:avoid_red_eye"},
+        )
+        reject_resp = await client.post(
+            f"/api/memory/{user_id}/reject",
+            json={"item_id": "constraints:flight:avoid_red_eye"},
+        )
+        events_resp = await client.post(
+            f"/api/memory/{user_id}/events",
+            json={
+                "event_type": "reject",
+                "object_type": "phase_output",
+                "object_payload": {"to_phase": 3},
+                "reason_text": "用户要求回退",
+            },
+        )
+        delete_resp = await client.delete(
+            f"/api/memory/{user_id}/constraints:flight:avoid_red_eye"
+        )
 
-    assert items_resp.status_code == 200
-    assert items_resp.json()["deprecated"] is True
-
-    assert episodes_resp.status_code == 200
-    episodes_payload = episodes_resp.json()
-    assert episodes_payload["deprecated"] is True
-    assert episodes_payload["episodes"][0]["id"] == "episode-legacy-1"
+    assert items_resp.status_code == 404
+    assert confirm_resp.status_code == 404
+    assert reject_resp.status_code == 404
+    assert events_resp.status_code == 404
+    assert delete_resp.status_code == 404
 
 
 def test_memory_hit_record_includes_v3_sources():

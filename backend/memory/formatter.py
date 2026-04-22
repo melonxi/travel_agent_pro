@@ -173,32 +173,6 @@ def _format_details(
     return " ".join(_sanitize_text(part) for part in parts if part)
 
 
-def _format_section(title: str, items: list[MemoryItem]) -> str:
-    lines = [f"## {_sanitize_text(title)}"]
-    for item in items:
-        annotation = _format_annotation(item)
-        lines.append(
-            f"- [{_sanitize_text(item.domain)}] {_sanitize_text(item.key)}: "
-            f"{_format_value(item.value)}{annotation}"
-        )
-    return "\n".join(lines)
-
-
-def _format_annotation(item: MemoryItem) -> str:
-    parts: list[str] = []
-    if item.scope and item.scope != "global":
-        parts.append(item.scope)
-    elif item.scope == "global":
-        parts.append("global")
-    if item.source and item.source.kind == "message" and item.status == "active":
-        parts.append(f"confidence {item.confidence:.2f}")
-    elif item.source and item.source.kind == "migration":
-        parts.append("migrated")
-    else:
-        parts.append(f"confidence {item.confidence:.2f}")
-    return f" ({', '.join(parts)})" if parts else ""
-
-
 def _format_value(value: Any) -> str:
     if value is None:
         return ""

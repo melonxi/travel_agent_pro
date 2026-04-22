@@ -73,7 +73,7 @@
 
 将 TraceViewer 的信噪比从"每个 LLM 调用一行"提升到"每个有意义阶段/工具调用一行"，大幅减少滚动和视觉噪声。
 
-## 4. session_id 与 trip_id 并存边界梳理
+## 4. [DONE] session_id 与 trip_id 并存边界梳理
 
 ### 背景
 
@@ -86,14 +86,13 @@ trip_id    = trip_xxxxxx
 
 但当用户在同一个聊天里触发"重新开始 / 换目的地 / 新行程"等 reset 型回退时，系统会保留同一个 `session_id`，并轮转新的 `trip_id`，以隔离旧行程下的 trip-scope memory / working memory / episode 语义。
 
-### 待办项
+### 完成结果
 
-- 明确产品语义：一个聊天会话是否允许承载多个连续旅行规划
-- 如果允许，确认 `session_id -> multiple trip_id` 是正式设计，而不是历史实现残留
-- 梳理 `TravelPlanState.trip_id`、v2 trip memory、v3 working memory、TripEpisode / EpisodeSlice 的生命周期边界
-- 评估 Working Memory 存储路径是否应从 `memory/sessions/{session_id}/working_memory.json` 调整为更显式的 `memory/sessions/{session_id}/trips/{trip_id}/working_memory.json`
-- 检查 trip 轮转后旧 working memory 是否只是不再召回，还是也需要显式归档 / 标记 obsolete
-- 补充测试覆盖：同一 session 中换目的地后，旧 trip 的临时信号不会污染新 trip
+- `session_id -> multiple trip_id` 是正式设计：聊天连续性归 session，旅行语义隔离归 trip。
+- `TravelPlanState.trip_id` 是当前旅行事实的隔离键；working memory 与 episode 归档都按当前 trip 语义读写。
+- Working Memory 已从 session 级路径收口到 `memory/sessions/{session_id}/trips/{trip_id}/working_memory.json`。
+- trip 轮转后旧 working memory 不会被当前 trip 召回。
+- 已补充测试覆盖同一 session 换目的地后旧 trip 临时信号不污染新 trip。
 
 ### 目标
 

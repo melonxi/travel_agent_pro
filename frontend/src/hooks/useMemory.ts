@@ -1,11 +1,10 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import type {
+  ArchivedTripEpisode,
   EpisodeSlice,
-  MemoryItem,
   MemoryProfileItem,
   MemoryProfileBuckets,
   SessionWorkingMemory,
-  TripEpisode,
   UseMemoryReturn,
   UserMemoryProfile,
 } from '../types/memory';
@@ -24,19 +23,15 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
     ...EMPTY_MEMORY_PROFILE,
     user_id: userId,
   });
-  const [sessionWorkingMemory, setSessionWorkingMemory] = useState<SessionWorkingMemory>({
+  const [workingMemory, setWorkingMemory] = useState<SessionWorkingMemory>({
     ...EMPTY_SESSION_WORKING_MEMORY,
     user_id: userId,
     session_id: sessionId ?? '',
   });
-  const [episodes, setEpisodes] = useState<TripEpisode[]>([]);
-  const [slices, setSlices] = useState<EpisodeSlice[]>([]);
-  const [legacyMemories, setLegacyMemories] = useState<MemoryItem[]>([]);
+  const [episodes, setEpisodes] = useState<ArchivedTripEpisode[]>([]);
+  const [episodeSlices, setEpisodeSlices] = useState<EpisodeSlice[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const memoriesRef = useRef(legacyMemories);
-  memoriesRef.current = legacyMemories;
 
   const updateProfileItem = useCallback(
     (
@@ -112,19 +107,6 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
     [],
   );
 
-  const loadLegacyMemories = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/memory/${userId}`);
-      if (!res.ok) {
-        return [];
-      }
-      const data = await res.json();
-      return Array.isArray(data.items) ? (data.items as MemoryItem[]) : [];
-    } catch {
-      return [];
-    }
-  }, [userId]);
-
   const fetchMemories = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -133,12 +115,11 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
         ? fetch(`/api/memory/${userId}/sessions/${sessionId}/working-memory`)
         : Promise.resolve(null);
 
-      const [profileRes, episodesRes, slicesRes, workingMemoryRes, legacyItems] = await Promise.all([
+      const [profileRes, episodesRes, slicesRes, workingMemoryRes] = await Promise.all([
         fetch(`/api/memory/${userId}/profile`),
         fetch(`/api/memory/${userId}/episodes`),
         fetch(`/api/memory/${userId}/episode-slices`),
         workingMemoryPromise,
-        loadLegacyMemories(),
       ]);
 
       if (!profileRes.ok) throw new Error(`画像请求失败 (${profileRes.status})`);
@@ -160,7 +141,7 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
         ...profileData,
         user_id: profileData.user_id ?? userId,
       });
-      setSessionWorkingMemory(
+      setWorkingMemory(
         workingMemoryData
           ? {
               ...EMPTY_SESSION_WORKING_MEMORY,
@@ -175,48 +156,28 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
             },
       );
       setEpisodes(Array.isArray(episodesData.episodes) ? episodesData.episodes : []);
-      setSlices(Array.isArray(slicesData.slices) ? slicesData.slices : []);
-      setLegacyMemories(legacyItems);
+      setEpisodeSlices(Array.isArray(slicesData.slices) ? slicesData.slices : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : '未知错误');
     } finally {
       setLoading(false);
     }
-  }, [loadLegacyMemories, sessionId, userId]);
+  }, [sessionId, userId]);
 
   const confirmMemory = useCallback(
     async (itemId: string) => {
-      const target = memoriesRef.current.find((m) => m.id === itemId);
       const profileResult = updateProfileItem(itemId, (_bucket, item) => ({
         ...item,
         status: 'active',
       }));
 
-      if (!target && !profileResult.previousItem) return;
-
-      const prevStatus = target?.status;
-      if (target) {
-        setLegacyMemories((ms) =>
-          ms.map((m) =>
-            m.id === itemId ? { ...m, status: 'active' as const } : m,
-          ),
-        );
-      }
+      if (!profileResult.previousItem) return;
       try {
-        const res = await fetch(`/api/memory/${userId}/confirm`, {
+        const res = await fetch(`/api/memory/${userId}/profile/${itemId}/confirm`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ item_id: itemId }),
         });
         if (!res.ok) throw new Error();
       } catch {
-        if (target && prevStatus) {
-          setLegacyMemories((ms) =>
-            ms.map((m) =>
-              m.id === itemId ? { ...m, status: prevStatus } : m,
-            ),
-          );
-        }
         restoreProfileItem(profileResult.previousBucket, profileResult.previousItem);
         setError('确认失败，请重试');
       }
@@ -226,7 +187,6 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
 
   const rejectMemory = useCallback(
     async (itemId: string) => {
-      const target = memoriesRef.current.find((m) => m.id === itemId);
       const profileResult = updateProfileItem(itemId, (_bucket, item) => {
         if (_bucket === 'preference_hypotheses') {
           return null;
@@ -237,31 +197,13 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
         };
       });
 
-      if (!target && !profileResult.previousItem) return;
-
-      const prevStatus = target?.status;
-      if (target) {
-        setLegacyMemories((ms) =>
-          ms.map((m) =>
-            m.id === itemId ? { ...m, status: 'rejected' as const } : m,
-          ),
-        );
-      }
+      if (!profileResult.previousItem) return;
       try {
-        const res = await fetch(`/api/memory/${userId}/reject`, {
+        const res = await fetch(`/api/memory/${userId}/profile/${itemId}/reject`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ item_id: itemId }),
         });
         if (!res.ok) throw new Error();
       } catch {
-        if (target && prevStatus) {
-          setLegacyMemories((ms) =>
-            ms.map((m) =>
-              m.id === itemId ? { ...m, status: prevStatus } : m,
-            ),
-          );
-        }
         restoreProfileItem(profileResult.previousBucket, profileResult.previousItem);
         setError('拒绝失败，请重试');
       }
@@ -271,32 +213,15 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
 
   const deleteMemory = useCallback(
     async (itemId: string) => {
-      const target = memoriesRef.current.find((m) => m.id === itemId);
       const profileResult = updateProfileItem(itemId, () => null);
 
-      if (!target && !profileResult.previousItem) return;
-
-      const prevStatus = target?.status;
-      if (target) {
-        setLegacyMemories((ms) =>
-          ms.map((m) =>
-            m.id === itemId ? { ...m, status: 'obsolete' as const } : m,
-          ),
-        );
-      }
+      if (!profileResult.previousItem) return;
       try {
-        const res = await fetch(`/api/memory/${userId}/${itemId}`, {
+        const res = await fetch(`/api/memory/${userId}/profile/${itemId}`, {
           method: 'DELETE',
         });
         if (!res.ok) throw new Error();
       } catch {
-        if (target && prevStatus) {
-          setLegacyMemories((ms) =>
-            ms.map((m) =>
-              m.id === itemId ? { ...m, status: prevStatus } : m,
-            ),
-          );
-        }
         restoreProfileItem(profileResult.previousBucket, profileResult.previousItem);
         setError('删除失败，请重试');
       }
@@ -312,11 +237,6 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
       preference_hypotheses: profile.preference_hypotheses ?? [],
     }),
     [profile],
-  );
-
-  const pendingMemories = useMemo(
-    () => legacyMemories.filter((m) => m.status === 'pending'),
-    [legacyMemories],
   );
 
   const pendingProfileCount = useMemo(
@@ -336,8 +256,8 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
   );
 
   const pendingCount = useMemo(
-    () => pendingProfileCount + pendingMemories.length,
-    [pendingMemories.length, pendingProfileCount],
+    () => pendingProfileCount,
+    [pendingProfileCount],
   );
 
   const actions = useMemo(
@@ -371,11 +291,9 @@ export function useMemory(userId: string, sessionId: string | null, refreshKey =
   return {
     profile,
     profileBuckets,
-    sessionWorkingMemory,
+    workingMemory,
     episodes,
-    slices,
-    legacyMemories,
-    pendingMemories,
+    episodeSlices,
     loading,
     error,
     actions,

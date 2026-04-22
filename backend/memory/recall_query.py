@@ -9,6 +9,7 @@ class RecallRetrievalPlan:
     source: str
     buckets: list[str]
     domains: list[str]
+    entities: dict[str, str]
     keywords: list[str]
     aliases: list[str]
     strictness: str
@@ -19,9 +20,10 @@ class RecallRetrievalPlan:
 
 def fallback_retrieval_plan() -> RecallRetrievalPlan:
     return RecallRetrievalPlan(
-        source="profile",
+        source="hybrid_history",
         buckets=["constraints", "rejections", "stable_preferences"],
         domains=[],
+        entities={},
         keywords=[],
         aliases=[],
         strictness="soft",
@@ -39,6 +41,17 @@ def _parse_string_list(value: Any) -> list[str]:
         return []
 
     return value
+
+
+def _parse_string_dict(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    parsed: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            return {}
+        parsed[key] = item
+    return parsed
 
 
 def _parse_top_k(value: Any) -> int:
@@ -78,16 +91,17 @@ def parse_recall_query_tool_arguments(payload: dict[str, Any] | None) -> RecallR
         return fallback_retrieval_plan()
 
     source = payload.get("source")
-    if source != "profile":
+    if source not in {"profile", "episode_slice", "hybrid_history"}:
         fallback_plan = fallback_retrieval_plan()
         fallback_plan.reason = "invalid_query_plan"
         fallback_plan.fallback_used = "invalid_query_plan"
         return fallback_plan
 
     return RecallRetrievalPlan(
-        source="profile",
+        source=source,
         buckets=_parse_string_list(payload.get("buckets")),
         domains=_parse_string_list(payload.get("domains")),
+        entities=_parse_string_dict(payload.get("entities")),
         keywords=_parse_string_list(payload.get("keywords")),
         aliases=_parse_string_list(payload.get("aliases")),
         strictness=_parse_strictness(payload.get("strictness")),

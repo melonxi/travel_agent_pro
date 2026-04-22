@@ -71,11 +71,11 @@ from memory.extraction import (
     parse_v3_profile_extraction_tool_arguments,
     parse_v3_working_memory_extraction_tool_arguments,
 )
+from memory.archival import build_archived_trip_episode
 from memory.episode_slices import build_episode_slices
 from memory.formatter import MemoryRecallTelemetry
 from memory.manager import MemoryManager
-from memory.models import MemoryCandidate, MemoryEvent, MemoryItem, TripEpisode
-from memory.policy import MemoryMerger as PolicyMemoryMerger, MemoryPolicy
+from memory.policy import MemoryPolicy
 from memory.profile_normalization import (
     merge_profile_item_with_existing,
     normalize_profile_item,
@@ -90,7 +90,7 @@ from memory.recall_gate import (
     build_recall_gate_tool,
     parse_recall_gate_tool_arguments,
 )
-from memory.v3_models import generate_profile_item_id
+from memory.v3_models import MemoryAuditEvent, generate_profile_item_id
 from phase.router import PhaseRouter
 from storage.archive_store import ArchiveStore
 from storage.database import Database
@@ -222,11 +222,14 @@ def _build_recall_query_tool() -> dict[str, Any]:
     return {
         "type": "function",
         "name": "build_recall_retrieval_plan",
-        "description": "为本轮记忆召回生成 profile retrieval plan",
+        "description": "为本轮记忆召回生成 v3 historical retrieval plan",
         "parameters": {
             "type": "object",
             "properties": {
-                "source": {"type": "string", "enum": ["profile"]},
+                "source": {
+                    "type": "string",
+                    "enum": ["profile", "episode_slice", "hybrid_history"],
+                },
                 "buckets": {
                     "type": "array",
                     "items": {
@@ -240,6 +243,10 @@ def _build_recall_query_tool() -> dict[str, Any]:
                     },
                 },
                 "domains": {"type": "array", "items": {"type": "string"}},
+                "entities": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                },
                 "keywords": {"type": "array", "items": {"type": "string"}},
                 "aliases": {"type": "array", "items": {"type": "string"}},
                 "strictness": {"type": "string", "enum": ["soft", "strict"]},
@@ -250,6 +257,7 @@ def _build_recall_query_tool() -> dict[str, Any]:
                 "source",
                 "buckets",
                 "domains",
+                "entities",
                 "keywords",
                 "aliases",
                 "strictness",
@@ -266,7 +274,7 @@ def _build_recall_query_prompt(*, user_message: str, gate_intent_type: str) -> s
         [
             "你是旅行记忆召回规划器。",
             "只基于 user_message 和 gate_intent_type 生成 retrieval plan。",
-            "source 必须是 profile。优先给出保守、可解释的 buckets/domains/keywords/aliases。",
+            "source 必须是 profile、episode_slice 或 hybrid_history。优先给出保守、可解释的 buckets/domains/entities/keywords/aliases。",
             "如果不确定，使用 constraints、rejections、stable_preferences 的保守组合。",
             f"user_message={json.dumps(user_message, ensure_ascii=False)}",
             f"gate_intent_type={json.dumps(gate_intent_type, ensure_ascii=False)}",
@@ -343,17 +351,6 @@ class BacktrackRequest(BaseModel):
     reason: str = ""
 
 
-class MemoryItemRequest(BaseModel):
-    item_id: str
-
-
-class MemoryEventRequest(BaseModel):
-    event_type: str
-    object_type: str
-    object_payload: dict[str, Any]
-    reason_text: str | None = None
-
-
 def _should_replace_dates_with_message_dates(
     current_dates,
     message_dates,
@@ -415,40 +412,6 @@ async def _apply_message_fallbacks(
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _memory_summary(candidate: MemoryCandidate) -> str:
-    value = candidate.value
-    if isinstance(value, (dict, list)):
-        value_text = json.dumps(value, ensure_ascii=False)
-    else:
-        value_text = "" if value is None else str(value)
-    return f"[{candidate.domain}] {candidate.key}: {value_text}"
-
-
-def _memory_pending_event(
-    candidates: list[MemoryCandidate],
-    item_ids: list[str],
-) -> str:
-    items: list[dict[str, Any]] = []
-    for index, candidate in enumerate(candidates):
-        item_id = item_ids[index] if index < len(item_ids) else None
-        items.append(
-            {
-                "id": item_id,
-                "status": "pending",
-                "summary": _memory_summary(candidate),
-                "candidate": candidate.to_dict(),
-            }
-        )
-    return json.dumps(
-        {
-            "type": "memory_pending",
-            "item_ids": item_ids,
-            "items": items,
-        },
-        ensure_ascii=False,
-    )
 
 
 def _days_count_from_dates(dates: Any | None) -> int | None:
@@ -674,33 +637,6 @@ def _record_llm_usage_stats(
     )
 
 
-def _memory_pending_event_from_items(items: list[MemoryItem]) -> str:
-    candidates: list[MemoryCandidate] = []
-    item_ids: list[str] = []
-    for item in items:
-        item_ids.append(item.id)
-        candidates.append(
-            MemoryCandidate(
-                type=item.type,
-                domain=item.domain,
-                key=item.key,
-                value=item.value,
-                scope=item.scope,
-                polarity=item.polarity,
-                confidence=item.confidence,
-                risk=item.status,
-                evidence=item.source.quote or "",
-                reason=str(item.attributes.get("reason", "")),
-                attributes=dict(item.attributes),
-            )
-        )
-    payload = json.loads(_memory_pending_event(candidates, item_ids))
-    for item_payload, item in zip(payload["items"], items, strict=False):
-        item_payload["status"] = item.status
-        item_payload["item"] = item.to_dict()
-    return json.dumps(payload, ensure_ascii=False)
-
-
 def create_app(config_path: str = "config.yaml") -> FastAPI:
     config = load_config(config_path)
     state_mgr = StateManager(data_dir=config.data_dir)
@@ -716,7 +652,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     memory_scheduler_runtimes: dict[str, MemorySchedulerRuntime] = {}
     memory_task_subscribers: dict[str, set[asyncio.Queue[str]]] = {}
     memory_active_tasks: dict[str, dict[str, InternalTask]] = {}
-    memory_pending_seen: dict[tuple[str, str], set[str]] = {}
     reflection_cache: dict[str, ReflectionInjector] = {}
     quality_gate_retries: dict[tuple[str, int, int], int] = {}
     db = Database(db_path=str(Path(config.data_dir) / "sessions.db"))
@@ -742,10 +677,17 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     async def _ensure_storage_ready() -> None:
         await db.initialize()
 
+    async def _run_v3_memory_cutover_cleanup_once() -> None:
+        if getattr(app.state, "_v3_memory_cutover_cleanup_done", False):
+            return
+        await memory_mgr.v3_store.delete_all_legacy_memory_files()
+        app.state._v3_memory_cutover_cleanup_done = True
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await db.initialize()
         await _probe_context_window()
+        await _run_v3_memory_cutover_cleanup_once()
         yield
         for runtime in memory_scheduler_runtimes.values():
             task = runtime.scheduler.running_task
@@ -754,6 +696,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         await db.close()
 
     app = FastAPI(title="Travel Agent Pro", lifespan=lifespan)
+    app.state._run_v3_memory_cutover_cleanup_once = _run_v3_memory_cutover_cleanup_once
     setup_telemetry(app, config.telemetry)
     app.add_middleware(
         CORSMiddleware,
@@ -1355,11 +1298,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "phase3_step": plan.phase3_step,
         }
 
-    async def _append_memory_event_nonfatal(event: MemoryEvent) -> None:
+    async def _append_memory_event_nonfatal(event: MemoryAuditEvent) -> None:
         if not config.memory.enabled:
             return
         try:
-            await memory_mgr.store.append_event(event)
+            await memory_mgr.v3_store.append_event(event)
         except Exception:
             return
 
@@ -1374,7 +1317,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     ) -> None:
         if not config.memory.enabled:
             return
-        event = MemoryEvent(
+        event = MemoryAuditEvent(
             id=f"{session_id}:{event_type}:{_now_iso()}",
             user_id=user_id,
             session_id=session_id,
@@ -2680,87 +2623,27 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 len(memory_task_subscribers.get(session_id, set())),
             )
 
-    async def _build_trip_episode(
-        *,
-        user_id: str,
-        session_id: str,
-        plan: TravelPlanState,
-    ) -> TripEpisode:
-        items: list[MemoryItem] = []
-        if config.memory.enabled:
-            items = await memory_mgr.store.list_items(user_id)
-        session_items = []
-        for item in items:
-            same_session = item.session_id == session_id
-            same_trip = bool(plan.trip_id) and item.trip_id == plan.trip_id
-            if same_session or same_trip:
-                session_items.append(item)
-        accepted_items = [
-            item.to_dict() for item in session_items if item.status == "active"
-        ]
-        rejected_items = [
-            item.to_dict()
-            for item in session_items
-            if item.status in {"rejected", "obsolete"}
-        ]
-        selected_skeleton = None
-        if plan.selected_skeleton_id:
-            for skeleton in plan.skeleton_plans:
-                if not isinstance(skeleton, dict):
-                    continue
-                if skeleton.get("id") == plan.selected_skeleton_id:
-                    selected_skeleton = skeleton
-                    break
-            if selected_skeleton is None:
-                selected_skeleton = {"id": plan.selected_skeleton_id}
-
-        lessons = [
-            item.attributes.get("reason", "")
-            for item in session_items
-            if item.attributes.get("reason")
-        ]
-        return TripEpisode(
-            id=f"{session_id}:episode",
-            user_id=user_id,
-            session_id=session_id,
-            trip_id=plan.trip_id,
-            destination=plan.destination,
-            dates=(f"{plan.dates.start} - {plan.dates.end}" if plan.dates else None),
-            travelers=plan.travelers.to_dict() if plan.travelers else None,
-            budget=plan.budget.to_dict() if plan.budget else None,
-            selected_skeleton=selected_skeleton,
-            final_plan_summary=_generate_title(plan),
-            accepted_items=accepted_items,
-            rejected_items=rejected_items,
-            lessons=lessons,
-            satisfaction=None,
-            created_at=_now_iso(),
-        )
-
-    async def _append_trip_episode_once(
+    async def _append_archived_trip_episode_once(
         *,
         user_id: str,
         session_id: str,
         plan: TravelPlanState,
     ) -> bool:
-        episodes = await memory_mgr.store.list_episodes(user_id)
-        existing_episode = next(
-            (episode for episode in episodes if episode.session_id == session_id),
-            None,
-        )
-        if existing_episode is not None:
-            await _append_episode_slices(existing_episode)
-            return False
-        episode = await _build_trip_episode(
+        episode = build_archived_trip_episode(
             user_id=user_id,
             session_id=session_id,
             plan=plan,
+            now=_now_iso(),
         )
-        await memory_mgr.store.append_episode(episode)
+        episodes = await memory_mgr.v3_store.list_episodes(user_id)
+        if any(existing.id == episode.id for existing in episodes):
+            await _append_episode_slices(episode)
+            return False
+        await memory_mgr.v3_store.append_episode(episode)
         await _append_episode_slices(episode)
         return True
 
-    async def _append_episode_slices(episode: TripEpisode) -> None:
+    async def _append_episode_slices(episode) -> None:
         now = _now_iso()
         for slice_ in build_episode_slices(episode, now=now):
             await memory_mgr.v3_store.append_episode_slice(slice_)
@@ -2808,13 +2691,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     ) -> bool:
         if not _is_new_trip_backtrack(to_phase, reason_text):
             return False
-        old_trip_id = plan.trip_id
         plan.trip_id = f"trip_{uuid.uuid4().hex[:12]}"
-        if not config.memory.enabled or not old_trip_id:
-            return True
-        for item in await memory_mgr.store.list_items(user_id):
-            if item.scope == "trip" and item.trip_id == old_trip_id:
-                await memory_mgr.store.update_status(user_id, item.id, "obsolete")
+        del user_id
         return True
 
     def _generate_title(plan: TravelPlanState) -> str:
@@ -3056,16 +2934,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             "created_at": result["created_at"],
         }
 
-    @app.get("/api/memory/{user_id}")
-    async def get_memory(user_id: str):
-        await _ensure_storage_ready()
-        items = await memory_mgr.store.list_items(user_id)
-        payload = {"items": [item.to_dict() for item in items]}
-        user_dir = memory_mgr.data_dir / "users" / user_id
-        if (user_dir / "memory.json").exists() or (user_dir / "trip_episodes.jsonl").exists():
-            payload["deprecated"] = True
-        return payload
-
     @app.get("/api/memory/{user_id}/profile")
     async def get_memory_profile(user_id: str):
         await _ensure_storage_ready()
@@ -3135,70 +3003,31 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         await memory_mgr.v3_store.save_profile(profile)
         return True
 
-    async def _set_memory_item_status(
-        user_id: str,
-        item_id: str,
-        status: str,
-    ) -> None:
-        items = await memory_mgr.store.list_items(user_id)
-        current = next((item for item in items if item.id == item_id), None)
-        if current is not None:
-            if current.status == status:
-                return
-            changed = await memory_mgr.store.update_status(user_id, item_id, status)
-            if changed:
-                return
-            items = await memory_mgr.store.list_items(user_id)
-            current = next((item for item in items if item.id == item_id), None)
-            if current is not None and current.status == status:
-                return
-
-        if await _set_v3_profile_item_status(user_id, item_id, status):
-            return
-
-        raise HTTPException(status_code=404, detail="Memory item not found")
-
-    @app.post("/api/memory/{user_id}/confirm")
-    async def confirm_memory_item(user_id: str, req: MemoryItemRequest):
+    @app.post("/api/memory/{user_id}/profile/{item_id}/confirm")
+    async def confirm_profile_item(user_id: str, item_id: str):
         await _ensure_storage_ready()
-        await _set_memory_item_status(user_id, req.item_id, "active")
-        return {"item_id": req.item_id, "status": "active"}
+        if not await _set_v3_profile_item_status(user_id, item_id, "active"):
+            raise HTTPException(status_code=404, detail="Profile item not found")
+        return {"item_id": item_id, "status": "active"}
 
-    @app.post("/api/memory/{user_id}/reject")
-    async def reject_memory_item(user_id: str, req: MemoryItemRequest):
+    @app.post("/api/memory/{user_id}/profile/{item_id}/reject")
+    async def reject_profile_item(user_id: str, item_id: str):
         await _ensure_storage_ready()
-        await _set_memory_item_status(user_id, req.item_id, "rejected")
-        return {"item_id": req.item_id, "status": "rejected"}
-
-    @app.post("/api/memory/{user_id}/events")
-    async def append_memory_event(user_id: str, req: MemoryEventRequest):
-        await _ensure_storage_ready()
-        event = MemoryEvent(
-            id=f"{user_id}:{req.event_type}:{_now_iso()}",
-            user_id=user_id,
-            session_id="",
-            event_type=req.event_type,
-            object_type=req.object_type,
-            object_payload=req.object_payload,
-            reason_text=req.reason_text,
-            created_at=_now_iso(),
-        )
-        await memory_mgr.store.append_event(event)
-        return {"ok": True}
+        if not await _set_v3_profile_item_status(user_id, item_id, "rejected"):
+            raise HTTPException(status_code=404, detail="Profile item not found")
+        return {"item_id": item_id, "status": "rejected"}
 
     @app.get("/api/memory/{user_id}/episodes")
     async def list_memory_episodes(user_id: str):
         await _ensure_storage_ready()
-        episodes = await memory_mgr.store.list_episodes(user_id)
-        return {
-            "episodes": [episode.to_dict() for episode in episodes],
-            "deprecated": True,
-        }
+        episodes = await memory_mgr.v3_store.list_episodes(user_id)
+        return {"episodes": [episode.to_dict() for episode in episodes]}
 
-    @app.delete("/api/memory/{user_id}/{item_id}")
-    async def delete_memory_item(user_id: str, item_id: str):
+    @app.delete("/api/memory/{user_id}/profile/{item_id}")
+    async def delete_profile_item(user_id: str, item_id: str):
         await _ensure_storage_ready()
-        await _set_memory_item_status(user_id, item_id, "obsolete")
+        if not await _set_v3_profile_item_status(user_id, item_id, "obsolete"):
+            raise HTTPException(status_code=404, detail="Profile item not found")
         return {"item_id": item_id, "status": "obsolete"}
 
     @app.post("/api/backtrack/{session_id}")
@@ -3701,7 +3530,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 await session_store.update(plan.session_id, status="archived")
                 if config.memory.enabled:
                     try:
-                        await _append_trip_episode_once(
+                        await _append_archived_trip_episode_once(
                             user_id=session["user_id"],
                             session_id=plan.session_id,
                             plan=plan,
@@ -3804,23 +3633,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     {"type": "internal_task", "task": task.to_dict()},
                     ensure_ascii=False,
                 )
-
-            if config.memory.enabled:
-                seen_key = (session["user_id"], plan.session_id)
-                seen_item_ids = memory_pending_seen.setdefault(seen_key, set())
-                pending_items = [
-                    item
-                    for item in await memory_mgr.store.list_items(session["user_id"])
-                    if item.status in {"pending", "pending_conflict"}
-                    and f"{item.id}:{item.status}:{item.updated_at}"
-                    not in seen_item_ids
-                ]
-                if pending_items:
-                    seen_item_ids.update(
-                        f"{item.id}:{item.status}:{item.updated_at}"
-                        for item in pending_items
-                    )
-                    yield _memory_pending_event_from_items(pending_items)
 
             messages.append(Message(role=Role.USER, content=req.message))
             _submit_memory_snapshot(

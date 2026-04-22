@@ -50,7 +50,7 @@ EpisodeSlice       = 过去完整旅行生成的可召回经验切片
 
 1. 先跑 memory_extraction_gate，判断这轮是否值得提取
 2. 值得则跑 memory_extraction，产出 profile 更新 + working memory
-3. 经 policy 分类后写入 `profile.json` / `sessions/{session_id}/working_memory.json`
+3. 经 policy 分类后写入 `profile.json` / `sessions/{session_id}/trips/{trip_id}/working_memory.json`
 
 extraction 已经是“**gate + 结构化抽取**”的两段式，而 recall 目前仍然是“**固定注入 + 被动规则触发**”，两者并不对称。本次优化的主目标就是把 recall 也做成和 extraction 同样结构清晰的两段式流程。
 
