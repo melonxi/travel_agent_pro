@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from typing import Any
 
@@ -45,6 +46,101 @@ def _coerce_hint_values(value: Any) -> list[Any]:
     if isinstance(value, tuple):
         return list(value)
     return [value]
+
+
+def _context_observation_count(context: Any) -> int:
+    if not isinstance(context, dict):
+        return 0
+    try:
+        return max(int(context.get("observation_count", 0) or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _merge_source_refs(
+    left: list[dict[str, Any]], right: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for ref in [*left, *right]:
+        if not isinstance(ref, dict):
+            continue
+        marker = json.dumps(ref, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        merged.append(ref)
+    return merged
+
+
+def _same_profile_identity(
+    bucket: str, left: MemoryProfileItem, right: MemoryProfileItem
+) -> bool:
+    if bucket in {"constraints", "stable_preferences"}:
+        return left.domain == right.domain and left.key == right.key
+    if bucket == "rejections":
+        return (
+            left.domain == right.domain
+            and left.key == right.key
+            and left.value == right.value
+        )
+    return (
+        left.domain == right.domain
+        and left.key == right.key
+        and left.value == right.value
+    )
+
+
+def merge_profile_item_with_existing(
+    bucket: str,
+    incoming: MemoryProfileItem,
+    existing_items: list[MemoryProfileItem],
+) -> tuple[str, MemoryProfileItem]:
+    matching = next(
+        (
+            item
+            for item in existing_items
+            if _same_profile_identity(bucket, item, incoming)
+        ),
+        None,
+    )
+
+    incoming_context = dict(incoming.context) if isinstance(incoming.context, dict) else {}
+    incoming_context.pop("observation_count", None)
+    incoming_source_refs = list(incoming.source_refs) if isinstance(incoming.source_refs, list) else []
+
+    if matching is None:
+        incoming_context["observation_count"] = 1
+        return bucket, replace(
+            incoming,
+            context=incoming_context,
+            source_refs=_merge_source_refs([], incoming_source_refs),
+        )
+
+    matching_context = dict(matching.context) if isinstance(matching.context, dict) else {}
+    observation_count = max(_context_observation_count(matching_context), 1) + 1
+    merged_context = dict(matching_context)
+    merged_context.update(incoming_context)
+    merged_context["observation_count"] = observation_count
+
+    merged_bucket = bucket
+    merged_stability = incoming.stability
+    if bucket == "preference_hypotheses" and observation_count >= 2:
+        merged_bucket = "stable_preferences"
+        merged_stability = "pattern_observed"
+
+    merged_source_refs = _merge_source_refs(
+        list(matching.source_refs) if isinstance(matching.source_refs, list) else [],
+        incoming_source_refs,
+    )
+
+    return merged_bucket, replace(
+        incoming,
+        stability=merged_stability,
+        confidence=max(matching.confidence, incoming.confidence),
+        context=merged_context,
+        source_refs=merged_source_refs,
+    )
 
 
 def normalize_profile_item(bucket: str, item: MemoryProfileItem) -> MemoryProfileItem:
