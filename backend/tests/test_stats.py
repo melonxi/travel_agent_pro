@@ -98,6 +98,10 @@ def test_to_dict_keeps_memory_hit_count_for_real_hits_only():
             gate_intent_type="",
             final_recall_decision="query_recall_enabled",
             fallback_used="none",
+            candidate_count=4,
+            reranker_selected_ids=["m1"],
+            reranker_final_reason="selected by reranker",
+            reranker_fallback="none",
         )
     )
 
@@ -112,3 +116,7 @@ def test_to_dict_keeps_memory_hit_count_for_real_hits_only():
         d["last_memory_recall"]["final_recall_decision"]
         == "query_recall_enabled"
     )
+    assert d["last_memory_recall"]["candidate_count"] == 4
+    assert d["last_memory_recall"]["reranker_selected_ids"] == ["m1"]
+    assert d["last_memory_recall"]["reranker_final_reason"] == "selected by reranker"
+    assert d["last_memory_recall"]["reranker_fallback"] == "none"

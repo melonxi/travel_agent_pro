@@ -9,6 +9,7 @@ from memory.retrieval_candidates import RecallCandidate
 from memory.models import MemoryItem, Rejection, UserMemory
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_query_adapter import plan_to_legacy_recall_query
+from memory.recall_reranker import RecallRerankResult, choose_reranker_path
 from memory.store import FileMemoryStore
 from memory.symbolic_recall import (
     build_recall_query,
@@ -25,6 +26,43 @@ _FIXED_PROFILE_LIMIT = 10
 _WORKING_MEMORY_LIMIT = 10
 _QUERY_PROFILE_LIMIT = 5
 _QUERY_SLICE_LIMIT = 5
+
+
+async def select_recall_candidates(
+    *,
+    user_message: str,
+    plan: TravelPlanState,
+    retrieval_plan: RecallRetrievalPlan | None,
+    candidates: list[RecallCandidate],
+) -> tuple[list[RecallCandidate], RecallRerankResult]:
+    del user_message, plan, retrieval_plan
+
+    if not candidates:
+        return [], RecallRerankResult(
+            selected_item_ids=[],
+            final_reason="",
+            per_item_reason={},
+            fallback_used="none",
+        )
+
+    path = choose_reranker_path(candidates)
+    selected_candidates = list(path.selected_candidates)
+    selected_item_ids = [candidate.item_id for candidate in selected_candidates]
+    per_item_reason = {
+        candidate.item_id: "selected from symbolic recall candidates"
+        for candidate in selected_candidates
+    }
+    final_reason = (
+        "candidate set is small enough to skip reranker"
+        if path.fallback_used == "skipped_small_candidate_set"
+        else "fallback_top_n_from_symbolic_recall"
+    )
+    return selected_candidates, RecallRerankResult(
+        selected_item_ids=selected_item_ids,
+        final_reason=final_reason,
+        per_item_reason=per_item_reason,
+        fallback_used=path.fallback_used,
+    )
 
 
 class MemoryManager:
@@ -178,14 +216,33 @@ class MemoryManager:
                     ]
                 )
 
+        selected_candidates = list(recall_candidates)
+        rerank_result = RecallRerankResult(
+            selected_item_ids=[],
+            final_reason="",
+            per_item_reason={},
+            fallback_used="none",
+        )
+        if recall_candidates:
+            selected_candidates, rerank_result = await select_recall_candidates(
+                user_message=user_message,
+                plan=plan,
+                retrieval_plan=retrieval_plan,
+                candidates=recall_candidates,
+            )
+
         telemetry = self._build_v3_telemetry(
             fixed_profile_items,
             working_items,
-            recall_candidates,
+            selected_candidates,
         )
         telemetry.stage0_decision = short_circuit
         telemetry.gate_needs_recall = recall_gate
         telemetry.final_recall_decision = final_recall_decision
+        telemetry.candidate_count = len(recall_candidates)
+        telemetry.reranker_selected_ids = list(rerank_result.selected_item_ids)
+        telemetry.reranker_final_reason = rerank_result.final_reason
+        telemetry.reranker_fallback = rerank_result.fallback_used
         if retrieval_plan is not None:
             telemetry.query_plan = {
                 "buckets": list(retrieval_plan.buckets),
@@ -197,7 +254,7 @@ class MemoryManager:
         context = format_v3_memory_context(
             profile_items=fixed_profile_items,
             working_items=working_items,
-            recall_candidates=recall_candidates,
+            recall_candidates=selected_candidates,
         )
         return context, telemetry
 

@@ -31,6 +31,19 @@ export interface MemoryHit {
   }
 }
 
+export interface MemoryRecallTelemetry {
+  stage0_decision?: string
+  stage0_reason?: string
+  gate_needs_recall?: boolean | null
+  gate_intent_type?: string
+  final_recall_decision?: string
+  fallback_used?: string
+  candidate_count?: number
+  reranker_selected_ids?: string[]
+  reranker_final_reason?: string
+  reranker_fallback?: string
+}
+
 export type Significance = 'high' | 'medium' | 'low' | 'none'
 
 export interface TraceIteration {
@@ -48,6 +61,7 @@ export interface TraceIteration {
   state_changes: StateChange[]
   compression_event: string | null
   memory_hits: MemoryHit | null
+  memory_recall?: MemoryRecallTelemetry | null
   significance: Significance
 }
 

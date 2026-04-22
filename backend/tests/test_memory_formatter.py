@@ -188,6 +188,10 @@ def test_memory_recall_telemetry_to_dict_preserves_fields():
         "fallback_used": "none",
         "query_plan": {},
         "query_plan_fallback": "none",
+        "candidate_count": 0,
+        "reranker_selected_ids": [],
+        "reranker_final_reason": "",
+        "reranker_fallback": "none",
     }
 
 
@@ -216,3 +220,21 @@ def test_memory_recall_telemetry_to_dict_includes_gate_fields():
     assert telemetry.to_dict()["stage0_decision"] == "force_recall"
     assert telemetry.to_dict()["gate_needs_recall"] is True
     assert telemetry.to_dict()["final_recall_decision"] == "query_recall_enabled"
+
+
+def test_memory_recall_telemetry_to_dict_includes_reranker_fields():
+    from memory.formatter import MemoryRecallTelemetry
+
+    telemetry = MemoryRecallTelemetry(
+        candidate_count=4,
+        reranker_selected_ids=["profile_1", "slice_2"],
+        reranker_final_reason="two items directly answer the user's question",
+        reranker_fallback="none",
+    )
+
+    payload = telemetry.to_dict()
+
+    assert payload["candidate_count"] == 4
+    assert payload["reranker_selected_ids"] == ["profile_1", "slice_2"]
+    assert payload["reranker_final_reason"] == "two items directly answer the user's question"
+    assert payload["reranker_fallback"] == "none"

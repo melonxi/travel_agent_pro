@@ -612,6 +612,10 @@ async def test_chat_stream_emits_memory_recall_telemetry_without_hits(monkeypatc
                 gate_confidence=0.98,
                 gate_reason="current trip fact question",
                 final_recall_decision="fixed_only",
+                candidate_count=4,
+                reranker_selected_ids=["profile_1", "slice_2"],
+                reranker_final_reason="two items directly answer the user's question",
+                reranker_fallback="none",
             ),
         )
 
@@ -638,6 +642,10 @@ async def test_chat_stream_emits_memory_recall_telemetry_without_hits(monkeypatc
     assert '"gate": false' in resp.text
     assert '"type": "memory_recall"' in resp.text
     assert '"gate_needs_recall": false' in resp.text
+    assert '"candidate_count": 4' in resp.text
+    assert '"reranker_selected_ids": ["profile_1", "slice_2"]' in resp.text
+    assert '"reranker_final_reason": "two items directly answer the user' in resp.text
+    assert '"reranker_fallback": "none"' in resp.text
 
 
 @pytest.mark.asyncio

@@ -180,6 +180,10 @@ interface BaseSSEEvent {
   slice_ids?: string[]
   matched_reasons?: string[]
   sources?: Record<string, number>
+  candidate_count?: number
+  reranker_selected_ids?: string[]
+  reranker_final_reason?: string
+  reranker_fallback?: string
   error?: string
   error_code?: string
   message?: string

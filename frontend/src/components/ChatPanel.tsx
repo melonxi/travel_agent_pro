@@ -714,6 +714,12 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
     } else if (event.type === 'memory_recall') {
       const itemIds = mergeRecalledIds(event)
       const recallCount = countRecalledItems(event)
+      const candidateCount = event.candidate_count ?? recallCount
+      const rerankerCount = event.reranker_selected_ids?.length ?? recallCount
+      const rerankerSuffix = candidateCount > 0
+        ? `候选 ${candidateCount} 条，最终保留 ${rerankerCount} 条`
+        : '未找到本轮可用记忆'
+      const rerankerReason = event.reranker_final_reason
       onMemoryRecall?.(itemIds)
       roundStateRef.current.memoryCount = recallCount
       const status = recallCount > 0 ? 'success' : 'skipped'
@@ -723,14 +729,18 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
         label: '记忆召回',
         status,
         message: recallCount > 0
-          ? `本轮使用 ${recallCount} 条旅行记忆`
-          : '未找到本轮可用记忆',
+          ? `本轮使用 ${recallCount} 条旅行记忆；${rerankerSuffix}${rerankerReason ? `；${rerankerReason}` : ''}`
+          : rerankerSuffix,
         blocking: true,
         scope: 'turn',
         result: {
           item_ids: itemIds,
           count: recallCount,
           sources: event.sources ?? {},
+          candidate_count: candidateCount,
+          reranker_selected_ids: event.reranker_selected_ids ?? [],
+          reranker_final_reason: rerankerReason ?? '',
+          reranker_fallback: event.reranker_fallback ?? 'none',
         },
         started_at: roundStateRef.current.startedAt,
         ended_at: Date.now(),
