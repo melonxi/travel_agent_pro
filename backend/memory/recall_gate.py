@@ -30,6 +30,8 @@ NON_RECALL_INTENT_TYPES = {
 class RecallShortCircuitDecision:
     decision: str
     reason: str
+    matched_rule: str = ""
+    signals: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass
