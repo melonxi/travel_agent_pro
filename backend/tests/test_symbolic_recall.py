@@ -5,6 +5,7 @@ from memory.symbolic_recall import (
     rank_profile_items,
     should_trigger_memory_recall,
 )
+from memory.retrieval_candidates import RecallCandidate
 from memory.v3_models import EpisodeSlice, MemoryProfileItem, UserMemoryProfile
 
 
@@ -108,7 +109,7 @@ def test_direct_train_preference_query_triggers_profile_recall():
     assert "train" in query.domains
 
 
-def test_rank_profile_items_prefers_constraints_over_hypotheses():
+def test_rank_profile_items_returns_recall_candidates():
     query = build_recall_query("我是不是说过不坐红眼航班？")
     query.allowed_buckets = ["constraints", "preference_hypotheses"]
     profile = UserMemoryProfile(
@@ -140,11 +141,12 @@ def test_rank_profile_items_prefers_constraints_over_hypotheses():
 
     ranked = rank_profile_items(query, profile)
 
-    assert [bucket for bucket, _, _ in ranked] == [
-        "constraints",
-        "preference_hypotheses",
-    ]
-    assert ranked[0][2].startswith("exact domain match")
+    assert [candidate.bucket for candidate in ranked] == ["constraints", "preference_hypotheses"]
+    assert isinstance(ranked[0], RecallCandidate)
+    assert ranked[0].source == "profile"
+    assert ranked[0].item_id == "constraints:flight:avoid_red_eye"
+    assert ranked[0].score > 0
+    assert ranked[0].matched_reason[0].startswith("exact domain match")
 
 
 def test_rank_profile_items_prefers_rejections_over_stable_preferences():
@@ -180,11 +182,8 @@ def test_rank_profile_items_prefers_rejections_over_stable_preferences():
 
     ranked = rank_profile_items(query, profile)
 
-    assert [bucket for bucket, _, _ in ranked] == [
-        "rejections",
-        "stable_preferences",
-    ]
-    assert ranked[0][2].startswith("exact domain match")
+    assert [candidate.bucket for candidate in ranked] == ["rejections", "stable_preferences"]
+    assert ranked[0].matched_reason[0].startswith("exact domain match")
 
 
 def test_rank_profile_items_respects_allowed_buckets():
@@ -231,7 +230,7 @@ def test_rank_profile_items_respects_allowed_buckets():
 
     ranked = rank_profile_items(query, profile)
 
-    assert [bucket for bucket, _, _ in ranked] == ["rejections"]
+    assert [candidate.bucket for candidate in ranked] == ["rejections"]
 
 
 def test_rank_profile_items_uses_conservative_default_when_allowed_buckets_is_empty():
@@ -277,10 +276,10 @@ def test_rank_profile_items_uses_conservative_default_when_allowed_buckets_is_em
 
     ranked = rank_profile_items(query, profile)
 
-    assert [bucket for bucket, _, _ in ranked] == ["constraints"]
+    assert [candidate.bucket for candidate in ranked] == ["constraints"]
 
 
-def test_rank_episode_slices_prefers_exact_destination_domain_matches():
+def test_rank_episode_slices_returns_recall_candidates():
     query = build_recall_query("我上次去京都住哪里？")
     slices = [
         _slice(
@@ -300,8 +299,11 @@ def test_rank_episode_slices_prefers_exact_destination_domain_matches():
 
     ranked = rank_episode_slices(query, slices)
 
-    assert [slice_.id for slice_, _ in ranked] == ["slice_exact", "slice_keyword_only"]
-    assert ranked[0][1].startswith("exact destination match")
+    assert [candidate.item_id for candidate in ranked] == ["slice_exact", "slice_keyword_only"]
+    assert isinstance(ranked[0], RecallCandidate)
+    assert ranked[0].source == "episode_slice"
+    assert ranked[0].bucket == "accommodation_decision"
+    assert ranked[0].matched_reason[0].startswith("exact destination match")
 
 
 def test_current_trip_question_produces_no_recall_hits():

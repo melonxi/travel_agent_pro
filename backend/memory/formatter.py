@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
+from memory.retrieval_candidates import RecallCandidate
 from memory.v3_models import EpisodeSlice, MemoryProfileItem, WorkingMemoryItem
 
 
@@ -59,8 +60,7 @@ class MemoryRecallTelemetry:
 def format_v3_memory_context(
     profile_items: list[tuple[str, MemoryProfileItem]],
     working_items: list[WorkingMemoryItem],
-    query_profile_items: list[tuple[str, MemoryProfileItem, str]],
-    query_slices: list[tuple[EpisodeSlice, str]],
+    recall_candidates: list[RecallCandidate],
 ) -> str:
     sections: list[str] = []
 
@@ -76,13 +76,7 @@ def format_v3_memory_context(
             lines.append(_format_v3_working_memory_item(item))
         sections.append("\n".join(lines))
 
-    history_lines: list[str] = []
-    for bucket, item, matched_reason in query_profile_items:
-        history_lines.append(
-            _format_v3_profile_item(bucket, item, matched_reason=matched_reason)
-        )
-    for slice_, matched_reason in query_slices:
-        history_lines.append(_format_v3_slice(slice_, matched_reason))
+    history_lines = [_format_recall_candidate(candidate) for candidate in recall_candidates]
     if history_lines:
         sections.append("\n".join(["## 本轮请求命中的历史记忆", *history_lines]))
 
@@ -134,6 +128,50 @@ def _format_v3_slice(slice_: EpisodeSlice, matched_reason: str | None = None) ->
         f"- {_sanitize_text(details)} "
         f"{domain_prefix}content: {_format_value(slice_.content)}"
     )
+
+
+def _format_recall_candidate(candidate: RecallCandidate) -> str:
+    details = _format_details(
+        source=candidate.source,
+        bucket=candidate.bucket,
+        matched_reason="；".join(candidate.matched_reason),
+        applicability=candidate.applicability,
+    )
+    if candidate.source == "profile":
+        return _format_profile_recall_candidate(details, candidate)
+    return _format_slice_recall_candidate(details, candidate)
+
+
+def _format_profile_recall_candidate(details: str, candidate: RecallCandidate) -> str:
+    domain, key, value = _parse_profile_candidate_summary(candidate)
+    return (
+        f"- {_sanitize_text(details)} "
+        f"[{_sanitize_text(domain)}] {_sanitize_text(key)}: {_format_value(value)}"
+    )
+
+
+def _format_slice_recall_candidate(details: str, candidate: RecallCandidate) -> str:
+    domain_text = ",".join(_sanitize_text(domain) for domain in candidate.domains if domain)
+    domain_prefix = f"[{domain_text}] " if domain_text else ""
+    return (
+        f"- {_sanitize_text(details)} "
+        f"{domain_prefix}content: {_format_value(candidate.content_summary)}"
+    )
+
+
+def _parse_profile_candidate_summary(candidate: RecallCandidate) -> tuple[str, str, str]:
+    summary = candidate.content_summary or ""
+    domain = candidate.domains[0] if candidate.domains else ""
+    key = summary
+    value = ""
+    if ":" in summary:
+        summary_domain, remainder = summary.split(":", 1)
+        if summary_domain:
+            domain = summary_domain
+        key = remainder
+    if "=" in key:
+        key, value = key.split("=", 1)
+    return domain, key, value
 
 
 def _format_details(
