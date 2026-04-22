@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from memory.recall_signals import extract_signals
+
 
 VALID_RECALL_INTENT_TYPES = (
     "current_trip_fact",
@@ -30,6 +32,8 @@ NON_RECALL_INTENT_TYPES = {
 class RecallShortCircuitDecision:
     decision: str
     reason: str
+    matched_rule: str = ""
+    signals: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass
@@ -42,19 +46,75 @@ class RecallGateDecision:
 
 
 def apply_recall_short_circuit(message: str) -> RecallShortCircuitDecision:
+    """Rule engine (Layer 2 of recall gate).
+
+    Priority contract (higher rule wins; first match returns):
+      P1: HISTORY ∪ STYLE  → force_recall (profile signal, keep legacy reason
+           "explicit_profile_history_query" for backward compatibility)
+      P2: RECOMMEND        → undecided (individualized recommendation needs LLM)
+      P3: FACT_SCOPE ∩ FACT_FIELD, with NO history/style/recommend
+                           → skip_recall ("current_trip_fact_question")
+      P4: only ACK_SYS hit, everything else empty
+                           → skip_recall ("ack_or_system_meta")
+      P5: message is empty / whitespace only
+                           → undecided ("empty_message")
+      P6: fallback         → undecided ("needs_llm_gate")
+
+    Returns signals + matched_rule alongside the legacy decision/reason for
+    tracing. Callers relying only on decision/reason are unaffected.
+    """
     text = (message or "").strip()
+    signals = extract_signals(message or "")
+    signals_tuple = tuple(signals.items())
+
     if not text:
-        return RecallShortCircuitDecision("undecided", "needs_llm_gate")
+        return RecallShortCircuitDecision(
+            decision="undecided",
+            reason="empty_message",
+            matched_rule="P5",
+            signals=signals_tuple,
+        )
 
-    if any(token in text for token in ("我是不是说过", "按我的习惯", "上次", "之前", "以前")):
-        return RecallShortCircuitDecision("force_recall", "explicit_profile_history_query")
+    if signals["history"] or signals["style"]:
+        return RecallShortCircuitDecision(
+            decision="force_recall",
+            reason="explicit_profile_history_query",
+            matched_rule="P1",
+            signals=signals_tuple,
+        )
 
-    if any(token in text for token in ("这次", "本次", "当前")) and any(
-        token in text for token in ("预算", "几号", "出发", "骨架", "日期", "酒店", "航班", "车次")
+    if signals["recommend"]:
+        return RecallShortCircuitDecision(
+            decision="undecided",
+            reason="needs_llm_gate_recommend",
+            matched_rule="P2",
+            signals=signals_tuple,
+        )
+
+    if signals["fact_scope"] and signals["fact_field"]:
+        return RecallShortCircuitDecision(
+            decision="skip_recall",
+            reason="current_trip_fact_question",
+            matched_rule="P3",
+            signals=signals_tuple,
+        )
+
+    if signals["ack_sys"] and not any(
+        signals[k] for k in ("history", "style", "recommend", "fact_scope", "fact_field")
     ):
-        return RecallShortCircuitDecision("skip_recall", "current_trip_fact_question")
+        return RecallShortCircuitDecision(
+            decision="skip_recall",
+            reason="ack_or_system_meta",
+            matched_rule="P4",
+            signals=signals_tuple,
+        )
 
-    return RecallShortCircuitDecision("undecided", "needs_llm_gate")
+    return RecallShortCircuitDecision(
+        decision="undecided",
+        reason="needs_llm_gate",
+        matched_rule="P6",
+        signals=signals_tuple,
+    )
 
 
 def build_recall_gate_tool() -> dict[str, Any]:
