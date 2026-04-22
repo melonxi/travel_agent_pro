@@ -291,6 +291,56 @@ def _build_profile_item_schema() -> dict[str, Any]:
             "value": {
                 "description": "偏好或约束的值。可为 string / boolean / number / object。",
             },
+            "applicability": {
+                "type": "string",
+                "description": "这条画像在什么场景下适用，必须是可复用的长期适用范围说明。",
+            },
+            "recall_hints": {
+                "type": "object",
+                "properties": {
+                    "domains": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "用于检索该画像的领域关键词数组。",
+                    },
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "用于检索该画像的主题关键词数组。",
+                    },
+                    "aliases": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "用户可能用来指代该画像的同义说法数组。",
+                    },
+                },
+                "required": ["domains", "keywords", "aliases"],
+                "additionalProperties": False,
+                "description": "便于后续召回的检索提示元数据。",
+            },
+            "source_refs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "description": "来源类型，例如 message 或 prior_memory。",
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "来源会话标识。",
+                        },
+                        "quote": {
+                            "type": "string",
+                            "description": "支撑这条画像的原始引用，当前轮必须来自用户当前消息，且不得包含敏感信息。",
+                        },
+                    },
+                    "required": ["kind", "session_id", "quote"],
+                    "additionalProperties": False,
+                },
+                "description": "支持该画像的来源引用数组。",
+            },
             "polarity": {
                 "type": "string",
                 "enum": _V3_POLARITIES,
@@ -320,6 +370,9 @@ def _build_profile_item_schema() -> dict[str, Any]:
             "domain",
             "key",
             "value",
+            "applicability",
+            "recall_hints",
+            "source_refs",
             "polarity",
             "stability",
             "confidence",
@@ -648,6 +701,9 @@ def build_v3_profile_extraction_prompt(
 - `rejections`：明确拒绝的对象，要带 value。
 - `stable_preferences`：多次观察到，或用户明确声明为长期成立的稳定偏好。
 - `preference_hypotheses`：单次观察得到的偏好假设。
+- 每条 profile item 都必须补齐 `applicability`、`recall_hints.domains`、`recall_hints.keywords`、`recall_hints.aliases`、`source_refs`。
+- `source_refs` 至少要包含一条来自当前轮用户消息的 `quote`，并且 `quote` 里不能包含手机号、邮箱、护照号、身份证号、银行卡号等敏感信息。
+- `recall_hints.domains/keywords/aliases` 都必须是字符串数组，用于后续召回。
 
 硬性要求：
 - 本次目的地、日期、预算、旅客人数、候选池、骨架、每日计划都属于当前 trip state，不要输出。
