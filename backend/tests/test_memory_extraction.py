@@ -333,6 +333,32 @@ class TestBuildV3ExtractionTool:
 
 
 class TestSplitMemoryExtractionTools:
+    def test_profile_item_schema_requires_recall_ready_fields(self):
+        tool = build_v3_profile_extraction_tool()
+        profile_item = tool["parameters"]["properties"]["profile_updates"]["properties"][
+            "constraints"
+        ]["items"]
+
+        assert "applicability" in profile_item["properties"]
+        assert "recall_hints" in profile_item["properties"]
+        assert "source_refs" in profile_item["properties"]
+        assert {"applicability", "recall_hints", "source_refs"}.issubset(
+            set(profile_item["required"])
+        )
+
+        recall_hints = profile_item["properties"]["recall_hints"]
+        assert recall_hints["type"] == "object"
+        assert set(recall_hints["required"]) == {"domains", "keywords", "aliases"}
+        assert recall_hints["properties"]["domains"]["type"] == "array"
+        assert recall_hints["properties"]["keywords"]["type"] == "array"
+        assert recall_hints["properties"]["aliases"]["type"] == "array"
+
+        source_refs = profile_item["properties"]["source_refs"]
+        assert source_refs["type"] == "array"
+        source_ref_item = source_refs["items"]
+        assert source_ref_item["type"] == "object"
+        assert set(source_ref_item["required"]) == {"kind", "session_id", "quote"}
+
     def test_profile_tool_outputs_only_profile_updates(self):
         tool = build_v3_profile_extraction_tool()
 
@@ -366,6 +392,23 @@ class TestSplitMemoryExtractionTools:
         assert "profile_updates" in prompt
         assert "working_memory" not in prompt
         assert "本次目的地、日期、预算" in prompt
+
+    def test_profile_prompt_requires_recall_ready_metadata(self):
+        prompt = build_v3_profile_extraction_prompt(
+            user_messages=["以后我都不坐红眼航班"],
+            profile=UserMemoryProfile.empty("u1"),
+            plan_facts={"destination": "京都"},
+        )
+
+        assert "applicability" in prompt
+        assert "recall_hints" in prompt
+        assert "domains" in prompt
+        assert "keywords" in prompt
+        assert "aliases" in prompt
+        assert "source_refs" in prompt
+        assert "当前轮" in prompt
+        assert "quote" in prompt
+        assert "敏感信息" in prompt
 
     def test_working_prompt_excludes_profile_updates_target(self):
         prompt = build_v3_working_memory_extraction_prompt(
