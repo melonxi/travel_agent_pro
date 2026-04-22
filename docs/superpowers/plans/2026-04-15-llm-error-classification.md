@@ -246,7 +246,7 @@ def test_body_dict_message_extracted():
 
 - [ ] **Step 2: 运行测试确认全部失败**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_classify_opaque_api_error.py -v 2>&1 | head -50`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_classify_opaque_api_error.py -v 2>&1 | head -50`
 Expected: 全部 FAILED（`ImportError: cannot import name 'classify_opaque_api_error'`）
 
 - [ ] **Step 3: 在 `errors.py` 末尾实现函数**
@@ -387,18 +387,18 @@ def classify_opaque_api_error(
 
 - [ ] **Step 4: 运行测试确认全部通过**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_classify_opaque_api_error.py -v`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_classify_opaque_api_error.py -v`
 Expected: 全部 PASSED
 
 - [ ] **Step 5: 运行已有测试确认无回归**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_llm_errors.py -v`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_llm_errors.py -v`
 Expected: 8 passed
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify
 git add backend/llm/errors.py backend/tests/test_classify_opaque_api_error.py
 git commit -m "feat(llm): add classify_opaque_api_error for bare APIError classification
 
@@ -480,13 +480,13 @@ def test_fixture_regression(fixture):
 
 - [ ] **Step 3: 运行 fixture 测试确认通过**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_classify_opaque_api_error.py::test_fixture_regression -v`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_classify_opaque_api_error.py::test_fixture_regression -v`
 Expected: 2 passed (xunfei_busy, xunfei_400_invalid_messages)
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify
 git add backend/tests/fixtures/opaque_api_errors/ backend/tests/test_classify_opaque_api_error.py
 git commit -m "test(llm): add real-log regression fixtures for opaque API errors
 
@@ -556,7 +556,7 @@ def test_classify_error_api_status_error_unchanged(provider):
 
 - [ ] **Step 3: 运行测试确认 `test_classify_error_unknown_exception` 失败（断言变了但代码没改）**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_openai_provider.py::test_classify_error_unknown_exception tests/test_openai_provider.py::test_classify_error_opaque_api_error_busy -v`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_openai_provider.py::test_classify_error_unknown_exception tests/test_openai_provider.py::test_classify_error_opaque_api_error_busy -v`
 Expected: `test_classify_error_unknown_exception` FAILED（当前代码仍返回 PROTOCOL_ERROR），`test_classify_error_opaque_api_error_busy` FAILED
 
 - [ ] **Step 4: 修改 `openai_provider.py` fallthrough**
@@ -599,13 +599,13 @@ from llm.errors import LLMError, LLMErrorCode, classify_by_http_status, classify
 
 - [ ] **Step 5: 运行全部 openai_provider 测试确认通过**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_openai_provider.py -v`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_openai_provider.py -v`
 Expected: 全部 PASSED
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify
 git add backend/llm/openai_provider.py backend/tests/test_openai_provider.py
 git commit -m "fix(llm): openai provider fallthrough uses classify_opaque_api_error
 
@@ -695,7 +695,7 @@ def test_provider_name(provider):
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_anthropic_provider_classify.py::test_classify_error_unknown_exception tests/test_anthropic_provider_classify.py::test_classify_error_opaque_api_error_busy -v`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_anthropic_provider_classify.py::test_classify_error_unknown_exception tests/test_anthropic_provider_classify.py::test_classify_error_opaque_api_error_busy -v`
 Expected: `test_classify_error_unknown_exception` FAILED（当前返回 PROTOCOL_ERROR），`test_classify_error_opaque_api_error_busy` FAILED
 
 - [ ] **Step 3: 修改 `anthropic_provider.py` fallthrough**
@@ -738,13 +738,13 @@ from llm.errors import LLMError, LLMErrorCode, classify_by_http_status, classify
 
 - [ ] **Step 4: 运行全部 anthropic 测试确认通过**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_anthropic_provider_classify.py -v`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_anthropic_provider_classify.py -v`
 Expected: 全部 PASSED
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify
 git add backend/llm/anthropic_provider.py backend/tests/test_anthropic_provider_classify.py
 git commit -m "fix(llm): anthropic provider fallthrough uses classify_opaque_api_error
 
@@ -762,7 +762,7 @@ via the same keyword/status extraction utility."
 
 - [ ] **Step 1: 运行全部 llm 相关测试确认无回归**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_llm_errors.py tests/test_openai_provider.py tests/test_classify_opaque_api_error.py tests/test_anthropic_provider_classify.py -v`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify/backend && python -m pytest tests/test_llm_errors.py tests/test_openai_provider.py tests/test_classify_opaque_api_error.py tests/test_anthropic_provider_classify.py -v`
 Expected: 全部 PASSED
 
 - [ ] **Step 2: 更新 `docs/TODO.md` 第 2 条**
@@ -795,7 +795,7 @@ Expected: 全部 PASSED
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/.worktrees/llm-error-classify
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/.worktrees/llm-error-classify
 git add docs/TODO.md PROJECT_OVERVIEW.md
 git commit -m "docs: mark TODO#2 done, update PROJECT_OVERVIEW for classify_opaque_api_error"
 ```

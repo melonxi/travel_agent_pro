@@ -62,7 +62,7 @@
 
 - [ ] **Step 2: 验证前端构建通过**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/frontend && npm run build`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/frontend && npm run build`
 
 Expected: 构建成功，无 CSS 相关错误
 
@@ -163,7 +163,7 @@ git commit -m "fix: 删除发送按钮死代码 CSS（is-streaming, send-spinner
 
 - [ ] **Step 5: 验证前端构建通过**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/frontend && npm run build`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/frontend && npm run build`
 
 - [ ] **Step 6: 提交**
 
@@ -265,7 +265,7 @@ const handleContinue = async () => {
 
 - [ ] **Step 5: 验证前端构建通过**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/frontend && npm run build`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/frontend && npm run build`
 
 - [ ] **Step 6: 提交**
 
@@ -367,7 +367,7 @@ git commit -m "refactor: 移除 sendingRef，统一使用 streaming 状态"
 
 - [ ] **Step 5: 验证前端构建通过**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/frontend && npm run build`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/frontend && npm run build`
 
 - [ ] **Step 6: 提交**
 
@@ -599,7 +599,7 @@ testMatch: explicitMatches.length > 0 ? explicitMatches : ['e2e-test.spec.ts', '
 
 - [ ] **Step 3: 运行测试验证**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro && npx playwright test e2e-send-button.spec.ts`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro && npx playwright test e2e-send-button.spec.ts`
 
 注意：需要前端 dev server 运行在 `http://127.0.0.1:5173`。
 
@@ -619,7 +619,7 @@ git commit -m "test: 新增发送按钮 E2E 测试覆盖"
 
 - [ ] **Step 1: 前端完整构建**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/frontend && npm run build`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/frontend && npm run build`
 
 Expected: 构建成功，无类型错误
 

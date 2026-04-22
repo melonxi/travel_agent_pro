@@ -3662,7 +3662,7 @@ class TestValidInputsStillWork:
 - [ ] **Step 7: Run tests**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/backend && python -m pytest tests/test_update_plan_state.py tests/test_update_plan_state_strict.py -v
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/backend && python -m pytest tests/test_update_plan_state.py tests/test_update_plan_state_strict.py -v
 ```
 
 Expected: All PASS
@@ -3670,7 +3670,7 @@ Expected: All PASS
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro && \
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro && \
 git add backend/tools/update_plan_state.py \
         backend/tests/test_update_plan_state.py \
         backend/tests/test_update_plan_state_strict.py && \
@@ -3981,7 +3981,7 @@ class TestEnginePhase3NewTools:
 - [ ] **Step 6: Run tests**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/backend && python -m pytest tests/test_tool_engine.py -v -k "Phase3NewTools"
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/backend && python -m pytest tests/test_tool_engine.py -v -k "Phase3NewTools"
 ```
 
 Expected: All PASS
@@ -3989,7 +3989,7 @@ Expected: All PASS
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro && \
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro && \
 git add backend/main.py \
         backend/tools/engine.py \
         backend/tools/plan_tools/__init__.py \
@@ -4346,7 +4346,7 @@ Replace `test_golden_cases_use_registered_tool_names` with:
 - [ ] **Step 9: Run tests + eval smoke check**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/backend && \
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/backend && \
 python -m pytest tests/test_prompt_architecture.py -v -k "NoUpdatePlanState" && \
 python -m pytest tests/test_eval_pipeline.py -v -k "registered_tool_names" && \
 TMPDIR=$(mktemp -d) && \
@@ -4365,7 +4365,7 @@ Running pass@2 stability evaluation
 - [ ] **Step 10: Commit**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro && \
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro && \
 git add backend/phase/prompts.py \
         backend/tests/test_prompt_architecture.py \
         backend/evals/golden_cases/failure-005-multi-constraint.yaml \
@@ -4823,7 +4823,7 @@ def test_phase5_complete_prompt_uses_new_tools(injector):
 - [ ] **Step 12: Run tests**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/backend && python -m pytest tests/test_guardrail.py tests/test_context_manager.py tests/test_reflection.py tests/test_agent_loop.py -v --timeout=30
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/backend && python -m pytest tests/test_guardrail.py tests/test_context_manager.py tests/test_reflection.py tests/test_agent_loop.py -v --timeout=30
 ```
 
 Expected: All PASS
@@ -4831,7 +4831,7 @@ Expected: All PASS
 - [ ] **Step 13: Commit**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro && \
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro && \
 git add backend/agent/loop.py \
         backend/agent/reflection.py \
         backend/agent/tool_choice.py \
@@ -4986,7 +4986,7 @@ New (single branch):
 - [ ] **Step 6: Delete `backend/tools/update_plan_state.py`**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/backend && git rm tools/update_plan_state.py
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/backend && git rm tools/update_plan_state.py
 ```
 
 - [ ] **Step 7: Migrate `tests/test_agent_loop.py` (concrete example)**
@@ -5040,7 +5040,7 @@ For `test_redundant_update_plan_state_is_skipped_after_phase_rebuild` (line 1046
 - [ ] **Step 8: Delete superseded test files**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/backend && \
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/backend && \
 git rm tests/test_update_plan_state.py && \
 git rm tests/test_update_plan_state_strict.py
 ```
@@ -5119,7 +5119,7 @@ Before running the grep gate, do one explicit cleanup pass for literal `update_p
 After that cleanup pass, run:
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/backend && grep -rn "update_plan_state\|make_update_plan_state_tool" --include="*.py" | grep -v __pycache__
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/backend && grep -rn "update_plan_state\|make_update_plan_state_tool" --include="*.py" | grep -v __pycache__
 ```
 
 Expected: zero matches. If any remain, fix before committing.
@@ -5127,7 +5127,7 @@ Expected: zero matches. If any remain, fix before committing.
 - [ ] **Step 12: Run full test suite**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro/backend && python -m pytest tests/ -v --timeout=60
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro/backend && python -m pytest tests/ -v --timeout=60
 ```
 
 Expected: All PASS
@@ -5135,7 +5135,7 @@ Expected: All PASS
 - [ ] **Step 13: Commit**
 
 ```bash
-cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro && \
+cd /Users/zhaoxiwei/solo-dev/travel_agent_pro && \
 git add -A && \
 git commit -m "feat(tools): remove update_plan_state, complete migration to 19 single-responsibility tools (Step 4)
 

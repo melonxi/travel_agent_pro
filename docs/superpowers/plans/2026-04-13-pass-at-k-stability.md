@@ -1052,7 +1052,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Verify --help works**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro && python scripts/eval-stability.py --help`
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro && python scripts/eval-stability.py --help`
 Expected: Usage text with --k, --base-url, --cases, --difficulty, --output flags
 
 - [ ] **Step 3: Commit**

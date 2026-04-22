@@ -2033,7 +2033,7 @@ assertions:
 
 - [ ] **Step 2: Verify YAML files parse correctly**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro && python -c "
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro && python -c "
 import sys; sys.path.insert(0, 'evals')
 from pathlib import Path
 from evals.runner import load_suite
@@ -2108,7 +2108,7 @@ Expected: All 543+ tests PASS (with new tests added, should be ~570+)
 
 - [ ] **Step 2: Verify eval loader works**
 
-Run: `cd /Users/zhaoxiwei/独立开发者的自我修养/travel_agent_pro && python -c "
+Run: `cd /Users/zhaoxiwei/solo-dev/travel_agent_pro && python -c "
 import sys; sys.path.insert(0, 'evals')
 from pathlib import Path
 from evals.runner import load_suite
