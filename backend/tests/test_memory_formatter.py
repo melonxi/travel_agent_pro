@@ -137,6 +137,8 @@ def test_memory_recall_telemetry_to_dict_preserves_fields():
         "gate_reason": "",
         "final_recall_decision": "",
         "fallback_used": "none",
+        "query_plan": {},
+        "query_plan_fallback": "none",
     }
 
 

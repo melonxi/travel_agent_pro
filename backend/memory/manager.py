@@ -6,6 +6,8 @@ from pathlib import Path
 
 from memory.formatter import MemoryRecallTelemetry, format_v3_memory_context
 from memory.models import MemoryItem, Rejection, UserMemory
+from memory.recall_query import RecallRetrievalPlan
+from memory.recall_query_adapter import plan_to_legacy_recall_query
 from memory.store import FileMemoryStore
 from memory.symbolic_recall import (
     build_recall_query,
@@ -114,6 +116,7 @@ class MemoryManager:
         user_message: str = "",
         recall_gate: bool | None = None,
         short_circuit: str = "undecided",
+        retrieval_plan: RecallRetrievalPlan | None = None,
     ) -> tuple[str, MemoryRecallTelemetry]:
         profile = await self.v3_store.load_profile(user_id)
         fixed_profile_items = self._fixed_profile_items(profile)
@@ -126,31 +129,52 @@ class MemoryManager:
 
         query_profile_items: list[tuple[str, MemoryProfileItem, str]] = []
         query_slices: list[tuple[EpisodeSlice, str]] = []
-        recall_query = build_recall_query(user_message)
+        legacy_recall_query = build_recall_query(user_message) if user_message else None
+        profile_recall_query = None
+        slice_recall_query = None
         should_run_query_recall = False
         final_recall_decision = "fixed_only"
         if recall_gate is None:
             should_run_query_recall = user_message and (
-                should_trigger_memory_recall(user_message) or recall_query.needs_memory
+                should_trigger_memory_recall(user_message)
+                or (legacy_recall_query.needs_memory if legacy_recall_query else False)
             )
+            if should_run_query_recall:
+                profile_recall_query = (
+                    plan_to_legacy_recall_query(retrieval_plan)
+                    if retrieval_plan is not None
+                    else legacy_recall_query
+                )
+                slice_recall_query = legacy_recall_query
             final_recall_decision = (
                 "query_recall_enabled" if should_run_query_recall else "fixed_only"
             )
         elif recall_gate:
             should_run_query_recall = True
+            profile_recall_query = (
+                plan_to_legacy_recall_query(retrieval_plan)
+                if retrieval_plan is not None
+                else legacy_recall_query
+            )
+            slice_recall_query = legacy_recall_query
             final_recall_decision = "query_recall_enabled"
 
-        if should_run_query_recall:
-            query_profile_items = rank_profile_items(recall_query, profile)[
-                :_QUERY_PROFILE_LIMIT
-            ]
-            candidate_slices = await self.v3_store.list_episode_slices(
-                user_id,
-                destination=recall_query.entities.get("destination"),
+        if should_run_query_recall and profile_recall_query is not None:
+            query_profile_limit = (
+                retrieval_plan.top_k if retrieval_plan is not None else _QUERY_PROFILE_LIMIT
             )
-            query_slices = rank_episode_slices(recall_query, candidate_slices)[
-                :_QUERY_SLICE_LIMIT
-            ]
+            if profile_recall_query.include_profile:
+                query_profile_items = rank_profile_items(profile_recall_query, profile)[
+                    :query_profile_limit
+                ]
+            if slice_recall_query is not None and slice_recall_query.include_slices:
+                candidate_slices = await self.v3_store.list_episode_slices(
+                    user_id,
+                    destination=slice_recall_query.entities.get("destination"),
+                )
+                query_slices = rank_episode_slices(slice_recall_query, candidate_slices)[
+                    :_QUERY_SLICE_LIMIT
+                ]
 
         telemetry = self._build_v3_telemetry(
             fixed_profile_items,
@@ -161,6 +185,14 @@ class MemoryManager:
         telemetry.stage0_decision = short_circuit
         telemetry.gate_needs_recall = recall_gate
         telemetry.final_recall_decision = final_recall_decision
+        if retrieval_plan is not None:
+            telemetry.query_plan = {
+                "buckets": list(retrieval_plan.buckets),
+                "domains": list(retrieval_plan.domains),
+                "strictness": retrieval_plan.strictness,
+                "top_k": retrieval_plan.top_k,
+            }
+            telemetry.query_plan_fallback = retrieval_plan.fallback_used
         context = format_v3_memory_context(
             profile_items=fixed_profile_items,
             working_items=working_items,

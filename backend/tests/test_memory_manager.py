@@ -7,6 +7,8 @@ import pytest
 from config import load_config
 from memory.manager import MemoryManager
 from memory.models import MemoryItem, MemorySource, Rejection, TripSummary, UserMemory
+from memory.recall_query import RecallRetrievalPlan
+from memory.symbolic_recall import RecallQuery
 from memory.v3_models import EpisodeSlice, MemoryProfileItem
 from state.models import TravelPlanState
 
@@ -29,6 +31,129 @@ def make_item(**overrides):
     )
     base.update(overrides)
     return MemoryItem(**base)
+
+
+@pytest.mark.asyncio
+async def test_generate_context_prefers_retrieval_plan_over_legacy_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    await manager.v3_store.upsert_profile_item(
+        "u1",
+        "stable_preferences",
+        MemoryProfileItem(
+            id="stable_preferences:hotel:preferred_area",
+            domain="hotel",
+            key="preferred_area",
+            value="京都住四条附近",
+            polarity="prefer",
+            stability="stable",
+            confidence=0.9,
+            status="active",
+            context={},
+            applicability="适用于大多数住宿选择。",
+            recall_hints={"domains": ["hotel"], "keywords": ["住宿", "住哪里"]},
+            source_refs=[],
+            created_at="2026-04-19T00:00:00",
+            updated_at="2026-04-19T00:00:00",
+        ),
+    )
+
+    def fake_build_recall_query(message: str) -> RecallQuery:
+        assert message == "住宿还是按我常规偏好来"
+        return RecallQuery(
+            needs_memory=True,
+            domains=["food"],
+            entities={},
+            keywords=["辣"],
+            include_profile=False,
+            include_slices=False,
+            include_working_memory=False,
+            matched_reason="legacy query should not drive profile recall here",
+        )
+
+    monkeypatch.setattr("memory.manager.build_recall_query", fake_build_recall_query)
+
+    text, recall = await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_now"),
+        user_message="住宿还是按我常规偏好来",
+        recall_gate=True,
+        short_circuit="undecided",
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            keywords=["住宿"],
+            aliases=["住哪里"],
+            strictness="soft",
+            top_k=5,
+            reason="reuse accommodation preference",
+        ),
+    )
+
+    assert "京都住四条附近" in text
+    assert recall.sources["query_profile"] == 1
+    assert recall.final_recall_decision == "query_recall_enabled"
+
+
+@pytest.mark.asyncio
+async def test_generate_context_keeps_legacy_slice_recall_when_retrieval_plan_is_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    await manager.v3_store.append_episode_slice(
+        EpisodeSlice(
+            id="slice_1",
+            user_id="u1",
+            source_episode_id="ep_1",
+            source_trip_id="trip_kyoto_old",
+            slice_type="accommodation_decision",
+            domains=["hotel", "accommodation"],
+            entities={"destination": "京都"},
+            keywords=["住宿", "酒店"],
+            content="上次京都住四条附近的町屋。",
+            applicability="仅供住宿选择参考。",
+            created_at="2026-04-19T00:00:00",
+        )
+    )
+
+    def fake_build_recall_query(message: str) -> RecallQuery:
+        assert message == "还记得去年京都订的那家旅馆吗？"
+        return RecallQuery(
+            needs_memory=True,
+            domains=["hotel", "accommodation"],
+            entities={"destination": "京都"},
+            keywords=["旅馆"],
+            include_profile=True,
+            include_slices=True,
+            include_working_memory=False,
+            matched_reason="legacy slice recall query",
+        )
+
+    monkeypatch.setattr("memory.manager.build_recall_query", fake_build_recall_query)
+
+    text, recall = await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_kyoto_now"),
+        user_message="还记得去年京都订的那家旅馆吗？",
+        recall_gate=True,
+        short_circuit="force_recall",
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            keywords=["住宿"],
+            aliases=["住哪里"],
+            strictness="soft",
+            top_k=5,
+            reason="reuse accommodation preference",
+        ),
+    )
+
+    assert "上次京都住四条附近的町屋。" in text
+    assert recall.sources["episode_slice"] == 1
+    assert recall.slice_ids == ["slice_1"]
 
 
 @pytest.mark.asyncio

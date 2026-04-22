@@ -451,3 +451,11 @@ git commit -m "docs(memory): capture phase-b recall query rollout"
 - 未纳入本计划：EpisodeSlice 双 source retrieval plan、Stage 4 reranker、Stage 3 全量重写 candidate 输出
 
 这些未纳入项是刻意延后到后续 Milestone C / D，不是遗漏。
+
+---
+
+## 执行后风险记录
+
+- query tool 的 `domains` / `buckets` 质量仍依赖模型输出，当前回归主要覆盖 fallback 语义，未覆盖召回质量波动。
+- Stage 3 仍复用现有规则召回器，`strictness` 只是轻量兼容层，排序与命中质量仍有旧实现边界。
+- `EpisodeSlice` 仍未纳入统一 retrieval plan，本轮 Phase B 只覆盖 `profile` source。

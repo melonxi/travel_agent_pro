@@ -1,4 +1,5 @@
 from memory.symbolic_recall import (
+    RecallQuery,
     build_recall_query,
     rank_episode_slices,
     rank_profile_items,
@@ -109,6 +110,7 @@ def test_direct_train_preference_query_triggers_profile_recall():
 
 def test_rank_profile_items_prefers_constraints_over_hypotheses():
     query = build_recall_query("我是不是说过不坐红眼航班？")
+    query.allowed_buckets = ["constraints", "preference_hypotheses"]
     profile = UserMemoryProfile(
         schema_version=3,
         user_id="u1",
@@ -183,6 +185,99 @@ def test_rank_profile_items_prefers_rejections_over_stable_preferences():
         "stable_preferences",
     ]
     assert ranked[0][2].startswith("exact domain match")
+
+
+def test_rank_profile_items_respects_allowed_buckets():
+    query = RecallQuery(
+        needs_memory=True,
+        domains=["hotel"],
+        entities={},
+        keywords=["青旅"],
+        include_profile=True,
+        include_slices=False,
+        include_working_memory=False,
+        matched_reason="adapter generated",
+        allowed_buckets=["rejections"],
+        strictness="strict",
+    )
+    profile = UserMemoryProfile(
+        schema_version=3,
+        user_id="u1",
+        constraints=[
+            _profile_item(
+                id="constraints:hotel:avoid_shared_bathroom",
+                domain="hotel",
+                key="avoid_shared_bathroom",
+                value=True,
+                polarity="avoid",
+                stability="explicit_declared",
+                recall_hints={"domains": ["hotel"], "keywords": ["青旅"]},
+            )
+        ],
+        rejections=[
+            _profile_item(
+                id="rejections:hotel:avoid_hostel",
+                domain="hotel",
+                key="avoid_hostel",
+                value="青旅",
+                polarity="avoid",
+                stability="explicit_declared",
+                recall_hints={"domains": ["hotel"], "keywords": ["青旅"]},
+            )
+        ],
+        stable_preferences=[],
+        preference_hypotheses=[],
+    )
+
+    ranked = rank_profile_items(query, profile)
+
+    assert [bucket for bucket, _, _ in ranked] == ["rejections"]
+
+
+def test_rank_profile_items_uses_conservative_default_when_allowed_buckets_is_empty():
+    query = RecallQuery(
+        needs_memory=True,
+        domains=["flight"],
+        entities={},
+        keywords=["红眼航班"],
+        include_profile=True,
+        include_slices=False,
+        include_working_memory=False,
+        matched_reason="adapter generated",
+        allowed_buckets=[],
+        strictness="soft",
+    )
+    profile = UserMemoryProfile(
+        schema_version=3,
+        user_id="u1",
+        constraints=[
+            _profile_item(
+                id="constraints:flight:avoid_red_eye",
+                domain="flight",
+                key="avoid_red_eye",
+                value=True,
+                stability="explicit_declared",
+                recall_hints={"domains": ["flight"], "keywords": ["红眼航班"]},
+            )
+        ],
+        rejections=[],
+        stable_preferences=[],
+        preference_hypotheses=[
+            _profile_item(
+                id="preference_hypotheses:flight:avoid_red_eye",
+                domain="flight",
+                key="avoid_red_eye",
+                value=True,
+                stability="hypothesis",
+                confidence=0.6,
+                recall_hints={"domains": ["flight"], "keywords": ["红眼航班"]},
+            )
+        ],
+    )
+
+    ranked = rank_profile_items(query, profile)
+
+    assert [bucket for bucket, _, _ in ranked] == ["constraints"]
 
 
 def test_rank_episode_slices_prefers_exact_destination_domain_matches():
