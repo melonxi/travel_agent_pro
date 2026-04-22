@@ -500,6 +500,10 @@ def _recall_telemetry_record_from_recall(
         gate_intent_type=memory_recall.gate_intent_type,
         final_recall_decision=memory_recall.final_recall_decision,
         fallback_used=memory_recall.fallback_used,
+        candidate_count=memory_recall.candidate_count,
+        reranker_selected_ids=list(memory_recall.reranker_selected_ids),
+        reranker_final_reason=memory_recall.reranker_final_reason,
+        reranker_fallback=memory_recall.reranker_fallback,
     )
 
 
@@ -3841,6 +3845,12 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                                 "count": len(recalled_ids),
                                 "sources": dict(memory_recall.sources),
                                 "gate": memory_recall.gate_needs_recall,
+                                "candidate_count": memory_recall.candidate_count,
+                                "reranker_selected_ids": list(
+                                    memory_recall.reranker_selected_ids
+                                ),
+                                "reranker_final_reason": memory_recall.reranker_final_reason,
+                                "reranker_fallback": memory_recall.reranker_fallback,
                             },
                             started_at=memory_recall_started_at,
                             ended_at=time.time(),

@@ -279,12 +279,18 @@ function EventRow({ iteration }: { iteration: TraceIteration }) {
                 <ToolCallRow key={i} tool={tool} maxDuration={maxToolDuration} />
               ))}
             </div>
-          )}
+      )}
           <StateDiffPanel changes={iteration.state_changes} />
           {iteration.memory_hits && (
             <div className="trace-memory-hits">
               命中 {memoryHitCount} 条记忆
               （profile {memorySources.profile_fixed ?? 0} / working {memorySources.working_memory ?? 0} / query {memorySources.query_profile ?? 0} / slice {memorySources.episode_slice ?? 0}）
+            </div>
+          )}
+          {iteration.memory_recall && (
+            <div className="trace-memory-hits">
+              recall {iteration.memory_recall.final_recall_decision ?? 'unknown'}
+              （候选 {iteration.memory_recall.candidate_count ?? 0} / 最终 {iteration.memory_recall.reranker_selected_ids?.length ?? 0} / fallback {iteration.memory_recall.reranker_fallback ?? 'none'}）
             </div>
           )}
         </div>

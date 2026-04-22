@@ -64,6 +64,10 @@ def _serialize_recall_telemetry(hit: RecallTelemetryRecord) -> dict:
         "gate_intent_type": hit.gate_intent_type,
         "final_recall_decision": hit.final_recall_decision,
         "fallback_used": hit.fallback_used,
+        "candidate_count": hit.candidate_count,
+        "reranker_selected_ids": list(hit.reranker_selected_ids),
+        "reranker_final_reason": hit.reranker_final_reason,
+        "reranker_fallback": hit.reranker_fallback,
     }
 
 
