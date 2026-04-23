@@ -58,18 +58,13 @@ for _canonical, _entry in _DESTINATION_CATALOG.items():
 
 
 def normalize_destination(value: str) -> NormalizedDestination:
-    original = value.strip()
-    canonical = _ALIAS_TO_CANONICAL.get(original, "")
-    if not canonical:
-        return NormalizedDestination(
-            original=original,
-            canonical="",
-            aliases=(),
-            region="",
-            children=(),
-        )
+    original = " ".join(str(value or "").split())
+    canonical = _ALIAS_TO_CANONICAL.get(original, original)
+    entry = _DESTINATION_CATALOG.get(
+        canonical,
+        {"aliases": (), "region": "", "children": ()},
+    )
 
-    entry = _DESTINATION_CATALOG[canonical]
     return NormalizedDestination(
         original=original,
         canonical=canonical,
