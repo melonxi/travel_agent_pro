@@ -21,6 +21,7 @@
 | 持久化 | aiosqlite（会话/消息）、JSON 文件（旅行方案快照） |
 | 可观测性 | OpenTelemetry + Jaeger (OTLP gRPC) |
 | 测试 | pytest + pytest-asyncio（后端）、Playwright（E2E） |
+| Embedding Runtime | FastEmbed 0.8.x + ONNX Runtime CPU；Stage 3 语义召回预研默认模型为 `BAAI/bge-small-zh-v1.5`，本地 cache 位于 `backend/data/embedding_cache` |
 | 外部服务 | Tavily、小红书 CLI、FlyAI CLI、Google Maps、Amadeus、OpenWeather |
 
 ---
