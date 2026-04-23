@@ -92,6 +92,67 @@ class MemoryRerankerConfig:
 
 
 @dataclass(frozen=True)
+class Stage3LaneConfig:
+    enabled: bool = True
+    top_k: int = 20
+    timeout_ms: int = 25
+
+
+@dataclass(frozen=True)
+class Stage3SemanticConfig(Stage3LaneConfig):
+    enabled: bool = False
+    provider: str = "fastembed"
+    model_name: str = "BAAI/bge-small-zh-v1.5"
+    cache_dir: str = "backend/data/embedding_cache"
+    local_files_only: bool = False
+    min_score: float = 0.58
+    cache_max_items: int = 10000
+    cache_max_mb: int = 64
+
+
+@dataclass(frozen=True)
+class Stage3FusionConfig:
+    rrf_k: int = 60
+    max_candidates: int = 30
+    max_profile_candidates: int = 16
+    max_slice_candidates: int = 16
+    lane_weights: tuple[tuple[str, float], ...] = (
+        ("symbolic", 1.0),
+        ("lexical", 0.6),
+        ("semantic", 0.8),
+        ("entity", 0.4),
+        ("temporal", 0.2),
+    )
+
+
+@dataclass(frozen=True)
+class Stage3SourceWideningConfig:
+    enabled: bool = False
+    min_primary_candidates: int = 3
+    max_secondary_candidates: int = 2
+
+
+@dataclass(frozen=True)
+class Stage3RecallConfig:
+    symbolic: Stage3LaneConfig = field(default_factory=Stage3LaneConfig)
+    lexical: Stage3LaneConfig = field(
+        default_factory=lambda: Stage3LaneConfig(enabled=False, top_k=20, timeout_ms=20)
+    )
+    semantic: Stage3SemanticConfig = field(default_factory=Stage3SemanticConfig)
+    entity: Stage3LaneConfig = field(
+        default_factory=lambda: Stage3LaneConfig(enabled=False, top_k=20, timeout_ms=15)
+    )
+    temporal: Stage3LaneConfig = field(
+        default_factory=lambda: Stage3LaneConfig(enabled=False, top_k=20, timeout_ms=10)
+    )
+    fusion: Stage3FusionConfig = field(default_factory=Stage3FusionConfig)
+    source_widening: Stage3SourceWideningConfig = field(
+        default_factory=Stage3SourceWideningConfig
+    )
+    destination_normalization_enabled: bool = False
+
+
+@dataclass(frozen=True)
 class MemoryRetrievalConfig:
     core_limit: int = 10
     phase_limit: int = 8
@@ -100,6 +161,7 @@ class MemoryRetrievalConfig:
     recall_gate_model: str = ""
     recall_gate_timeout_seconds: float = 6.0
     reranker: MemoryRerankerConfig = field(default_factory=MemoryRerankerConfig)
+    stage3: Stage3RecallConfig = field(default_factory=Stage3RecallConfig)
 
 
 @dataclass(frozen=True)
@@ -260,6 +322,106 @@ def _build_memory_extraction_config(raw: dict) -> MemoryExtractionConfig:
     )
 
 
+def _build_stage3_lane_config(
+    raw: dict, default: Stage3LaneConfig
+) -> Stage3LaneConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    return Stage3LaneConfig(
+        enabled=_as_bool(raw.get("enabled"), default.enabled),
+        top_k=int(raw.get("top_k", default.top_k)),
+        timeout_ms=int(raw.get("timeout_ms", default.timeout_ms)),
+    )
+
+
+def _build_stage3_semantic_config(raw: dict) -> Stage3SemanticConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    default = Stage3SemanticConfig()
+    return Stage3SemanticConfig(
+        enabled=_as_bool(raw.get("enabled"), default.enabled),
+        top_k=int(raw.get("top_k", default.top_k)),
+        timeout_ms=int(raw.get("timeout_ms", default.timeout_ms)),
+        provider=str(raw.get("provider", default.provider)),
+        model_name=str(raw.get("model_name", default.model_name)),
+        cache_dir=str(raw.get("cache_dir", default.cache_dir)),
+        local_files_only=_as_bool(
+            raw.get("local_files_only"), default.local_files_only
+        ),
+        min_score=float(raw.get("min_score", default.min_score)),
+        cache_max_items=int(raw.get("cache_max_items", default.cache_max_items)),
+        cache_max_mb=int(raw.get("cache_max_mb", default.cache_max_mb)),
+    )
+
+
+def _build_stage3_fusion_config(raw: dict) -> Stage3FusionConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    default = Stage3FusionConfig()
+    lane_weights_raw = raw.get("lane_weights", default.lane_weights)
+    lane_weights = default.lane_weights
+
+    if isinstance(lane_weights_raw, dict):
+        lane_weights = tuple(
+            (str(name), float(weight)) for name, weight in lane_weights_raw.items()
+        )
+    elif isinstance(lane_weights_raw, list):
+        parsed_weights: list[tuple[str, float]] = []
+        for item in lane_weights_raw:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                parsed_weights = []
+                break
+            parsed_weights.append((str(item[0]), float(item[1])))
+        if parsed_weights:
+            lane_weights = tuple(parsed_weights)
+
+    return Stage3FusionConfig(
+        rrf_k=int(raw.get("rrf_k", default.rrf_k)),
+        max_candidates=int(raw.get("max_candidates", default.max_candidates)),
+        max_profile_candidates=int(
+            raw.get("max_profile_candidates", default.max_profile_candidates)
+        ),
+        max_slice_candidates=int(
+            raw.get("max_slice_candidates", default.max_slice_candidates)
+        ),
+        lane_weights=lane_weights,
+    )
+
+
+def _build_stage3_source_widening_config(raw: dict) -> Stage3SourceWideningConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    default = Stage3SourceWideningConfig()
+    return Stage3SourceWideningConfig(
+        enabled=_as_bool(raw.get("enabled"), default.enabled),
+        min_primary_candidates=int(
+            raw.get("min_primary_candidates", default.min_primary_candidates)
+        ),
+        max_secondary_candidates=int(
+            raw.get("max_secondary_candidates", default.max_secondary_candidates)
+        ),
+    )
+
+
+def _build_stage3_recall_config(raw: dict) -> Stage3RecallConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    default = Stage3RecallConfig()
+    return Stage3RecallConfig(
+        symbolic=_build_stage3_lane_config(raw.get("symbolic", {}), default.symbolic),
+        lexical=_build_stage3_lane_config(raw.get("lexical", {}), default.lexical),
+        semantic=_build_stage3_semantic_config(raw.get("semantic", {})),
+        entity=_build_stage3_lane_config(raw.get("entity", {}), default.entity),
+        temporal=_build_stage3_lane_config(raw.get("temporal", {}), default.temporal),
+        fusion=_build_stage3_fusion_config(raw.get("fusion", {})),
+        source_widening=_build_stage3_source_widening_config(
+            raw.get("source_widening", {})
+        ),
+        destination_normalization_enabled=_as_bool(
+            raw.get(
+                "destination_normalization_enabled",
+                default.destination_normalization_enabled,
+            ),
+            default.destination_normalization_enabled,
+        ),
+    )
+
+
 def _build_memory_config(
     raw: dict, legacy_extraction: MemoryExtractionConfig
 ) -> MemoryConfig:
@@ -268,6 +430,7 @@ def _build_memory_config(
     retrieval_raw = raw.get("retrieval", {})
     storage_raw = raw.get("storage", {})
     reranker_raw = retrieval_raw.get("reranker", {})
+    stage3_raw = retrieval_raw.get("stage3", {})
 
     extraction = MemoryExtractionV2Config(
         enabled=_as_bool(extraction_raw.get("enabled"), legacy_extraction.enabled),
@@ -312,6 +475,7 @@ def _build_memory_config(
                     reranker_raw.get("recency_half_life_days", 180)
                 ),
             ),
+            stage3=_build_stage3_recall_config(stage3_raw),
         ),
         storage=MemoryStorageConfig(
             backend=str(storage_raw.get("backend", "json")),
