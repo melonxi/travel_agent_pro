@@ -1,7 +1,11 @@
 from dataclasses import dataclass
 
 from memory.recall_query import RecallRetrievalPlan
-from memory.recall_reranker import choose_reranker_path
+from memory.recall_reranker import (
+    RecallRerankResult,
+    SignalScoreDetail,
+    choose_reranker_path,
+)
 from memory.retrieval_candidates import RecallCandidate
 from state.models import TravelPlanState, Travelers
 
@@ -32,6 +36,37 @@ def make_candidate(**overrides) -> RecallCandidate:
     )
     base.update(overrides)
     return RecallCandidate(**base)
+
+
+def test_recall_rerank_result_supports_structured_score_payload():
+    result = RecallRerankResult(
+        selected_item_ids=["profile_1"],
+        final_reason="selected profile memory",
+        per_item_reason={"profile_1": "bucket=0.82 domain=1.00 keyword=0.50"},
+        per_item_scores={
+            "profile_1": SignalScoreDetail(
+                bucket_score=0.82,
+                domain_exact_score=1.0,
+                keyword_exact_score=0.5,
+                destination_score=0.0,
+                recency_score=0.9,
+                applicability_score=0.35,
+                conflict_score=0.0,
+                rule_score=0.71,
+                evidence_score=0.0,
+                source_normalized_score=1.0,
+                final_score=2.0,
+            )
+        },
+        intent_label="profile",
+        selection_metrics={
+            "selected_pairwise_similarity_max": None,
+            "selected_pairwise_similarity_avg": None,
+        },
+    )
+
+    assert result.intent_label == "profile"
+    assert result.per_item_scores["profile_1"].rule_score == 0.71
 
 
 def test_choose_reranker_path_skips_scoring_when_candidate_set_is_small():
