@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from typing import Any
 
 from config import Stage3RecallConfig
@@ -123,7 +122,7 @@ class SemanticLane:
                 *envelope.expanded_keywords,
             ]
         )
-        record_texts = [record.text for record in records]
+        record_texts = [text for _, _, text in records]
         try:
             vectors = embedding_provider.embed([query_text, *record_texts])
         except Exception as exc:
@@ -142,20 +141,16 @@ class SemanticLane:
 
         query_vector = vectors[0]
         ranked: list[tuple[float, RecallCandidate, RetrievalEvidence]] = []
-        for record, vector in zip(records, vectors[1:]):
+        for (candidate, evidence, _), vector in zip(records, vectors[1:]):
             score = cosine_similarity(query_vector, vector)
             if score < config.semantic.min_score:
                 continue
 
-            record.candidate.score = score
-            evidence = RetrievalEvidence(
-                item_id=record.candidate.item_id,
-                source=record.candidate.source,
-                lanes=[self.lane_name],
-                semantic_score=score,
-                retrieval_reason=f"semantic cosine score={score:.3f}",
-            )
-            ranked.append((score, record.candidate, evidence))
+            candidate.score = score
+            evidence.lanes = [self.lane_name]
+            evidence.semantic_score = score
+            evidence.retrieval_reason = f"semantic cosine score={score:.3f}"
+            ranked.append((score, candidate, evidence))
 
         ranked.sort(key=lambda entry: (-entry[0], entry[1].source, entry[1].item_id))
         return Stage3LaneResult(
@@ -167,18 +162,12 @@ class SemanticLane:
         )
 
 
-@dataclass(frozen=True)
-class _SemanticRecord:
-    candidate: RecallCandidate
-    text: str
-
-
 def _semantic_records(
     envelope: RecallQueryEnvelope,
     profile: UserMemoryProfile,
     slices: list[EpisodeSlice],
-) -> list[_SemanticRecord]:
-    records: list[_SemanticRecord] = []
+) -> list[tuple[RecallCandidate, RetrievalEvidence, str]]:
+    records: list[tuple[RecallCandidate, RetrievalEvidence, str]] = []
     if envelope.source_policy.search_profile:
         for bucket in envelope.plan.buckets:
             for item in getattr(profile, bucket, []):
@@ -186,9 +175,10 @@ def _semantic_records(
                     [(bucket, item, "semantic embedding match")]
                 )[0]
                 records.append(
-                    _SemanticRecord(
-                        candidate=candidate,
-                        text=_profile_item_text(bucket, item),
+                    (
+                        candidate,
+                        _evidence_from_candidate(candidate, SemanticLane.lane_name),
+                        _profile_item_text(bucket, item),
                     )
                 )
 
@@ -198,9 +188,10 @@ def _semantic_records(
                 [(slice_, "semantic embedding match")]
             )[0]
             records.append(
-                _SemanticRecord(
-                    candidate=candidate,
-                    text=_slice_text(slice_),
+                (
+                    candidate,
+                    _evidence_from_candidate(candidate, SemanticLane.lane_name),
+                    _slice_text(slice_),
                 )
             )
 
