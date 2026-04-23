@@ -6,7 +6,7 @@ from typing import Any
 from config import Stage3FusionConfig, Stage3RecallConfig
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3_fusion import fuse_lane_results
-from memory.recall_stage3_lanes import SymbolicLane
+from memory.recall_stage3_lanes import LexicalLane, SymbolicLane
 from memory.recall_stage3_models import (
     Stage3LaneResult,
     Stage3RecallResult,
@@ -59,6 +59,16 @@ def retrieve_recall_candidates(
         lane_name = SymbolicLane.lane_name
         telemetry.lanes_attempted.append(lane_name)
         lane_result = SymbolicLane().run(envelope, profile, slices, config)
+        telemetry.candidates_by_lane[lane_name] = len(lane_result.candidates)
+        if lane_result.error:
+            telemetry.lane_errors[lane_name] = lane_result.error
+        else:
+            lane_results.append(lane_result)
+            telemetry.lanes_succeeded.append(lane_name)
+    if config.lexical.enabled:
+        lane_name = LexicalLane.lane_name
+        telemetry.lanes_attempted.append(lane_name)
+        lane_result = LexicalLane().run(envelope, profile, slices, config)
         telemetry.candidates_by_lane[lane_name] = len(lane_result.candidates)
         if lane_result.error:
             telemetry.lane_errors[lane_name] = lane_result.error
