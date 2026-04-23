@@ -108,3 +108,15 @@ def test_build_query_envelope_requires_keyword_arguments() -> None:
 def test_expansion_helpers_return_lists() -> None:
     assert _expand_domains(["hotel"]) == ["hotel", "accommodation"]
     assert _expand_keywords(["住哪里"]) == ["住哪里", "住宿", "酒店", "民宿", "旅馆"]
+
+
+def test_expand_keywords_preserves_original_non_empty_values() -> None:
+    assert _expand_keywords([" 住哪里 ", "   ", " 住宿按我习惯来 "]) == [
+        " 住哪里 ",
+        "住哪里",
+        "住宿",
+        "酒店",
+        "民宿",
+        "旅馆",
+        " 住宿按我习惯来 ",
+    ]

@@ -99,10 +99,10 @@ def _expand_domains(domains: list[str]) -> list[str]:
 def _expand_keywords(values: list[str]) -> list[str]:
     expanded: list[str] = []
     seen: set[str] = set()
-    normalized_values = [value.strip() for value in values if value and value.strip()]
-    joined = "\n".join(normalized_values)
+    original_values = [value for value in values if value and value.strip()]
+    joined = "\n".join(values)
 
-    for value in normalized_values:
+    for value in original_values:
         if value not in seen:
             seen.add(value)
             expanded.append(value)
