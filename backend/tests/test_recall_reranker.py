@@ -11,11 +11,11 @@ from memory.recall_reranker import (
     RecallRerankResult,
     SignalScoreDetail,
     _conflict_score,
-    _empty_rerank_result,
     _normalize_optional_scores,
     _resolve_intent_label,
     _resolve_intent_profile,
     choose_reranker_path,
+    empty_rerank_result,
 )
 from memory.recall_stage3_models import RetrievalEvidence
 from memory.retrieval_candidates import RecallCandidate
@@ -79,8 +79,15 @@ def test_normalize_optional_scores_single_value_returns_one():
     assert normalized["b"] == 1.0
 
 
+def test_normalize_optional_scores_equal_zero_values_stay_zero():
+    assert _normalize_optional_scores({"a": 0.0, "b": 0.0}) == {
+        "a": 0.0,
+        "b": 0.0,
+    }
+
+
 def test_selection_metrics_placeholder_is_always_present():
-    result = _empty_rerank_result()
+    result = empty_rerank_result()
 
     assert result.selection_metrics == {
         "selected_pairwise_similarity_max": None,
@@ -408,13 +415,13 @@ def test_evidence_scores_do_not_change_order_when_all_evidence_weights_are_zero(
             item_id="profile_kyoto_area",
             source="profile",
             lanes=["symbolic"],
-            fused_score=0.5,
+            fused_score=0.0,
         ),
         "slice_kyoto_machiya": RetrievalEvidence(
             item_id="slice_kyoto_machiya",
             source="episode_slice",
             lanes=["symbolic", "semantic"],
-            fused_score=0.7,
+            fused_score=0.0,
             semantic_score=0.88,
         ),
     }
@@ -440,6 +447,7 @@ def test_evidence_scores_do_not_change_order_when_all_evidence_weights_are_zero(
         "profile_kyoto_area",
         "slice_kyoto_machiya",
     ]
+    assert path.result.per_item_scores["profile_kyoto_area"].lane_fused_score == 0.0
     assert path.result.per_item_scores["slice_kyoto_machiya"].semantic_score > 0.0
     assert path.result.per_item_scores["slice_kyoto_machiya"].evidence_score == 0.0
     assert path.result.selection_metrics == {
