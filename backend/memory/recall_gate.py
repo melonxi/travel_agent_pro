@@ -19,13 +19,26 @@ RECALL_REQUIRED_INTENT_TYPES = {
     "profile_preference_recall",
     "profile_constraint_recall",
     "past_trip_experience_recall",
+    "mixed_or_ambiguous",
 }
 
 NON_RECALL_INTENT_TYPES = {
     "current_trip_fact",
-    "mixed_or_ambiguous",
     "no_recall_needed",
 }
+
+_PROFILE_SIGNAL_NEGATION_PREFIXES = (
+    "不要",
+    "别",
+    "别再",
+    "不再",
+    "不用",
+    "不按",
+    "不照",
+    "不是",
+    "不想",
+    "先别",
+)
 
 
 @dataclass(frozen=True)
@@ -76,6 +89,13 @@ def apply_recall_short_circuit(message: str) -> RecallShortCircuitDecision:
         )
 
     if signals["history"] or signals["style"]:
+        if _has_negated_profile_signal(text, signals):
+            return RecallShortCircuitDecision(
+                decision="undecided",
+                reason="negated_profile_history_signal",
+                matched_rule="P1N",
+                signals=signals_tuple,
+            )
         return RecallShortCircuitDecision(
             decision="force_recall",
             reason="explicit_profile_history_query",
@@ -115,6 +135,31 @@ def apply_recall_short_circuit(message: str) -> RecallShortCircuitDecision:
         matched_rule="P6",
         signals=signals_tuple,
     )
+
+
+def _has_negated_profile_signal(
+    message: str, signals: dict[str, tuple[str, ...]]
+) -> bool:
+    for category in ("history", "style"):
+        for token in signals.get(category, ()):
+            if _signal_has_negation_prefix(message, token):
+                return True
+    return False
+
+
+def _signal_has_negation_prefix(message: str, token: str) -> bool:
+    if not token:
+        return False
+    start = message.find(token)
+    while start >= 0:
+        prefix = message[max(0, start - 8) : start]
+        if any(
+            prefix.endswith(negation)
+            for negation in _PROFILE_SIGNAL_NEGATION_PREFIXES
+        ):
+            return True
+        start = message.find(token, start + 1)
+    return False
 
 
 def build_recall_gate_tool() -> dict[str, Any]:
@@ -160,6 +205,18 @@ def parse_recall_gate_tool_arguments(payload: dict[str, Any] | None) -> RecallGa
         and isinstance(confidence, (int, float))
         and not isinstance(confidence, bool)
     ):
+        if intent_type == "mixed_or_ambiguous":
+            return RecallGateDecision(
+                needs_recall=True,
+                intent_type=intent_type,
+                reason=reason,
+                confidence=float(confidence),
+                fallback_used=(
+                    "none"
+                    if needs_recall
+                    else "mixed_or_ambiguous_conservative_recall"
+                ),
+            )
         if needs_recall and intent_type not in RECALL_REQUIRED_INTENT_TYPES:
             return RecallGateDecision(
                 needs_recall=False,

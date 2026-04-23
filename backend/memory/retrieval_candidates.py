@@ -18,6 +18,8 @@ class RecallCandidate:
     content_summary: str
     domains: list[str]
     applicability: str
+    polarity: str = ""
+    created_at: str = ""
 
 
 def build_profile_candidates(
@@ -36,6 +38,8 @@ def build_profile_candidates(
                 content_summary=_profile_summary(item),
                 domains=[item.domain],
                 applicability=item.applicability,
+                polarity=item.polarity,
+                created_at=item.updated_at or item.created_at,
             )
         )
     return candidates
@@ -57,6 +61,7 @@ def build_episode_slice_candidates(
                 content_summary=_slice_summary(slice_.content),
                 domains=list(slice_.domains),
                 applicability=slice_.applicability,
+                created_at=slice_.created_at,
             )
         )
     return candidates

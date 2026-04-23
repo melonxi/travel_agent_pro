@@ -27,18 +27,24 @@ class MemoryRecallTelemetry:
     matched_reasons: list[str] = field(default_factory=list)
     stage0_decision: str = "undecided"
     stage0_reason: str = ""
+    stage0_matched_rule: str = ""
+    stage0_signals: dict[str, list[str]] = field(default_factory=dict)
     gate_needs_recall: bool | None = None
     gate_intent_type: str = ""
     gate_confidence: float | None = None
     gate_reason: str = ""
     final_recall_decision: str = ""
     fallback_used: str = "none"
+    recall_skip_source: str = ""
     query_plan: dict[str, Any] = field(default_factory=dict)
+    query_plan_source: str = ""
     query_plan_fallback: str = "none"
     candidate_count: int = 0
+    recall_attempted_but_zero_hit: bool = False
     reranker_selected_ids: list[str] = field(default_factory=list)
     reranker_final_reason: str = ""
     reranker_fallback: str = "none"
+    reranker_per_item_reason: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -49,18 +55,26 @@ class MemoryRecallTelemetry:
             "matched_reasons": list(self.matched_reasons),
             "stage0_decision": self.stage0_decision,
             "stage0_reason": self.stage0_reason,
+            "stage0_matched_rule": self.stage0_matched_rule,
+            "stage0_signals": {
+                name: list(hits) for name, hits in self.stage0_signals.items()
+            },
             "gate_needs_recall": self.gate_needs_recall,
             "gate_intent_type": self.gate_intent_type,
             "gate_confidence": self.gate_confidence,
             "gate_reason": self.gate_reason,
             "final_recall_decision": self.final_recall_decision,
             "fallback_used": self.fallback_used,
+            "recall_skip_source": self.recall_skip_source,
             "query_plan": dict(self.query_plan),
+            "query_plan_source": self.query_plan_source,
             "query_plan_fallback": self.query_plan_fallback,
             "candidate_count": self.candidate_count,
+            "recall_attempted_but_zero_hit": self.recall_attempted_but_zero_hit,
             "reranker_selected_ids": list(self.reranker_selected_ids),
             "reranker_final_reason": self.reranker_final_reason,
             "reranker_fallback": self.reranker_fallback,
+            "reranker_per_item_reason": dict(self.reranker_per_item_reason),
         }
 
 
