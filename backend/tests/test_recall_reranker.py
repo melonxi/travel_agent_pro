@@ -8,6 +8,8 @@ from memory.recall_reranker import (
     RecallRerankPath,
     RecallRerankResult,
     SignalScoreDetail,
+    _conflict_score,
+    _resolve_intent_label,
     choose_reranker_path,
 )
 from memory.recall_stage3_models import RetrievalEvidence
@@ -146,6 +148,108 @@ def test_choose_reranker_path_treats_missing_evidence_as_empty():
     )
 
     assert path.result.selected_item_ids == ["profile_missing_evidence"]
+
+
+def test_resolve_intent_label_preserves_current_heuristic_branches():
+    assert _resolve_intent_label(
+        "按我偏好选机票",
+        RecallRetrievalPlan(
+            source="profile",
+            buckets=["constraints"],
+            domains=["flight"],
+            destination="",
+            keywords=["机票"],
+            top_k=5,
+            reason="profile_constraint_recall",
+        ),
+    ) == "profile"
+
+    assert _resolve_intent_label(
+        "沿用上次大阪行程的节奏",
+        RecallRetrievalPlan(
+            source="episode_slice",
+            buckets=["day_rhythm"],
+            domains=["itinerary"],
+            destination="大阪",
+            keywords=["行程"],
+            top_k=5,
+            reason="past_trip_slice_lookup",
+        ),
+    ) == "episode_slice"
+
+    assert _resolve_intent_label(
+        "推荐这次京都住哪里比较好",
+        RecallRetrievalPlan(
+            source="hybrid_history",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="京都",
+            keywords=["住宿"],
+            top_k=5,
+            reason="recommend",
+        ),
+    ) == "recommend"
+
+    assert _resolve_intent_label(
+        "查查巴黎餐厅",
+        RecallRetrievalPlan(
+            source="hybrid_history",
+            buckets=["poi_preferences"],
+            domains=["food"],
+            destination="巴黎",
+            keywords=["餐厅"],
+            top_k=5,
+            reason="lookup",
+        ),
+    ) == "default"
+
+
+def test_default_config_per_item_reason_bit_stable():
+    candidate = make_candidate(
+        item_id="profile_kyoto_area",
+        matched_reason=["exact domain match on hotel", "keyword match on 住宿"],
+        content_summary="hotel:preferred_area=京都四条",
+        domains=["hotel"],
+        applicability="适用于京都住宿选择。",
+        created_at="",
+    )
+
+    path = choose_reranker_path(
+        candidates=[candidate],
+        user_message="推荐这次京都住哪里",
+        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="京都",
+            keywords=["住宿"],
+            top_k=5,
+            reason="profile",
+        ),
+        evidence_by_id={},
+        config=DummyRerankerConfig(small_candidate_set_threshold=0),
+    )
+
+    assert path.result.per_item_reason["profile_kyoto_area"] == (
+        "exact domain match on hotel | keyword match on 住宿 | "
+        "bucket=0.82 domain=1.00 keyword=0.08 destination=1.00 "
+        "recency=1.00 applicability=0.65 conflict=0.00"
+    )
+
+
+def test_conflict_score_fixture_for_hard_drop_is_reachable():
+    candidate = make_candidate(
+        item_id="constraint_avoid_red_eye",
+        bucket="constraints",
+        polarity="avoid",
+        matched_reason=["exact domain match on flight", "keyword match on 红眼"],
+        content_summary="flight:avoid_red_eye=true",
+        domains=["flight"],
+        applicability="适用于所有旅行。",
+    )
+
+    assert _conflict_score(candidate, "这次可以坐红眼航班") == 1.0
 
 
 def test_choose_reranker_path_skips_scoring_when_candidate_set_is_small():

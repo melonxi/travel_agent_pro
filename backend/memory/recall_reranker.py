@@ -6,7 +6,7 @@ import math
 import re
 from typing import Any
 
-from config import MemoryRerankerConfig
+from config import IntentWeightProfile, MemoryRerankerConfig
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3_models import RetrievalEvidence
 from memory.retrieval_candidates import RecallCandidate
@@ -82,27 +82,13 @@ class RecallRerankPath:
 
 
 @dataclass(frozen=True)
-class _IntentWeights:
-    profile_source_prior: float
-    slice_source_prior: float
-    bucket_weight: float
-    domain_weight: float
-    keyword_weight: float
-    destination_weight: float
-    recency_weight: float
-    applicability_weight: float
-    conflict_weight: float
-
-
-@dataclass(frozen=True)
 class _ScoredCandidate:
     candidate: RecallCandidate
+    detail: SignalScoreDetail
     source_score: float
     normalized_score: float
     final_score: float
     duplicate_group: str
-    conflict_score: float
-    weak_relevance: bool
     reason: str
 
 
@@ -128,8 +114,10 @@ def choose_reranker_path(
             ),
         )
 
-    weights = _intent_weights(user_message, retrieval_plan)
+    intent_label = _resolve_intent_label(user_message, retrieval_plan)
+    weights = _resolve_intent_profile(user_message, retrieval_plan, reranker_config)
     per_item_reason: dict[str, str] = {}
+    per_item_scores: dict[str, SignalScoreDetail] = {}
 
     # Always score every candidate and always run conflict filtering + dedup.
     # The small-set fast path ONLY skips the weighted cross-source re-sort,
@@ -142,17 +130,20 @@ def choose_reranker_path(
             plan,
             retrieval_plan,
             weights,
-            reranker_config.recency_half_life_days,
+            reranker_config,
             evidence_by_id.get(candidate.item_id),
         )
+        per_item_scores[candidate.item_id] = scored.detail
         per_item_reason[candidate.item_id] = scored.reason
-        if scored.conflict_score >= 0.95:
-            per_item_reason[candidate.item_id] = f"{scored.reason} | dropped as conflict"
-            continue
-        if scored.weak_relevance:
-            per_item_reason[candidate.item_id] = (
-                f"{scored.reason} | dropped as weak relevance"
+        keep, hard_filter = _passes_hard_filter(scored.detail)
+        scored.detail.hard_filter = hard_filter
+        if not keep:
+            suffix = (
+                "dropped as conflict"
+                if hard_filter == "conflict"
+                else "dropped as weak relevance"
             )
+            per_item_reason[candidate.item_id] = f"{scored.reason} | {suffix}"
             continue
         grouped[candidate.source].append(scored)
 
@@ -176,6 +167,8 @@ def choose_reranker_path(
             final_reason="small candidate set; skipped weighted rerank",
             per_item_reason=per_item_reason,
             fallback_used="skipped_small_candidate_set",
+            per_item_scores=per_item_scores,
+            intent_label=intent_label,
         )
         return RecallRerankPath(selected_candidates=selected_candidates, result=result)
 
@@ -207,6 +200,8 @@ def choose_reranker_path(
         final_reason=final_reason,
         per_item_reason=per_item_reason,
         fallback_used="none",
+        per_item_scores=per_item_scores,
+        intent_label=intent_label,
     )
     return RecallRerankPath(selected_candidates=selected_candidates, result=result)
 
@@ -226,20 +221,35 @@ def _small_candidate_set_result(candidates: list[RecallCandidate]) -> RecallRera
     return RecallRerankPath(selected_candidates=list(candidates), result=result)
 
 
-def _intent_weights(
+def _resolve_intent_label(
     user_message: str,
     retrieval_plan: RecallRetrievalPlan | None,
-) -> _IntentWeights:
+) -> str:
     text = user_message or ""
     reason = (retrieval_plan.reason if retrieval_plan is not None else "").lower()
     source = retrieval_plan.source if retrieval_plan is not None else ""
     if source == "profile" or "profile_" in reason:
-        return _IntentWeights(1.0, 0.62, 0.34, 0.24, 0.18, 0.08, 0.06, 0.10, 1.4)
+        return "profile"
     if source == "episode_slice" or "past_trip" in reason:
-        return _IntentWeights(0.62, 1.0, 0.16, 0.22, 0.18, 0.24, 0.14, 0.08, 1.0)
+        return "episode_slice"
     if any(word in text for word in ("推荐", "比较好", "适合我", "怎么安排")):
-        return _IntentWeights(0.9, 0.9, 0.22, 0.22, 0.20, 0.18, 0.10, 0.14, 1.2)
-    return _IntentWeights(0.84, 0.84, 0.24, 0.22, 0.18, 0.14, 0.08, 0.12, 1.2)
+        return "recommend"
+    return "default"
+
+
+def _resolve_intent_profile(
+    user_message: str,
+    retrieval_plan: RecallRetrievalPlan | None,
+    config: MemoryRerankerConfig,
+) -> IntentWeightProfile:
+    intent_label = _resolve_intent_label(user_message, retrieval_plan)
+    configured_weights = getattr(
+        config,
+        "intent_weights",
+        MemoryRerankerConfig().intent_weights,
+    )
+    profiles = dict(configured_weights)
+    return profiles.get(intent_label, profiles["default"])
 
 
 def _score_candidate(
@@ -247,10 +257,49 @@ def _score_candidate(
     user_message: str,
     plan: TravelPlanState,
     retrieval_plan: RecallRetrievalPlan | None,
-    weights: _IntentWeights,
-    recency_half_life_days: int,
+    weights: IntentWeightProfile,
+    reranker_config: MemoryRerankerConfig,
     _evidence: RetrievalEvidence | None = None,
 ) -> _ScoredCandidate:
+    detail = _compute_rule_signals(
+        candidate,
+        user_message,
+        plan,
+        retrieval_plan,
+        reranker_config,
+    )
+    duplicate_group = _duplicate_group(candidate)
+    raw_score = (
+        weights.bucket_weight * detail.bucket_score
+        + weights.domain_weight * detail.domain_exact_score
+        + weights.keyword_weight * detail.keyword_exact_score
+        + weights.destination_weight * detail.destination_score
+        + weights.recency_weight * detail.recency_score
+        + weights.applicability_weight * detail.applicability_score
+        - weights.conflict_weight * detail.conflict_score
+    )
+    detail.rule_score = raw_score
+    detail.source_normalized_score = raw_score
+    detail.final_score = raw_score
+    reason = _build_reason_text(candidate, detail)
+    return _ScoredCandidate(
+        candidate=candidate,
+        detail=detail,
+        source_score=raw_score,
+        normalized_score=raw_score,
+        final_score=raw_score,
+        duplicate_group=duplicate_group,
+        reason=reason,
+    )
+
+
+def _compute_rule_signals(
+    candidate: RecallCandidate,
+    user_message: str,
+    plan: TravelPlanState,
+    retrieval_plan: RecallRetrievalPlan | None,
+    reranker_config: MemoryRerankerConfig,
+) -> SignalScoreDetail:
     bucket_score = _bucket_prior(candidate)
     domain_score = _jaccard(
         set(retrieval_plan.domains if retrieval_plan is not None else []),
@@ -258,41 +307,43 @@ def _score_candidate(
     )
     keyword_score = _keyword_overlap(candidate, retrieval_plan)
     destination_score = _destination_match(candidate, plan, retrieval_plan)
-    recency_score = _recency_score(candidate, recency_half_life_days)
+    recency_score = _recency_score(candidate, reranker_config.recency_half_life_days)
     applicability_score = _applicability_score(candidate, plan, user_message)
     conflict_score = _conflict_score(candidate, user_message)
-    duplicate_group = _duplicate_group(candidate)
-    weak_relevance = (
-        domain_score <= 0.0
-        and keyword_score <= 0.0
-        and destination_score <= 0.0
-        and applicability_score <= 0.35
-    )
-    raw_score = (
-        weights.bucket_weight * bucket_score
-        + weights.domain_weight * domain_score
-        + weights.keyword_weight * keyword_score
-        + weights.destination_weight * destination_score
-        + weights.recency_weight * recency_score
-        + weights.applicability_weight * applicability_score
-        - weights.conflict_weight * conflict_score
-    )
-    reason = (
-        f"{_matched_reason_text(candidate)} | bucket={bucket_score:.2f} "
-        f"domain={domain_score:.2f} keyword={keyword_score:.2f} "
-        f"destination={destination_score:.2f} recency={recency_score:.2f} "
-        f"applicability={applicability_score:.2f} conflict={conflict_score:.2f}"
-    )
-    return _ScoredCandidate(
-        candidate=candidate,
-        source_score=raw_score,
-        normalized_score=raw_score,
-        final_score=raw_score,
-        duplicate_group=duplicate_group,
+    return SignalScoreDetail(
+        bucket_score=bucket_score,
+        domain_exact_score=domain_score,
+        keyword_exact_score=keyword_score,
+        destination_score=destination_score,
+        recency_score=recency_score,
+        applicability_score=applicability_score,
         conflict_score=conflict_score,
-        weak_relevance=weak_relevance,
-        reason=reason,
     )
+
+
+def _build_reason_text(candidate: RecallCandidate, detail: SignalScoreDetail) -> str:
+    return (
+        f"{_matched_reason_text(candidate)} | bucket={detail.bucket_score:.2f} "
+        f"domain={detail.domain_exact_score:.2f} keyword={detail.keyword_exact_score:.2f} "
+        f"destination={detail.destination_score:.2f} recency={detail.recency_score:.2f} "
+        f"applicability={detail.applicability_score:.2f} conflict={detail.conflict_score:.2f}"
+    )
+
+
+def _passes_hard_filter(detail: SignalScoreDetail) -> tuple[bool, str]:
+    # Current _conflict_score is binary {0.0, 1.0}; 0.95 keeps a safety margin
+    # if conflict becomes continuous later.
+    if detail.conflict_score >= 0.95:
+        return False, "conflict"
+    weak_relevance = (
+        detail.domain_exact_score <= 0.0
+        and detail.keyword_exact_score <= 0.0
+        and detail.destination_score <= 0.0
+        and detail.applicability_score <= 0.35
+    )
+    if weak_relevance:
+        return False, "weak_relevance"
+    return True, ""
 
 
 def _normalize_source_scores(
@@ -311,15 +362,16 @@ def _normalize_source_scores(
             norm = 1.0
         else:
             norm = (scored.source_score - min_score) / (max_score - min_score)
+        scored.detail.source_normalized_score = norm
+        scored.detail.final_score = source_prior + norm
         normalized.append(
             _ScoredCandidate(
                 candidate=scored.candidate,
+                detail=scored.detail,
                 source_score=scored.source_score,
                 normalized_score=norm,
                 final_score=source_prior + norm,
                 duplicate_group=scored.duplicate_group,
-                conflict_score=scored.conflict_score,
-                weak_relevance=scored.weak_relevance,
                 reason=scored.reason,
             )
         )
@@ -653,7 +705,7 @@ def _matched_reason_text(candidate: RecallCandidate) -> str:
     return " | ".join(candidate.matched_reason) if candidate.matched_reason else "matched candidate"
 
 
-def _source_prior(source: str, weights: _IntentWeights) -> float:
+def _source_prior(source: str, weights: IntentWeightProfile) -> float:
     if source == "profile":
         return weights.profile_source_prior
     return weights.slice_source_prior
