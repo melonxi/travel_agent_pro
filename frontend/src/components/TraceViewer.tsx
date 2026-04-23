@@ -291,6 +291,11 @@ function EventRow({ iteration }: { iteration: TraceIteration }) {
             <div className="trace-memory-hits">
               recall {iteration.memory_recall.final_recall_decision ?? 'unknown'}
               （候选 {iteration.memory_recall.candidate_count ?? 0} / 最终 {iteration.memory_recall.reranker_selected_ids?.length ?? 0} / fallback {iteration.memory_recall.reranker_fallback ?? 'none'}）
+              {iteration.memory_recall.reranker_intent_label && (
+                <div className="trace-memory-recall-detail">
+                  intent {iteration.memory_recall.reranker_intent_label}
+                </div>
+              )}
             </div>
           )}
         </div>

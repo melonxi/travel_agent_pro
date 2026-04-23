@@ -106,6 +106,12 @@ def test_to_dict_keeps_memory_hit_count_for_real_hits_only():
             reranker_selected_ids=["m1"],
             reranker_final_reason="selected by reranker",
             reranker_fallback="none",
+            reranker_per_item_scores={"m1": {"rule_score": 0.71, "final_score": 2.0}},
+            reranker_intent_label="profile",
+            reranker_selection_metrics={
+                "selected_pairwise_similarity_max": None,
+                "selected_pairwise_similarity_avg": None,
+            },
         )
     )
 
@@ -128,3 +134,11 @@ def test_to_dict_keeps_memory_hit_count_for_real_hits_only():
     assert d["last_memory_recall"]["reranker_selected_ids"] == ["m1"]
     assert d["last_memory_recall"]["reranker_final_reason"] == "selected by reranker"
     assert d["last_memory_recall"]["reranker_fallback"] == "none"
+    assert d["last_memory_recall"]["reranker_intent_label"] == "profile"
+    assert d["last_memory_recall"]["reranker_per_item_scores"]["m1"]["rule_score"] == 0.71
+    assert (
+        d["last_memory_recall"]["reranker_selection_metrics"][
+            "selected_pairwise_similarity_max"
+        ]
+        is None
+    )

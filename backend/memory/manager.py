@@ -1,6 +1,8 @@
 # backend/memory/manager.py
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from config import MemoryRerankerConfig, MemoryRetrievalConfig
 from memory.destination_normalization import match_destination
 from memory.embedding_provider import (
@@ -218,6 +220,12 @@ class MemoryManager:
         telemetry.reranker_final_reason = rerank_result.final_reason
         telemetry.reranker_fallback = rerank_result.fallback_used
         telemetry.reranker_per_item_reason = dict(rerank_result.per_item_reason)
+        telemetry.reranker_per_item_scores = {
+            item_id: asdict(detail)
+            for item_id, detail in rerank_result.per_item_scores.items()
+        }
+        telemetry.reranker_intent_label = rerank_result.intent_label
+        telemetry.reranker_selection_metrics = dict(rerank_result.selection_metrics)
         if recall_attempted and active_plan is not None:
             telemetry.query_plan = {
                 "buckets": list(active_plan.buckets),

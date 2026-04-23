@@ -633,6 +633,9 @@ def _recall_telemetry_record_from_recall(
         reranker_final_reason=memory_recall.reranker_final_reason,
         reranker_fallback=memory_recall.reranker_fallback,
         reranker_per_item_reason=dict(memory_recall.reranker_per_item_reason),
+        reranker_per_item_scores=dict(memory_recall.reranker_per_item_scores),
+        reranker_intent_label=memory_recall.reranker_intent_label,
+        reranker_selection_metrics=dict(memory_recall.reranker_selection_metrics),
     )
 
 
@@ -4044,6 +4047,15 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                                 "reranker_fallback": memory_recall.reranker_fallback,
                                 "reranker_per_item_reason": dict(
                                     memory_recall.reranker_per_item_reason
+                                ),
+                                "reranker_per_item_scores": dict(
+                                    memory_recall.reranker_per_item_scores
+                                ),
+                                "reranker_intent_label": (
+                                    memory_recall.reranker_intent_label
+                                ),
+                                "reranker_selection_metrics": dict(
+                                    memory_recall.reranker_selection_metrics
                                 ),
                             },
                             started_at=memory_recall_started_at,

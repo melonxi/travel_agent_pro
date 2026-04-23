@@ -105,6 +105,11 @@ class RecallTelemetryRecord:
     reranker_final_reason: str = ""
     reranker_fallback: str = "none"
     reranker_per_item_reason: dict[str, str] = field(default_factory=dict)
+    reranker_per_item_scores: dict[str, dict[str, float | str | None]] = field(
+        default_factory=dict
+    )
+    reranker_intent_label: str = ""
+    reranker_selection_metrics: dict[str, float | None] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
@@ -127,6 +132,12 @@ class RecallTelemetryRecord:
             "reranker_final_reason": self.reranker_final_reason,
             "reranker_fallback": self.reranker_fallback,
             "reranker_per_item_reason": dict(self.reranker_per_item_reason),
+            "reranker_per_item_scores": {
+                item_id: dict(scores)
+                for item_id, scores in self.reranker_per_item_scores.items()
+            },
+            "reranker_intent_label": self.reranker_intent_label,
+            "reranker_selection_metrics": dict(self.reranker_selection_metrics),
             "timestamp": self.timestamp,
         }
 

@@ -169,6 +169,9 @@ def test_memory_recall_telemetry_to_dict_preserves_fields():
         "reranker_final_reason": "",
         "reranker_fallback": "none",
         "reranker_per_item_reason": {},
+        "reranker_per_item_scores": {},
+        "reranker_intent_label": "",
+        "reranker_selection_metrics": {},
     }
 
 
@@ -230,6 +233,35 @@ def test_memory_recall_telemetry_to_dict_includes_reranker_fields():
     assert payload["reranker_selected_ids"] == ["profile_1", "slice_2"]
     assert payload["reranker_final_reason"] == "two items directly answer the user's question"
     assert payload["reranker_fallback"] == "none"
+
+
+def test_memory_recall_telemetry_to_dict_includes_structured_reranker_fields():
+    from memory.formatter import MemoryRecallTelemetry
+
+    telemetry = MemoryRecallTelemetry(
+        candidate_count=2,
+        reranker_selected_ids=["profile_1"],
+        reranker_final_reason="selected profile memory",
+        reranker_fallback="none",
+        reranker_per_item_reason={"profile_1": "bucket=0.82 domain=1.00 keyword=0.50"},
+        reranker_per_item_scores={
+            "profile_1": {
+                "rule_score": 0.71,
+                "evidence_score": 0.0,
+                "final_score": 2.0,
+            }
+        },
+        reranker_intent_label="profile",
+        reranker_selection_metrics={
+            "selected_pairwise_similarity_max": None,
+            "selected_pairwise_similarity_avg": None,
+        },
+    )
+
+    payload = telemetry.to_dict()
+
+    assert payload["reranker_intent_label"] == "profile"
+    assert payload["reranker_per_item_scores"]["profile_1"]["final_score"] == 2.0
 
 
 def test_memory_recall_telemetry_to_dict_includes_query_source_and_zero_hit_flag():

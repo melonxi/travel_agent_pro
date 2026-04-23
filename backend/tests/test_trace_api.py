@@ -586,6 +586,65 @@ async def test_trace_recall_telemetry_visible_without_memory_hit(app):
 
 
 @pytest.mark.asyncio
+async def test_trace_recall_telemetry_includes_structured_reranker_fields(app):
+    from telemetry.stats import RecallTelemetryRecord
+
+    sessions = _get_sessions(app)
+    session_id = "test-reranker-structured-trace"
+    stats = SessionStats()
+    stats.record_llm_call(
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        duration_ms=200.0,
+        phase=1,
+        iteration=1,
+    )
+    stats.recall_telemetry.append(
+        RecallTelemetryRecord(
+            stage0_decision="undecided",
+            stage0_reason="needs_llm_gate",
+            gate_needs_recall=True,
+            gate_intent_type="recommend",
+            final_recall_decision="query_recall_enabled",
+            fallback_used="none",
+            query_plan_source="llm",
+            candidate_count=2,
+            recall_attempted_but_zero_hit=False,
+            reranker_selected_ids=["profile_1"],
+            reranker_final_reason="selected profile memory",
+            reranker_fallback="none",
+            reranker_per_item_scores={
+                "profile_1": {"rule_score": 0.71, "final_score": 2.0}
+            },
+            reranker_intent_label="recommend",
+            reranker_selection_metrics={
+                "selected_pairwise_similarity_max": None,
+                "selected_pairwise_similarity_avg": None,
+            },
+            timestamp=stats.llm_calls[-1].timestamp,
+        )
+    )
+    sessions[session_id] = {
+        "stats": stats,
+        "messages": [],
+        "plan": None,
+        "compression_events": [],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/api/sessions/{session_id}/trace")
+
+    recall = resp.json()["iterations"][0]["memory_recall"]
+    assert recall["reranker_intent_label"] == "recommend"
+    assert recall["reranker_per_item_scores"]["profile_1"]["rule_score"] == 0.71
+    assert recall["reranker_selection_metrics"]["selected_pairwise_similarity_max"] is None
+
+
+@pytest.mark.asyncio
 async def test_trace_memory_hits_attach_only_to_first_matching_llm(app):
     from telemetry.stats import MemoryHitRecord
 

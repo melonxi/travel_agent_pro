@@ -76,6 +76,12 @@ def _serialize_recall_telemetry(hit: RecallTelemetryRecord) -> dict:
         "reranker_final_reason": hit.reranker_final_reason,
         "reranker_fallback": hit.reranker_fallback,
         "reranker_per_item_reason": dict(hit.reranker_per_item_reason),
+        "reranker_per_item_scores": {
+            item_id: dict(scores)
+            for item_id, scores in hit.reranker_per_item_scores.items()
+        },
+        "reranker_intent_label": hit.reranker_intent_label,
+        "reranker_selection_metrics": dict(hit.reranker_selection_metrics),
     }
 
 
