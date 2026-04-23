@@ -22,13 +22,14 @@ def fuse_lane_results(
             continue
 
         seen_in_lane: set[str] = set()
-        for index, candidate in enumerate(lane_result.candidates):
-            rank = index + 1
-            contribution = weight / float(config.rrf_k + rank)
+        unique_rank = 0
+        for candidate in lane_result.candidates:
             item_id = candidate.candidate.item_id
             if item_id in seen_in_lane:
                 continue
             seen_in_lane.add(item_id)
+            unique_rank += 1
+            contribution = weight / float(config.rrf_k + unique_rank)
 
             if item_id not in fused_by_id:
                 fused_by_id[item_id] = Stage3Candidate(
@@ -41,7 +42,7 @@ def fuse_lane_results(
             evidence = fused_by_id[item_id].evidence
             if lane_name not in evidence.lanes:
                 evidence.lanes.append(lane_name)
-            evidence.lane_ranks[lane_name] = rank
+            evidence.lane_ranks[lane_name] = unique_rank
             evidence.lane_scores[lane_name] = contribution
             evidence.fused_score += contribution
 
