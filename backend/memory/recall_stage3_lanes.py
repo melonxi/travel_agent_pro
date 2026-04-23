@@ -25,10 +25,11 @@ class SymbolicLane:
     ) -> Stage3LaneResult:
         lane_plan = _plan_for_source_policy(envelope)
         symbolic_limit = min(config.symbolic.top_k, envelope.plan.top_k)
-        candidates = [
-            *rank_profile_items(lane_plan, profile)[:symbolic_limit],
-            *rank_episode_slices(lane_plan, slices)[:symbolic_limit],
-        ]
+        candidates: list[RecallCandidate] = []
+        if envelope.source_policy.search_profile:
+            candidates.extend(rank_profile_items(lane_plan, profile)[:symbolic_limit])
+        if envelope.source_policy.search_slices:
+            candidates.extend(rank_episode_slices(lane_plan, slices)[:symbolic_limit])
 
         return Stage3LaneResult(
             lane_name=self.lane_name,

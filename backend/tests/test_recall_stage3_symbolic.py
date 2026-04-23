@@ -1,7 +1,11 @@
 from config import Stage3RecallConfig
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3 import retrieve_recall_candidates
-from memory.recall_stage3_lanes import _evidence_from_candidate, _plan_for_source_policy
+from memory.recall_stage3_lanes import (
+    SymbolicLane,
+    _evidence_from_candidate,
+    _plan_for_source_policy,
+)
 from memory.recall_stage3_models import RecallQueryEnvelope, SourcePolicy
 from memory.retrieval_candidates import RecallCandidate
 from memory.symbolic_recall import rank_episode_slices, rank_profile_items
@@ -124,6 +128,32 @@ def test_stage3_symbolic_plan_preserves_original_source_when_policy_selects_no_l
     lane_plan = _plan_for_source_policy(envelope)
 
     assert lane_plan.source == "profile"
+
+
+def test_stage3_symbolic_lane_returns_no_candidates_when_policy_selects_no_lane() -> None:
+    envelope = RecallQueryEnvelope(
+        plan=_query(),
+        user_message="",
+        source_policy=SourcePolicy(
+            requested_source="hybrid_history",
+            search_profile=False,
+            search_slices=False,
+        ),
+        original_domains=("hotel",),
+        expanded_domains=("hotel",),
+        original_keywords=("住宿",),
+        expanded_keywords=("住宿",),
+        destination="京都",
+    )
+
+    result = SymbolicLane().run(
+        envelope=envelope,
+        profile=_profile(),
+        slices=_slices(),
+        config=Stage3RecallConfig(),
+    )
+
+    assert result.candidates == []
 
 
 def test_stage3_symbolic_evidence_reports_only_domains_present_in_reasons() -> None:
