@@ -336,10 +336,13 @@ async def test_generate_context_drops_fixed_profile_when_gate_blocks_query_recal
         ),
     )
 
-    def fail_rank_profile_items(*args, **kwargs):
-        raise AssertionError("rank_profile_items should not run when recall gate blocks")
+    def fail_retrieve_recall_candidates(*args, **kwargs):
+        raise AssertionError("retrieve_recall_candidates should not run when recall gate blocks")
 
-    monkeypatch.setattr("memory.manager.rank_profile_items", fail_rank_profile_items)
+    monkeypatch.setattr(
+        "memory.manager.retrieve_recall_candidates",
+        fail_retrieve_recall_candidates,
+    )
 
     text, recall = await manager.generate_context(
         "u1",
@@ -642,3 +645,99 @@ memory:
     cfg = load_config(str(cfg_file))
 
     assert cfg.memory.retrieval.recall_gate_model == ""
+
+
+@pytest.mark.asyncio
+async def test_generate_context_attaches_stage3_telemetry(tmp_path: Path):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    await manager.v3_store.upsert_profile_item(
+        "u1",
+        "stable_preferences",
+        MemoryProfileItem(
+            id="stable_preferences:hotel:preferred_area",
+            domain="hotel",
+            key="preferred_area",
+            value="京都住四条附近",
+            polarity="prefer",
+            stability="stable",
+            confidence=0.9,
+            status="active",
+            context={},
+            applicability="适用于大多数住宿选择。",
+            recall_hints={"domains": ["hotel"], "keywords": ["住宿"]},
+            source_refs=[],
+            created_at="2026-04-19T00:00:00",
+            updated_at="2026-04-19T00:00:00",
+        ),
+    )
+
+    _, recall = await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_now"),
+        user_message="住宿按我习惯",
+        recall_gate=True,
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="",
+            keywords=["住宿"],
+            top_k=5,
+            reason="test",
+        ),
+    )
+
+    assert recall.stage3["lanes_attempted"] == ["symbolic"]
+    assert recall.stage3["zero_hit"] is False
+
+
+@pytest.mark.asyncio
+async def test_generate_context_passes_active_plan_to_reranker_when_plan_is_heuristic(
+    tmp_path: Path,
+    monkeypatch,
+):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    seen = {}
+
+    async def fake_select_recall_candidates(**kwargs):
+        seen["retrieval_plan"] = kwargs["retrieval_plan"]
+        return kwargs["candidates"], RecallRerankResult(
+            selected_item_ids=[candidate.item_id for candidate in kwargs["candidates"]],
+            final_reason="fake",
+            per_item_reason={},
+            fallback_used="none",
+        )
+
+    monkeypatch.setattr("memory.manager.select_recall_candidates", fake_select_recall_candidates)
+    await manager.v3_store.upsert_profile_item(
+        "u1",
+        "stable_preferences",
+        MemoryProfileItem(
+            id="stable_preferences:hotel:preferred_area",
+            domain="hotel",
+            key="preferred_area",
+            value="京都住四条附近",
+            polarity="prefer",
+            stability="stable",
+            confidence=0.9,
+            status="active",
+            context={},
+            applicability="适用于大多数住宿选择。",
+            recall_hints={"domains": ["hotel"], "keywords": ["住宿"]},
+            source_refs=[],
+            created_at="2026-04-19T00:00:00",
+            updated_at="2026-04-19T00:00:00",
+        ),
+    )
+
+    await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_now"),
+        user_message="住宿按我常规偏好来",
+        recall_gate=True,
+        short_circuit="force_recall",
+        retrieval_plan=None,
+    )
+
+    assert seen["retrieval_plan"] is not None
+    assert seen["retrieval_plan"].source == "profile"

@@ -41,6 +41,7 @@ class MemoryRecallTelemetry:
     query_plan_fallback: str = "none"
     candidate_count: int = 0
     recall_attempted_but_zero_hit: bool = False
+    stage3: dict[str, Any] = field(default_factory=dict)
     reranker_selected_ids: list[str] = field(default_factory=list)
     reranker_final_reason: str = ""
     reranker_fallback: str = "none"
@@ -71,6 +72,7 @@ class MemoryRecallTelemetry:
             "query_plan_fallback": self.query_plan_fallback,
             "candidate_count": self.candidate_count,
             "recall_attempted_but_zero_hit": self.recall_attempted_but_zero_hit,
+            "stage3": dict(self.stage3),
             "reranker_selected_ids": list(self.reranker_selected_ids),
             "reranker_final_reason": self.reranker_final_reason,
             "reranker_fallback": self.reranker_fallback,
