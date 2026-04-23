@@ -13,6 +13,7 @@ class AssertionType(Enum):
     CONTAINS_TEXT = "contains_text"
     NOT_CONTAINS_TEXT = "not_contains_text"
     BUDGET_WITHIN = "budget_within"
+    MEMORY_RECALL_FIELD = "memory_recall_field"
 
 
 @dataclass
@@ -53,6 +54,7 @@ class CaseResult:
     duration_ms: float = 0.0
     error: str | None = None
     difficulty: str = ""
+    tags: list[str] = field(default_factory=list)
     stats: dict[str, Any] = field(default_factory=dict)
 
 

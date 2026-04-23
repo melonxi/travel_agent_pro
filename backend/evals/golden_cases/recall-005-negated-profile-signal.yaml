@@ -1,0 +1,18 @@
+id: recall-005-negated-profile-signal
+name: Negated profile signal does not force Stage0 recall
+description: Negated profile/history phrases should be downgraded to the LLM gate instead of force_recall.
+difficulty: memory
+messages:
+  - role: user
+    content: 不要按我的习惯来
+assertions:
+  - type: memory_recall_field
+    target: stage0_decision
+    value: undecided
+  - type: memory_recall_field
+    target: stage0_matched_rule
+    value: P1N
+tags:
+  - memory_recall
+  - negated_profile_signal
+  - stage0_guard

@@ -1,0 +1,19 @@
+id: recall-004-ack-preference-force
+name: Ack plus preference phrase still recalls
+description: ACK tokens must not hide natural preference phrases such as "按我偏好".
+difficulty: memory
+messages:
+  - role: user
+    content: 好的，按我偏好来
+assertions:
+  - type: memory_recall_field
+    target: stage0_matched_rule
+    value: P1
+  - type: memory_recall_field
+    target: final_recall_decision
+    value: query_recall_enabled
+tags:
+  - memory_recall
+  - expect_recall
+  - ack_preference
+  - natural_phrase

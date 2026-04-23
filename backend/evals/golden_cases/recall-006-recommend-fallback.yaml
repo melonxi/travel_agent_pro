@@ -1,0 +1,19 @@
+id: recall-006-recommend-fallback
+name: Recommendation wording survives gate failure
+description: Personalized recommendation wording should fall back to heuristic profile recall when the LLM gate is unavailable.
+difficulty: memory
+messages:
+  - role: user
+    content: 住宿怎么安排比较好
+assertions:
+  - type: memory_recall_field
+    target: final_recall_decision
+    value: query_recall_enabled
+  - type: memory_recall_field
+    target: query_plan_source
+    value: heuristic_fallback
+tags:
+  - memory_recall
+  - expect_recall
+  - recommend_fallback
+  - gate_failure

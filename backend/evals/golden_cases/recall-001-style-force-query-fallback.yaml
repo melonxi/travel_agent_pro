@@ -1,0 +1,22 @@
+id: recall-001-style-force-query-fallback
+name: Style force recall survives query fallback
+description: Stage0 STYLE force should still attempt profile recall when the recall query tool is unavailable.
+difficulty: memory
+messages:
+  - role: user
+    content: 老样子给我订机票
+assertions:
+  - type: memory_recall_field
+    target: final_recall_decision
+    value: query_recall_enabled
+  - type: memory_recall_field
+    target: query_plan_source
+    value: heuristic_fallback
+  - type: memory_recall_field
+    target: recall_attempted_but_zero_hit
+    value: false
+tags:
+  - memory_recall
+  - expect_recall
+  - style_force
+  - query_fallback
