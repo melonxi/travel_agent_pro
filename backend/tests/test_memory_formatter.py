@@ -150,18 +150,24 @@ def test_memory_recall_telemetry_to_dict_preserves_fields():
         "matched_reasons": ["exact destination match on 京都"],
         "stage0_decision": "undecided",
         "stage0_reason": "",
+        "stage0_matched_rule": "",
+        "stage0_signals": {},
         "gate_needs_recall": None,
         "gate_intent_type": "",
         "gate_confidence": None,
         "gate_reason": "",
         "final_recall_decision": "",
         "fallback_used": "none",
+        "recall_skip_source": "",
         "query_plan": {},
+        "query_plan_source": "",
         "query_plan_fallback": "none",
         "candidate_count": 0,
+        "recall_attempted_but_zero_hit": False,
         "reranker_selected_ids": [],
         "reranker_final_reason": "",
         "reranker_fallback": "none",
+        "reranker_per_item_reason": {},
     }
 
 
@@ -178,6 +184,8 @@ def test_memory_recall_telemetry_to_dict_includes_gate_fields():
         matched_reasons=["query profile recall"],
         stage0_decision="force_recall",
         stage0_reason="history_phrase",
+        stage0_matched_rule="P1",
+        stage0_signals={"history": ["上次"]},
         gate_needs_recall=True,
         gate_intent_type="profile_preference_recall",
         gate_confidence=0.88,
@@ -187,6 +195,8 @@ def test_memory_recall_telemetry_to_dict_includes_gate_fields():
     )
 
     assert telemetry.to_dict()["stage0_decision"] == "force_recall"
+    assert telemetry.to_dict()["stage0_matched_rule"] == "P1"
+    assert telemetry.to_dict()["stage0_signals"] == {"history": ["上次"]}
     assert telemetry.to_dict()["gate_needs_recall"] is True
     assert telemetry.to_dict()["final_recall_decision"] == "query_recall_enabled"
 
@@ -219,3 +229,35 @@ def test_memory_recall_telemetry_to_dict_includes_reranker_fields():
     assert payload["reranker_selected_ids"] == ["profile_1", "slice_2"]
     assert payload["reranker_final_reason"] == "two items directly answer the user's question"
     assert payload["reranker_fallback"] == "none"
+
+
+def test_memory_recall_telemetry_to_dict_includes_query_source_and_zero_hit_flag():
+    from memory.formatter import MemoryRecallTelemetry
+
+    telemetry = MemoryRecallTelemetry(
+        final_recall_decision="query_recall_enabled",
+        query_plan_source="heuristic_fallback",
+        query_plan_fallback="query_plan_timeout",
+        candidate_count=0,
+        recall_attempted_but_zero_hit=True,
+    )
+
+    payload = telemetry.to_dict()
+
+    assert payload["query_plan_source"] == "heuristic_fallback"
+    assert payload["query_plan_fallback"] == "query_plan_timeout"
+    assert payload["recall_attempted_but_zero_hit"] is True
+
+
+def test_memory_recall_telemetry_to_dict_includes_recall_skip_source():
+    from memory.formatter import MemoryRecallTelemetry
+
+    telemetry = MemoryRecallTelemetry(
+        final_recall_decision="no_recall_applied",
+        fallback_used="gate_timeout",
+        recall_skip_source="gate_failure_no_heuristic",
+    )
+
+    payload = telemetry.to_dict()
+
+    assert payload["recall_skip_source"] == "gate_failure_no_heuristic"

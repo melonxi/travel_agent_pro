@@ -6,6 +6,7 @@ import pytest
 
 from config import load_config
 from memory.manager import MemoryManager
+from memory.recall_gate import apply_recall_short_circuit
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import RecallRerankResult
 from memory.v3_models import EpisodeSlice, MemoryProfileItem
@@ -46,10 +47,8 @@ async def test_generate_context_uses_retrieval_plan_for_profile_recall(tmp_path:
             source="profile",
             buckets=["stable_preferences"],
             domains=["hotel"],
-            entities={},
+            destination="",
             keywords=["住宿"],
-            aliases=["住哪里"],
-            strictness="soft",
             top_k=5,
             reason="reuse accommodation preference",
         ),
@@ -87,12 +86,10 @@ async def test_generate_context_uses_retrieval_plan_for_slice_recall(tmp_path: P
         short_circuit="force_recall",
         retrieval_plan=RecallRetrievalPlan(
             source="episode_slice",
-            buckets=["stable_preferences"],
+            buckets=[],
             domains=["hotel"],
-            entities={"destination": "京都"},
+            destination="京都",
             keywords=["住宿"],
-            aliases=["住哪里"],
-            strictness="soft",
             top_k=5,
             reason="reuse accommodation preference",
         ),
@@ -101,6 +98,48 @@ async def test_generate_context_uses_retrieval_plan_for_slice_recall(tmp_path: P
     assert "上次京都住四条附近的町屋。" in text
     assert recall.sources["episode_slice"] == 1
     assert recall.slice_ids == ["slice_1"]
+
+
+@pytest.mark.asyncio
+async def test_generate_context_applies_top_k_to_episode_slice_candidates(tmp_path: Path):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    for idx in range(3):
+        await manager.v3_store.append_episode_slice(
+            EpisodeSlice(
+                id=f"slice_{idx}",
+                user_id="u1",
+                source_episode_id=f"ep_{idx}",
+                source_trip_id=f"trip_old_{idx}",
+                slice_type="accommodation_decision",
+                domains=["hotel"],
+                entities={"destination": "京都"},
+                keywords=["住宿", "酒店"],
+                content=f"上次京都住处 {idx}",
+                applicability="仅供住宿选择参考。",
+                created_at=f"2026-04-19T00:00:0{idx}",
+            )
+        )
+
+    text, recall = await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_kyoto_now"),
+        user_message="我上次去京都住哪里？",
+        recall_gate=True,
+        short_circuit="force_recall",
+        retrieval_plan=RecallRetrievalPlan(
+            source="episode_slice",
+            buckets=[],
+            domains=["hotel"],
+            destination="京都",
+            keywords=["住宿"],
+            top_k=1,
+            reason="past_trip_experience_recall -> Kyoto hotel slice lookup",
+        ),
+    )
+
+    assert recall.candidate_count == 1
+    assert len(recall.slice_ids) == 1
+    assert text.count("source=episode_slice") == 1
 
 
 @pytest.mark.asyncio
@@ -322,6 +361,55 @@ async def test_generate_context_drops_fixed_profile_when_gate_blocks_query_recal
 
 
 @pytest.mark.asyncio
+async def test_generate_context_uses_stage0_style_heuristic_when_query_plan_missing(
+    tmp_path: Path,
+):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    await manager.v3_store.upsert_profile_item(
+        "u1",
+        "constraints",
+        MemoryProfileItem(
+            id="constraints:flight:avoid_red_eye",
+            domain="flight",
+            key="avoid_red_eye",
+            value=True,
+            polarity="avoid",
+            stability="explicit_declared",
+            confidence=0.95,
+            status="active",
+            context={},
+            applicability="适用于所有旅行。",
+            recall_hints={"domains": ["flight"], "keywords": ["机票", "航班"]},
+            source_refs=[],
+            created_at="2026-04-19T00:00:00",
+            updated_at="2026-04-19T00:00:00",
+        ),
+    )
+    stage0 = apply_recall_short_circuit("老样子给我订机票")
+
+    text, recall = await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_now"),
+        user_message="老样子给我订机票",
+        recall_gate=True,
+        short_circuit=stage0.decision,
+        retrieval_plan=None,
+        stage0_matched_rule=stage0.matched_rule,
+        stage0_signals={name: list(hits) for name, hits in stage0.signals},
+        query_plan_source="heuristic_fallback",
+        query_plan_fallback="query_plan_timeout",
+    )
+
+    assert "avoid_red_eye" in text
+    assert recall.sources["query_profile"] == 1
+    assert recall.stage0_matched_rule == "P1"
+    assert recall.stage0_signals["style"] == ["老样子"]
+    assert recall.query_plan_source == "heuristic_fallback"
+    assert recall.query_plan_fallback == "query_plan_timeout"
+    assert recall.recall_attempted_but_zero_hit is False
+
+
+@pytest.mark.asyncio
 async def test_generate_context_formats_selected_candidates_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -387,6 +475,9 @@ async def test_generate_context_formats_selected_candidates_only(
     assert "京都住四条附近" in text or "上次京都住四条附近的町屋。" in text
     assert recall.candidate_count >= len(selected_ids)
     assert recall.reranker_selected_ids == selected_ids
+    assert recall.reranker_per_item_reason == {
+        candidate_id: "selected by test" for candidate_id in selected_ids
+    }
 
 
 @pytest.mark.asyncio
@@ -462,6 +553,14 @@ memory:
     core_limit: 5
     phase_limit: 3
     include_pending: "true"
+    reranker:
+      small_candidate_set_threshold: 2
+      profile_top_n: 5
+      slice_top_n: 4
+      hybrid_top_n: 6
+      hybrid_profile_top_n: 3
+      hybrid_slice_top_n: 2
+      recency_half_life_days: 90
   storage:
     backend: json
 telemetry:
@@ -490,6 +589,13 @@ parallel_tool_execution: "false"
     assert cfg.memory.retrieval.core_limit == 5
     assert cfg.memory.retrieval.phase_limit == 3
     assert cfg.memory.retrieval.include_pending is True
+    assert cfg.memory.retrieval.reranker.small_candidate_set_threshold == 2
+    assert cfg.memory.retrieval.reranker.profile_top_n == 5
+    assert cfg.memory.retrieval.reranker.slice_top_n == 4
+    assert cfg.memory.retrieval.reranker.hybrid_top_n == 6
+    assert cfg.memory.retrieval.reranker.hybrid_profile_top_n == 3
+    assert cfg.memory.retrieval.reranker.hybrid_slice_top_n == 2
+    assert cfg.memory.retrieval.reranker.recency_half_life_days == 90
     assert cfg.memory.storage.backend == "json"
     assert cfg.telemetry.enabled is False
     assert cfg.flyai.enabled is False
@@ -536,4 +642,3 @@ memory:
     cfg = load_config(str(cfg_file))
 
     assert cfg.memory.retrieval.recall_gate_model == ""
-

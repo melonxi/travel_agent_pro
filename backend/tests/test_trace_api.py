@@ -538,11 +538,15 @@ async def test_trace_recall_telemetry_visible_without_memory_hit(app):
         RecallTelemetryRecord(
             stage0_decision="undecided",
             stage0_reason="needs_llm_gate",
+            stage0_matched_rule="P6",
+            stage0_signals={"recommend": ["推荐"]},
             gate_needs_recall=False,
             gate_intent_type="gate_decision_unavailable",
             final_recall_decision="no_recall_applied",
             fallback_used="gate_timeout",
+            query_plan_source="",
             candidate_count=4,
+            recall_attempted_but_zero_hit=False,
             reranker_selected_ids=["profile_1", "slice_2"],
             reranker_final_reason="two items directly answer the user's question",
             reranker_fallback="none",
@@ -567,11 +571,15 @@ async def test_trace_recall_telemetry_visible_without_memory_hit(app):
     recall = data["iterations"][0]["memory_recall"]
     assert recall["stage0_decision"] == "undecided"
     assert recall["stage0_reason"] == "needs_llm_gate"
+    assert recall["stage0_matched_rule"] == "P6"
+    assert recall["stage0_signals"] == {"recommend": ["推荐"]}
     assert recall["gate_needs_recall"] is False
     assert recall["gate_intent_type"] == "gate_decision_unavailable"
     assert recall["final_recall_decision"] == "no_recall_applied"
     assert recall["fallback_used"] == "gate_timeout"
+    assert recall["query_plan_source"] == ""
     assert recall["candidate_count"] == 4
+    assert recall["recall_attempted_but_zero_hit"] is False
     assert recall["reranker_selected_ids"] == ["profile_1", "slice_2"]
     assert recall["reranker_final_reason"] == "two items directly answer the user's question"
     assert recall["reranker_fallback"] == "none"

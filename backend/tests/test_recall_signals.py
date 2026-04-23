@@ -27,6 +27,12 @@ def test_extract_signals_style_hits_zhaojiu_and_laoyangzi():
     assert "老样子" in extract_signals("老样子，别太折腾")["style"]
 
 
+def test_extract_signals_style_hits_natural_preference_phrases():
+    assert "按我偏好" in extract_signals("好的，按我偏好来")["style"]
+    assert "按我习惯" in extract_signals("按我习惯来")["style"]
+    assert "照我的习惯" in extract_signals("照我的习惯来")["style"]
+
+
 def test_extract_signals_recommend_hits_on_helper_verbs():
     out = extract_signals("帮我选一个酒店")
     assert "帮我选" in out["recommend"]
@@ -63,3 +69,9 @@ def test_extract_signals_whitespace_only_returns_empty():
 
 def test_extract_signals_recommend_hits_zenmeding():
     assert "怎么订" in extract_signals("这次航班怎么订？")["recommend"]
+
+
+def test_extract_signals_recommend_hits_arrangement_quality_phrases():
+    out = extract_signals("住宿怎么安排比较好")
+    assert "怎么安排" in out["recommend"]
+    assert "比较好" in out["recommend"]

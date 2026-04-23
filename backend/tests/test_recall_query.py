@@ -1,131 +1,88 @@
-from memory.recall_query import fallback_retrieval_plan, parse_recall_query_tool_arguments
+from memory.recall_query import (
+    ALLOWED_RECALL_DOMAINS,
+    RecallRetrievalPlan,
+    fallback_retrieval_plan,
+    parse_recall_query_tool_arguments,
+)
+from main import _build_recall_query_tool
 
 
-def test_parse_recall_query_tool_arguments_honors_schema_fields():
+def test_parse_recall_query_tool_arguments_honors_tightened_schema_fields():
     plan = parse_recall_query_tool_arguments(
         {
             "source": "profile",
             "buckets": ["stable_preferences", "constraints"],
             "domains": ["hotel", "accommodation"],
-            "entities": {"destination": "京都"},
+            "destination": "京都",
             "keywords": ["住宿", "酒店"],
-            "aliases": ["住哪里", "住宿偏好"],
-            "strictness": "soft",
             "top_k": 8,
-            "reason": "user wants to reuse accommodation preference",
+            "reason": "profile_preference_recall -> hotel domain -> stable_preferences",
         }
     )
 
-    assert plan.source == "profile"
-    assert plan.buckets == ["stable_preferences", "constraints"]
-    assert plan.domains == ["hotel", "accommodation"]
-    assert plan.entities == {"destination": "京都"}
-    assert plan.aliases == ["住哪里", "住宿偏好"]
-    assert plan.strictness == "soft"
-    assert plan.top_k == 8
+    assert plan == RecallRetrievalPlan(
+        source="profile",
+        buckets=["stable_preferences", "constraints"],
+        domains=["hotel", "accommodation"],
+        destination="京都",
+        keywords=["住宿", "酒店"],
+        top_k=8,
+        reason="profile_preference_recall -> hotel domain -> stable_preferences",
+        fallback_used="none",
+    )
 
 
-def test_parse_recall_query_tool_arguments_rejects_invalid_strictness():
+def test_parse_recall_query_tool_arguments_rejects_unknown_domains():
     plan = parse_recall_query_tool_arguments(
         {
             "source": "profile",
             "buckets": ["stable_preferences"],
-            "domains": ["hotel"],
-            "entities": {"destination": "京都"},
+            "domains": ["lodging", "hotel"],
+            "destination": "",
             "keywords": ["住宿"],
-            "aliases": ["住哪里"],
-            "strictness": "aggressive",
-            "top_k": 8,
-            "reason": "bad strictness",
+            "top_k": 5,
+            "reason": "bad domain",
         }
     )
 
-    assert plan.strictness == "soft"
+    assert plan.fallback_used == "invalid_query_plan"
+    assert plan.reason == "invalid_query_plan"
 
 
-def test_parse_recall_query_tool_arguments_allows_v3_history_sources():
-    slice_plan = parse_recall_query_tool_arguments(
+def test_parse_recall_query_tool_arguments_rejects_non_destination_entity_shape():
+    plan = parse_recall_query_tool_arguments(
         {
             "source": "episode_slice",
-            "buckets": ["stable_preferences"],
+            "buckets": [],
             "domains": ["hotel"],
-            "entities": {"destination": "京都"},
+            "entities": {"city": "京都"},
             "keywords": ["住宿"],
-            "aliases": ["住哪里"],
-            "strictness": "soft",
             "top_k": 5,
-            "reason": "slice source",
-        }
-    )
-    hybrid_plan = parse_recall_query_tool_arguments(
-        {
-            "source": "hybrid_history",
-            "buckets": ["stable_preferences"],
-            "domains": ["hotel"],
-            "entities": {"destination": "京都"},
-            "keywords": ["住宿"],
-            "aliases": ["住哪里"],
-            "strictness": "soft",
-            "top_k": 5,
-            "reason": "hybrid source",
+            "reason": "bad destination shape",
         }
     )
 
-    assert slice_plan.source == "episode_slice"
-    assert slice_plan.entities == {"destination": "京都"}
-    assert hybrid_plan.source == "hybrid_history"
+    assert plan.fallback_used == "invalid_query_plan"
+    assert plan.reason == "invalid_query_plan"
 
 
-def test_parse_recall_query_tool_arguments_rejects_legacy_sources_to_hybrid_history():
-    for source in ("working_memory", "legacy", "profile_fixed"):
-        plan = parse_recall_query_tool_arguments(
-            {
-                "source": source,
-                "buckets": ["stable_preferences"],
-                "domains": [],
-                "entities": {},
-                "keywords": [],
-                "aliases": [],
-                "strictness": "soft",
-                "top_k": 5,
-                "reason": "bad source",
-            }
-        )
-
-        assert plan.fallback_used == "invalid_query_plan"
-        assert plan.reason == "invalid_query_plan"
-        assert plan.source == "hybrid_history"
-    assert plan.buckets == ["constraints", "rejections", "stable_preferences"]
-    assert plan.entities == {}
-    assert plan.domains == []
-    assert plan.keywords == []
-    assert plan.aliases == []
-    assert plan.strictness == "soft"
-    assert plan.top_k == 5
-
-
-def test_parse_recall_query_tool_arguments_uses_fallback_for_none_payload():
-    plan = parse_recall_query_tool_arguments(None)
-
-    assert plan == fallback_retrieval_plan()
-
-
-def test_parse_recall_query_tool_arguments_uses_safe_default_for_invalid_top_k():
+def test_parse_recall_query_tool_arguments_does_not_accept_removed_aliases_or_strictness():
     plan = parse_recall_query_tool_arguments(
         {
             "source": "profile",
             "buckets": ["stable_preferences"],
             "domains": ["hotel"],
-            "entities": {},
+            "destination": "",
             "keywords": ["住宿"],
             "aliases": ["住哪里"],
             "strictness": "soft",
-            "top_k": "abc",
-            "reason": "bad top_k",
+            "top_k": 5,
+            "reason": "removed fields should invalidate the payload",
         }
     )
 
-    assert plan.top_k == 5
+    assert plan.fallback_used == "invalid_query_plan"
+    assert plan.reason == "invalid_query_plan"
 
 
 def test_parse_recall_query_tool_arguments_rejects_bool_top_k():
@@ -134,116 +91,82 @@ def test_parse_recall_query_tool_arguments_rejects_bool_top_k():
             "source": "profile",
             "buckets": ["stable_preferences"],
             "domains": ["hotel"],
-            "entities": {},
+            "destination": "",
             "keywords": ["住宿"],
-            "aliases": ["住哪里"],
-            "strictness": "soft",
             "top_k": True,
             "reason": "bool top_k",
         }
     )
 
-    assert plan.top_k == 5
-
-
-def test_parse_recall_query_tool_arguments_rejects_non_positive_top_k():
-    zero_plan = parse_recall_query_tool_arguments(
-        {
-            "source": "profile",
-            "buckets": ["stable_preferences"],
-            "domains": ["hotel"],
-            "entities": {},
-            "keywords": ["住宿"],
-            "aliases": ["住哪里"],
-            "strictness": "soft",
-            "top_k": 0,
-            "reason": "zero top_k",
-        }
-    )
-    negative_plan = parse_recall_query_tool_arguments(
-        {
-            "source": "profile",
-            "buckets": ["stable_preferences"],
-            "domains": ["hotel"],
-            "entities": {},
-            "keywords": ["住宿"],
-            "aliases": ["住哪里"],
-            "strictness": "soft",
-            "top_k": -1,
-            "reason": "negative top_k",
-        }
-    )
-
-    assert zero_plan.top_k == 5
-    assert negative_plan.top_k == 5
+    assert plan.fallback_used == "invalid_query_plan"
 
 
 def test_parse_recall_query_tool_arguments_clamps_large_top_k():
-    huge_int_plan = parse_recall_query_tool_arguments(
+    plan = parse_recall_query_tool_arguments(
         {
             "source": "profile",
             "buckets": ["stable_preferences"],
             "domains": ["hotel"],
+            "destination": "",
             "keywords": ["住宿"],
-            "aliases": ["住哪里"],
-            "strictness": "soft",
             "top_k": 999999,
             "reason": "huge int top_k",
         }
     )
-    huge_string_plan = parse_recall_query_tool_arguments(
+
+    assert plan.top_k == 10
+
+
+def test_parse_recall_query_tool_arguments_requires_reason_string():
+    plan = parse_recall_query_tool_arguments(
         {
             "source": "profile",
             "buckets": ["stable_preferences"],
             "domains": ["hotel"],
+            "destination": "",
             "keywords": ["住宿"],
-            "aliases": ["住哪里"],
-            "strictness": "soft",
-            "top_k": "1000000",
-            "reason": "huge string top_k",
+            "top_k": 3,
+            "reason": 123,
         }
     )
 
-    assert huge_int_plan.top_k == 10
-    assert huge_string_plan.top_k == 10
+    assert plan.fallback_used == "invalid_query_plan"
 
 
-def test_parse_recall_query_tool_arguments_ignores_invalid_collection_types():
+def test_parse_recall_query_tool_arguments_allows_source_specific_buckets():
     plan = parse_recall_query_tool_arguments(
         {
-            "source": "profile",
-            "buckets": "stable_preferences",
+            "source": "episode_slice",
             "domains": ["hotel"],
-            "entities": {},
+            "destination": "京都",
             "keywords": ["住宿"],
-            "aliases": {"name": "住哪里"},
-            "strictness": "soft",
-            "top_k": 8,
-            "reason": "bad collection types",
+            "top_k": 4,
+            "reason": "past_trip_experience_recall -> hotel domain -> destination Kyoto",
         }
     )
 
+    assert plan.source == "episode_slice"
     assert plan.buckets == []
-    assert plan.aliases == []
+    assert plan.destination == "京都"
+    assert plan.top_k == 4
 
 
-def test_parse_recall_query_tool_arguments_rejects_mixed_type_lists():
-    plan = parse_recall_query_tool_arguments(
-        {
-            "source": "profile",
-            "buckets": ["stable_preferences", 123],
-            "domains": ["hotel"],
-            "entities": {},
-            "keywords": ["住宿"],
-            "aliases": ["住哪里", 123],
-            "strictness": "soft",
-            "top_k": 8,
-            "reason": "mixed type lists",
-        }
+def test_allowed_recall_domains_matches_system_contract():
+    assert ALLOWED_RECALL_DOMAINS == (
+        "itinerary",
+        "pace",
+        "food",
+        "hotel",
+        "accommodation",
+        "flight",
+        "train",
+        "budget",
+        "family",
+        "accessibility",
+        "planning_style",
+        "documents",
+        "general",
     )
-
-    assert plan.buckets == []
-    assert plan.aliases == []
 
 
 def test_fallback_retrieval_plan_is_conservative():
@@ -251,6 +174,30 @@ def test_fallback_retrieval_plan_is_conservative():
 
     assert plan.source == "hybrid_history"
     assert plan.buckets == ["constraints", "rejections", "stable_preferences"]
-    assert plan.entities == {}
-    assert plan.strictness == "soft"
+    assert plan.destination == ""
+    assert plan.domains == []
+    assert plan.keywords == []
     assert plan.top_k == 5
+
+
+def test_query_tool_schema_uses_source_aware_branches():
+    tool = _build_recall_query_tool()
+    parameters = tool["parameters"]
+
+    assert "oneOf" in parameters
+    branches = parameters["oneOf"]
+    assert len(branches) == 3
+
+    profile_branch = next(
+        branch
+        for branch in branches
+        if branch["properties"]["source"]["const"] == "profile"
+    )
+    episode_branch = next(
+        branch
+        for branch in branches
+        if branch["properties"]["source"]["const"] == "episode_slice"
+    )
+
+    assert "buckets" in profile_branch["required"]
+    assert "buckets" not in episode_branch["properties"]

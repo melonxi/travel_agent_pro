@@ -94,11 +94,15 @@ def test_to_dict_keeps_memory_hit_count_for_real_hits_only():
         RecallTelemetryRecord(
             stage0_decision="force_recall",
             stage0_reason="explicit_profile_history_query",
+            stage0_matched_rule="P1",
+            stage0_signals={"history": ["我是不是说过"]},
             gate_needs_recall=True,
             gate_intent_type="",
             final_recall_decision="query_recall_enabled",
             fallback_used="none",
+            query_plan_source="llm",
             candidate_count=4,
+            recall_attempted_but_zero_hit=False,
             reranker_selected_ids=["m1"],
             reranker_final_reason="selected by reranker",
             reranker_fallback="none",
@@ -110,13 +114,17 @@ def test_to_dict_keeps_memory_hit_count_for_real_hits_only():
     assert d["memory_hit_count"] == 1
     assert d["last_memory_recall"]["stage0_decision"] == "force_recall"
     assert d["last_memory_recall"]["stage0_reason"] == "explicit_profile_history_query"
+    assert d["last_memory_recall"]["stage0_matched_rule"] == "P1"
+    assert d["last_memory_recall"]["stage0_signals"] == {"history": ["我是不是说过"]}
     assert d["last_memory_recall"]["gate_needs_recall"] is True
     assert d["last_memory_recall"]["gate_intent_type"] == ""
     assert (
         d["last_memory_recall"]["final_recall_decision"]
         == "query_recall_enabled"
     )
+    assert d["last_memory_recall"]["query_plan_source"] == "llm"
     assert d["last_memory_recall"]["candidate_count"] == 4
+    assert d["last_memory_recall"]["recall_attempted_but_zero_hit"] is False
     assert d["last_memory_recall"]["reranker_selected_ids"] == ["m1"]
     assert d["last_memory_recall"]["reranker_final_reason"] == "selected by reranker"
     assert d["last_memory_recall"]["reranker_fallback"] == "none"

@@ -94,6 +94,26 @@ class TestAssertionEvaluation:
         )
         assert ok
 
+    def test_memory_recall_field_assertion_reads_last_recall_stats(self):
+        a = Assertion(
+            type=AssertionType.MEMORY_RECALL_FIELD,
+            target="final_recall_decision",
+            value="query_recall_enabled",
+        )
+        ok, reason = evaluate_assertion(
+            a,
+            {},
+            [],
+            [],
+            stats={
+                "last_memory_recall": {
+                    "final_recall_decision": "query_recall_enabled"
+                }
+            },
+        )
+
+        assert ok, reason
+
 
 class TestGoldenCaseLoader:
     def test_load_yaml_cases(self, tmp_path):
@@ -180,6 +200,26 @@ class TestGoldenCaseLoader:
         ]
         assert len(constraint_assertions) >= 1, (
             "Should have add_constraints assertion for dietary constraint"
+        )
+
+    def test_loads_memory_recall_golden_cases(self):
+        cases = load_golden_cases(golden_cases_dir())
+        recall_cases = [case for case in cases if "memory_recall" in case.tags]
+
+        assert {case.id for case in recall_cases} >= {
+            "recall-001-style-force-query-fallback",
+            "recall-002-current-trip-fact-skip",
+            "recall-003-gate-failure-profile-cue",
+            "recall-004-ack-preference-force",
+            "recall-005-negated-profile-signal",
+            "recall-006-recommend-fallback",
+        }
+        assert all(
+            any(
+                assertion.type == AssertionType.MEMORY_RECALL_FIELD
+                for assertion in case.assertions
+            )
+            for case in recall_cases
         )
 
 
@@ -310,6 +350,73 @@ class TestExecutableRunner:
         assert suite.metrics["infeasible"]["passed"] == 0
         assert suite.metrics["stats"]["total_input_tokens"] == 30
         assert suite.metrics["stats"]["estimated_cost_usd"] == 0.03
+
+    def test_run_suite_aggregates_memory_recall_metrics(self):
+        cases = [
+            GoldenCase(
+                id="recall-pass",
+                name="Recall expected",
+                description="",
+                difficulty="memory",
+                messages=[],
+                tags=["memory_recall", "expect_recall"],
+                assertions=[],
+            ),
+            GoldenCase(
+                id="skip-pass",
+                name="Skip expected",
+                description="",
+                difficulty="memory",
+                messages=[],
+                tags=["memory_recall", "expect_skip"],
+                assertions=[],
+            ),
+            GoldenCase(
+                id="zero-hit",
+                name="Recall zero hit",
+                description="",
+                difficulty="memory",
+                messages=[],
+                tags=["memory_recall", "expect_recall"],
+                assertions=[],
+            ),
+        ]
+
+        def executor(case: GoldenCase) -> EvalExecution:
+            payloads = {
+                "recall-pass": {
+                    "final_recall_decision": "query_recall_enabled",
+                    "candidate_count": 2,
+                    "recall_attempted_but_zero_hit": False,
+                },
+                "skip-pass": {
+                    "final_recall_decision": "no_recall_applied",
+                    "candidate_count": 0,
+                    "recall_attempted_but_zero_hit": False,
+                },
+                "zero-hit": {
+                    "final_recall_decision": "query_recall_enabled",
+                    "candidate_count": 0,
+                    "recall_attempted_but_zero_hit": True,
+                },
+            }
+            return EvalExecution(
+                state={},
+                tool_calls=[],
+                responses=[],
+                stats={"last_memory_recall": payloads[case.id]},
+            )
+
+        suite = run_suite(cases, executor)
+        metrics = suite.metrics["memory_recall"]
+
+        assert metrics["total"] == 3
+        assert metrics["expected_recall"] == 2
+        assert metrics["expected_skip"] == 1
+        assert metrics["false_skip_rate"] == 0.0
+        assert metrics["false_recall_rate"] == 0.0
+        assert metrics["hit_rate_when_recall_enabled"] == 0.5
+        assert metrics["recall_attempted_but_zero_hit_rate"] == 0.5
 
     def test_save_report_writes_json_with_metrics_and_results(self, tmp_path):
         case = GoldenCase(
