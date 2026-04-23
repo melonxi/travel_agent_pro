@@ -14,6 +14,14 @@
 
 Use `BAAI/bge-small-zh-v1.5` through FastEmbed as the default local embedding runtime.
 
+Runtime readiness status:
+
+- Completed before this Stage 3 implementation plan in commit `987b104 chore: verify stage3 embedding runtime`.
+- `backend/pyproject.toml` already declares `fastembed>=0.8.0,<0.9.0`.
+- `scripts/verify-stage3-embedding-runtime.py` already verifies the real runtime.
+- Local cache has been validated at `backend/data/embedding_cache`; the cache is git-ignored runtime data.
+- The implementation tasks below must not re-add the dependency or re-download the model as part of normal unit tests.
+
 Decision basis checked on 2026-04-23:
 
 - Hugging Face model card for `BAAI/bge-small-zh-v1.5` identifies it as a Chinese BGE v1.5 embedding model with 512-dimensional output and MIT/commercial-friendly release terms: <https://huggingface.co/BAAI/bge-small-zh-v1.5>
@@ -28,9 +36,9 @@ Why this choice:
 - `bge-m3` is stronger but too large for this local Stage 3 first pass; it belongs in a future eval once we know semantic recall is the bottleneck.
 - `shibing624/text2vec-base-chinese` remains a reasonable alternative, but it is less retrieval-focused for this task and likely increases runtime packaging complexity.
 
-Runtime policy:
+Runtime policy during implementation:
 
-- Development can allow first-run model download into `backend/data/embedding_cache`.
+- If the local environment changes, verify the runtime with `./scripts/verify-stage3-embedding-runtime.py --local-files-only` before debugging Stage 3 code.
 - Production should pre-warm that cache in the image or deployment artifact and set `local_files_only=true`.
 - Unit tests must not download the model. They use a fake embedding provider.
 - The semantic lane must degrade to disabled with telemetry if FastEmbed import, model load, or embedding generation fails.
@@ -63,7 +71,8 @@ This plan does not implement:
 - Modify `backend/config.py`: add Stage 3 config under `memory.retrieval.stage3`.
 - Modify `backend/memory/manager.py`: call Stage 3 entrypoint, pass `active_plan` to Stage 4, attach Stage 3 telemetry.
 - Modify `backend/memory/formatter.py`: add `stage3` telemetry field to `MemoryRecallTelemetry`.
-- Modify `backend/pyproject.toml`: add `fastembed>=0.8.0,<0.9.0`.
+- Existing `backend/pyproject.toml`: already contains `fastembed>=0.8.0,<0.9.0` from commit `987b104`.
+- Existing `scripts/verify-stage3-embedding-runtime.py`: real runtime verification script; do not duplicate it in this plan.
 - Test `backend/tests/test_stage3_config.py`: config defaults and YAML parsing.
 - Test `backend/tests/test_destination_normalization.py`: exact, alias, parent-child, region-weak, mismatch.
 - Test `backend/tests/test_recall_stage3_fusion.py`: RRF fusion, tie-breaking, caps.
@@ -72,11 +81,10 @@ This plan does not implement:
 - Test `backend/tests/test_recall_stage3_semantic.py`: semantic lane with fake embedding provider.
 - Modify `backend/tests/test_memory_manager.py`: manager integration, active plan handoff, Stage 3 telemetry.
 
-## Task 1: Add Stage 3 Config and Dependency
+## Task 1: Add Stage 3 Config
 
 **Files:**
 - Modify: `backend/config.py`
-- Modify: `backend/pyproject.toml`
 - Create: `backend/tests/test_stage3_config.py`
 
 - [ ] **Step 1: Write failing config tests**
@@ -354,17 +362,7 @@ Then add this field inside `MemoryRetrievalConfig(...)`:
 stage3=_build_stage3_recall_config(stage3_raw),
 ```
 
-- [ ] **Step 5: Add FastEmbed dependency**
-
-In `backend/pyproject.toml`, add:
-
-```toml
-"fastembed>=0.8.0,<0.9.0",
-```
-
-Place it in `[project].dependencies` near the other runtime dependencies.
-
-- [ ] **Step 6: Verify config tests pass**
+- [ ] **Step 5: Verify config tests pass**
 
 Run:
 
@@ -374,10 +372,10 @@ cd backend && pytest tests/test_stage3_config.py -v
 
 Expected: both tests pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add backend/config.py backend/pyproject.toml backend/tests/test_stage3_config.py
+git add backend/config.py backend/tests/test_stage3_config.py
 git commit -m "feat: add stage3 recall config"
 ```
 
@@ -1737,6 +1735,8 @@ git commit -m "feat: add stage3 lexical lane"
 - Create: `backend/tests/test_embedding_provider.py`
 - Create: `backend/tests/test_recall_stage3_semantic.py`
 
+**Precondition:** the real FastEmbed runtime has already been verified in commit `987b104`. This task implements the provider wrapper and semantic lane only. Do not add `fastembed` again, do not create another runtime verification script, and do not make unit tests instantiate the real model.
+
 - [ ] **Step 1: Write provider tests**
 
 Create `backend/tests/test_embedding_provider.py`:
@@ -2359,15 +2359,15 @@ cd backend && pytest -q
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Inspect dependency installability**
+- [ ] **Step 5: Verify embedding runtime was already prepared**
 
 Run:
 
 ```bash
-cd backend && python -m pip install -e ".[dev]"
+./scripts/verify-stage3-embedding-runtime.py --local-files-only
 ```
 
-Expected: package installs successfully with `fastembed>=0.8.0,<0.9.0`. Do not instantiate the real FastEmbed model in unit tests.
+Expected: exits `0`, prints `dim=512`, and does not download model files. If this fails, fix environment/cache setup before changing Stage 3 logic.
 
 - [ ] **Step 6: Commit verification guard if changed**
 
