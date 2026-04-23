@@ -203,7 +203,7 @@
 本测试套件对应实现已在 `feature/recall-gate-redesign` 分支完成重构：
 
 - Layer 1: `backend/memory/recall_signals.py`
-- Layer 2: `backend/memory/recall_gate.py::apply_recall_short_circuit`（P1–P6）
+- Layer 2: `backend/memory/recall_gate.py::apply_recall_short_circuit`（P1/P1N/P2–P6）
 - Layer 3: `decide_memory_recall` tool 保持不变
 
 **行为变更补记**（对 Spec §3 表格的补充）：
@@ -211,6 +211,11 @@
 - `还是按我常规偏好来` / `这次按我常规偏好安排` / `还是按我常规偏好来` 类：
   STYLE 词 `常规偏好` 现命中 P1，统一走 force_recall。测试用例 U7/U8 的期望已同步更新。
 - `怎么订` 归入 RECOMMEND 词表，修正 X2 漏洞。
+- `按我偏好` / `按我习惯` / `照我的习惯` 归入 STYLE 词表，修正 ACK+偏好被 P4 skip 的漏召风险。
+- P1 命中前置否定/排除语境（如 `不要按我的习惯来`、`不是上次那种安排`、`这次不要照旧`）时输出 P1N → `undecided`，不再硬 force。
+- `mixed_or_ambiguous` 在 LLM gate 解析层采用保守召回：即使模型返回 `needs_recall=false`，也归一化为 `needs_recall=true` 并标记 `mixed_or_ambiguous_conservative_recall`。
+- `怎么安排` / `比较好` 归入 RECOMMEND 词表；当 LLM gate 或 query tool 失败时，携带 recommend signal 的个性化推荐话术会走 heuristic profile recall fallback。
+- memory recall golden cases 已扩展到 `recall-001`–`recall-006`，覆盖 style force、当前事实 skip、gate failure profile cue、ACK+偏好、否定 P1N、推荐失败回退。
 
 所有 2.1 / 2.3 / 2.4 / 2.5 表格中列出的用例均有对应 pytest 参数化覆盖；
 2.2 undecided 用例保留给 LLM gate，不在硬短路强断言范围。
