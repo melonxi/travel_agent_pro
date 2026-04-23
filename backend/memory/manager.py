@@ -13,7 +13,12 @@ from memory.recall_stage3 import retrieve_recall_candidates
 from memory.recall_stage3_models import RetrievalEvidence
 from memory.retrieval_candidates import RecallCandidate
 from memory.recall_query import RecallRetrievalPlan
-from memory.recall_reranker import RecallRerankResult, choose_reranker_path
+from memory.recall_reranker import (
+    RecallRerankResult,
+    _empty_rerank_result,
+    _selection_metrics_placeholder,
+    choose_reranker_path,
+)
 from memory.symbolic_recall import (
     heuristic_retrieval_plan_from_message,
     should_trigger_memory_recall,
@@ -38,17 +43,7 @@ async def select_recall_candidates(
     reranker_config: MemoryRerankerConfig | None = None,
 ) -> tuple[list[RecallCandidate], RecallRerankResult]:
     if not candidates:
-        # Keep this payload byte-for-byte aligned with Task 3B `_empty_rerank_result()`
-        # until the shared factory replaces this inline branch.
-        return [], RecallRerankResult(
-            selected_item_ids=[],
-            final_reason="",
-            per_item_reason={},
-            selection_metrics={
-                "selected_pairwise_similarity_max": None,
-                "selected_pairwise_similarity_avg": None,
-            },
-        )
+        return [], _empty_rerank_result()
 
     path = choose_reranker_path(
         candidates=candidates,
@@ -58,6 +53,8 @@ async def select_recall_candidates(
         evidence_by_id=evidence_by_id or {},
         config=reranker_config,
     )
+    if not path.result.selection_metrics:
+        path.result.selection_metrics = _selection_metrics_placeholder()
     return list(path.selected_candidates), path.result
 
 
@@ -187,6 +184,7 @@ class MemoryManager:
             final_reason="",
             per_item_reason={},
             fallback_used="none",
+            selection_metrics=_selection_metrics_placeholder(),
         )
         stage3_evidence_by_id = (
             stage3_result.evidence_by_id if stage3_result is not None else {}

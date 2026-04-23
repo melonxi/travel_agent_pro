@@ -88,6 +88,30 @@ def test_selection_metrics_placeholder_is_always_present():
     }
 
 
+@pytest.mark.asyncio
+async def test_select_recall_candidates_empty_result_uses_selection_metrics_placeholder():
+    _, result = await select_recall_candidates(
+        user_message="住宿按我习惯",
+        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="",
+            keywords=["住宿"],
+            top_k=5,
+            reason="test",
+        ),
+        candidates=[],
+        evidence_by_id={},
+    )
+
+    assert result.selection_metrics == {
+        "selected_pairwise_similarity_max": None,
+        "selected_pairwise_similarity_avg": None,
+    }
+
+
 def test_destination_match_type_score_mapping_covers_supported_labels():
     assert DESTINATION_MATCH_TYPE_SCORE == {
         "exact": 1.0,
@@ -418,9 +442,13 @@ def test_evidence_scores_do_not_change_order_when_all_evidence_weights_are_zero(
     ]
     assert path.result.per_item_scores["slice_kyoto_machiya"].semantic_score > 0.0
     assert path.result.per_item_scores["slice_kyoto_machiya"].evidence_score == 0.0
+    assert path.result.selection_metrics == {
+        "selected_pairwise_similarity_max": None,
+        "selected_pairwise_similarity_avg": None,
+    }
 
 
-def test_choose_reranker_path_skips_scoring_when_candidate_set_is_small():
+def test_small_candidate_path_skips_scoring_and_keeps_selection_metrics_placeholder():
     candidates = [
         make_candidate(
             item_id="profile_1",
@@ -459,6 +487,10 @@ def test_choose_reranker_path_skips_scoring_when_candidate_set_is_small():
     assert path.result.fallback_used == "skipped_small_candidate_set"
     assert "small candidate set" in path.result.final_reason
     assert "exact domain match on hotel" in path.result.per_item_reason["profile_1"]
+    assert path.result.selection_metrics == {
+        "selected_pairwise_similarity_max": None,
+        "selected_pairwise_similarity_avg": None,
+    }
 
 
 def test_choose_reranker_path_prefers_profile_constraints_for_preference_queries():
