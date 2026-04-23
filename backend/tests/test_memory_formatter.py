@@ -164,6 +164,7 @@ def test_memory_recall_telemetry_to_dict_preserves_fields():
         "query_plan_fallback": "none",
         "candidate_count": 0,
         "recall_attempted_but_zero_hit": False,
+        "stage3": {},
         "reranker_selected_ids": [],
         "reranker_final_reason": "",
         "reranker_fallback": "none",
