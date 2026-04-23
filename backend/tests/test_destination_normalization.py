@@ -50,6 +50,20 @@ def test_match_destination_returns_parent_child_for_region_and_city():
     assert match.score == 0.75
 
 
+def test_match_destination_returns_parent_child_for_region_label_only_catalog_entry():
+    match = match_destination("九州", "福冈")
+
+    assert match.match_type == "parent_child"
+    assert match.score == 0.75
+
+
+def test_match_destination_returns_parent_child_for_non_japan_region_label():
+    match = match_destination("法兰西岛", "巴黎")
+
+    assert match.match_type == "parent_child"
+    assert match.score == 0.75
+
+
 def test_match_destination_returns_region_weak_for_same_region_siblings():
     match = match_destination("大阪", "京都")
 

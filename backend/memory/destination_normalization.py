@@ -96,7 +96,12 @@ def match_destination(query_value: str, candidate_value: str) -> DestinationMatc
             score=0.95,
         )
 
-    if candidate.canonical in query.children or query.canonical in candidate.children:
+    if (
+        candidate.canonical in query.children
+        or query.canonical in candidate.children
+        or query.canonical == candidate.region
+        or candidate.canonical == query.region
+    ):
         return DestinationMatch(
             query=query,
             candidate=candidate,
