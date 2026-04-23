@@ -101,14 +101,14 @@ class _ScoredCandidate:
     reason: str
 
 
-def _selection_metrics_placeholder() -> dict[str, float | None]:
+def selection_metrics_placeholder() -> dict[str, float | None]:
     return {
         "selected_pairwise_similarity_max": None,
         "selected_pairwise_similarity_avg": None,
     }
 
 
-def _empty_rerank_result() -> RecallRerankResult:
+def empty_rerank_result() -> RecallRerankResult:
     return RecallRerankResult(
         selected_item_ids=[],
         final_reason="",
@@ -116,7 +116,7 @@ def _empty_rerank_result() -> RecallRerankResult:
         fallback_used="none",
         per_item_scores={},
         intent_label="",
-        selection_metrics=_selection_metrics_placeholder(),
+        selection_metrics=selection_metrics_placeholder(),
     )
 
 
@@ -134,7 +134,7 @@ def choose_reranker_path(
     if not candidates:
         return RecallRerankPath(
             selected_candidates=[],
-            result=_empty_rerank_result(),
+            result=empty_rerank_result(),
         )
 
     intent_label = _resolve_intent_label(user_message, retrieval_plan)
@@ -220,7 +220,7 @@ def choose_reranker_path(
             fallback_used="skipped_small_candidate_set",
             per_item_scores=per_item_scores,
             intent_label=intent_label,
-            selection_metrics=_selection_metrics_placeholder(),
+            selection_metrics=selection_metrics_placeholder(),
         )
         return RecallRerankPath(selected_candidates=selected_candidates, result=result)
 
@@ -254,7 +254,7 @@ def choose_reranker_path(
         fallback_used="none",
         per_item_scores=per_item_scores,
         intent_label=intent_label,
-        selection_metrics=_selection_metrics_placeholder(),
+        selection_metrics=selection_metrics_placeholder(),
     )
     return RecallRerankPath(selected_candidates=selected_candidates, result=result)
 
@@ -270,7 +270,7 @@ def _small_candidate_set_result(candidates: list[RecallCandidate]) -> RecallRera
         final_reason="small candidate set; skipped weighted rerank",
         per_item_reason=per_item_reason,
         fallback_used="skipped_small_candidate_set",
-        selection_metrics=_selection_metrics_placeholder(),
+        selection_metrics=selection_metrics_placeholder(),
     )
     return RecallRerankPath(selected_candidates=list(candidates), result=result)
 
@@ -490,6 +490,8 @@ def _normalize_optional_scores(values: dict[str, float | None]) -> dict[str, flo
     low = min(present.values())
     high = max(present.values())
     if math.isclose(low, high):
+        if high <= 0.0:
+            return {key: 0.0 for key in values}
         return {
             key: (1.0 if value is not None else 0.0)
             for key, value in values.items()
