@@ -1,0 +1,60 @@
+id: reranker-only-016-all-weak-candidates-drop
+name: All weak candidates should be dropped
+description: If every candidate has no source/domain/keyword/destination relevance to the fixed query, reranker should inject nothing.
+user_message: 京都住宿想安静一点
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+  destination: 京都
+retrieval_plan:
+  source: hybrid_history
+  buckets: [stable_preferences]
+  domains: [hotel, accommodation]
+  destination: 京都
+  keywords: [住宿, 安静]
+  top_k: 5
+  reason: fixed_reranker_eval -> all weak candidates
+config:
+  small_candidate_set_threshold: 1
+  hybrid_top_n: 3
+  hybrid_profile_top_n: 1
+  hybrid_slice_top_n: 2
+candidates:
+  - source: profile
+    item_id: stable_preferences:food:avoid_spicy
+    bucket: stable_preferences
+    score: 0.8
+    matched_reason: [bucket match only]
+    content_summary: food:avoid_spicy=true
+    domains: [food]
+    applicability: 适用于大多数餐饮选择。
+    polarity: avoid
+    key: avoid_spicy
+    created_at: "2026-04-20T13:08:23+00:00"
+  - source: episode_slice
+    item_id: slice_tokyo_budget_only
+    bucket: budget_signal
+    score: 0.7
+    matched_reason: [recent slice only]
+    content_summary: 东京预算：总额 20000 CNY。
+    domains: [budget]
+    applicability: 仅供预算参考。
+    created_at: "2026-04-23T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_flight_only
+    bucket: transport_choice
+    score: 0.7
+    matched_reason: [recent slice only]
+    content_summary: 上次选择了早班机。
+    domains: [flight]
+    applicability: 仅供交通方式参考。
+    created_at: "2026-04-23T00:00:00+00:00"
+expected:
+  selected_item_ids: []
+  final_reason: small candidate set; skipped weighted rerank
+  fallback_used: skipped_small_candidate_set
+  reason_contains:
+    stable_preferences:food:avoid_spicy: dropped as weak relevance
+    slice_tokyo_budget_only: dropped as weak relevance
+    slice_flight_only: dropped as weak relevance
+

@@ -1,0 +1,57 @@
+id: reranker-only-006-recency-half-life-prioritizes-recent
+name: Short recency half-life prioritizes recent slice
+description: With an aggressive recency half-life, a recent relevant slice should outrank an older otherwise-similar slice.
+user_message: 这次东京住宿参考最近一次经验
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+  destination: 东京
+retrieval_plan:
+  source: episode_slice
+  buckets: []
+  domains: [hotel, accommodation]
+  destination: 东京
+  keywords: [住宿, 最近]
+  top_k: 5
+  reason: fixed_reranker_eval -> recency pressure
+config:
+  small_candidate_set_threshold: 1
+  slice_top_n: 2
+  recency_half_life_days: 1
+candidates:
+  - source: episode_slice
+    item_id: slice_tokyo_recent_stay
+    bucket: stay_choice
+    score: 0.7
+    matched_reason: [exact destination match on 东京, keyword match on 住宿]
+    content_summary: 东京住宿：最近一次住新宿，交通方便。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。东京
+    created_at: "2026-04-23T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_tokyo_old_stay
+    bucket: stay_choice
+    score: 0.9
+    matched_reason: [exact destination match on 东京, keyword match on 住宿]
+    content_summary: 东京住宿：很早以前住银座，价格偏高。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。东京
+    created_at: "2024-01-01T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_tokyo_irrelevant_budget
+    bucket: budget_signal
+    score: 0.6
+    matched_reason: [exact destination match on 东京]
+    content_summary: 东京预算：总额 20000 CNY。
+    domains: [budget]
+    applicability: 仅供预算参考。东京
+    created_at: "2026-04-23T00:00:00+00:00"
+expected:
+  selected_item_ids:
+    - slice_tokyo_recent_stay
+    - slice_tokyo_old_stay
+  final_reason: source-aware weighted rerank selected 2 items (0 profile, 2 slice)
+  fallback_used: none
+  reason_contains:
+    slice_tokyo_old_stay: recency=0.00
+

@@ -1,0 +1,47 @@
+id: reranker-only-002-conflicting-profile-drop
+name: Conflicting avoid profile item is dropped
+description: Positive current intent to take a red-eye should drop the avoid_red_eye profile constraint.
+user_message: 这次为了省预算，可以坐红眼航班
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+retrieval_plan:
+  source: profile
+  buckets: [constraints]
+  domains: [flight]
+  destination: ""
+  keywords: [红眼, 航班]
+  top_k: 5
+  reason: fixed_reranker_eval -> profile conflict
+config:
+  small_candidate_set_threshold: 1
+  profile_top_n: 2
+candidates:
+  - source: profile
+    item_id: constraints:flight:avoid_red_eye
+    bucket: constraints
+    score: 1.0
+    matched_reason: [domain match on flight, keyword match on 红眼]
+    content_summary: flight:avoid_red_eye=true
+    domains: [flight]
+    applicability: 适用于所有旅行。
+    polarity: avoid
+    key: avoid_red_eye
+    created_at: "2026-04-20T13:08:23+00:00"
+  - source: episode_slice
+    item_id: slice_recent_red_eye_tradeoff
+    bucket: transport_choice
+    score: 0.7
+    matched_reason: [domain match on flight, keyword match on 红眼]
+    content_summary: 上次东京行程坐红眼虽然便宜，但第二天状态较差。
+    domains: [flight]
+    applicability: 仅供交通方式参考；班次和出发条件变化时需重新判断。
+    created_at: "2026-04-23T02:23:34+00:00"
+expected:
+  selected_item_ids:
+    - slice_recent_red_eye_tradeoff
+  final_reason: small candidate set; skipped weighted rerank
+  fallback_used: skipped_small_candidate_set
+  reason_contains:
+    constraints:flight:avoid_red_eye: dropped as conflict
+

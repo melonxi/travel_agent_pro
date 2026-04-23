@@ -1,0 +1,27 @@
+id: reranker-001-tokyo-stay-hybrid-weighted
+name: Tokyo stay history triggers hybrid weighted rerank
+description: Historical Tokyo stay lookup should hit a mixed profile-plus-slice candidate set and keep the source-aware weighted reranker path.
+difficulty: memory
+messages:
+  - role: user
+    content: 我之前去东京的住宿和行程是怎么安排的？
+assertions:
+  - type: memory_recall_field
+    target: final_recall_decision
+    value: query_recall_enabled
+  - type: memory_recall_field
+    target: reranker_selected_ids
+    value:
+      - constraints:accommodation:avoid_capsule_hotel
+      - constraints:accommodation:avoid_hostel
+      - slice_ep_trip_0f330fb40256_stay_choice_01
+      - slice_ep_trip_fd671558cef2_stay_choice_01
+  - type: memory_recall_field
+    target: reranker_final_reason
+    value: source-aware weighted rerank selected 4 items (2 profile, 2 slice)
+tags:
+  - memory_recall
+  - reranker_eval
+  - expect_recall
+  - weighted_rerank
+  - hybrid_history

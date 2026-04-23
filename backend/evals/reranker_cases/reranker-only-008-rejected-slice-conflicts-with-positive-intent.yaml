@@ -1,0 +1,59 @@
+id: reranker-only-008-rejected-slice-conflicts-with-positive-intent
+name: Rejected slice conflicts with positive current intent
+description: A historical rejected option should not be injected when the current user explicitly wants to try that option.
+user_message: 这次京都我想试试胶囊酒店，可以体验一下
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+  destination: 京都
+retrieval_plan:
+  source: hybrid_history
+  buckets: [stable_preferences]
+  domains: [hotel]
+  destination: 京都
+  keywords: [胶囊, 酒店]
+  top_k: 5
+  reason: fixed_reranker_eval -> rejected slice conflict
+config:
+  small_candidate_set_threshold: 1
+  hybrid_top_n: 2
+  hybrid_profile_top_n: 1
+  hybrid_slice_top_n: 1
+candidates:
+  - source: episode_slice
+    item_id: slice_rejected_capsule
+    bucket: rejected_option
+    score: 0.9
+    matched_reason: [exact destination match on 京都, keyword match on 胶囊]
+    content_summary: 上次在京都订了胶囊酒店，体验很差。
+    domains: [hotel]
+    applicability: 仅供住宿选择参考。京都
+    created_at: "2026-04-22T15:02:43+00:00"
+  - source: episode_slice
+    item_id: slice_kyoto_standard_hotel
+    bucket: stay_choice
+    score: 0.7
+    matched_reason: [exact destination match on 京都, keyword match on 酒店]
+    content_summary: 京都标准酒店，位置方便。
+    domains: [hotel]
+    applicability: 仅供住宿选择参考。京都
+    created_at: "2026-04-23T02:24:00+00:00"
+  - source: profile
+    item_id: stable_preferences:hotel:prefer_quiet_hotel
+    bucket: stable_preferences
+    score: 0.8
+    matched_reason: [domain match on hotel]
+    content_summary: hotel:prefer_quiet_hotel=true
+    domains: [hotel]
+    applicability: 适用于大多数住宿选择。
+    polarity: prefer
+    key: prefer_quiet_hotel
+    created_at: "2026-04-20T13:08:23+00:00"
+expected:
+  selected_item_ids:
+    - slice_kyoto_standard_hotel
+    - stable_preferences:hotel:prefer_quiet_hotel
+  final_reason: source-aware weighted rerank selected 2 items (1 profile, 1 slice)
+  fallback_used: none
+  reason_contains:
+    slice_rejected_capsule: dropped as conflict

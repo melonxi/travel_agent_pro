@@ -1,0 +1,69 @@
+id: reranker-only-018-budget-tight-but-not-bad-hotel
+name: Budget tight but not bad hotel tradeoff
+description: Budget pressure should not override hard accommodation quality constraints.
+user_message: 预算紧一点，但别住太差
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+retrieval_plan:
+  source: hybrid_history
+  buckets: [constraints]
+  domains: [hotel, accommodation, budget]
+  destination: ""
+  keywords: [预算, 住, 太差, 青旅]
+  top_k: 5
+  reason: fixed_reranker_eval -> budget quality tradeoff
+config:
+  small_candidate_set_threshold: 1
+  hybrid_top_n: 4
+  hybrid_profile_top_n: 2
+  hybrid_slice_top_n: 2
+candidates:
+  - source: profile
+    item_id: constraints:accommodation:avoid_hostel
+    bucket: constraints
+    score: 1.0
+    matched_reason: [domain match on accommodation, keyword match on 青旅]
+    content_summary: accommodation:avoid_hostel=true
+    domains: [accommodation]
+    applicability: 适用于所有住宿选择。
+    polarity: avoid
+    key: avoid_hostel
+    created_at: "2026-04-20T11:51:12+00:00"
+  - source: profile
+    item_id: constraints:accommodation:avoid_capsule_hotel
+    bucket: constraints
+    score: 1.0
+    matched_reason: [domain match on accommodation]
+    content_summary: accommodation:avoid_capsule_hotel=true
+    domains: [accommodation]
+    applicability: 适用于所有住宿选择。
+    polarity: avoid
+    key: avoid_capsule_hotel
+    created_at: "2026-04-20T12:01:27+00:00"
+  - source: episode_slice
+    item_id: slice_budget_tight_hotel
+    bucket: budget_signal
+    score: 0.8
+    matched_reason: [domain match on budget, keyword match on 预算]
+    content_summary: 上次预算紧时压缩住宿预算，但没有选择太差的住宿。
+    domains: [budget, hotel]
+    applicability: 仅供预算分配参考。
+    created_at: "2026-04-23T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_rejected_bad_hostel
+    bucket: rejected_option
+    score: 0.8
+    matched_reason: [domain match on hotel, keyword match on 太差]
+    content_summary: 上次差点选择便宜青旅，但因为住宿质量太差被拒绝。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。
+    created_at: "2026-04-22T00:00:00+00:00"
+expected:
+  selected_item_ids:
+    - constraints:accommodation:avoid_hostel
+    - slice_rejected_bad_hostel
+    - constraints:accommodation:avoid_capsule_hotel
+    - slice_budget_tight_hotel
+  final_reason: source-aware weighted rerank selected 4 items (2 profile, 2 slice)
+  fallback_used: none

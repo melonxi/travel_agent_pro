@@ -1,0 +1,70 @@
+id: reranker-only-010-natural-change-style
+name: Natural expression "change style this time"
+description: Natural wording about changing style should drop the conflicting historical prefer-slow profile and retain alternative higher-energy memories.
+user_message: 这次想换个风格，不要再慢悠悠的了
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+retrieval_plan:
+  source: hybrid_history
+  buckets: [stable_preferences]
+  domains: [pace, itinerary]
+  destination: ""
+  keywords: [换个风格, 慢悠悠, 节奏, 行程]
+  top_k: 5
+  reason: fixed_reranker_eval -> natural expression change style
+config:
+  small_candidate_set_threshold: 1
+  hybrid_top_n: 3
+  hybrid_profile_top_n: 1
+  hybrid_slice_top_n: 2
+candidates:
+  - source: profile
+    item_id: stable_preferences:pace:prefer_slow_pace
+    bucket: stable_preferences
+    score: 0.9
+    matched_reason: [domain match on pace, keyword match on 慢悠悠]
+    content_summary: pace:prefer_slow_pace=慢悠悠
+    domains: [pace]
+    applicability: 适用于大多数行程节奏。
+    polarity: prefer
+    key: prefer_slow_pace
+    created_at: "2026-04-20T12:37:16+00:00"
+  - source: profile
+    item_id: stable_preferences:general:prefer_quiet_temples
+    bucket: stable_preferences
+    score: 0.7
+    matched_reason: [domain match on itinerary]
+    content_summary: itinerary:prefer_quiet_temples=true
+    domains: [itinerary]
+    applicability: 适用于大多数行程选择。
+    polarity: prefer
+    key: prefer_quiet_temples
+    created_at: "2026-04-20T12:37:16+00:00"
+  - source: episode_slice
+    item_id: slice_osaka_active_day
+    bucket: itinerary_pattern
+    score: 0.8
+    matched_reason: [keyword match on 换个风格, domain match on itinerary]
+    content_summary: 另一次旅行尝试了更紧凑的城市漫游，白天活动更多。
+    domains: [itinerary, pace]
+    applicability: 仅供换风格时参考；需要重新核实体力。
+    created_at: "2026-04-23T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_quiet_slow_day
+    bucket: itinerary_pattern
+    score: 0.7
+    matched_reason: [domain match on pace]
+    content_summary: 上次慢节奏寺庙散步，整体很安静。
+    domains: [itinerary, pace]
+    applicability: 仅供行程结构参考。
+    created_at: "2026-04-22T00:00:00+00:00"
+expected:
+  selected_item_ids:
+    - slice_osaka_active_day
+    - stable_preferences:general:prefer_quiet_temples
+    - slice_quiet_slow_day
+  final_reason: source-aware weighted rerank selected 3 items (1 profile, 2 slice)
+  fallback_used: none
+  reason_contains:
+    stable_preferences:pace:prefer_slow_pace: dropped as conflict

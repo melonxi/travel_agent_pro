@@ -20,6 +20,7 @@ class RecallCandidate:
     applicability: str
     polarity: str = ""
     created_at: str = ""
+    key: str = ""
 
 
 def build_profile_candidates(
@@ -40,6 +41,7 @@ def build_profile_candidates(
                 applicability=item.applicability,
                 polarity=item.polarity,
                 created_at=item.updated_at or item.created_at,
+                key=item.key,
             )
         )
     return candidates

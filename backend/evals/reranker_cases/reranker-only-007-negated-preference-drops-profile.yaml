@@ -1,0 +1,49 @@
+id: reranker-only-007-negated-preference-drops-profile
+name: Negated current message drops prefer profile item
+description: Current negative seat preference should drop the conflicting historical prefer profile candidate.
+user_message: 这次航班不要靠窗座位
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+retrieval_plan:
+  source: profile
+  buckets: [stable_preferences]
+  domains: [flight]
+  destination: ""
+  keywords: [航班, 靠窗, 座位]
+  top_k: 5
+  reason: fixed_reranker_eval -> negated current preference
+config:
+  small_candidate_set_threshold: 1
+  profile_top_n: 2
+candidates:
+  - source: profile
+    item_id: stable_preferences:flight:prefer_window_seat
+    bucket: stable_preferences
+    score: 0.9
+    matched_reason: [domain match on flight, keyword match on 靠窗]
+    content_summary: flight:seat_preference=靠窗
+    domains: [flight]
+    applicability: 适用于大多数航班选择。
+    polarity: prefer
+    key: prefer_window_seat
+    created_at: "2026-04-20T13:08:23+00:00"
+  - source: profile
+    item_id: stable_preferences:flight:prefer_morning_departure
+    bucket: stable_preferences
+    score: 0.8
+    matched_reason: [domain match on flight]
+    content_summary: flight:departure_time=morning
+    domains: [flight]
+    applicability: 适用于大多数航班选择。
+    polarity: prefer
+    key: prefer_morning_departure
+    created_at: "2026-04-20T13:08:23+00:00"
+expected:
+  selected_item_ids:
+    - stable_preferences:flight:prefer_morning_departure
+  final_reason: small candidate set; skipped weighted rerank
+  fallback_used: skipped_small_candidate_set
+  reason_contains:
+    stable_preferences:flight:prefer_window_seat: dropped as conflict
+

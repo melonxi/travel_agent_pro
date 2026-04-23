@@ -1,0 +1,70 @@
+id: reranker-only-015-implicit-change-away-from-old-style
+name: Implicit change away from old quiet style
+description: Implicit wording about changing away from the old quiet style should drop the conflicting quiet-hotel profile memory.
+user_message: 这次住宿换个热闹点，以前那种安静避世的就算了
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+retrieval_plan:
+  source: hybrid_history
+  buckets: [stable_preferences]
+  domains: [hotel, accommodation]
+  destination: ""
+  keywords: [住宿, 热闹, 安静, 换个]
+  top_k: 5
+  reason: fixed_reranker_eval -> implicit change away from old style
+config:
+  small_candidate_set_threshold: 1
+  hybrid_top_n: 3
+  hybrid_profile_top_n: 1
+  hybrid_slice_top_n: 2
+candidates:
+  - source: profile
+    item_id: stable_preferences:hotel:prefer_quiet_hotel
+    bucket: stable_preferences
+    score: 0.9
+    matched_reason: [domain match on hotel, keyword match on 安静]
+    content_summary: hotel:prefer_quiet_hotel=安静避世
+    domains: [hotel]
+    applicability: 适用于大多数住宿选择。
+    polarity: prefer
+    key: prefer_quiet_hotel
+    created_at: "2026-04-20T13:08:23+00:00"
+  - source: profile
+    item_id: stable_preferences:hotel:prefer_clean_hotel
+    bucket: stable_preferences
+    score: 0.7
+    matched_reason: [domain match on hotel]
+    content_summary: hotel:prefer_clean_hotel=true
+    domains: [hotel]
+    applicability: 适用于大多数住宿选择。
+    polarity: prefer
+    key: prefer_clean_hotel
+    created_at: "2026-04-20T13:08:23+00:00"
+  - source: episode_slice
+    item_id: slice_lively_area_stay
+    bucket: stay_choice
+    score: 0.8
+    matched_reason: [keyword match on 热闹, domain match on hotel]
+    content_summary: 上次有一晚住在热闹商圈，吃饭和夜间活动都方便。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。
+    created_at: "2026-04-23T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_quiet_hideaway_stay
+    bucket: stay_choice
+    score: 0.7
+    matched_reason: [keyword match on 安静, domain match on hotel]
+    content_summary: 上次住安静避世的旅馆，适合休息但晚上不热闹。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。
+    created_at: "2026-04-22T00:00:00+00:00"
+expected:
+  selected_item_ids:
+    - slice_quiet_hideaway_stay
+    - stable_preferences:hotel:prefer_clean_hotel
+    - slice_lively_area_stay
+  final_reason: source-aware weighted rerank selected 3 items (1 profile, 2 slice)
+  fallback_used: none
+  reason_contains:
+    stable_preferences:hotel:prefer_quiet_hotel: dropped as conflict

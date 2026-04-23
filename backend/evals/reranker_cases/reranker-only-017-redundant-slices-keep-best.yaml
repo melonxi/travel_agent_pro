@@ -1,0 +1,56 @@
+id: reranker-only-017-redundant-slices-keep-best
+name: Redundant episode slices keep best representative
+description: Exact duplicate slice summaries should be collapsed so they do not consume multiple prompt slots.
+user_message: 我上次东京住宿怎么安排的？
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+  destination: 东京
+retrieval_plan:
+  source: episode_slice
+  buckets: []
+  domains: [hotel, accommodation]
+  destination: 东京
+  keywords: [住宿, 东京]
+  top_k: 5
+  reason: fixed_reranker_eval -> duplicate slice compression
+config:
+  small_candidate_set_threshold: 1
+  slice_top_n: 3
+candidates:
+  - source: episode_slice
+    item_id: slice_tokyo_stay_recent_a
+    bucket: stay_choice
+    score: 0.9
+    matched_reason: [exact destination match on 东京, keyword match on 住宿]
+    content_summary: 东京住宿：新宿华盛顿酒店，交通方便。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。东京
+    created_at: "2026-04-23T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_tokyo_stay_recent_b
+    bucket: stay_choice
+    score: 0.8
+    matched_reason: [exact destination match on 东京, keyword match on 住宿]
+    content_summary: 东京住宿：新宿华盛顿酒店，交通方便。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。东京
+    created_at: "2026-04-22T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_tokyo_stay_ginza
+    bucket: stay_choice
+    score: 0.7
+    matched_reason: [exact destination match on 东京, keyword match on 住宿]
+    content_summary: 东京住宿：银座商务酒店，价格偏高。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。东京
+    created_at: "2026-04-21T00:00:00+00:00"
+expected:
+  selected_item_ids:
+    - slice_tokyo_stay_recent_a
+    - slice_tokyo_stay_ginza
+  final_reason: source-aware weighted rerank selected 2 items (0 profile, 2 slice)
+  fallback_used: none
+  reason_contains:
+    slice_tokyo_stay_recent_b: duplicate group
+
