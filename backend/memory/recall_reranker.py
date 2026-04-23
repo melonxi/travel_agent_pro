@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import math
 import re
@@ -93,12 +93,14 @@ class RecallRerankPath:
 @dataclass(frozen=True)
 class _ScoredCandidate:
     candidate: RecallCandidate
-    detail: SignalScoreDetail
     source_score: float
     normalized_score: float
     final_score: float
     duplicate_group: str
+    conflict_score: float
+    weak_relevance: bool
     reason: str
+    score_detail: SignalScoreDetail
 
 
 def selection_metrics_placeholder() -> dict[str, float | None]:
@@ -137,8 +139,12 @@ def choose_reranker_path(
             result=empty_rerank_result(),
         )
 
+    intent_profile = _resolve_intent_profile(
+        user_message,
+        retrieval_plan,
+        reranker_config,
+    )
     intent_label = _resolve_intent_label(user_message, retrieval_plan)
-    weights = _resolve_intent_profile(user_message, retrieval_plan, reranker_config)
     per_item_reason: dict[str, str] = {}
     per_item_scores: dict[str, SignalScoreDetail] = {}
     candidate_ids = [candidate.item_id for candidate in candidates]
@@ -167,39 +173,51 @@ def choose_reranker_path(
         }
     )
 
-    # Always score every candidate and always run conflict filtering + dedup.
-    # The small-set fast path ONLY skips the weighted cross-source re-sort,
-    # not the integrity filters.
-    grouped: dict[str, list[_ScoredCandidate]] = {"profile": [], "episode_slice": []}
+    profile_scored: list[_ScoredCandidate] = []
+    slice_scored: list[_ScoredCandidate] = []
     for candidate in candidates:
-        scored = _score_candidate(
+        detail = _compute_rule_signals(
             candidate,
             user_message,
             plan,
             retrieval_plan,
-            weights,
             reranker_config,
-            evidence_by_id.get(candidate.item_id),
+        )
+        detail = _finalize_source_score(detail, intent_profile)
+        detail = _compute_evidence_signals(
+            detail,
+            _candidate_evidence(candidate, evidence_by_id),
             normalized_fused_scores[candidate.item_id],
             normalized_lexical_scores[candidate.item_id],
             normalized_semantic_scores[candidate.item_id],
+            reranker_config,
         )
-        per_item_scores[candidate.item_id] = scored.detail
-        per_item_reason[candidate.item_id] = scored.reason
-        keep, hard_filter = _passes_hard_filter(scored.detail)
-        scored.detail.hard_filter = hard_filter
+        reason = _build_reason_text(candidate, detail)
+        per_item_scores[candidate.item_id] = detail
+        per_item_reason[candidate.item_id] = reason
+        keep, hard_filter = _passes_hard_filter(detail)
+        detail.hard_filter = hard_filter
         if not keep:
             suffix = (
                 "dropped as conflict"
                 if hard_filter == "conflict"
                 else "dropped as weak relevance"
             )
-            per_item_reason[candidate.item_id] = f"{scored.reason} | {suffix}"
+            per_item_reason[candidate.item_id] = f"{reason} | {suffix}"
             continue
-        grouped[candidate.source].append(scored)
+        scored = _build_scored_candidate(
+            candidate,
+            detail,
+            duplicate_group=_duplicate_group(candidate),
+            reason=reason,
+        )
+        if candidate.source == "profile":
+            profile_scored.append(scored)
+        else:
+            slice_scored.append(scored)
 
-    deduped_profile, duplicate_profile_reasons = _dedupe_group(grouped["profile"])
-    deduped_slices, duplicate_slice_reasons = _dedupe_group(grouped["episode_slice"])
+    deduped_profile, duplicate_profile_reasons = _dedupe_candidates(profile_scored)
+    deduped_slices, duplicate_slice_reasons = _dedupe_candidates(slice_scored)
     per_item_reason.update(duplicate_profile_reasons)
     per_item_reason.update(duplicate_slice_reasons)
 
@@ -225,10 +243,10 @@ def choose_reranker_path(
         return RecallRerankPath(selected_candidates=selected_candidates, result=result)
 
     normalized_profile = _normalize_source_scores(
-        deduped_profile, source_prior=weights.profile_source_prior
+        deduped_profile, source_prior=intent_profile.profile_source_prior
     )
     normalized_slices = _normalize_source_scores(
-        deduped_slices, source_prior=weights.slice_source_prior
+        deduped_slices, source_prior=intent_profile.slice_source_prior
     )
 
     selected = _select_candidates(
@@ -328,17 +346,29 @@ def _score_candidate(
         retrieval_plan,
         reranker_config,
     )
-    if evidence is not None:
-        detail = _compute_evidence_signals(
-            detail,
-            evidence,
-            normalized_fused_score,
-            normalized_lexical_score,
-            normalized_semantic_score,
-            reranker_config,
-        )
-    duplicate_group = _duplicate_group(candidate)
-    raw_score = (
+    detail = _finalize_source_score(detail, weights)
+    detail = _compute_evidence_signals(
+        detail,
+        evidence or _candidate_evidence(candidate, {}),
+        normalized_fused_score,
+        normalized_lexical_score,
+        normalized_semantic_score,
+        reranker_config,
+    )
+    reason = _build_reason_text(candidate, detail)
+    return _build_scored_candidate(
+        candidate,
+        detail,
+        duplicate_group=_duplicate_group(candidate),
+        reason=reason,
+    )
+
+
+def _finalize_source_score(
+    detail: SignalScoreDetail,
+    weights: IntentWeightProfile,
+) -> SignalScoreDetail:
+    detail.rule_score = (
         weights.bucket_weight * detail.bucket_score
         + weights.domain_weight * detail.domain_exact_score
         + weights.keyword_weight * detail.keyword_exact_score
@@ -347,18 +377,37 @@ def _score_candidate(
         + weights.applicability_weight * detail.applicability_score
         - weights.conflict_weight * detail.conflict_score
     )
-    detail.rule_score = raw_score
-    detail.source_normalized_score = raw_score
-    detail.final_score = raw_score
-    reason = _build_reason_text(candidate, detail)
+    return detail
+
+
+def _candidate_evidence(
+    candidate: RecallCandidate,
+    evidence_by_id: dict[str, RetrievalEvidence],
+) -> RetrievalEvidence:
+    evidence = evidence_by_id.get(candidate.item_id)
+    if evidence is not None:
+        return evidence
+    return RetrievalEvidence(item_id=candidate.item_id, source=candidate.source)
+
+
+def _build_scored_candidate(
+    candidate: RecallCandidate,
+    detail: SignalScoreDetail,
+    *,
+    duplicate_group: str,
+    reason: str,
+) -> _ScoredCandidate:
+    source_score = detail.rule_score + detail.evidence_score
     return _ScoredCandidate(
         candidate=candidate,
-        detail=detail,
-        source_score=raw_score,
-        normalized_score=raw_score,
-        final_score=raw_score,
+        source_score=source_score,
+        normalized_score=0.0,
+        final_score=0.0,
         duplicate_group=duplicate_group,
+        conflict_score=detail.conflict_score,
+        weak_relevance=False,
         reason=reason,
+        score_detail=detail,
     )
 
 
@@ -463,17 +512,22 @@ def _normalize_source_scores(
             norm = 1.0
         else:
             norm = (scored.source_score - min_score) / (max_score - min_score)
-        scored.detail.source_normalized_score = norm
-        scored.detail.final_score = source_prior + norm
+        detail = replace(
+            scored.score_detail,
+            source_normalized_score=norm,
+            final_score=source_prior + norm,
+        )
         normalized.append(
             _ScoredCandidate(
                 candidate=scored.candidate,
-                detail=scored.detail,
                 source_score=scored.source_score,
                 normalized_score=norm,
-                final_score=source_prior + norm,
+                final_score=detail.final_score,
                 duplicate_group=scored.duplicate_group,
+                conflict_score=scored.conflict_score,
+                weak_relevance=scored.weak_relevance,
                 reason=scored.reason,
+                score_detail=detail,
             )
         )
     normalized.sort(key=lambda item: (-item.final_score, item.candidate.item_id))
@@ -532,7 +586,7 @@ def _select_candidates(
     return merged[: config.hybrid_top_n]
 
 
-def _dedupe_group(
+def _dedupe_candidates(
     scored_candidates: list[_ScoredCandidate],
 ) -> tuple[list[_ScoredCandidate], dict[str, str]]:
     seen: dict[str, _ScoredCandidate] = {}
@@ -548,6 +602,12 @@ def _dedupe_group(
             f"{scored.reason} | duplicate group={scored.duplicate_group}"
         )
     return deduped, reasons
+
+
+def _dedupe_group(
+    scored_candidates: list[_ScoredCandidate],
+) -> tuple[list[_ScoredCandidate], dict[str, str]]:
+    return _dedupe_candidates(scored_candidates)
 
 
 def _duplicate_group(candidate: RecallCandidate) -> str:
