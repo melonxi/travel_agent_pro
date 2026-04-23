@@ -21,6 +21,37 @@ def test_memory_retrieval_config_stage3_defaults():
     )
 
 
+def test_memory_retrieval_config_reranker_defaults_include_evidence_blocks():
+    cfg = MemoryRetrievalConfig()
+
+    assert cfg.reranker.small_candidate_set_threshold == 3
+    assert cfg.reranker.evidence.symbolic_hit_weight == 0.0
+    assert cfg.reranker.evidence.lexical_hit_weight == 0.0
+    assert cfg.reranker.evidence.semantic_hit_weight == 0.0
+    assert cfg.reranker.evidence.lane_fused_weight == 0.0
+    assert cfg.reranker.dynamic_budget.enabled is False
+    assert dict(cfg.reranker.intent_weights)["profile"].profile_source_prior == 1.0
+
+
+def test_load_config_reranker_missing_blocks_fall_back_to_defaults(tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        """\
+memory:
+  retrieval:
+    reranker:
+      hybrid_top_n: 5
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(str(cfg_file))
+
+    assert cfg.memory.retrieval.reranker.hybrid_top_n == 5
+    assert cfg.memory.retrieval.reranker.evidence.semantic_score_weight == 0.0
+    assert cfg.memory.retrieval.reranker.dynamic_budget.enabled is False
+
+
 def test_load_config_parses_stage3_recall_config(tmp_path):
     cfg_file = tmp_path / "config.yaml"
     cfg_file.write_text(

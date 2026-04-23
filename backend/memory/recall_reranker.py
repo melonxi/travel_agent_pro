@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import math
 import re
@@ -41,11 +41,37 @@ _PROFILE_BUCKET_PRIOR = {
 
 
 @dataclass
+class SignalScoreDetail:
+    bucket_score: float
+    domain_exact_score: float
+    keyword_exact_score: float
+    destination_score: float
+    recency_score: float
+    applicability_score: float
+    conflict_score: float
+    symbolic_hit: float = 0.0
+    lexical_hit: float = 0.0
+    semantic_hit: float = 0.0
+    lane_fused_score: float = 0.0
+    lexical_score: float = 0.0
+    semantic_score: float = 0.0
+    destination_match_type_score: float = 0.0
+    rule_score: float = 0.0
+    evidence_score: float = 0.0
+    source_normalized_score: float = 0.0
+    final_score: float = 0.0
+    hard_filter: str = ""
+
+
+@dataclass
 class RecallRerankResult:
     selected_item_ids: list[str]
     final_reason: str
     per_item_reason: dict[str, str]
     fallback_used: str = "none"
+    per_item_scores: dict[str, SignalScoreDetail] = field(default_factory=dict)
+    intent_label: str = ""
+    selection_metrics: dict[str, float | None] = field(default_factory=dict)
 
 
 @dataclass
