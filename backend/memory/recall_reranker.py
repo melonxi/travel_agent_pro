@@ -249,7 +249,10 @@ def _resolve_intent_profile(
         MemoryRerankerConfig().intent_weights,
     )
     profiles = dict(configured_weights)
-    return profiles.get(intent_label, profiles["default"])
+    if intent_label in profiles:
+        return profiles[intent_label]
+    default_profiles = dict(MemoryRerankerConfig().intent_weights)
+    return profiles.get("default", default_profiles["default"])
 
 
 def _score_candidate(
