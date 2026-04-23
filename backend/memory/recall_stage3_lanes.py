@@ -19,6 +19,8 @@ from memory.retrieval_candidates import (
 from memory.symbolic_recall import rank_episode_slices, rank_profile_items
 from memory.v3_models import EpisodeSlice, MemoryProfileItem, UserMemoryProfile
 
+_MIN_LEXICAL_SCORE = 0.05
+
 
 class SymbolicLane:
     lane_name = "symbolic"
@@ -173,9 +175,7 @@ def _rank_profile_lexical(
                 item_id=candidate.item_id,
                 source=candidate.source,
                 lanes=[LexicalLane.lane_name],
-                matched_keywords=sorted(
-                    query_terms & _tokenize_for_lexical(item_text)
-                ),
+                matched_keywords=_matched_lexical_keywords(envelope, item_text),
                 lexical_score=score,
                 retrieval_reason="lexical keyword expansion",
             )
@@ -188,8 +188,6 @@ def _rank_slices_lexical(
     slices: list[EpisodeSlice],
     query_terms: set[str],
 ) -> list[tuple[float, RecallCandidate, RetrievalEvidence]]:
-    del envelope
-
     ranked: list[tuple[float, RecallCandidate, RetrievalEvidence]] = []
     for slice_ in slices:
         slice_text = _slice_text(slice_)
@@ -205,7 +203,7 @@ def _rank_slices_lexical(
             item_id=candidate.item_id,
             source=candidate.source,
             lanes=[LexicalLane.lane_name],
-            matched_keywords=sorted(query_terms & _tokenize_for_lexical(slice_text)),
+            matched_keywords=_matched_lexical_keywords(envelope, slice_text),
             lexical_score=score,
             retrieval_reason="lexical keyword expansion",
         )
@@ -221,38 +219,65 @@ def _lexical_score(query_terms: set[str], text: str) -> float:
     overlap = query_terms & text_terms
     if not overlap:
         return 0.0
+    if not any(_is_meaningful_lexical_term(term) for term in overlap):
+        return 0.0
 
     precision = len(overlap) / len(text_terms)
     recall = len(overlap) / len(query_terms)
     if precision + recall == 0:
         return 0.0
-    return 2 * precision * recall / (precision + recall)
+    score = 2 * precision * recall / (precision + recall)
+    if score < _MIN_LEXICAL_SCORE:
+        return 0.0
+    return score
 
 
 def _tokenize_for_lexical(text: str) -> set[str]:
-    normalized = "".join(
-        char.lower() if char.isalnum() else " " for char in str(text)
-    )
     terms: set[str] = set()
-    for part in normalized.split():
-        if not part:
-            continue
-        terms.add(part)
-        terms.update(part)
-        terms.update(part[index : index + 2] for index in range(len(part) - 1))
+    ascii_buffer: list[str] = []
+    cjk_buffer: list[str] = []
+
+    def flush_ascii() -> None:
+        if not ascii_buffer:
+            return
+        token = "".join(ascii_buffer).lower()
+        ascii_buffer.clear()
+        if len(token) < 2:
+            return
+        terms.add(token)
+        if len(token) >= 4:
+            terms.update(token[index : index + 2] for index in range(len(token) - 1))
+
+    def flush_cjk() -> None:
+        if not cjk_buffer:
+            return
+        token = "".join(cjk_buffer)
+        cjk_buffer.clear()
+        if len(token) >= 2:
+            terms.add(token)
+        terms.update(token)
+        terms.update(token[index : index + 2] for index in range(len(token) - 1))
+
+    for char in str(text):
+        if char.isascii() and char.isalnum():
+            flush_cjk()
+            ascii_buffer.append(char)
+        elif _is_cjk(char):
+            flush_ascii()
+            cjk_buffer.append(char)
+        else:
+            flush_ascii()
+            flush_cjk()
+    flush_ascii()
+    flush_cjk()
     return terms
 
 
 def _profile_item_text(bucket: str, item: MemoryProfileItem) -> str:
+    del bucket
+
     parts = [
-        bucket,
-        item.id,
-        item.domain,
-        item.key,
         _stringify_for_stage3(item.value),
-        item.polarity,
-        item.stability,
-        item.status,
         item.applicability,
         _stringify_for_stage3(item.context),
         _stringify_for_stage3(item.recall_hints),
@@ -263,9 +288,6 @@ def _profile_item_text(bucket: str, item: MemoryProfileItem) -> str:
 
 def _slice_text(slice_: EpisodeSlice) -> str:
     parts = [
-        slice_.id,
-        slice_.slice_type,
-        " ".join(slice_.domains),
         _stringify_for_stage3(slice_.entities),
         " ".join(slice_.keywords),
         slice_.content,
@@ -284,3 +306,45 @@ def _stringify_for_stage3(value: Any) -> str:
     if isinstance(value, (int, float)):
         return str(value)
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _matched_lexical_keywords(
+    envelope: RecallQueryEnvelope,
+    document_text: str,
+) -> list[str]:
+    document_terms = _tokenize_for_lexical(document_text)
+    candidates: list[str] = []
+    for value in (
+        envelope.user_message,
+        *envelope.original_keywords,
+        *envelope.expanded_keywords,
+    ):
+        for term in _tokenize_for_lexical(value):
+            if (
+                term in document_terms
+                and _is_meaningful_lexical_term(term)
+                and term not in candidates
+            ):
+                candidates.append(term)
+    return sorted(candidates, key=lambda term: (-len(term), term))
+
+
+def _is_meaningful_lexical_term(term: str) -> bool:
+    if not term:
+        return False
+    if term.isascii():
+        return len(term) >= 2
+    if any(_is_cjk(char) for char in term):
+        return len(term) >= 2
+    return len(term) >= 2
+
+
+def _is_cjk(char: str) -> bool:
+    return any(
+        start <= ord(char) <= end
+        for start, end in (
+            (0x3400, 0x4DBF),
+            (0x4E00, 0x9FFF),
+            (0xF900, 0xFAFF),
+        )
+    )
