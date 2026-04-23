@@ -58,19 +58,21 @@ def retrieve_recall_candidates(
     if config.symbolic.enabled:
         lane_name = SymbolicLane.lane_name
         telemetry.lanes_attempted.append(lane_name)
-        try:
-            lane_result = SymbolicLane().run(envelope, profile, slices, config)
-        except Exception as exc:
-            telemetry.lane_errors[lane_name] = str(exc)
+        lane_result = SymbolicLane().run(envelope, profile, slices, config)
+        telemetry.candidates_by_lane[lane_name] = len(lane_result.candidates)
+        if lane_result.error:
+            telemetry.lane_errors[lane_name] = lane_result.error
         else:
             lane_results.append(lane_result)
-            telemetry.candidates_by_lane[lane_name] = len(lane_result.candidates)
             telemetry.lanes_succeeded.append(lane_name)
 
     telemetry.total_candidates_before_fusion = sum(
         len(lane_result.candidates) for lane_result in lane_results
     )
-    fused = fuse_lane_results(lane_results, config.fusion)
+    if _is_default_symbolic_only(config, telemetry):
+        fused = lane_results[0].candidates if lane_results else []
+    else:
+        fused = fuse_lane_results(lane_results, config.fusion)
     telemetry.total_candidates_after_fusion = len(fused)
     telemetry.zero_hit = len(fused) == 0
     telemetry.candidates_by_source = dict(
@@ -84,4 +86,18 @@ def retrieve_recall_candidates(
             for stage3_candidate in fused
         },
         telemetry=telemetry,
+    )
+
+
+def _is_default_symbolic_only(
+    config: Stage3RecallConfig,
+    telemetry: Stage3Telemetry,
+) -> bool:
+    return (
+        config.symbolic.enabled
+        and not config.lexical.enabled
+        and not config.semantic.enabled
+        and not config.entity.enabled
+        and not config.temporal.enabled
+        and telemetry.lanes_succeeded == ["symbolic"]
     )
