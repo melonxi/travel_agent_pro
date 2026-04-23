@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from config import Stage3RecallConfig
+from memory.embedding_provider import EmbeddingProvider, cosine_similarity
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3_models import (
     RecallQueryEnvelope,
@@ -90,6 +92,119 @@ class LexicalLane:
                 for _, candidate, evidence in top_ranked
             ],
         )
+
+
+class SemanticLane:
+    lane_name = "semantic"
+
+    def run(
+        self,
+        envelope: RecallQueryEnvelope,
+        profile: UserMemoryProfile,
+        slices: list[EpisodeSlice],
+        config: Stage3RecallConfig,
+        embedding_provider: EmbeddingProvider | None,
+    ) -> Stage3LaneResult:
+        if embedding_provider is None:
+            return Stage3LaneResult(
+                lane_name=self.lane_name,
+                candidates=[],
+                error="embedding_provider_missing",
+            )
+
+        records = _semantic_records(envelope, profile, slices)
+        if not records:
+            return Stage3LaneResult(lane_name=self.lane_name, candidates=[])
+
+        query_text = " ".join(
+            [
+                envelope.user_message,
+                *envelope.expanded_domains,
+                *envelope.expanded_keywords,
+            ]
+        )
+        record_texts = [record.text for record in records]
+        try:
+            vectors = embedding_provider.embed([query_text, *record_texts])
+        except Exception as exc:
+            return Stage3LaneResult(
+                lane_name=self.lane_name,
+                candidates=[],
+                error=f"embedding_error:{type(exc).__name__}",
+            )
+
+        if len(vectors) != len(records) + 1:
+            return Stage3LaneResult(
+                lane_name=self.lane_name,
+                candidates=[],
+                error="embedding_count_mismatch",
+            )
+
+        query_vector = vectors[0]
+        ranked: list[tuple[float, RecallCandidate, RetrievalEvidence]] = []
+        for record, vector in zip(records, vectors[1:]):
+            score = cosine_similarity(query_vector, vector)
+            if score < config.semantic.min_score:
+                continue
+
+            record.candidate.score = score
+            evidence = RetrievalEvidence(
+                item_id=record.candidate.item_id,
+                source=record.candidate.source,
+                lanes=[self.lane_name],
+                semantic_score=score,
+                retrieval_reason=f"semantic cosine score={score:.3f}",
+            )
+            ranked.append((score, record.candidate, evidence))
+
+        ranked.sort(key=lambda entry: (-entry[0], entry[1].source, entry[1].item_id))
+        return Stage3LaneResult(
+            lane_name=self.lane_name,
+            candidates=[
+                Stage3Candidate(candidate=candidate, evidence=evidence)
+                for _, candidate, evidence in ranked[: config.semantic.top_k]
+            ],
+        )
+
+
+@dataclass(frozen=True)
+class _SemanticRecord:
+    candidate: RecallCandidate
+    text: str
+
+
+def _semantic_records(
+    envelope: RecallQueryEnvelope,
+    profile: UserMemoryProfile,
+    slices: list[EpisodeSlice],
+) -> list[_SemanticRecord]:
+    records: list[_SemanticRecord] = []
+    if envelope.source_policy.search_profile:
+        for bucket in envelope.plan.buckets:
+            for item in getattr(profile, bucket, []):
+                candidate = build_profile_candidates(
+                    [(bucket, item, "semantic embedding match")]
+                )[0]
+                records.append(
+                    _SemanticRecord(
+                        candidate=candidate,
+                        text=_profile_item_text(bucket, item),
+                    )
+                )
+
+    if envelope.source_policy.search_slices:
+        for slice_ in slices:
+            candidate = build_episode_slice_candidates(
+                [(slice_, "semantic embedding match")]
+            )[0]
+            records.append(
+                _SemanticRecord(
+                    candidate=candidate,
+                    text=_slice_text(slice_),
+                )
+            )
+
+    return records
 
 
 def _plan_for_source_policy(envelope: RecallQueryEnvelope) -> RecallRetrievalPlan:
