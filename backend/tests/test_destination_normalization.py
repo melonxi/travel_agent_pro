@@ -9,6 +9,26 @@ def test_normalize_destination_resolves_tokyo_alias():
     assert normalized.region == "关东"
 
 
+def test_normalize_destination_collapses_whitespace_and_handles_non_str():
+    normalized = normalize_destination(None)
+    whitespace = normalize_destination("  Tokyo   ")
+
+    assert normalized.original == ""
+    assert normalized.canonical == ""
+    assert whitespace.original == "Tokyo"
+    assert whitespace.canonical == "东京"
+
+
+def test_normalize_destination_keeps_unknown_value_as_canonical():
+    normalized = normalize_destination("  火星   基地  ")
+
+    assert normalized.original == "火星 基地"
+    assert normalized.canonical == "火星 基地"
+    assert normalized.aliases == ()
+    assert normalized.region == ""
+    assert normalized.children == ()
+
+
 def test_match_destination_returns_exact_for_same_canonical_input():
     match = match_destination("京都", "京都")
 
