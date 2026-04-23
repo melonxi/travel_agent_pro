@@ -841,6 +841,51 @@ def test_choose_reranker_path_hybrid_default_config_keeps_selected_ids_and_place
     }
 
 
+def test_choose_reranker_path_per_item_scores_expose_normalized_final_score():
+    candidates = [
+        make_candidate(
+            item_id="profile_kyoto_area",
+            bucket="stable_preferences",
+            matched_reason=["exact domain match on hotel", "keyword match on 住宿"],
+            content_summary="hotel:preferred_area=京都四条",
+            domains=["hotel"],
+            applicability="适用于京都住宿选择。",
+        ),
+        make_candidate(
+            item_id="profile_kyoto_weak",
+            bucket="preference_hypotheses",
+            matched_reason=["exact domain match on hotel"],
+            content_summary="hotel:preferred_style=安静",
+            domains=["hotel"],
+            applicability="仅供住宿选择参考。",
+        ),
+    ]
+
+    path = choose_reranker_path(
+        candidates=candidates,
+        user_message="推荐这次京都住哪里",
+        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="京都",
+            keywords=["住宿"],
+            top_k=5,
+            reason="profile",
+        ),
+        evidence_by_id={},
+        config=DummyRerankerConfig(small_candidate_set_threshold=0),
+    )
+
+    selected_id = path.result.selected_item_ids[0]
+    selected_detail = path.result.per_item_scores[selected_id]
+
+    assert selected_id == "profile_kyoto_area"
+    assert selected_detail.source_normalized_score == pytest.approx(1.0)
+    assert selected_detail.final_score == pytest.approx(2.0)
+
+
 def test_default_config_small_set_still_drops_conflicting_profile_candidates():
     # Regression: the small-set fast path used to skip conflict detection entirely.
     # With the default config (small_candidate_set_threshold=3) and only 2 candidates,
