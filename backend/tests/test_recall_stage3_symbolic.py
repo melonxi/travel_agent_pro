@@ -184,6 +184,16 @@ def test_stage3_symbolic_default_bypass_leaves_evidence_unfused() -> None:
     assert evidence.fused_score == 0.0
 
 
+def test_stage3_default_config_keeps_only_symbolic_lane_enabled() -> None:
+    config = Stage3RecallConfig()
+
+    assert config.symbolic.enabled is True
+    assert config.lexical.enabled is False
+    assert config.semantic.enabled is False
+    assert config.entity.enabled is False
+    assert config.temporal.enabled is False
+
+
 def test_stage3_symbolic_custom_fusion_caps_are_respected() -> None:
     query = _query()
     query.top_k = 20
