@@ -81,8 +81,9 @@ from memory.profile_normalization import (
     normalize_profile_item,
 )
 from memory.recall_query import (
+    ALLOWED_PROFILE_BUCKETS,
+    ALLOWED_RECALL_DOMAINS,
     RecallRetrievalPlan,
-    fallback_retrieval_plan,
     parse_recall_query_tool_arguments,
 )
 from memory.recall_gate import (
@@ -90,6 +91,7 @@ from memory.recall_gate import (
     build_recall_gate_tool,
     parse_recall_gate_tool_arguments,
 )
+from memory.symbolic_recall import heuristic_retrieval_plan_from_message
 from memory.v3_models import MemoryAuditEvent, generate_profile_item_id
 from phase.router import PhaseRouter
 from storage.archive_store import ArchiveStore
@@ -208,76 +210,229 @@ class MemoryRecallDecision:
     needs_recall: bool
     stage0_decision: str
     stage0_reason: str
+    stage0_matched_rule: str = ""
+    stage0_signals: dict[str, list[str]] = field(default_factory=dict)
     intent_type: str = ""
     reason: str = ""
     confidence: float | None = None
     fallback_used: str = "none"
+    recall_skip_source: str = ""
+    gate_user_window: list[str] = field(default_factory=list)
+    memory_summary: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RecallQueryPlanResult:
+    plan: RecallRetrievalPlan | None
+    query_plan_source: str
+    query_plan_fallback: str = "none"
+
+
+_GATE_HEURISTIC_RECALL_FALLBACKS = {
+    "gate_timeout_heuristic_recall",
+    "gate_error_heuristic_recall",
+    "invalid_tool_payload_heuristic_recall",
+}
 
 
 def _final_recall_decision_from_gate(needs_recall: bool) -> str:
     return "query_recall_enabled" if needs_recall else "no_recall_applied"
 
 
+def _stage0_signals_to_dict(
+    signals: tuple[tuple[str, tuple[str, ...]], ...],
+) -> dict[str, list[str]]:
+    return {name: list(hits) for name, hits in signals}
+
+
+def _gate_failure_recall_decision_from_heuristic(
+    *,
+    user_message: str,
+    stage0: Any,
+    stage0_signals: dict[str, list[str]],
+    reason: str,
+    fallback_used: str,
+) -> MemoryRecallDecision:
+    plan = heuristic_retrieval_plan_from_message(
+        user_message,
+        stage0_decision=stage0.decision,
+        stage0_signals=stage0_signals,
+    )
+    if plan.fallback_used == "none":
+        return MemoryRecallDecision(
+            needs_recall=True,
+            stage0_decision=stage0.decision,
+            stage0_reason=stage0.reason,
+            stage0_matched_rule=stage0.matched_rule,
+            stage0_signals=stage0_signals,
+            intent_type="gate_decision_unavailable",
+            reason=f"{reason}_heuristic_recall",
+            confidence=0.0,
+            fallback_used=f"{fallback_used}_heuristic_recall",
+        )
+    return MemoryRecallDecision(
+        needs_recall=False,
+        stage0_decision=stage0.decision,
+        stage0_reason=stage0.reason,
+        stage0_matched_rule=stage0.matched_rule,
+        stage0_signals=stage0_signals,
+        intent_type="gate_decision_unavailable",
+        reason=reason,
+        confidence=0.0,
+        fallback_used=fallback_used,
+        recall_skip_source="gate_failure_no_heuristic",
+    )
+
+
 def _build_recall_query_tool() -> dict[str, Any]:
+    common_properties = {
+        "domains": {
+            "type": "array",
+            "items": {"type": "string", "enum": list(ALLOWED_RECALL_DOMAINS)},
+            "description": (
+                "Exact system domain labels used by symbolic matching. "
+                "Do not invent synonyms or localized labels."
+            ),
+        },
+        "destination": {
+            "type": "string",
+            "description": (
+                "Exact destination name for episode-slice lookup. "
+                "Use an empty string when no destination can be inferred."
+            ),
+        },
+        "keywords": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Short exact keywords that are likely to appear in stored "
+                "profile items or slice summaries."
+            ),
+        },
+        "top_k": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Per-source candidate budget. It applies independently to profile and episode-slice retrieval.",
+        },
+        "reason": {
+            "type": "string",
+            "description": (
+                "A short telemetry explanation describing why this plan "
+                "was chosen. Keep it under 160 characters."
+            ),
+        },
+    }
+    bucket_property = {
+        "buckets": {
+            "type": "array",
+            "items": {"type": "string", "enum": list(ALLOWED_PROFILE_BUCKETS)},
+            "description": (
+                "Profile buckets to search. Required for 'profile' and "
+                "'hybrid_history' plans."
+            ),
+        }
+    }
     return {
         "type": "function",
         "name": "build_recall_retrieval_plan",
-        "description": "为本轮记忆召回生成 v3 historical retrieval plan",
+        "description": (
+            "Generate a retrieval plan for symbolic travel-memory lookup after the "
+            "recall gate has already decided that recall is needed. Choose the "
+            "smallest plan that can drive exact domain/keyword/destination matching."
+        ),
         "parameters": {
             "type": "object",
-            "properties": {
-                "source": {
-                    "type": "string",
-                    "enum": ["profile", "episode_slice", "hybrid_history"],
-                },
-                "buckets": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": [
-                            "constraints",
-                            "rejections",
-                            "stable_preferences",
-                            "preference_hypotheses",
-                        ],
-                    },
-                },
-                "domains": {"type": "array", "items": {"type": "string"}},
-                "entities": {
+            "oneOf": [
+                {
                     "type": "object",
-                    "additionalProperties": {"type": "string"},
+                    "properties": {
+                        "source": {"const": "profile"},
+                        **bucket_property,
+                        **common_properties,
+                    },
+                    "required": [
+                        "source",
+                        "buckets",
+                        "domains",
+                        "destination",
+                        "keywords",
+                        "top_k",
+                        "reason",
+                    ],
+                    "additionalProperties": False,
                 },
-                "keywords": {"type": "array", "items": {"type": "string"}},
-                "aliases": {"type": "array", "items": {"type": "string"}},
-                "strictness": {"type": "string", "enum": ["soft", "strict"]},
-                "top_k": {"type": "integer", "minimum": 1, "maximum": 10},
-                "reason": {"type": "string"},
-            },
-            "required": [
-                "source",
-                "buckets",
-                "domains",
-                "entities",
-                "keywords",
-                "aliases",
-                "strictness",
-                "top_k",
-                "reason",
+                {
+                    "type": "object",
+                    "properties": {
+                        "source": {"const": "episode_slice"},
+                        **common_properties,
+                    },
+                    "required": [
+                        "source",
+                        "domains",
+                        "destination",
+                        "keywords",
+                        "top_k",
+                        "reason",
+                    ],
+                    "additionalProperties": False,
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "source": {"const": "hybrid_history"},
+                        **bucket_property,
+                        **common_properties,
+                    },
+                    "required": [
+                        "source",
+                        "buckets",
+                        "domains",
+                        "destination",
+                        "keywords",
+                        "top_k",
+                        "reason",
+                    ],
+                    "additionalProperties": False,
+                },
             ],
-            "additionalProperties": False,
         },
     }
 
 
-def _build_recall_query_prompt(*, user_message: str, gate_intent_type: str) -> str:
+def _build_recall_query_prompt(
+    *,
+    user_message: str,
+    recent_user_window: list[str],
+    gate_intent_type: str,
+    gate_reason: str,
+    gate_confidence: float | None,
+    stage0_signals: dict[str, list[str]],
+    plan_facts: dict[str, Any],
+    memory_summary: dict[str, Any],
+) -> str:
     return "\n".join(
         [
             "你是旅行记忆召回规划器。",
-            "只基于 user_message 和 gate_intent_type 生成 retrieval plan。",
-            "source 必须是 profile、episode_slice 或 hybrid_history。优先给出保守、可解释的 buckets/domains/entities/keywords/aliases。",
-            "如果不确定，使用 constraints、rejections、stable_preferences 的保守组合。",
+            "Recall gate 已经确认需要召回。你不要重新判断要不要 recall，只输出检索计划。",
+            "你的计划会驱动符号检索，不是语义向量检索；domains、destination、keywords 必须精确、可被下游字符串匹配消费。",
+            "source 决策规则：profile_preference_recall -> profile；profile_constraint_recall -> profile；past_trip_experience_recall -> episode_slice 或 hybrid_history；mixed_or_ambiguous -> hybrid_history。",
+            "buckets 仅在 source=profile 或 hybrid_history 时填写。profile_constraint_recall 优先 constraints/rejections；profile_preference_recall 优先 constraints/rejections/stable_preferences；mixed_or_ambiguous 可加 preference_hypotheses。",
+            f"合法 domains 只有：{json.dumps(list(ALLOWED_RECALL_DOMAINS), ensure_ascii=False)}",
+            "destination 只允许填写目的地名称；无法可靠推断时填空字符串。",
+            "top_k 表示每个 source 的候选预算，不是总候选数。",
+            "reason 只写一行简短遥测说明，不要展开推理过程。",
             f"user_message={json.dumps(user_message, ensure_ascii=False)}",
+            f"recent_user_window={json.dumps(recent_user_window, ensure_ascii=False)}",
             f"gate_intent_type={json.dumps(gate_intent_type, ensure_ascii=False)}",
+            f"gate_reason={json.dumps(gate_reason, ensure_ascii=False)}",
+            f"gate_confidence={json.dumps(gate_confidence, ensure_ascii=False)}",
+            f"stage0_signals={json.dumps(stage0_signals, ensure_ascii=False)}",
+            f"plan_facts={json.dumps(plan_facts, ensure_ascii=False)}",
+            f"memory_summary={json.dumps(memory_summary, ensure_ascii=False)}",
+            '示例1：{"source":"episode_slice","domains":["hotel"],"destination":"大阪","keywords":["住宿","酒店"],"top_k":3,"reason":"past_trip_experience_recall -> Osaka hotel slices"}',
+            '示例2：{"source":"profile","buckets":["constraints","rejections","stable_preferences"],"domains":["hotel"],"destination":"","keywords":["住宿","偏好"],"top_k":3,"reason":"profile_preference_recall -> hotel preference profile"}',
             "必须调用 build_recall_retrieval_plan 工具输出结果。",
         ]
     )
@@ -287,7 +442,7 @@ def _query_plan_summary(plan: RecallRetrievalPlan) -> dict[str, Any]:
     return {
         "buckets": list(plan.buckets),
         "domains": list(plan.domains),
-        "strictness": plan.strictness,
+        "destination": plan.destination,
         "top_k": plan.top_k,
     }
 
@@ -464,14 +619,20 @@ def _recall_telemetry_record_from_recall(
     return RecallTelemetryRecord(
         stage0_decision=memory_recall.stage0_decision,
         stage0_reason=memory_recall.stage0_reason,
+        stage0_matched_rule=memory_recall.stage0_matched_rule,
+        stage0_signals=dict(memory_recall.stage0_signals),
         gate_needs_recall=memory_recall.gate_needs_recall,
         gate_intent_type=memory_recall.gate_intent_type,
         final_recall_decision=memory_recall.final_recall_decision,
         fallback_used=memory_recall.fallback_used,
+        recall_skip_source=memory_recall.recall_skip_source,
+        query_plan_source=memory_recall.query_plan_source,
         candidate_count=memory_recall.candidate_count,
+        recall_attempted_but_zero_hit=memory_recall.recall_attempted_but_zero_hit,
         reranker_selected_ids=list(memory_recall.reranker_selected_ids),
         reranker_final_reason=memory_recall.reranker_final_reason,
         reranker_fallback=memory_recall.reranker_fallback,
+        reranker_per_item_reason=dict(memory_recall.reranker_per_item_reason),
     )
 
 
@@ -1486,31 +1647,44 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         user_id: str,
         user_messages: list[str],
         plan_snapshot: TravelPlanState,
+        memory_summary: dict[str, Any] | None = None,
     ) -> MemoryRecallDecision:
         stage0 = apply_recall_short_circuit(user_messages[-1] if user_messages else "")
+        stage0_signals = _stage0_signals_to_dict(stage0.signals)
         if stage0.decision == "force_recall":
             return MemoryRecallDecision(
                 needs_recall=True,
                 stage0_decision=stage0.decision,
                 stage0_reason=stage0.reason,
+                stage0_matched_rule=stage0.matched_rule,
+                stage0_signals=stage0_signals,
                 intent_type="",
                 reason=stage0.reason,
+                memory_summary=memory_summary or {},
             )
         if stage0.decision == "skip_recall":
             return MemoryRecallDecision(
                 needs_recall=False,
                 stage0_decision=stage0.decision,
                 stage0_reason=stage0.reason,
+                stage0_matched_rule=stage0.matched_rule,
+                stage0_signals=stage0_signals,
                 intent_type="",
                 reason=stage0.reason,
+                recall_skip_source="stage0_skip",
+                memory_summary=memory_summary or {},
             )
         if not config.memory.retrieval.recall_gate_enabled:
             return MemoryRecallDecision(
                 needs_recall=False,
                 stage0_decision=stage0.decision,
                 stage0_reason=stage0.reason,
+                stage0_matched_rule=stage0.matched_rule,
+                stage0_signals=stage0_signals,
                 intent_type="no_recall_needed",
                 reason="recall_gate_disabled",
+                recall_skip_source="gate_disabled",
+                memory_summary=memory_summary or {},
             )
         gate_window = build_gate_user_window(
             user_messages=user_messages,
@@ -1522,15 +1696,20 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 needs_recall=False,
                 stage0_decision=stage0.decision,
                 stage0_reason=stage0.reason,
+                stage0_matched_rule=stage0.matched_rule,
+                stage0_signals=stage0_signals,
                 intent_type="no_recall_needed",
                 reason="no_user_messages",
+                recall_skip_source="no_user_messages",
+                memory_summary=memory_summary or {},
             )
 
-        memory_summary = await _build_gate_memory_summary(
-            user_id=user_id,
-            session_id=session_id,
-            plan_snapshot=plan_snapshot,
-        )
+        if memory_summary is None:
+            memory_summary = await _build_gate_memory_summary(
+                user_id=user_id,
+                session_id=session_id,
+                plan_snapshot=plan_snapshot,
+            )
         prompt = "\n".join(
             [
                 "你是旅行记忆召回判定器。",
@@ -1560,13 +1739,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 user_id,
                 config.memory.retrieval.recall_gate_timeout_seconds,
             )
-            return MemoryRecallDecision(
-                needs_recall=False,
-                stage0_decision=stage0.decision,
-                stage0_reason=stage0.reason,
-                intent_type="gate_decision_unavailable",
+            return _gate_failure_recall_decision_from_heuristic(
+                user_message=user_messages[-1] if user_messages else "",
+                stage0=stage0,
+                stage0_signals=stage0_signals,
                 reason="gate_timeout",
-                confidence=0.0,
                 fallback_used="gate_timeout",
             )
         except Exception:
@@ -1575,35 +1752,74 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 session_id,
                 user_id,
             )
-            return MemoryRecallDecision(
-                needs_recall=False,
-                stage0_decision=stage0.decision,
-                stage0_reason=stage0.reason,
-                intent_type="gate_decision_unavailable",
+            return _gate_failure_recall_decision_from_heuristic(
+                user_message=user_messages[-1] if user_messages else "",
+                stage0=stage0,
+                stage0_signals=stage0_signals,
                 reason="gate_error",
-                confidence=0.0,
                 fallback_used="gate_error",
             )
         gate_decision = parse_recall_gate_tool_arguments(tool_args)
         gate_intent_type = gate_decision.intent_type
         if gate_decision.fallback_used == "invalid_tool_payload":
-            gate_intent_type = "gate_decision_unavailable"
+            return _gate_failure_recall_decision_from_heuristic(
+                user_message=user_messages[-1] if user_messages else "",
+                stage0=stage0,
+                stage0_signals=stage0_signals,
+                reason="invalid_tool_payload",
+                fallback_used="invalid_tool_payload",
+            )
         return MemoryRecallDecision(
             needs_recall=gate_decision.needs_recall,
             stage0_decision=stage0.decision,
             stage0_reason=stage0.reason,
+            stage0_matched_rule=stage0.matched_rule,
+            stage0_signals=stage0_signals,
             intent_type=gate_intent_type,
             reason=gate_decision.reason,
             confidence=gate_decision.confidence,
             fallback_used=gate_decision.fallback_used,
+            recall_skip_source="" if gate_decision.needs_recall else "gate_false",
+            gate_user_window=list(gate_window),
+            memory_summary=dict(memory_summary),
         )
 
     async def _build_recall_retrieval_plan(
         *,
+        session_id: str,
+        user_id: str,
         user_message: str,
+        user_messages: list[str],
         gate_intent_type: str,
-    ) -> RecallRetrievalPlan:
+        gate_reason: str,
+        gate_confidence: float | None,
+        stage0_decision: str,
+        stage0_signals: dict[str, list[str]],
+        plan_snapshot: TravelPlanState,
+        memory_summary: dict[str, Any] | None = None,
+    ) -> RecallQueryPlanResult:
         query_llm = create_llm_provider(config.llm)
+        recent_user_window = build_gate_user_window(
+            user_messages=user_messages,
+            max_messages=_GATE_MAX_USER_MESSAGES,
+            max_chars=_GATE_MAX_CHARS,
+        )
+        if memory_summary is None:
+            memory_summary = await _build_gate_memory_summary(
+                user_id=user_id,
+                session_id=session_id,
+                plan_snapshot=plan_snapshot,
+            )
+        prompt = _build_recall_query_prompt(
+            user_message=user_message,
+            recent_user_window=recent_user_window,
+            gate_intent_type=gate_intent_type,
+            gate_reason=gate_reason,
+            gate_confidence=gate_confidence,
+            stage0_signals=stage0_signals,
+            plan_facts=_memory_plan_facts(plan_snapshot),
+            memory_summary=memory_summary,
+        )
         try:
             tool_args = await asyncio.wait_for(
                 _collect_forced_tool_call_arguments(
@@ -1611,10 +1827,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     messages=[
                         Message(
                             role=Role.USER,
-                            content=_build_recall_query_prompt(
-                                user_message=user_message,
-                                gate_intent_type=gate_intent_type,
-                            ),
+                            content=prompt,
                         )
                     ],
                     tool_def=_build_recall_query_tool(),
@@ -1622,21 +1835,39 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 timeout=config.memory.retrieval.recall_gate_timeout_seconds,
             )
         except asyncio.TimeoutError:
-            plan = fallback_retrieval_plan()
-            plan.reason = "query_plan_timeout"
-            plan.fallback_used = "query_plan_timeout"
-            return plan
+            heuristic_plan = heuristic_retrieval_plan_from_message(
+                user_message,
+                stage0_decision=stage0_decision,
+                stage0_signals=stage0_signals,
+            )
+            return RecallQueryPlanResult(
+                plan=heuristic_plan,
+                query_plan_source="heuristic_fallback",
+                query_plan_fallback="query_plan_timeout",
+            )
         except Exception:
             logger.exception("记忆召回 query tool 调用失败")
-            plan = fallback_retrieval_plan()
-            plan.reason = "query_plan_error"
-            plan.fallback_used = "query_plan_error"
-            return plan
+            heuristic_plan = heuristic_retrieval_plan_from_message(
+                user_message,
+                stage0_decision=stage0_decision,
+                stage0_signals=stage0_signals,
+            )
+            return RecallQueryPlanResult(
+                plan=heuristic_plan,
+                query_plan_source="heuristic_fallback",
+                query_plan_fallback="query_plan_error",
+            )
 
         plan = parse_recall_query_tool_arguments(tool_args)
         if not plan.reason:
             plan.reason = "query_plan_generated"
-        return plan
+        return RecallQueryPlanResult(
+            plan=plan,
+            query_plan_source=(
+                "default_fallback" if plan.fallback_used != "none" else "llm"
+            ),
+            query_plan_fallback=plan.fallback_used,
+        )
 
     async def _decide_memory_extraction(
         *,
@@ -3677,11 +3908,44 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     plan_snapshot=plan,
                 )
                 retrieval_plan = None
+                query_plan_source = ""
+                query_plan_fallback = "none"
                 if recall_decision.needs_recall:
-                    retrieval_plan = await _build_recall_retrieval_plan(
-                        user_message=req.message,
-                        gate_intent_type=recall_decision.intent_type,
-                    )
+                    recall_user_messages = [
+                        message.content
+                        for message in messages
+                        if message.role == Role.USER and message.content
+                    ]
+                    recall_memory_summary = recall_decision.memory_summary
+                    if not recall_memory_summary:
+                        recall_memory_summary = await _build_gate_memory_summary(
+                            user_id=req.user_id,
+                            session_id=plan.session_id,
+                            plan_snapshot=plan,
+                        )
+                    if (
+                        recall_decision.fallback_used
+                        in _GATE_HEURISTIC_RECALL_FALLBACKS
+                    ):
+                        query_plan_source = "heuristic_fallback"
+                        query_plan_fallback = recall_decision.fallback_used
+                    else:
+                        query_plan_result = await _build_recall_retrieval_plan(
+                            session_id=plan.session_id,
+                            user_id=req.user_id,
+                            user_message=req.message,
+                            user_messages=recall_user_messages,
+                            gate_intent_type=recall_decision.intent_type,
+                            gate_reason=recall_decision.reason,
+                            gate_confidence=recall_decision.confidence,
+                            stage0_decision=recall_decision.stage0_decision,
+                            stage0_signals=recall_decision.stage0_signals,
+                            plan_snapshot=plan,
+                            memory_summary=recall_memory_summary,
+                        )
+                        retrieval_plan = query_plan_result.plan
+                        query_plan_source = query_plan_result.query_plan_source
+                        query_plan_fallback = query_plan_result.query_plan_fallback
                 memory_result = await memory_mgr.generate_context(
                     req.user_id,
                     plan,
@@ -3689,6 +3953,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     recall_gate=recall_decision.needs_recall,
                     short_circuit=recall_decision.stage0_decision,
                     retrieval_plan=retrieval_plan,
+                    stage0_matched_rule=recall_decision.stage0_matched_rule,
+                    stage0_signals=recall_decision.stage0_signals,
+                    query_plan_source=query_plan_source,
+                    query_plan_fallback=query_plan_fallback,
                 )
                 if (
                     isinstance(memory_result, tuple)
@@ -3701,16 +3969,28 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                     memory_recall = MemoryRecallTelemetry()
                 memory_recall.stage0_decision = recall_decision.stage0_decision
                 memory_recall.stage0_reason = recall_decision.stage0_reason
+                memory_recall.stage0_matched_rule = recall_decision.stage0_matched_rule
+                memory_recall.stage0_signals = dict(recall_decision.stage0_signals)
                 memory_recall.gate_needs_recall = recall_decision.needs_recall
                 memory_recall.gate_intent_type = recall_decision.intent_type
                 memory_recall.gate_confidence = recall_decision.confidence
                 memory_recall.gate_reason = recall_decision.reason
                 memory_recall.fallback_used = recall_decision.fallback_used
+                memory_recall.recall_skip_source = recall_decision.recall_skip_source
+                if query_plan_source and not memory_recall.query_plan_source:
+                    memory_recall.query_plan_source = query_plan_source
+                if query_plan_fallback != "none":
+                    memory_recall.query_plan_fallback = query_plan_fallback
+                    memory_recall.fallback_used = query_plan_fallback
                 if retrieval_plan is not None:
                     if not memory_recall.query_plan:
                         memory_recall.query_plan = _query_plan_summary(retrieval_plan)
-                    memory_recall.query_plan_fallback = retrieval_plan.fallback_used
-                    if retrieval_plan.fallback_used != "none":
+                    if memory_recall.query_plan_fallback == "none":
+                        memory_recall.query_plan_fallback = retrieval_plan.fallback_used
+                    if (
+                        retrieval_plan.fallback_used != "none"
+                        and memory_recall.fallback_used == "none"
+                    ):
                         memory_recall.fallback_used = retrieval_plan.fallback_used
                 memory_recall.final_recall_decision = (
                     memory_recall.final_recall_decision
@@ -3751,12 +4031,20 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                                 "count": len(recalled_ids),
                                 "sources": dict(memory_recall.sources),
                                 "gate": memory_recall.gate_needs_recall,
+                                "stage0_matched_rule": memory_recall.stage0_matched_rule,
+                                "query_plan_source": memory_recall.query_plan_source,
                                 "candidate_count": memory_recall.candidate_count,
+                                "recall_attempted_but_zero_hit": (
+                                    memory_recall.recall_attempted_but_zero_hit
+                                ),
                                 "reranker_selected_ids": list(
                                     memory_recall.reranker_selected_ids
                                 ),
                                 "reranker_final_reason": memory_recall.reranker_final_reason,
                                 "reranker_fallback": memory_recall.reranker_fallback,
+                                "reranker_per_item_reason": dict(
+                                    memory_recall.reranker_per_item_reason
+                                ),
                             },
                             started_at=memory_recall_started_at,
                             ended_at=time.time(),

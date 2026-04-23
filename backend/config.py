@@ -81,6 +81,17 @@ class MemoryPolicyConfig:
 
 
 @dataclass(frozen=True)
+class MemoryRerankerConfig:
+    small_candidate_set_threshold: int = 3
+    profile_top_n: int = 4
+    slice_top_n: int = 3
+    hybrid_top_n: int = 4
+    hybrid_profile_top_n: int = 2
+    hybrid_slice_top_n: int = 2
+    recency_half_life_days: int = 180
+
+
+@dataclass(frozen=True)
 class MemoryRetrievalConfig:
     core_limit: int = 10
     phase_limit: int = 8
@@ -88,6 +99,7 @@ class MemoryRetrievalConfig:
     recall_gate_enabled: bool = True
     recall_gate_model: str = ""
     recall_gate_timeout_seconds: float = 6.0
+    reranker: MemoryRerankerConfig = field(default_factory=MemoryRerankerConfig)
 
 
 @dataclass(frozen=True)
@@ -255,6 +267,7 @@ def _build_memory_config(
     policy_raw = raw.get("policy", {})
     retrieval_raw = raw.get("retrieval", {})
     storage_raw = raw.get("storage", {})
+    reranker_raw = retrieval_raw.get("reranker", {})
 
     extraction = MemoryExtractionV2Config(
         enabled=_as_bool(extraction_raw.get("enabled"), legacy_extraction.enabled),
@@ -285,6 +298,19 @@ def _build_memory_config(
             recall_gate_model=(retrieval_raw.get("recall_gate_model") or ""),
             recall_gate_timeout_seconds=float(
                 retrieval_raw.get("recall_gate_timeout_seconds", 6.0)
+            ),
+            reranker=MemoryRerankerConfig(
+                small_candidate_set_threshold=int(
+                    reranker_raw.get("small_candidate_set_threshold", 3)
+                ),
+                profile_top_n=int(reranker_raw.get("profile_top_n", 4)),
+                slice_top_n=int(reranker_raw.get("slice_top_n", 3)),
+                hybrid_top_n=int(reranker_raw.get("hybrid_top_n", 4)),
+                hybrid_profile_top_n=int(reranker_raw.get("hybrid_profile_top_n", 2)),
+                hybrid_slice_top_n=int(reranker_raw.get("hybrid_slice_top_n", 2)),
+                recency_half_life_days=int(
+                    reranker_raw.get("recency_half_life_days", 180)
+                ),
             ),
         ),
         storage=MemoryStorageConfig(
