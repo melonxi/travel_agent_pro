@@ -1,6 +1,7 @@
 # backend/memory/manager.py
 from __future__ import annotations
 
+from config import MemoryRerankerConfig, MemoryRetrievalConfig
 from memory.formatter import MemoryRecallTelemetry, format_v3_memory_context
 from memory.retrieval_candidates import RecallCandidate
 from memory.recall_query import RecallRetrievalPlan
@@ -27,9 +28,8 @@ async def select_recall_candidates(
     plan: TravelPlanState,
     retrieval_plan: RecallRetrievalPlan | None,
     candidates: list[RecallCandidate],
+    reranker_config: MemoryRerankerConfig | None = None,
 ) -> tuple[list[RecallCandidate], RecallRerankResult]:
-    del user_message, plan, retrieval_plan
-
     if not candidates:
         return [], RecallRerankResult(
             selected_item_ids=[],
@@ -38,29 +38,24 @@ async def select_recall_candidates(
             fallback_used="none",
         )
 
-    path = choose_reranker_path(candidates)
-    selected_candidates = list(path.selected_candidates)
-    selected_item_ids = [candidate.item_id for candidate in selected_candidates]
-    per_item_reason = {
-        candidate.item_id: "selected from symbolic recall candidates"
-        for candidate in selected_candidates
-    }
-    final_reason = (
-        "candidate set is small enough to skip reranker"
-        if path.fallback_used == "skipped_small_candidate_set"
-        else "fallback_top_n_from_symbolic_recall"
+    path = choose_reranker_path(
+        candidates=candidates,
+        user_message=user_message,
+        plan=plan,
+        retrieval_plan=retrieval_plan,
+        config=reranker_config,
     )
-    return selected_candidates, RecallRerankResult(
-        selected_item_ids=selected_item_ids,
-        final_reason=final_reason,
-        per_item_reason=per_item_reason,
-        fallback_used=path.fallback_used,
-    )
+    return list(path.selected_candidates), path.result
 
 
 class MemoryManager:
-    def __init__(self, data_dir: str = "./data"):
+    def __init__(
+        self,
+        data_dir: str = "./data",
+        retrieval_config: MemoryRetrievalConfig | None = None,
+    ):
         self.v3_store = FileMemoryV3Store(data_dir)
+        self.retrieval_config = retrieval_config or MemoryRetrievalConfig()
 
     async def generate_context(
         self,
@@ -70,6 +65,10 @@ class MemoryManager:
         recall_gate: bool | None = None,
         short_circuit: str = "undecided",
         retrieval_plan: RecallRetrievalPlan | None = None,
+        stage0_matched_rule: str = "",
+        stage0_signals: dict[str, list[str] | tuple[str, ...]] | None = None,
+        query_plan_source: str = "",
+        query_plan_fallback: str = "none",
     ) -> tuple[str, MemoryRecallTelemetry]:
         profile = await self.v3_store.load_profile(user_id)
         working_memory = await self.v3_store.load_working_memory(
@@ -80,9 +79,24 @@ class MemoryManager:
         working_items = self._active_working_memory_items(working_memory.items)
 
         recall_candidates: list[RecallCandidate] = []
-        active_plan = retrieval_plan or (
-            heuristic_retrieval_plan_from_message(user_message) if user_message else None
-        )
+        normalized_stage0_signals = self._normalize_stage0_signals(stage0_signals)
+        active_plan = retrieval_plan
+        effective_query_plan_source = query_plan_source
+        effective_query_plan_fallback = query_plan_fallback
+        if active_plan is None and user_message:
+            active_plan = heuristic_retrieval_plan_from_message(
+                user_message,
+                stage0_decision=short_circuit,
+                stage0_signals=normalized_stage0_signals,
+            )
+            if not effective_query_plan_source:
+                effective_query_plan_source = "heuristic"
+        elif active_plan is not None and not effective_query_plan_source:
+            effective_query_plan_source = (
+                "default_fallback"
+                if active_plan.fallback_used != "none"
+                else "llm"
+            )
         should_run_query_recall = False
         final_recall_decision = "no_recall_applied"
         if recall_gate is None:
@@ -98,6 +112,7 @@ class MemoryManager:
             should_run_query_recall = True
             final_recall_decision = "query_recall_enabled"
 
+        recall_attempted = should_run_query_recall and active_plan is not None
         if should_run_query_recall and active_plan is not None:
             query_profile_limit = (
                 active_plan.top_k if active_plan is not None else _QUERY_PROFILE_LIMIT
@@ -108,12 +123,10 @@ class MemoryManager:
             if active_plan.source in {"episode_slice", "hybrid_history"}:
                 candidate_slices = await self.v3_store.list_episode_slices(
                     user_id,
-                    destination=active_plan.entities.get("destination"),
+                    destination=active_plan.destination or None,
                 )
                 recall_candidates.extend(
-                    rank_episode_slices(active_plan, candidate_slices)[
-                        :_QUERY_SLICE_LIMIT
-                    ]
+                    rank_episode_slices(active_plan, candidate_slices)[: active_plan.top_k]
                 )
 
         selected_candidates = list(recall_candidates)
@@ -129,6 +142,7 @@ class MemoryManager:
                 plan=plan,
                 retrieval_plan=retrieval_plan,
                 candidates=recall_candidates,
+                reranker_config=self.retrieval_config.reranker,
             )
 
         telemetry = self._build_v3_telemetry(
@@ -136,20 +150,31 @@ class MemoryManager:
             selected_candidates,
         )
         telemetry.stage0_decision = short_circuit
+        telemetry.stage0_matched_rule = stage0_matched_rule
+        telemetry.stage0_signals = normalized_stage0_signals
         telemetry.gate_needs_recall = recall_gate
         telemetry.final_recall_decision = final_recall_decision
         telemetry.candidate_count = len(recall_candidates)
+        telemetry.recall_attempted_but_zero_hit = (
+            recall_attempted and len(recall_candidates) == 0
+        )
         telemetry.reranker_selected_ids = list(rerank_result.selected_item_ids)
         telemetry.reranker_final_reason = rerank_result.final_reason
         telemetry.reranker_fallback = rerank_result.fallback_used
-        if retrieval_plan is not None:
+        telemetry.reranker_per_item_reason = dict(rerank_result.per_item_reason)
+        if recall_attempted and active_plan is not None:
             telemetry.query_plan = {
-                "buckets": list(retrieval_plan.buckets),
-                "domains": list(retrieval_plan.domains),
-                "strictness": retrieval_plan.strictness,
-                "top_k": retrieval_plan.top_k,
+                "buckets": list(active_plan.buckets),
+                "domains": list(active_plan.domains),
+                "destination": active_plan.destination,
+                "top_k": active_plan.top_k,
             }
-            telemetry.query_plan_fallback = retrieval_plan.fallback_used
+            telemetry.query_plan_source = effective_query_plan_source
+            telemetry.query_plan_fallback = (
+                effective_query_plan_fallback
+                if effective_query_plan_fallback != "none"
+                else active_plan.fallback_used
+            )
         context = format_v3_memory_context(
             working_items=working_items,
             recall_candidates=selected_candidates,
@@ -201,3 +226,16 @@ class MemoryManager:
             seen.add(value)
             deduped.append(value)
         return deduped
+
+    def _normalize_stage0_signals(
+        self,
+        signals: dict[str, list[str] | tuple[str, ...]] | None,
+    ) -> dict[str, list[str]]:
+        if not isinstance(signals, dict):
+            return {}
+        normalized: dict[str, list[str]] = {}
+        for name, hits in signals.items():
+            if not isinstance(name, str) or not isinstance(hits, (list, tuple)):
+                continue
+            normalized[name] = [hit for hit in hits if isinstance(hit, str)]
+        return normalized

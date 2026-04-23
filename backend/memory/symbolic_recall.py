@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime
 import json
 from typing import Any
@@ -15,7 +14,6 @@ from memory.v3_models import EpisodeSlice, MemoryProfileItem, UserMemoryProfile
 
 
 _CURRENT_TRIP_PHRASES = ("这次", "本次", "当前")
-_CURRENT_TRIP_STATE_WORDS = ("预算", "几号", "出发", "骨架", "约束")
 _HISTORY_PHRASES = (
     "我是不是说过",
     "按我的习惯",
@@ -37,7 +35,6 @@ _PROFILE_HINT_WORDS = (
     "避开",
     "拒绝",
 )
-_SLICES_HINT_WORDS = ("上次", "之前", "以前", "住哪里", "住哪", "住哪家", "哪里住")
 _PROFILE_RECALL_DOMAINS = {
     "flight",
     "train",
@@ -58,7 +55,7 @@ _DOMAIN_RULES: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = [
         ("住哪里", "住哪", "住哪家", "哪里住", "住宿", "酒店", "民宿", "住酒店", "住民宿", "青旅", "住青旅"),
         ("住哪里", "住哪", "住哪家", "哪里住", "住宿", "酒店", "民宿", "住酒店", "住民宿", "青旅", "住青旅"),
     ),
-    ("flight", ("航班", "红眼", "飞机"), ("航班", "红眼", "飞机")),
+    ("flight", ("航班", "红眼", "飞机", "机票"), ("航班", "红眼", "飞机", "机票")),
     ("train", ("火车", "高铁"), ("火车", "高铁")),
     ("pace", ("节奏", "累", "慢", "松"), ("节奏", "累", "慢", "松")),
     ("food", ("吃", "辣", "餐厅"), ("吃", "辣", "餐厅")),
@@ -108,16 +105,32 @@ def should_trigger_memory_recall(message: str) -> bool:
         return True
 
     if any(phrase in text for phrase in _CURRENT_TRIP_PHRASES):
-        if any(word in text for word in _CURRENT_TRIP_STATE_WORDS):
-            return False
         return False
 
     return False
 
 
-def heuristic_retrieval_plan_from_message(message: str) -> RecallRetrievalPlan:
+def heuristic_retrieval_plan_from_message(
+    message: str,
+    *,
+    stage0_decision: str = "",
+    stage0_signals: dict[str, list[str] | tuple[str, ...]] | None = None,
+) -> RecallRetrievalPlan:
     text = _normalize_text(message)
-    trigger = should_trigger_memory_recall(text)
+    normalized_stage0_signals = _normalize_stage0_signals(stage0_signals)
+    stage0_style_force = (
+        stage0_decision == "force_recall"
+        and bool(normalized_stage0_signals.get("style"))
+    )
+    stage0_recommend_fallback = (
+        stage0_decision == "undecided"
+        and bool(normalized_stage0_signals.get("recommend"))
+    )
+    trigger = (
+        should_trigger_memory_recall(text)
+        or stage0_style_force
+        or stage0_recommend_fallback
+    )
     if not trigger:
         fallback = fallback_retrieval_plan()
         fallback.reason = "no_historical_recall_cue"
@@ -125,13 +138,14 @@ def heuristic_retrieval_plan_from_message(message: str) -> RecallRetrievalPlan:
         return fallback
 
     domains = _extract_domains(text)
-    entities: dict[str, str] = {}
     destination = _extract_destination(text)
-    if destination:
-        entities["destination"] = destination
 
     keywords = _extract_keywords(text)
-    include_profile = _should_include_profile(text, domains)
+    include_profile = (
+        stage0_style_force
+        or stage0_recommend_fallback
+        or _should_include_profile(text, domains)
+    )
     include_slices = _should_include_slices(text, domains, destination)
     source = "hybrid_history"
     if include_profile and not include_slices:
@@ -139,19 +153,30 @@ def heuristic_retrieval_plan_from_message(message: str) -> RecallRetrievalPlan:
     elif include_slices and not include_profile:
         source = "episode_slice"
     elif include_profile and include_slices:
-        if _is_direct_profile_recall_query(text, domains):
+        if (
+            stage0_style_force
+            or stage0_recommend_fallback
+            or _is_direct_profile_recall_query(text, domains)
+        ):
             source = "profile"
 
     return RecallRetrievalPlan(
         source=source,
         buckets=list(_CONSERVATIVE_PROFILE_BUCKETS),
         domains=domains,
-        entities=entities,
+        destination=destination or "",
         keywords=keywords,
-        aliases=[],
-        strictness="soft",
         top_k=5,
-        reason=_build_matched_reason(text, trigger, domains, destination, include_profile, include_slices),
+        reason=_build_matched_reason(
+            text,
+            trigger,
+            domains,
+            destination,
+            include_profile,
+            include_slices,
+            stage0_style_force,
+            stage0_recommend_fallback,
+        ),
     )
 
 
@@ -293,6 +318,8 @@ def _build_matched_reason(
     destination: str | None,
     include_profile: bool,
     include_slices: bool,
+    stage0_style_force: bool = False,
+    stage0_recommend_fallback: bool = False,
 ) -> str:
     if not trigger:
         if any(phrase in text for phrase in _CURRENT_TRIP_PHRASES):
@@ -301,7 +328,11 @@ def _build_matched_reason(
 
     parts = []
     history_hits = [phrase for phrase in _HISTORY_PHRASES if phrase in text]
-    if history_hits:
+    if stage0_style_force:
+        parts.append("stage0 style force")
+    elif stage0_recommend_fallback:
+        parts.append("stage0 recommend fallback")
+    elif history_hits:
         parts.append(f"history cue: {history_hits[0]}")
     elif _is_direct_profile_recall_query(text, domains):
         parts.append("profile cue")
@@ -320,6 +351,19 @@ def _is_direct_profile_recall_query(text: str, domains: list[str]) -> bool:
     return any(domain in _PROFILE_RECALL_DOMAINS for domain in domains) and any(
         word in text for word in _PROFILE_HINT_WORDS
     )
+
+
+def _normalize_stage0_signals(
+    signals: dict[str, list[str] | tuple[str, ...]] | None,
+) -> dict[str, list[str]]:
+    if not isinstance(signals, dict):
+        return {}
+    normalized: dict[str, list[str]] = {}
+    for name, hits in signals.items():
+        if not isinstance(name, str) or not isinstance(hits, (list, tuple)):
+            continue
+        normalized[name] = [hit for hit in hits if isinstance(hit, str)]
+    return normalized
 
 
 def _extract_domains(text: str) -> list[str]:
@@ -391,7 +435,7 @@ def _slice_search_terms(slice_: EpisodeSlice) -> list[str]:
 
 
 def _match_destination(query: RecallRetrievalPlan, slice_: EpisodeSlice) -> str | None:
-    destination = query.entities.get("destination")
+    destination = query.destination
     if destination and _stringify(slice_.entities.get("destination")) == destination:
         return destination
     return None
