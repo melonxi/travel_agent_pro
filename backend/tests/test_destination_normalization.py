@@ -64,6 +64,27 @@ def test_match_destination_returns_parent_child_for_non_japan_region_label():
     assert match.score == 0.75
 
 
+def test_match_destination_returns_parent_child_for_england_and_london():
+    match = match_destination("英格兰", "伦敦")
+
+    assert match.match_type == "parent_child"
+    assert match.score == 0.75
+
+
+def test_match_destination_returns_parent_child_for_korea_and_seoul():
+    match = match_destination("韩国", "首尔")
+
+    assert match.match_type == "parent_child"
+    assert match.score == 0.75
+
+
+def test_match_destination_returns_parent_child_for_taiwan_and_taipei():
+    match = match_destination("台湾", "台北")
+
+    assert match.match_type == "parent_child"
+    assert match.score == 0.75
+
+
 def test_match_destination_returns_region_weak_for_same_region_siblings():
     match = match_destination("大阪", "京都")
 
