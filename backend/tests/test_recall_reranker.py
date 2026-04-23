@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from config import IntentWeightProfile
 from memory.manager import select_recall_candidates
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import (
@@ -10,6 +11,7 @@ from memory.recall_reranker import (
     SignalScoreDetail,
     _conflict_score,
     _resolve_intent_label,
+    _resolve_intent_profile,
     choose_reranker_path,
 )
 from memory.recall_stage3_models import RetrievalEvidence
@@ -26,6 +28,18 @@ class DummyRerankerConfig:
     hybrid_profile_top_n: int = 2
     hybrid_slice_top_n: int = 2
     recency_half_life_days: int = 180
+
+
+@dataclass(frozen=True)
+class PartialIntentRerankerConfig(DummyRerankerConfig):
+    intent_weights: tuple[tuple[str, IntentWeightProfile], ...] = (
+        (
+            "profile",
+            IntentWeightProfile(
+                1.0, 0.62, 0.34, 0.24, 0.18, 0.08, 0.06, 0.10, 1.4
+            ),
+        ),
+    )
 
 
 def make_candidate(**overrides) -> RecallCandidate:
@@ -238,6 +252,24 @@ def test_default_config_per_item_reason_bit_stable():
     )
 
 
+def test_resolve_intent_profile_allows_partial_override_for_matching_intent():
+    profile = _resolve_intent_profile(
+        "按我偏好选机票",
+        RecallRetrievalPlan(
+            source="profile",
+            buckets=["constraints"],
+            domains=["flight"],
+            destination="",
+            keywords=["机票"],
+            top_k=5,
+            reason="profile_constraint_recall",
+        ),
+        PartialIntentRerankerConfig(),
+    )
+
+    assert profile.profile_source_prior == 1.0
+
+
 def test_conflict_score_fixture_for_hard_drop_is_reachable():
     candidate = make_candidate(
         item_id="constraint_avoid_red_eye",
@@ -350,7 +382,7 @@ def test_choose_reranker_path_prefers_profile_constraints_for_preference_queries
     assert "bucket=" in path.result.per_item_reason["constraint_avoid_red_eye"]
 
 
-def test_choose_reranker_path_drops_conflicting_profile_candidate():
+def test_choose_reranker_path_records_conflict_hard_filter_label():
     candidates = [
         make_candidate(
             item_id="constraint_avoid_red_eye",
@@ -394,6 +426,10 @@ def test_choose_reranker_path_drops_conflicting_profile_candidate():
         "slice_recent_red_eye"
     ]
     assert "conflict" in path.result.per_item_reason["constraint_avoid_red_eye"]
+    assert (
+        path.result.per_item_scores["constraint_avoid_red_eye"].hard_filter
+        == "conflict"
+    )
 
 
 def test_choose_reranker_path_applies_source_budgets_and_dedupes_profile_candidates():
