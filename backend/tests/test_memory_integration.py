@@ -600,6 +600,62 @@ async def test_chat_stream_emits_memory_recall_telemetry_without_hits(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_emits_structured_reranker_fields(monkeypatch, app):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        return "暂无相关用户记忆", MemoryRecallTelemetry(
+            candidate_count=2,
+            reranker_selected_ids=["profile_1"],
+            reranker_final_reason="selected profile memory",
+            reranker_fallback="none",
+            reranker_per_item_reason={
+                "profile_1": "bucket=0.82 domain=1.00 keyword=0.50"
+            },
+            reranker_per_item_scores={
+                "profile_1": {
+                    "rule_score": 0.71,
+                    "evidence_score": 0.0,
+                    "final_score": 2.0,
+                }
+            },
+            reranker_intent_label="profile",
+            reranker_selection_metrics={
+                "selected_pairwise_similarity_max": None,
+                "selected_pairwise_similarity_avg": None,
+            },
+        )
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "住宿按我习惯", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"type": "memory_recall"' in resp.text
+    assert '"reranker_intent_label": "profile"' in resp.text
+    assert '"reranker_per_item_scores"' in resp.text
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_keeps_conservative_recall_fields_when_gate_disabled(
     monkeypatch, app_recall_gate_disabled
 ):
