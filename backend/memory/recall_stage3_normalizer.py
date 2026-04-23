@@ -75,12 +75,12 @@ def _build_source_policy(
     source = query.source
     search_profile = source in {"profile", "hybrid_history"}
     search_slices = source in {"episode_slice", "hybrid_history"}
-    widened = False if not config.source_widening.enabled else False
     return SourcePolicy(
         requested_source=source,
         search_profile=search_profile,
         search_slices=search_slices,
-        widened=widened,
+        # Task 3 only records the source policy; widening is applied by later stages.
+        widened=False,
         widening_reason="",
     )
 
