@@ -81,6 +81,9 @@ def test_fuse_lane_results_ignores_same_lane_duplicate_item_ids() -> None:
     assert fused[0].evidence.lane_ranks == {"symbolic": 1}
     assert fused[0].evidence.lane_scores == {"symbolic": pytest.approx(1.0 / 61.0)}
     assert fused[0].evidence.fused_score == pytest.approx(1.0 / 61.0)
+    assert fused[1].evidence.lane_ranks == {"symbolic": 2}
+    assert fused[1].evidence.lane_scores == {"symbolic": pytest.approx(1.0 / 62.0)}
+    assert fused[1].evidence.fused_score == pytest.approx(1.0 / 62.0)
 
 
 def test_fuse_lane_results_does_not_leak_input_fused_score() -> None:
@@ -156,3 +159,19 @@ def test_fuse_lane_results_deep_copies_mutable_evidence_fields() -> None:
     assert evidence.matched_domains == ["hotel"]
     assert evidence.matched_keywords == ["pool"]
     assert evidence.matched_entities == ["tokyo"]
+
+
+def test_fuse_lane_results_uses_deterministic_tie_breakers() -> None:
+    lane_results = [
+        Stage3LaneResult("lexical", [_candidate("b"), _candidate("a")]),
+        Stage3LaneResult("semantic", [_candidate("c", source="episode_slice")]),
+        Stage3LaneResult("symbolic", [_candidate("d")]),
+    ]
+    config = Stage3FusionConfig(
+        max_candidates=10,
+        lane_weights=(("symbolic", 1.0), ("lexical", 1.0), ("semantic", 1.0)),
+    )
+
+    fused = fuse_lane_results(lane_results, config)
+
+    assert [candidate.candidate.item_id for candidate in fused] == ["d", "c", "b", "a"]
