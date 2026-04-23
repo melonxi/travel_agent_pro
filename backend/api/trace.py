@@ -60,14 +60,22 @@ def _serialize_recall_telemetry(hit: RecallTelemetryRecord) -> dict:
     return {
         "stage0_decision": hit.stage0_decision,
         "stage0_reason": hit.stage0_reason,
+        "stage0_matched_rule": hit.stage0_matched_rule,
+        "stage0_signals": {
+            name: list(hits) for name, hits in hit.stage0_signals.items()
+        },
         "gate_needs_recall": hit.gate_needs_recall,
         "gate_intent_type": hit.gate_intent_type,
         "final_recall_decision": hit.final_recall_decision,
         "fallback_used": hit.fallback_used,
+        "recall_skip_source": hit.recall_skip_source,
+        "query_plan_source": hit.query_plan_source,
         "candidate_count": hit.candidate_count,
+        "recall_attempted_but_zero_hit": hit.recall_attempted_but_zero_hit,
         "reranker_selected_ids": list(hit.reranker_selected_ids),
         "reranker_final_reason": hit.reranker_final_reason,
         "reranker_fallback": hit.reranker_fallback,
+        "reranker_per_item_reason": dict(hit.reranker_per_item_reason),
     }
 
 
