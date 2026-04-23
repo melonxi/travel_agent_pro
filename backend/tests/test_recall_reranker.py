@@ -10,7 +10,10 @@ from memory.recall_reranker import (
     RecallRerankPath,
     RecallRerankResult,
     SignalScoreDetail,
+    _ScoredCandidate,
+    _build_scored_candidate,
     _conflict_score,
+    _normalize_source_scores,
     _normalize_optional_scores,
     _resolve_intent_label,
     _resolve_intent_profile,
@@ -97,6 +100,78 @@ def test_selection_metrics_placeholder_is_always_present():
         "selected_pairwise_similarity_max": None,
         "selected_pairwise_similarity_avg": None,
     }
+
+
+def test_normalize_source_scores_uses_per_source_min_max_plus_source_prior():
+    scored = [
+        _ScoredCandidate(
+            candidate=make_candidate(item_id="profile_1"),
+            source_score=0.5,
+            normalized_score=0.5,
+            final_score=0.5,
+            duplicate_group="profile:1",
+            conflict_score=0.0,
+            weak_relevance=False,
+            reason="r1",
+            score_detail=SignalScoreDetail(
+                bucket_score=0.82,
+                domain_exact_score=1.0,
+                keyword_exact_score=0.5,
+                destination_score=0.0,
+                recency_score=1.0,
+                applicability_score=0.35,
+                conflict_score=0.0,
+            ),
+        ),
+        _ScoredCandidate(
+            candidate=make_candidate(item_id="profile_2"),
+            source_score=0.9,
+            normalized_score=0.9,
+            final_score=0.9,
+            duplicate_group="profile:2",
+            conflict_score=0.0,
+            weak_relevance=False,
+            reason="r2",
+            score_detail=SignalScoreDetail(
+                bucket_score=0.82,
+                domain_exact_score=1.0,
+                keyword_exact_score=0.5,
+                destination_score=0.0,
+                recency_score=1.0,
+                applicability_score=0.35,
+                conflict_score=0.0,
+            ),
+        ),
+    ]
+
+    normalized = _normalize_source_scores(scored, source_prior=1.0)
+
+    assert normalized[0].candidate.item_id == "profile_2"
+    assert normalized[0].score_detail.source_normalized_score == 1.0
+    assert normalized[0].score_detail.final_score == 2.0
+
+
+def test_build_scored_candidate_source_score_equals_rule_plus_evidence():
+    detail = SignalScoreDetail(
+        bucket_score=0.82,
+        domain_exact_score=1.0,
+        keyword_exact_score=0.5,
+        destination_score=1.0,
+        recency_score=1.0,
+        applicability_score=0.65,
+        conflict_score=0.0,
+        rule_score=0.71,
+        evidence_score=0.19,
+    )
+
+    scored = _build_scored_candidate(
+        candidate=make_candidate(item_id="profile_1"),
+        detail=detail,
+        duplicate_group="profile:1",
+        reason="r1",
+    )
+
+    assert scored.source_score == pytest.approx(0.90)
 
 
 @pytest.mark.asyncio
@@ -722,6 +797,48 @@ def test_choose_reranker_path_applies_source_budgets_and_dedupes_profile_candida
         "slice_kyoto_station_hotel",
     ]
     assert "duplicate group" in path.result.per_item_reason["profile_kyoto_area_dup"]
+
+
+def test_choose_reranker_path_hybrid_default_config_keeps_selected_ids_and_placeholder_metrics():
+    candidates = [
+        make_candidate(item_id="profile_kyoto_area", domains=["hotel"]),
+        make_candidate(
+            source="episode_slice",
+            item_id="slice_kyoto_machiya",
+            bucket="stay_choice",
+            matched_reason=["exact destination match on 京都", "keyword match on 住宿"],
+            content_summary="上次京都住四条附近的町屋。",
+            domains=["hotel"],
+            applicability="仅供住宿选择参考。",
+            polarity="",
+        ),
+    ]
+
+    path = choose_reranker_path(
+        candidates=candidates,
+        user_message="推荐这次京都住哪里",
+        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
+        retrieval_plan=RecallRetrievalPlan(
+            source="hybrid_history",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="京都",
+            keywords=["住宿"],
+            top_k=5,
+            reason="recommend",
+        ),
+        evidence_by_id={},
+        config=DummyRerankerConfig(small_candidate_set_threshold=0),
+    )
+
+    assert path.result.selected_item_ids == [
+        "profile_kyoto_area",
+        "slice_kyoto_machiya",
+    ]
+    assert path.result.selection_metrics == {
+        "selected_pairwise_similarity_max": None,
+        "selected_pairwise_similarity_avg": None,
+    }
 
 
 def test_default_config_small_set_still_drops_conflicting_profile_candidates():
