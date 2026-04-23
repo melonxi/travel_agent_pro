@@ -76,7 +76,7 @@ class LexicalLane:
         if envelope.source_policy.search_profile:
             ranked.extend(_rank_profile_lexical(envelope, profile, query_terms))
         if envelope.source_policy.search_slices:
-            ranked.extend(_rank_slices_lexical(slices, query_terms))
+            ranked.extend(_rank_slices_lexical(envelope, slices, query_terms))
 
         ranked.sort(key=lambda entry: (-entry[0], entry[1].source, entry[1].item_id))
         top_ranked = ranked[: config.lexical.top_k]
@@ -184,9 +184,12 @@ def _rank_profile_lexical(
 
 
 def _rank_slices_lexical(
+    envelope: RecallQueryEnvelope,
     slices: list[EpisodeSlice],
     query_terms: set[str],
 ) -> list[tuple[float, RecallCandidate, RetrievalEvidence]]:
+    del envelope
+
     ranked: list[tuple[float, RecallCandidate, RetrievalEvidence]] = []
     for slice_ in slices:
         slice_text = _slice_text(slice_)
