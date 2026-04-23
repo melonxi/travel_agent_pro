@@ -8,6 +8,8 @@ def test_memory_retrieval_config_stage3_defaults():
     assert cfg.stage3.symbolic.enabled is True
     assert cfg.stage3.lexical.enabled is False
     assert cfg.stage3.semantic.enabled is False
+    assert cfg.stage3.entity.enabled is False
+    assert cfg.stage3.temporal.enabled is False
     assert cfg.stage3.destination_normalization_enabled is False
     assert cfg.stage3.source_widening.enabled is False
     assert cfg.stage3.fusion.lane_weights == (
