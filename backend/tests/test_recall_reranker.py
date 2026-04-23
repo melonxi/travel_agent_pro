@@ -6,10 +6,13 @@ from config import IntentWeightProfile
 from memory.manager import select_recall_candidates
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import (
+    DESTINATION_MATCH_TYPE_SCORE,
     RecallRerankPath,
     RecallRerankResult,
     SignalScoreDetail,
     _conflict_score,
+    _empty_rerank_result,
+    _normalize_optional_scores,
     _resolve_intent_label,
     _resolve_intent_profile,
     choose_reranker_path,
@@ -57,6 +60,43 @@ def make_candidate(**overrides) -> RecallCandidate:
     )
     base.update(overrides)
     return RecallCandidate(**base)
+
+
+def test_normalize_optional_scores_ignores_missing_values():
+    values = {"a": 0.4, "b": None, "c": 0.9}
+
+    normalized = _normalize_optional_scores(values)
+
+    assert normalized["c"] == 1.0
+    assert normalized["a"] == 0.0
+    assert normalized["b"] == 0.0
+
+
+def test_normalize_optional_scores_single_value_returns_one():
+    normalized = _normalize_optional_scores({"a": None, "b": 0.55})
+
+    assert normalized["a"] == 0.0
+    assert normalized["b"] == 1.0
+
+
+def test_selection_metrics_placeholder_is_always_present():
+    result = _empty_rerank_result()
+
+    assert result.selection_metrics == {
+        "selected_pairwise_similarity_max": None,
+        "selected_pairwise_similarity_avg": None,
+    }
+
+
+def test_destination_match_type_score_mapping_covers_supported_labels():
+    assert DESTINATION_MATCH_TYPE_SCORE == {
+        "exact": 1.0,
+        "alias": 0.8,
+        "parent_child": 0.6,
+        "region_weak": 0.3,
+        "none": 0.0,
+        "": 0.0,
+    }
 
 
 def test_recall_rerank_result_supports_structured_score_payload():
@@ -282,6 +322,102 @@ def test_conflict_score_fixture_for_hard_drop_is_reachable():
     )
 
     assert _conflict_score(candidate, "这次可以坐红眼航班") == 1.0
+
+
+def test_hard_dropped_candidate_still_keeps_score_detail_for_trace():
+    candidate = make_candidate(
+        item_id="constraint_avoid_red_eye",
+        bucket="constraints",
+        polarity="avoid",
+        matched_reason=["exact domain match on flight", "keyword match on 红眼"],
+        content_summary="flight:avoid_red_eye=true",
+        domains=["flight"],
+        applicability="适用于所有旅行。",
+    )
+
+    path = choose_reranker_path(
+        candidates=[candidate],
+        user_message="这次可以坐红眼航班",
+        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["constraints"],
+            domains=["flight"],
+            destination="",
+            keywords=["红眼", "航班"],
+            top_k=5,
+            reason="profile",
+        ),
+        evidence_by_id={},
+        config=DummyRerankerConfig(small_candidate_set_threshold=0),
+    )
+
+    assert path.result.selected_item_ids == []
+    assert (
+        path.result.per_item_scores["constraint_avoid_red_eye"].hard_filter
+        == "conflict"
+    )
+
+
+def test_evidence_scores_do_not_change_order_when_all_evidence_weights_are_zero():
+    candidates = [
+        make_candidate(
+            item_id="profile_kyoto_area",
+            matched_reason=["exact domain match on hotel", "keyword match on 住宿"],
+            content_summary="hotel:preferred_area=京都四条",
+            domains=["hotel"],
+            applicability="适用于京都住宿选择。",
+        ),
+        make_candidate(
+            source="episode_slice",
+            item_id="slice_kyoto_machiya",
+            bucket="stay_choice",
+            matched_reason=["exact destination match on 京都", "keyword match on 住宿"],
+            content_summary="上次京都住四条附近的町屋。",
+            domains=["hotel"],
+            applicability="仅供住宿选择参考。",
+            polarity="",
+        ),
+    ]
+    evidence_by_id = {
+        "profile_kyoto_area": RetrievalEvidence(
+            item_id="profile_kyoto_area",
+            source="profile",
+            lanes=["symbolic"],
+            fused_score=0.5,
+        ),
+        "slice_kyoto_machiya": RetrievalEvidence(
+            item_id="slice_kyoto_machiya",
+            source="episode_slice",
+            lanes=["symbolic", "semantic"],
+            fused_score=0.7,
+            semantic_score=0.88,
+        ),
+    }
+
+    path = choose_reranker_path(
+        candidates=candidates,
+        user_message="推荐这次京都住哪里",
+        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
+        retrieval_plan=RecallRetrievalPlan(
+            source="hybrid_history",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="京都",
+            keywords=["住宿"],
+            top_k=5,
+            reason="recommend",
+        ),
+        evidence_by_id=evidence_by_id,
+        config=DummyRerankerConfig(small_candidate_set_threshold=0),
+    )
+
+    assert path.result.selected_item_ids == [
+        "profile_kyoto_area",
+        "slice_kyoto_machiya",
+    ]
+    assert path.result.per_item_scores["slice_kyoto_machiya"].semantic_score > 0.0
+    assert path.result.per_item_scores["slice_kyoto_machiya"].evidence_score == 0.0
 
 
 def test_choose_reranker_path_skips_scoring_when_candidate_set_is_small():

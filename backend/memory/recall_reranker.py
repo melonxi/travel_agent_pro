@@ -40,6 +40,15 @@ _PROFILE_BUCKET_PRIOR = {
     "preference_hypotheses": 0.66,
 }
 
+DESTINATION_MATCH_TYPE_SCORE = {
+    "exact": 1.0,
+    "alias": 0.8,
+    "parent_child": 0.6,
+    "region_weak": 0.3,
+    "none": 0.0,
+    "": 0.0,
+}
+
 
 @dataclass
 class SignalScoreDetail:
@@ -92,6 +101,21 @@ class _ScoredCandidate:
     reason: str
 
 
+def _empty_rerank_result() -> RecallRerankResult:
+    return RecallRerankResult(
+        selected_item_ids=[],
+        final_reason="",
+        per_item_reason={},
+        fallback_used="none",
+        per_item_scores={},
+        intent_label="",
+        selection_metrics={
+            "selected_pairwise_similarity_max": None,
+            "selected_pairwise_similarity_avg": None,
+        },
+    )
+
+
 def choose_reranker_path(
     *,
     candidates: list[RecallCandidate],
@@ -106,18 +130,38 @@ def choose_reranker_path(
     if not candidates:
         return RecallRerankPath(
             selected_candidates=[],
-            result=RecallRerankResult(
-                selected_item_ids=[],
-                final_reason="",
-                per_item_reason={},
-                fallback_used="none",
-            ),
+            result=_empty_rerank_result(),
         )
 
     intent_label = _resolve_intent_label(user_message, retrieval_plan)
     weights = _resolve_intent_profile(user_message, retrieval_plan, reranker_config)
     per_item_reason: dict[str, str] = {}
     per_item_scores: dict[str, SignalScoreDetail] = {}
+    candidate_ids = [candidate.item_id for candidate in candidates]
+    normalized_fused_scores = _normalize_optional_scores(
+        {
+            item_id: evidence_by_id[item_id].fused_score
+            if item_id in evidence_by_id
+            else None
+            for item_id in candidate_ids
+        }
+    )
+    normalized_lexical_scores = _normalize_optional_scores(
+        {
+            item_id: evidence_by_id[item_id].lexical_score
+            if item_id in evidence_by_id
+            else None
+            for item_id in candidate_ids
+        }
+    )
+    normalized_semantic_scores = _normalize_optional_scores(
+        {
+            item_id: evidence_by_id[item_id].semantic_score
+            if item_id in evidence_by_id
+            else None
+            for item_id in candidate_ids
+        }
+    )
 
     # Always score every candidate and always run conflict filtering + dedup.
     # The small-set fast path ONLY skips the weighted cross-source re-sort,
@@ -132,6 +176,9 @@ def choose_reranker_path(
             weights,
             reranker_config,
             evidence_by_id.get(candidate.item_id),
+            normalized_fused_scores[candidate.item_id],
+            normalized_lexical_scores[candidate.item_id],
+            normalized_semantic_scores[candidate.item_id],
         )
         per_item_scores[candidate.item_id] = scored.detail
         per_item_reason[candidate.item_id] = scored.reason
@@ -262,7 +309,10 @@ def _score_candidate(
     retrieval_plan: RecallRetrievalPlan | None,
     weights: IntentWeightProfile,
     reranker_config: MemoryRerankerConfig,
-    _evidence: RetrievalEvidence | None = None,
+    evidence: RetrievalEvidence | None = None,
+    normalized_fused_score: float = 0.0,
+    normalized_lexical_score: float = 0.0,
+    normalized_semantic_score: float = 0.0,
 ) -> _ScoredCandidate:
     detail = _compute_rule_signals(
         candidate,
@@ -271,6 +321,15 @@ def _score_candidate(
         retrieval_plan,
         reranker_config,
     )
+    if evidence is not None:
+        detail = _compute_evidence_signals(
+            detail,
+            evidence,
+            normalized_fused_score,
+            normalized_lexical_score,
+            normalized_semantic_score,
+            reranker_config,
+        )
     duplicate_group = _duplicate_group(candidate)
     raw_score = (
         weights.bucket_weight * detail.bucket_score
@@ -322,6 +381,38 @@ def _compute_rule_signals(
         applicability_score=applicability_score,
         conflict_score=conflict_score,
     )
+
+
+def _compute_evidence_signals(
+    detail: SignalScoreDetail,
+    evidence: RetrievalEvidence,
+    normalized_fused_score: float,
+    normalized_lexical_score: float,
+    normalized_semantic_score: float,
+    config: MemoryRerankerConfig,
+) -> SignalScoreDetail:
+    evidence_cfg = getattr(config, "evidence", MemoryRerankerConfig().evidence)
+    detail.symbolic_hit = 1.0 if "symbolic" in evidence.lanes else 0.0
+    detail.lexical_hit = 1.0 if "lexical" in evidence.lanes else 0.0
+    detail.semantic_hit = 1.0 if "semantic" in evidence.lanes else 0.0
+    detail.lane_fused_score = normalized_fused_score
+    detail.lexical_score = normalized_lexical_score
+    detail.semantic_score = normalized_semantic_score
+    detail.destination_match_type_score = DESTINATION_MATCH_TYPE_SCORE.get(
+        evidence.destination_match_type or "",
+        0.0,
+    )
+    detail.evidence_score = (
+        evidence_cfg.symbolic_hit_weight * detail.symbolic_hit
+        + evidence_cfg.lexical_hit_weight * detail.lexical_hit
+        + evidence_cfg.semantic_hit_weight * detail.semantic_hit
+        + evidence_cfg.lane_fused_weight * detail.lane_fused_score
+        + evidence_cfg.lexical_score_weight * detail.lexical_score
+        + evidence_cfg.semantic_score_weight * detail.semantic_score
+        + evidence_cfg.destination_match_type_weight
+        * detail.destination_match_type_score
+    )
+    return detail
 
 
 def _build_reason_text(candidate: RecallCandidate, detail: SignalScoreDetail) -> str:
@@ -380,6 +471,26 @@ def _normalize_source_scores(
         )
     normalized.sort(key=lambda item: (-item.final_score, item.candidate.item_id))
     return normalized
+
+
+def _normalize_optional_scores(values: dict[str, float | None]) -> dict[str, float]:
+    present = {key: value for key, value in values.items() if value is not None}
+    if not present:
+        return {key: 0.0 for key in values}
+    if len(present) == 1:
+        only_key = next(iter(present))
+        return {key: 1.0 if key == only_key else 0.0 for key in values}
+    low = min(present.values())
+    high = max(present.values())
+    if math.isclose(low, high):
+        return {
+            key: (1.0 if value is not None else 0.0)
+            for key, value in values.items()
+        }
+    return {
+        key: ((value - low) / (high - low) if value is not None else 0.0)
+        for key, value in values.items()
+    }
 
 
 def _select_candidates(
