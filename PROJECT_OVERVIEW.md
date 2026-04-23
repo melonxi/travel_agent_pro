@@ -222,6 +222,7 @@ travel_agent_pro/
 - `docs/learning/interview-stress-test/`、`docs/mind/`：学习型架构评审与阶段性洞察，当前包含记忆系统写入语境、稳定性、TripEpisode 职责边界与 working memory 取舍分析
 - `docs/learning/2026-04-19-Phase*.md` 与 `docs/learning/assets/phase5-parallel-orchestration/`：面向初学者的 Phase 转换机制、Phase 5 并行 Orchestrator-Workers 生命周期说明和配图
 - `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划，包含 v3-only memory cutover、Memory Extraction Routing 设计，以及 Phase 3 `candidate_pois` 全局唯一性设计与实施计划（把重复 POI 拦截在 `set_skeleton_plans` 写入边界，而不是留给 Phase 5 并行 worker 事后去重）
+- `docs/superpowers/specs/2026-04-23-reranker-stage4-upgrade-v2-design.md`、`docs/superpowers/specs/2026-04-23-stage3-recall-upgrade-v2-design.md`、`docs/superpowers/plans/2026-04-23-stage3-hybrid-recall-upgrade-v2.md`：记录记忆召回 Stage 4 reranker 语义增强边界、Stage 3 hybrid recall 候选生成设计，以及默认 embedding/runtime 决策（`BAAI/bge-small-zh-v1.5` + FastEmbed/ONNX Runtime CPU）。
 - `docs/superpowers/specs/2026-04-19-internal-task-visibility-design.md`：内部耗时任务可见性设计，定义 `internal_task` SSE、系统任务卡片、soft judge / quality gate / memory / compaction / reflection / Phase 5 orchestration 的统一聊天流展示模型
 - `docs/agent-tool-design-guide.md`：Agent 工具设计评审准则，新增或重塑工具前应对照其命名、schema、返回值、错误反馈与评估清单
 
