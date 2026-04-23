@@ -1,0 +1,22 @@
+id: recall-003-gate-failure-profile-cue
+name: Gate failure falls back to profile cue heuristic
+description: If the LLM recall gate is unavailable, a direct profile cue should still trigger recall through heuristic fallback.
+difficulty: memory
+messages:
+  - role: user
+    content: 我不住青旅吗？
+assertions:
+  - type: memory_recall_field
+    target: final_recall_decision
+    value: query_recall_enabled
+  - type: memory_recall_field
+    target: fallback_used
+    value: gate_timeout_heuristic_recall
+  - type: memory_recall_field
+    target: query_plan_source
+    value: heuristic_fallback
+tags:
+  - memory_recall
+  - expect_recall
+  - gate_failure
+  - profile_cue

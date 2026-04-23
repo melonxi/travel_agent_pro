@@ -1,0 +1,18 @@
+id: recall-002-current-trip-fact-skip
+name: Current trip fact skips memory recall
+description: Pure current-trip factual questions should not trigger historical recall.
+difficulty: memory
+messages:
+  - role: user
+    content: 这次预算多少？
+assertions:
+  - type: memory_recall_field
+    target: final_recall_decision
+    value: no_recall_applied
+  - type: memory_recall_field
+    target: recall_skip_source
+    value: stage0_skip
+tags:
+  - memory_recall
+  - expect_skip
+  - current_trip_fact

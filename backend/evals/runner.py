@@ -57,6 +57,7 @@ def evaluate_assertion(
     state: dict[str, Any],
     tool_calls: list[str],
     responses: list[str],
+    stats: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Evaluate a single assertion against collected state.
     
@@ -111,7 +112,32 @@ def evaluate_assertion(
             return True, ""
         return False, f"cost {total_cost} exceeds budget {budget}*{margin}"
 
+    if t == AssertionType.MEMORY_RECALL_FIELD:
+        recall = (stats or {}).get("last_memory_recall")
+        if not isinstance(recall, dict):
+            return False, "last_memory_recall is not available"
+        val = _get_nested_value(recall, assertion.target)
+        if assertion.value is not None:
+            if str(val) == str(assertion.value):
+                return True, ""
+            return False, (
+                f"memory_recall.{assertion.target}={val}, "
+                f"expected {assertion.value}"
+            )
+        if val is not None:
+            return True, ""
+        return False, f"memory_recall.{assertion.target} is not set"
+
     return False, f"unknown assertion type: {t}"
+
+
+def _get_nested_value(source: dict[str, Any], path: str) -> Any:
+    value: Any = source
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
 
 
 def run_case_offline(
@@ -125,8 +151,11 @@ def run_case_offline(
     start = time.monotonic()
     passed_count = 0
     failures: list[str] = []
+    stats = stats or {}
     for assertion in case.assertions:
-        ok, reason = evaluate_assertion(assertion, state, tool_calls, responses)
+        ok, reason = evaluate_assertion(
+            assertion, state, tool_calls, responses, stats=stats
+        )
         if ok:
             passed_count += 1
         else:
@@ -140,7 +169,8 @@ def run_case_offline(
         failures=failures,
         duration_ms=elapsed,
         difficulty=case.difficulty,
-        stats=stats or {},
+        tags=list(case.tags),
+        stats=stats,
     )
 
 
@@ -159,6 +189,7 @@ def run_case(case: GoldenCase, executor: GoldenCaseExecutor) -> CaseResult:
             duration_ms=elapsed,
             error=f"{type(exc).__name__}: {exc}",
             difficulty=case.difficulty,
+            tags=list(case.tags),
         )
 
     result = run_case_offline(
@@ -192,6 +223,7 @@ def run_suite_offline(
                 assertions_total=len(case.assertions),
                 error="No execution data found",
                 difficulty=case.difficulty,
+                tags=list(case.tags),
             ))
             continue
         state, tools, responses = results_map[case.id]
@@ -278,7 +310,59 @@ def build_suite_metrics(suite: SuiteResult) -> dict[str, Any]:
             "pass_rate": assertion_pass_rate,
         },
         "infeasible": infeasible,
+        "memory_recall": _build_memory_recall_metrics(suite.results),
         "stats": dict(stats_totals),
+    }
+
+
+def _build_memory_recall_metrics(results: list[CaseResult]) -> dict[str, Any]:
+    recall_results = [result for result in results if "memory_recall" in result.tags]
+    expected_recall = 0
+    expected_skip = 0
+    false_skip = 0
+    false_recall = 0
+    recall_enabled = 0
+    recall_hits = 0
+    zero_hits = 0
+
+    for result in recall_results:
+        tags = set(result.tags)
+        recall = result.stats.get("last_memory_recall")
+        if not isinstance(recall, dict):
+            recall = {}
+        final_decision = recall.get("final_recall_decision")
+        did_recall = final_decision == "query_recall_enabled"
+
+        if "expect_recall" in tags:
+            expected_recall += 1
+            if not did_recall:
+                false_skip += 1
+        if "expect_skip" in tags:
+            expected_skip += 1
+            if did_recall:
+                false_recall += 1
+
+        if did_recall:
+            recall_enabled += 1
+            candidate_count = recall.get("candidate_count")
+            has_hit = isinstance(candidate_count, (int, float)) and candidate_count > 0
+            if has_hit:
+                recall_hits += 1
+            if recall.get("recall_attempted_but_zero_hit") is True or not has_hit:
+                zero_hits += 1
+
+    return {
+        "total": len(recall_results),
+        "expected_recall": expected_recall,
+        "expected_skip": expected_skip,
+        "false_skip_rate": false_skip / expected_recall if expected_recall else 0.0,
+        "false_recall_rate": false_recall / expected_skip if expected_skip else 0.0,
+        "hit_rate_when_recall_enabled": (
+            recall_hits / recall_enabled if recall_enabled else 0.0
+        ),
+        "recall_attempted_but_zero_hit_rate": (
+            zero_hits / recall_enabled if recall_enabled else 0.0
+        ),
     }
 
 
@@ -304,6 +388,7 @@ def suite_to_dict(suite: SuiteResult) -> dict[str, Any]:
                 "failures": result.failures,
                 "duration_ms": round(result.duration_ms, 1),
                 "error": result.error,
+                "tags": list(result.tags),
                 "stats": result.stats,
             }
             for result in suite.results
