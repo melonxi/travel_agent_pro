@@ -43,11 +43,14 @@ class SymbolicLane:
 
 
 def _plan_for_source_policy(envelope: RecallQueryEnvelope) -> RecallRetrievalPlan:
-    source = "hybrid_history"
     if envelope.source_policy.search_profile and not envelope.source_policy.search_slices:
         source = "profile"
     elif envelope.source_policy.search_slices and not envelope.source_policy.search_profile:
         source = "episode_slice"
+    elif envelope.source_policy.search_profile and envelope.source_policy.search_slices:
+        source = "hybrid_history"
+    else:
+        source = envelope.plan.source
 
     return RecallRetrievalPlan(
         source=source,
@@ -69,11 +72,19 @@ def _evidence_from_candidate(
         item_id=candidate.item_id,
         source=candidate.source,
         lanes=[lane_name],
-        matched_domains=list(candidate.domains),
+        matched_domains=_matched_domains_from_reason(candidate),
         matched_keywords=_matched_keywords_from_reason(candidate),
         destination_match_type=_destination_match_type(candidate),
         retrieval_reason="; ".join(candidate.matched_reason),
     )
+
+
+def _matched_domains_from_reason(candidate: RecallCandidate) -> list[str]:
+    return [
+        domain
+        for domain in candidate.domains
+        if any(domain in reason for reason in candidate.matched_reason)
+    ]
 
 
 def _matched_keywords_from_reason(candidate: RecallCandidate) -> list[str]:

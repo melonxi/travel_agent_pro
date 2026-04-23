@@ -48,6 +48,8 @@ def retrieve_recall_candidates(
             "expanded_domains": list(envelope.expanded_domains),
             "original_keywords": list(envelope.original_keywords),
             "expanded_keywords": list(envelope.expanded_keywords),
+            "destination_aliases": list(envelope.destination_aliases),
+            "destination_children": list(envelope.destination_children),
         },
         fallback_used=query.fallback_used,
     )
