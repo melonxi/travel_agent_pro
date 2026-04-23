@@ -1,6 +1,10 @@
 from config import Stage3RecallConfig
 from memory.recall_query import RecallRetrievalPlan
-from memory.recall_stage3_normalizer import build_query_envelope
+from memory.recall_stage3_normalizer import (
+    _expand_domains,
+    _expand_keywords,
+    build_query_envelope,
+)
 from state.models import TravelPlanState
 
 
@@ -32,7 +36,14 @@ def test_build_query_envelope_preserves_default_profile_source_policy() -> None:
     assert envelope.source_policy.widened is False
     assert envelope.destination == "東京"
     assert envelope.destination_canonical == ""
-    assert envelope.expanded_keywords == ("住哪里",)
+    assert envelope.expanded_keywords == (
+        "住哪里",
+        "住宿",
+        "酒店",
+        "民宿",
+        "旅馆",
+        "住宿按我习惯来",
+    )
 
 
 def test_build_query_envelope_expands_destination_when_enabled() -> None:
@@ -60,3 +71,40 @@ def test_build_query_envelope_expands_hotel_keywords() -> None:
     assert "住宿" in envelope.expanded_keywords
     assert "酒店" in envelope.expanded_keywords
     assert "民宿" in envelope.expanded_keywords
+
+
+def test_build_query_envelope_expands_keywords_from_user_message() -> None:
+    envelope = build_query_envelope(
+        query=_plan(keywords=["预算"]),
+        user_message="这次想住民宿",
+        plan=TravelPlanState(session_id="s1", trip_id="t1"),
+        config=Stage3RecallConfig(),
+    )
+
+    assert envelope.expanded_keywords == (
+        "预算",
+        "这次想住民宿",
+        "民宿",
+        "住宿",
+        "酒店",
+        "住哪里",
+    )
+
+
+def test_build_query_envelope_requires_keyword_arguments() -> None:
+    try:
+        build_query_envelope(
+            _plan(),
+            "住宿按我习惯来",
+            TravelPlanState(session_id="s1", trip_id="t1"),
+            Stage3RecallConfig(),
+        )
+    except TypeError:
+        return
+
+    raise AssertionError("build_query_envelope should require keyword arguments")
+
+
+def test_expansion_helpers_return_lists() -> None:
+    assert _expand_domains(["hotel"]) == ["hotel", "accommodation"]
+    assert _expand_keywords(["住哪里"]) == ["住哪里", "住宿", "酒店", "民宿", "旅馆"]

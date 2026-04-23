@@ -17,7 +17,7 @@ _DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
 
 _KEYWORD_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "住宿": ("住宿", "酒店", "民宿", "住哪里", "旅馆"),
-    "住哪里": ("住哪里",),
+    "住哪里": ("住哪里", "住宿", "酒店", "民宿", "旅馆"),
     "酒店": ("酒店", "住宿", "住哪里", "民宿"),
     "民宿": ("民宿", "住宿", "酒店", "住哪里"),
     "机票": ("机票", "航班", "飞机"),
@@ -30,6 +30,7 @@ _KEYWORD_EXPANSIONS: dict[str, tuple[str, ...]] = {
 
 
 def build_query_envelope(
+    *,
     query: RecallRetrievalPlan,
     user_message: str,
     plan: TravelPlanState,
@@ -38,7 +39,7 @@ def build_query_envelope(
     destination = query.destination or getattr(plan, "destination", "") or ""
     source_policy = _build_source_policy(query, config)
     expanded_domains = _expand_domains(query.domains)
-    expanded_keywords = _expand_keywords(query.keywords)
+    expanded_keywords = _expand_keywords([*query.keywords, user_message])
 
     destination_canonical = ""
     destination_aliases: tuple[str, ...] = ()
@@ -56,9 +57,9 @@ def build_query_envelope(
         user_message=user_message,
         source_policy=source_policy,
         original_domains=tuple(query.domains),
-        expanded_domains=expanded_domains,
+        expanded_domains=tuple(expanded_domains),
         original_keywords=tuple(query.keywords),
-        expanded_keywords=expanded_keywords,
+        expanded_keywords=tuple(expanded_keywords),
         destination=destination,
         destination_canonical=destination_canonical,
         destination_aliases=destination_aliases,
@@ -84,7 +85,7 @@ def _build_source_policy(
     )
 
 
-def _expand_domains(domains: list[str]) -> tuple[str, ...]:
+def _expand_domains(domains: list[str]) -> list[str]:
     expanded: list[str] = []
     seen: set[str] = set()
     for domain in domains:
@@ -92,10 +93,10 @@ def _expand_domains(domains: list[str]) -> tuple[str, ...]:
             if value and value not in seen:
                 seen.add(value)
                 expanded.append(value)
-    return tuple(expanded)
+    return expanded
 
 
-def _expand_keywords(values: list[str]) -> tuple[str, ...]:
+def _expand_keywords(values: list[str]) -> list[str]:
     expanded: list[str] = []
     seen: set[str] = set()
     normalized_values = [value.strip() for value in values if value and value.strip()]
@@ -107,10 +108,18 @@ def _expand_keywords(values: list[str]) -> tuple[str, ...]:
             expanded.append(value)
 
         for trigger, synonyms in _KEYWORD_EXPANSIONS.items():
-            if trigger in value or trigger in joined:
+            if trigger in value:
                 for synonym in synonyms:
                     if synonym not in seen:
                         seen.add(synonym)
                         expanded.append(synonym)
 
-    return tuple(expanded)
+    for trigger, synonyms in _KEYWORD_EXPANSIONS.items():
+        if trigger not in joined:
+            continue
+        for synonym in synonyms:
+            if synonym not in seen:
+                seen.add(synonym)
+                expanded.append(synonym)
+
+    return expanded

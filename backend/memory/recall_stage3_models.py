@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
 from memory.recall_query import RecallRetrievalPlan
@@ -50,7 +50,22 @@ class RetrievalEvidence:
     retrieval_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "item_id": self.item_id,
+            "source": self.source,
+            "lanes": list(self.lanes),
+            "lane_scores": dict(self.lane_scores),
+            "lane_ranks": dict(self.lane_ranks),
+            "fused_score": self.fused_score,
+            "matched_domains": list(self.matched_domains),
+            "matched_keywords": list(self.matched_keywords),
+            "matched_entities": list(self.matched_entities),
+            "destination_match_type": self.destination_match_type,
+            "semantic_score": self.semantic_score,
+            "lexical_score": self.lexical_score,
+            "temporal_score": self.temporal_score,
+            "retrieval_reason": self.retrieval_reason,
+        }
 
 
 @dataclass(frozen=True)
@@ -71,7 +86,7 @@ class Stage3Telemetry:
     lanes_attempted: list[str] = field(default_factory=list)
     lanes_succeeded: list[str] = field(default_factory=list)
     source_policy: dict[str, Any] = field(default_factory=dict)
-    query_expansion: dict[str, Any] = field(default_factory=dict)
+    query_expansion: dict[str, list[str]] = field(default_factory=dict)
     candidates_by_lane: dict[str, int] = field(default_factory=dict)
     candidates_by_source: dict[str, int] = field(default_factory=dict)
     total_candidates_before_fusion: int = 0
@@ -81,11 +96,25 @@ class Stage3Telemetry:
     lane_errors: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "lanes_attempted": list(self.lanes_attempted),
+            "lanes_succeeded": list(self.lanes_succeeded),
+            "source_policy": dict(self.source_policy),
+            "query_expansion": {
+                key: list(value) for key, value in self.query_expansion.items()
+            },
+            "candidates_by_lane": dict(self.candidates_by_lane),
+            "candidates_by_source": dict(self.candidates_by_source),
+            "total_candidates_before_fusion": self.total_candidates_before_fusion,
+            "total_candidates_after_fusion": self.total_candidates_after_fusion,
+            "zero_hit": self.zero_hit,
+            "fallback_used": self.fallback_used,
+            "lane_errors": dict(self.lane_errors),
+        }
 
 
 @dataclass
 class Stage3RecallResult:
-    candidates: list[Stage3Candidate]
+    candidates: list[RecallCandidate]
     evidence_by_id: dict[str, RetrievalEvidence]
     telemetry: Stage3Telemetry
