@@ -336,13 +336,21 @@ def _build_stage3_lane_config(
 def _build_stage3_semantic_config(raw: dict) -> Stage3SemanticConfig:
     raw = raw if isinstance(raw, dict) else {}
     default = Stage3SemanticConfig()
+
+    def _as_non_empty_str(value: object, fallback: str) -> str:
+        if value is None:
+            return fallback
+        if isinstance(value, str):
+            return value or fallback
+        return str(value)
+
     return Stage3SemanticConfig(
         enabled=_as_bool(raw.get("enabled"), default.enabled),
         top_k=int(raw.get("top_k", default.top_k)),
         timeout_ms=int(raw.get("timeout_ms", default.timeout_ms)),
-        provider=str(raw.get("provider", default.provider)),
-        model_name=str(raw.get("model_name", default.model_name)),
-        cache_dir=str(raw.get("cache_dir", default.cache_dir)),
+        provider=_as_non_empty_str(raw.get("provider"), default.provider),
+        model_name=_as_non_empty_str(raw.get("model_name"), default.model_name),
+        cache_dir=_as_non_empty_str(raw.get("cache_dir"), default.cache_dir),
         local_files_only=_as_bool(
             raw.get("local_files_only"), default.local_files_only
         ),
