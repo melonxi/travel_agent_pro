@@ -136,6 +136,23 @@ def test_parse_recall_gate_tool_arguments_rejects_true_needs_recall_with_non_rec
     assert decision.confidence == 0.0
 
 
+def test_parse_recall_gate_tool_arguments_conservatively_recalls_mixed_ambiguous():
+    decision = parse_recall_gate_tool_arguments(
+        {
+            "needs_recall": False,
+            "intent_type": "mixed_or_ambiguous",
+            "reason": "ambiguous between current trip and preference",
+            "confidence": 0.42,
+        }
+    )
+
+    assert decision.needs_recall is True
+    assert decision.intent_type == "mixed_or_ambiguous"
+    assert decision.reason == "ambiguous between current trip and preference"
+    assert decision.confidence == 0.42
+    assert decision.fallback_used == "mixed_or_ambiguous_conservative_recall"
+
+
 def test_build_recall_gate_tool_exposes_required_enum_schema():
     tool = build_recall_gate_tool()
 
@@ -173,6 +190,9 @@ _FORCE_CASES = [
     ("像我平时喜欢的那种", "P1"),
     ("这次预算和上次一样", "P1"),
     ("这次酒店按我以前的习惯推荐一家", "P1"),
+    ("好的，按我偏好来", "P1"),
+    ("按我习惯来", "P1"),
+    ("照我的习惯来", "P1"),
 ]
 
 _UNDECIDED_RECOMMEND_CASES = [
@@ -268,3 +288,20 @@ def test_rule_engine_exposes_signals_on_force():
     d = apply_recall_short_circuit("照旧安排就行")
     flat = {name: hits for name, hits in d.signals}
     assert "照旧" in flat["style"]
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "不要按我的习惯来",
+        "别按我习惯来",
+        "不是上次那种安排",
+        "这次不要照旧",
+    ],
+)
+def test_rule_engine_negated_profile_signal_downgrades_to_llm_gate(msg):
+    d = apply_recall_short_circuit(msg)
+
+    assert d.decision == "undecided"
+    assert d.reason == "negated_profile_history_signal"
+    assert d.matched_rule == "P1N"

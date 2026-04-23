@@ -232,6 +232,46 @@ parallel_tool_execution: false
     return create_app(str(config_file))
 
 
+@pytest.fixture
+def app_extraction_disabled(monkeypatch, tmp_path: Path):
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path / "data"
+    config_file.write_text(
+        f"""
+llm:
+  provider: openai
+  model: gpt-4o
+data_dir: "{data_dir}"
+flyai:
+  enabled: false
+memory:
+  enabled: true
+  extraction:
+    enabled: false
+telemetry:
+  enabled: false
+guardrails:
+  enabled: false
+parallel_tool_execution: false
+""",
+        encoding="utf-8",
+    )
+
+    class FakeProvider:
+        async def chat(self, *args, **kwargs):
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: FakeProvider())
+    return create_app(str(config_file))
+
+
 @pytest.mark.asyncio
 async def test_legacy_memory_routes_are_removed_in_integration_app(app):
     async with AsyncClient(
@@ -381,7 +421,7 @@ async def test_chat_system_prompt_skips_memory_when_disabled(
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
+            json={"message": "这次预算多少？", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -544,7 +584,7 @@ async def test_chat_stream_emits_memory_recall_telemetry_without_hits(monkeypatc
         session_id = session_resp.json()["session_id"]
         resp = await client.post(
             f"/api/chat/{session_id}",
-            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
+            json={"message": "这次预算多少？", "user_id": "u1"},
         )
 
     assert resp.status_code == 200
@@ -621,7 +661,7 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
                 "source": retrieval_plan.source,
                 "buckets": list(retrieval_plan.buckets),
                 "domains": list(retrieval_plan.domains),
-                "strictness": retrieval_plan.strictness,
+                "destination": retrieval_plan.destination,
                 "top_k": retrieval_plan.top_k,
             },
             query_plan_fallback=retrieval_plan.fallback_used,
@@ -656,11 +696,9 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
                     name=tool_name,
                     arguments={
                         "source": "episode_slice",
-                        "buckets": ["stable_preferences"],
                         "domains": ["hotel"],
+                        "destination": "",
                         "keywords": ["住宿"],
-                        "aliases": ["住哪里"],
-                        "strictness": "soft",
                         "top_k": 5,
                         "reason": "bad source",
                     },
@@ -692,7 +730,7 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
     assert '"type": "memory_recall"' in resp.text
     assert '"query_plan_fallback": "none"' in resp.text
     assert '"fallback_used": "none"' in resp.text
-    assert '"query_plan": {"source": "episode_slice", "buckets": ["stable_preferences"]' in resp.text
+    assert '"query_plan": {"source": "episode_slice", "buckets": []' in resp.text
 
 
 @pytest.mark.asyncio
@@ -711,8 +749,20 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
     ):
         retrieval_plan = kwargs["retrieval_plan"]
         assert isinstance(retrieval_plan, RecallRetrievalPlan)
-        assert retrieval_plan.fallback_used == "query_plan_timeout"
-        return "暂无相关用户记忆", MemoryRecallTelemetry()
+        assert retrieval_plan.source == "profile"
+        assert kwargs["query_plan_source"] == "heuristic_fallback"
+        assert kwargs["query_plan_fallback"] == "query_plan_timeout"
+        return "暂无相关用户记忆", MemoryRecallTelemetry(
+            query_plan={
+                "source": retrieval_plan.source,
+                "buckets": list(retrieval_plan.buckets),
+                "domains": list(retrieval_plan.domains),
+                "destination": retrieval_plan.destination,
+                "top_k": retrieval_plan.top_k,
+            },
+            query_plan_source=kwargs["query_plan_source"],
+            query_plan_fallback=kwargs["query_plan_fallback"],
+        )
 
     async def fake_collect_forced_tool_call_arguments(llm, *, messages, tool_def):
         tool_name = tool_def["name"]
@@ -757,9 +807,9 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
     ]
     assert resp.status_code == 200
     assert '"type": "memory_recall"' in resp.text
+    assert '"query_plan_source": "heuristic_fallback"' in resp.text
     assert '"query_plan_fallback": "query_plan_timeout"' in resp.text
     assert '"fallback_used": "query_plan_timeout"' in resp.text
-    assert '"query_plan": {"buckets": ["constraints", "rejections", "stable_preferences"]' in resp.text
 
 
 @pytest.mark.asyncio
@@ -778,8 +828,20 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
     ):
         retrieval_plan = kwargs["retrieval_plan"]
         assert isinstance(retrieval_plan, RecallRetrievalPlan)
-        assert retrieval_plan.fallback_used == "query_plan_error"
-        return "暂无相关用户记忆", MemoryRecallTelemetry()
+        assert retrieval_plan.source == "profile"
+        assert kwargs["query_plan_source"] == "heuristic_fallback"
+        assert kwargs["query_plan_fallback"] == "query_plan_error"
+        return "暂无相关用户记忆", MemoryRecallTelemetry(
+            query_plan={
+                "source": retrieval_plan.source,
+                "buckets": list(retrieval_plan.buckets),
+                "domains": list(retrieval_plan.domains),
+                "destination": retrieval_plan.destination,
+                "top_k": retrieval_plan.top_k,
+            },
+            query_plan_source=kwargs["query_plan_source"],
+            query_plan_fallback=kwargs["query_plan_fallback"],
+        )
 
     async def fake_collect_forced_tool_call_arguments(llm, *, messages, tool_def):
         tool_name = tool_def["name"]
@@ -824,9 +886,202 @@ async def test_chat_stream_falls_back_to_default_retrieval_plan_when_query_tool_
     ]
     assert resp.status_code == 200
     assert '"type": "memory_recall"' in resp.text
+    assert '"query_plan_source": "heuristic_fallback"' in resp.text
     assert '"query_plan_fallback": "query_plan_error"' in resp.text
     assert '"fallback_used": "query_plan_error"' in resp.text
-    assert '"query_plan": {"buckets": ["constraints", "rejections", "stable_preferences"]' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_passes_stage0_style_signals_to_heuristic_fallback(
+    monkeypatch, app
+):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+    observed = {"recall_calls": []}
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        retrieval_plan = kwargs["retrieval_plan"]
+        assert isinstance(retrieval_plan, RecallRetrievalPlan)
+        assert retrieval_plan.source == "profile"
+        assert retrieval_plan.domains == ["flight"]
+        assert kwargs["query_plan_source"] == "heuristic_fallback"
+        assert kwargs["query_plan_fallback"] == "query_plan_timeout"
+        assert kwargs["stage0_matched_rule"] == "P1"
+        assert kwargs["stage0_signals"]["style"] == ["老样子"]
+        return "暂无相关用户记忆", MemoryRecallTelemetry(
+            stage0_matched_rule=kwargs["stage0_matched_rule"],
+            stage0_signals=kwargs["stage0_signals"],
+            query_plan={
+                "source": retrieval_plan.source,
+                "buckets": list(retrieval_plan.buckets),
+                "domains": list(retrieval_plan.domains),
+                "destination": retrieval_plan.destination,
+                "top_k": retrieval_plan.top_k,
+            },
+            query_plan_source=kwargs["query_plan_source"],
+            query_plan_fallback=kwargs["query_plan_fallback"],
+        )
+
+    async def fake_collect_forced_tool_call_arguments(llm, *, messages, tool_def):
+        tool_name = tool_def["name"]
+        if tool_name in {"decide_memory_recall", "build_recall_retrieval_plan"}:
+            observed["recall_calls"].append(tool_name)
+        if tool_name == "build_recall_retrieval_plan":
+            raise asyncio.TimeoutError
+        return {
+            "should_extract": False,
+            "routes": {"profile": False, "working_memory": False},
+            "reason": "trip_state_only",
+            "message": "本轮只是当前行程事实",
+        }
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("main._collect_forced_tool_call_arguments", fake_collect_forced_tool_call_arguments)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "老样子给我订机票", "user_id": "u1"},
+        )
+
+    assert observed["recall_calls"] == ["build_recall_retrieval_plan"]
+    assert resp.status_code == 200
+    assert '"stage0_matched_rule": "P1"' in resp.text
+    assert '"stage0_signals": {"history": [], "style": ["老样子"]' in resp.text
+    assert '"query_plan_source": "heuristic_fallback"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_query_plan_prompt_includes_recent_user_window_for_context(
+    monkeypatch, app
+):
+    observed_prompt = {"content": ""}
+
+    async def fake_collect_forced_tool_call_arguments(llm, *, messages, tool_def):
+        tool_name = tool_def["name"]
+        if tool_name == "decide_memory_recall":
+            return {
+                "needs_recall": True,
+                "intent_type": "profile_preference_recall",
+                "reason": "need_preference_memory",
+                "confidence": 0.92,
+            }
+        if tool_name == "build_recall_retrieval_plan":
+            observed_prompt["content"] = messages[0].content
+            return {
+                "source": "profile",
+                "buckets": ["constraints", "rejections", "stable_preferences"],
+                "domains": ["hotel"],
+                "destination": "",
+                "keywords": ["住宿"],
+                "top_k": 3,
+                "reason": "profile_preference_recall -> hotel preference profile",
+            }
+        return {
+            "should_extract": False,
+            "routes": {"profile": False, "working_memory": False},
+            "reason": "trip_state_only",
+            "message": "本轮只是当前行程事实",
+        }
+
+    monkeypatch.setattr("main._collect_forced_tool_call_arguments", fake_collect_forced_tool_call_arguments)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "还是按我以前住酒店的习惯来", "user_id": "u1"},
+        )
+        await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "换个吧", "user_id": "u1"},
+        )
+
+    assert "recent_user_window" in observed_prompt["content"]
+    assert "还是按我以前住酒店的习惯来" in observed_prompt["content"]
+    assert "换个吧" in observed_prompt["content"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_reuses_gate_memory_summary_for_query_prompt(
+    monkeypatch, app_extraction_disabled
+):
+    build_recall_retrieval_plan = _get_closure_value(
+        app_extraction_disabled, "_build_recall_retrieval_plan"
+    )
+    original_summary = _get_function_closure_value(
+        build_recall_retrieval_plan, "_build_gate_memory_summary"
+    )
+    call_count = {"count": 0}
+
+    async def counting_summary(*args, **kwargs):
+        call_count["count"] += 1
+        return await original_summary(*args, **kwargs)
+
+    _set_function_closure_value(
+        build_recall_retrieval_plan, "_build_gate_memory_summary", counting_summary
+    )
+
+    async def fake_collect_forced_tool_call_arguments(llm, *, messages, tool_def):
+        tool_name = tool_def["name"]
+        if tool_name == "decide_memory_recall":
+            return {
+                "needs_recall": True,
+                "intent_type": "profile_preference_recall",
+                "reason": "need_preference_memory",
+                "confidence": 0.92,
+            }
+        if tool_name == "build_recall_retrieval_plan":
+            return {
+                "source": "profile",
+                "buckets": ["constraints", "rejections", "stable_preferences"],
+                "domains": ["hotel"],
+                "destination": "",
+                "keywords": ["住宿"],
+                "top_k": 3,
+                "reason": "profile_preference_recall -> hotel preference profile",
+            }
+        return {
+            "should_extract": False,
+            "routes": {"profile": False, "working_memory": False},
+            "reason": "trip_state_only",
+            "message": "本轮只是当前行程事实",
+        }
+
+    monkeypatch.setattr("main._collect_forced_tool_call_arguments", fake_collect_forced_tool_call_arguments)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app_extraction_disabled), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "住宿还是按我常规偏好来", "user_id": "u1"},
+            )
+        assert resp.status_code == 200
+        assert call_count["count"] == 1
+    finally:
+        _set_function_closure_value(
+            build_recall_retrieval_plan, "_build_gate_memory_summary", original_summary
+        )
 
 
 @pytest.mark.asyncio
@@ -914,7 +1169,7 @@ async def test_chat_stream_keeps_undecided_conservative_when_recall_gate_disable
     assert resp.status_code == 200
     assert '"type": "memory_recall"' in resp.text
     assert '"stage0_decision": "undecided"' in resp.text
-    assert '"stage0_reason": "needs_llm_gate"' in resp.text
+    assert '"stage0_reason": "needs_llm_gate_recommend"' in resp.text
     assert '"gate": false' in resp.text
     assert '"gate_needs_recall": false' in resp.text
     assert '"gate_intent_type": "no_recall_needed"' in resp.text
@@ -1063,6 +1318,10 @@ async def test_chat_stream_keeps_conservative_recall_fields_for_invalid_gate_pay
         user_message: str = "",
         **kwargs,
     ):
+        assert kwargs["recall_gate"] is True
+        assert kwargs["retrieval_plan"] is None
+        assert kwargs["query_plan_source"] == "heuristic_fallback"
+        assert kwargs["query_plan_fallback"] == "invalid_tool_payload_heuristic_recall"
         return "暂无相关用户记忆", MemoryRecallTelemetry()
 
     async def fake_run(self, messages, phase, tools_override=None):
@@ -1084,11 +1343,100 @@ async def test_chat_stream_keeps_conservative_recall_fields_for_invalid_gate_pay
 
     assert resp.status_code == 200
     assert '"type": "memory_recall"' in resp.text
-    assert '"gate": false' in resp.text
-    assert '"gate_needs_recall": false' in resp.text
+    assert '"gate": true' in resp.text
+    assert '"gate_needs_recall": true' in resp.text
     assert '"gate_intent_type": "gate_decision_unavailable"' in resp.text
-    assert '"fallback_used": "invalid_tool_payload"' in resp.text
-    assert '"final_recall_decision": "no_recall_applied"' in resp.text
+    assert '"fallback_used": "invalid_tool_payload_heuristic_recall"' in resp.text
+    assert '"query_plan_source": "heuristic_fallback"' in resp.text
+    assert '"final_recall_decision": "query_recall_enabled"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_treats_mixed_ambiguous_gate_intent_as_recall(
+    monkeypatch, app
+):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+
+    class MixedAmbiguousRecallGateProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_recall":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_gate",
+                        name=tool_name,
+                        arguments={
+                            "needs_recall": False,
+                            "intent_type": "mixed_or_ambiguous",
+                            "reason": "ambiguous between current trip and preference",
+                            "confidence": 0.42,
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_query",
+                    name=tool_name,
+                    arguments={
+                        "source": "profile",
+                        "buckets": ["constraints", "rejections", "stable_preferences"],
+                        "domains": ["hotel"],
+                        "destination": "",
+                        "keywords": ["住宿"],
+                        "top_k": 5,
+                        "reason": "ambiguous gate uses conservative profile recall",
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        assert kwargs["recall_gate"] is True
+        assert kwargs["retrieval_plan"].source == "profile"
+        return "暂无相关用户记忆", MemoryRecallTelemetry()
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+    monkeypatch.setattr(
+        "main.create_llm_provider", lambda _config: MixedAmbiguousRecallGateProvider()
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "住宿怎么安排比较好", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    assert '"type": "memory_recall"' in resp.text
+    assert '"gate": true' in resp.text
+    assert '"gate_needs_recall": true' in resp.text
+    assert '"gate_intent_type": "mixed_or_ambiguous"' in resp.text
+    assert '"fallback_used": "mixed_or_ambiguous_conservative_recall"' in resp.text
+    assert '"final_recall_decision": "query_recall_enabled"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -1141,11 +1489,78 @@ async def test_chat_stream_falls_back_when_recall_gate_times_out(monkeypatch, ap
 
     assert resp.status_code == 200
     assert '"type": "memory_recall"' in resp.text
-    assert '"gate": false' in resp.text
-    assert '"gate_needs_recall": false' in resp.text
+    assert '"gate": true' in resp.text
+    assert '"gate_needs_recall": true' in resp.text
     assert '"gate_intent_type": "gate_decision_unavailable"' in resp.text
-    assert '"fallback_used": "gate_timeout"' in resp.text
-    assert '"final_recall_decision": "no_recall_applied"' in resp.text
+    assert '"fallback_used": "gate_timeout_heuristic_recall"' in resp.text
+    assert '"query_plan_source": "heuristic_fallback"' in resp.text
+    assert '"final_recall_decision": "query_recall_enabled"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_uses_heuristic_recall_when_gate_times_out_with_profile_cue(
+    monkeypatch, app
+):
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+    observed = {"recall_calls": []}
+
+    async def fake_generate_context(
+        self,
+        user_id: str,
+        plan: TravelPlanState,
+        user_message: str = "",
+        **kwargs,
+    ):
+        assert kwargs["recall_gate"] is True
+        assert kwargs["retrieval_plan"] is None
+        assert kwargs["query_plan_source"] == "heuristic_fallback"
+        assert kwargs["query_plan_fallback"] == "gate_timeout_heuristic_recall"
+        return "暂无相关用户记忆", MemoryRecallTelemetry(
+            final_recall_decision="query_recall_enabled",
+            query_plan_source=kwargs["query_plan_source"],
+            query_plan_fallback=kwargs["query_plan_fallback"],
+            candidate_count=1,
+        )
+
+    async def fake_collect_forced_tool_call_arguments(llm, *, messages, tool_def):
+        tool_name = tool_def["name"]
+        if tool_name in {"decide_memory_recall", "build_recall_retrieval_plan"}:
+            observed["recall_calls"].append(tool_name)
+        if tool_name == "decide_memory_recall":
+            raise asyncio.TimeoutError
+        if tool_name == "build_recall_retrieval_plan":
+            raise AssertionError("gate failure heuristic recall should skip query tool")
+        return {
+            "should_extract": False,
+            "routes": {"profile": False, "working_memory": False},
+            "reason": "trip_state_only",
+            "message": "本轮只是当前行程事实",
+        }
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr(type(memory_mgr), "generate_context", fake_generate_context)
+    monkeypatch.setattr("main._collect_forced_tool_call_arguments", fake_collect_forced_tool_call_arguments)
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "我不住青旅吗？", "user_id": "u1"},
+        )
+
+    assert observed["recall_calls"] == ["decide_memory_recall"]
+    assert resp.status_code == 200
+    assert '"gate": true' in resp.text
+    assert '"fallback_used": "gate_timeout_heuristic_recall"' in resp.text
+    assert '"query_plan_source": "heuristic_fallback"' in resp.text
+    assert '"query_plan_fallback": "gate_timeout_heuristic_recall"' in resp.text
+    assert '"final_recall_decision": "query_recall_enabled"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -1193,11 +1608,12 @@ async def test_chat_stream_falls_back_when_recall_gate_errors(monkeypatch, app):
 
     assert resp.status_code == 200
     assert '"type": "memory_recall"' in resp.text
-    assert '"gate": false' in resp.text
-    assert '"gate_needs_recall": false' in resp.text
+    assert '"gate": true' in resp.text
+    assert '"gate_needs_recall": true' in resp.text
     assert '"gate_intent_type": "gate_decision_unavailable"' in resp.text
-    assert '"fallback_used": "gate_error"' in resp.text
-    assert '"final_recall_decision": "no_recall_applied"' in resp.text
+    assert '"fallback_used": "gate_error_heuristic_recall"' in resp.text
+    assert '"query_plan_source": "heuristic_fallback"' in resp.text
+    assert '"final_recall_decision": "query_recall_enabled"' in resp.text
 
 
 def test_project_overview_documents_memory_recall_payload_fields():
@@ -1211,12 +1627,17 @@ def test_project_overview_documents_memory_recall_payload_fields():
         "gate",
         "stage0_decision",
         "stage0_reason",
+        "stage0_matched_rule",
+        "stage0_signals",
         "gate_needs_recall",
         "gate_intent_type",
         "gate_confidence",
         "gate_reason",
         "final_recall_decision",
         "fallback_used",
+        "recall_skip_source",
+        "query_plan_source",
+        "recall_attempted_but_zero_hit",
     ):
         assert field in content
 
