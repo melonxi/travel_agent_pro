@@ -35,3 +35,12 @@ def test_cached_embedding_provider_rejects_vector_count_mismatch() -> None:
 def test_cached_embedding_provider_rejects_invalid_max_items() -> None:
     with pytest.raises(ValueError, match="max_items must be >= 1"):
         CachedEmbeddingProvider(StaticEmbeddingProvider([]), max_items=0)
+
+
+def test_cached_embedding_provider_returns_current_batch_when_cache_evicted() -> None:
+    provider = CachedEmbeddingProvider(
+        StaticEmbeddingProvider([[1.0, 0.0], [0.0, 1.0]]),
+        max_items=1,
+    )
+
+    assert provider.embed(["a", "b"]) == [[1.0, 0.0], [0.0, 1.0]]

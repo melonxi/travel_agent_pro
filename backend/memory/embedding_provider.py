@@ -27,9 +27,11 @@ class CachedEmbeddingProvider:
     def embed(self, texts: list[str]) -> list[list[float]]:
         missing: list[str] = []
         seen_missing: set[str] = set()
+        result_vectors: dict[str, list[float]] = {}
         for text in texts:
             if text in self._cache:
                 self._cache.move_to_end(text)
+                result_vectors[text] = self._cache[text]
             elif text not in seen_missing:
                 missing.append(text)
                 seen_missing.add(text)
@@ -39,12 +41,13 @@ class CachedEmbeddingProvider:
             if len(vectors) != len(missing):
                 raise ValueError("embedding_count_mismatch")
             for text, vector in zip(missing, vectors):
+                result_vectors[text] = vector
                 self._cache[text] = vector
                 self._cache.move_to_end(text)
                 while len(self._cache) > self._max_items:
                     self._cache.popitem(last=False)
 
-        return [self._cache[text] for text in texts]
+        return [result_vectors[text] for text in texts]
 
 
 class FastEmbedProvider:
