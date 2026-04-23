@@ -485,8 +485,9 @@ def _normalize_optional_scores(values: dict[str, float | None]) -> dict[str, flo
     if not present:
         return {key: 0.0 for key in values}
     if len(present) == 1:
-        only_key = next(iter(present))
-        return {key: 1.0 if key == only_key else 0.0 for key in values}
+        only_key, only_value = next(iter(present.items()))
+        normalized_value = 1.0 if only_value > 0.0 else 0.0
+        return {key: normalized_value if key == only_key else 0.0 for key in values}
     low = min(present.values())
     high = max(present.values())
     if math.isclose(low, high):

@@ -79,6 +79,10 @@ def test_normalize_optional_scores_single_value_returns_one():
     assert normalized["b"] == 1.0
 
 
+def test_normalize_optional_scores_single_zero_value_stays_zero():
+    assert _normalize_optional_scores({"only": 0.0}) == {"only": 0.0}
+
+
 def test_normalize_optional_scores_equal_zero_values_stay_zero():
     assert _normalize_optional_scores({"a": 0.0, "b": 0.0}) == {
         "a": 0.0,
@@ -454,6 +458,42 @@ def test_evidence_scores_do_not_change_order_when_all_evidence_weights_are_zero(
         "selected_pairwise_similarity_max": None,
         "selected_pairwise_similarity_avg": None,
     }
+
+
+def test_lane_fused_score_stays_zero_for_single_symbolic_unfused_evidence():
+    candidate = make_candidate(
+        item_id="profile_symbolic_only",
+        matched_reason=["exact domain match on hotel"],
+    )
+
+    path = choose_reranker_path(
+        candidates=[candidate],
+        user_message="住宿按我习惯",
+        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="",
+            keywords=["住宿"],
+            top_k=5,
+            reason="profile",
+        ),
+        evidence_by_id={
+            "profile_symbolic_only": RetrievalEvidence(
+                item_id="profile_symbolic_only",
+                source="profile",
+                lanes=["symbolic"],
+                fused_score=0.0,
+            )
+        },
+        config=DummyRerankerConfig(small_candidate_set_threshold=0),
+    )
+
+    assert (
+        path.result.per_item_scores["profile_symbolic_only"].lane_fused_score
+        == 0.0
+    )
 
 
 def test_small_candidate_path_skips_scoring_and_keeps_selection_metrics_placeholder():
