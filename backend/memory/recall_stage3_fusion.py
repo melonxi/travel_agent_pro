@@ -21,10 +21,14 @@ def fuse_lane_results(
         if weight <= 0.0:
             continue
 
+        seen_in_lane: set[str] = set()
         for index, candidate in enumerate(lane_result.candidates):
             rank = index + 1
             contribution = weight / float(config.rrf_k + rank)
             item_id = candidate.candidate.item_id
+            if item_id in seen_in_lane:
+                continue
+            seen_in_lane.add(item_id)
 
             if item_id not in fused_by_id:
                 fused_by_id[item_id] = Stage3Candidate(
@@ -60,7 +64,7 @@ def _copy_evidence(evidence: RetrievalEvidence) -> RetrievalEvidence:
         lanes=list(evidence.lanes),
         lane_scores=dict(evidence.lane_scores),
         lane_ranks=dict(evidence.lane_ranks),
-        fused_score=evidence.fused_score,
+        fused_score=0.0,
         matched_domains=list(evidence.matched_domains),
         matched_keywords=list(evidence.matched_keywords),
         matched_entities=list(evidence.matched_entities),
