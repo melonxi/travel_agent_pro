@@ -212,18 +212,23 @@ def _rank_slices_lexical(
 
 
 def _lexical_score(query_terms: set[str], text: str) -> float:
-    text_terms = _tokenize_for_lexical(text)
-    if not query_terms or not text_terms:
+    meaningful_query_terms = {
+        term for term in query_terms if _is_meaningful_lexical_term(term)
+    }
+    text_terms = {
+        term
+        for term in _tokenize_for_lexical(text)
+        if _is_meaningful_lexical_term(term)
+    }
+    if not meaningful_query_terms or not text_terms:
         return 0.0
 
-    overlap = query_terms & text_terms
+    overlap = meaningful_query_terms & text_terms
     if not overlap:
-        return 0.0
-    if not any(_is_meaningful_lexical_term(term) for term in overlap):
         return 0.0
 
     precision = len(overlap) / len(text_terms)
-    recall = len(overlap) / len(query_terms)
+    recall = len(overlap) / len(meaningful_query_terms)
     if precision + recall == 0:
         return 0.0
     score = 2 * precision * recall / (precision + recall)
