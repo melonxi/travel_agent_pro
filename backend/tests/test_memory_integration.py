@@ -47,6 +47,27 @@ def _set_function_closure_value(fn, name: str, value):
     raise RuntimeError(f"Cannot locate {name}")
 
 
+def _parse_sse_data_events(body: str) -> list[dict]:
+    events: list[dict] = []
+    data_lines: list[str] = []
+
+    def flush_event():
+        if not data_lines:
+            return
+        events.append(json.loads("\n".join(data_lines)))
+        data_lines.clear()
+
+    for line in body.splitlines():
+        if not line:
+            flush_event()
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line.removeprefix("data:").strip())
+
+    flush_event()
+    return events
+
+
 async def _wait_for_memory_scheduler_idle(
     app,
     session_id: str,
@@ -650,9 +671,14 @@ async def test_chat_stream_emits_structured_reranker_fields(monkeypatch, app):
         )
 
     assert resp.status_code == 200
-    assert '"type": "memory_recall"' in resp.text
-    assert '"reranker_intent_label": "profile"' in resp.text
-    assert '"reranker_per_item_scores"' in resp.text
+    events = _parse_sse_data_events(resp.text)
+    memory_event = next(event for event in events if event["type"] == "memory_recall")
+    assert memory_event["reranker_intent_label"] == "profile"
+    assert memory_event["reranker_per_item_scores"]["profile_1"]["final_score"] == 2.0
+    assert (
+        memory_event["reranker_selection_metrics"]["selected_pairwise_similarity_max"]
+        is None
+    )
 
 
 @pytest.mark.asyncio
