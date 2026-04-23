@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from config import MemoryRerankerConfig, MemoryRetrievalConfig
+from memory.destination_normalization import match_destination
 from memory.embedding_provider import (
     CachedEmbeddingProvider,
     FastEmbedProvider,
@@ -81,7 +82,7 @@ class MemoryManager:
                 max_items=semantic_config.cache_max_items,
             )
         except Exception:
-            self._embedding_provider = NullEmbeddingProvider()
+            return None
         return self._embedding_provider
 
     async def generate_context(
@@ -157,6 +158,10 @@ class MemoryManager:
                     user_id,
                     destination=destination_filter or None,
                 )
+                candidate_slices = self._filter_slices_by_normalized_destination(
+                    active_plan.destination,
+                    candidate_slices,
+                )
             stage3_result = retrieve_recall_candidates(
                 query=active_plan,
                 profile=profile,
@@ -227,6 +232,24 @@ class MemoryManager:
     ) -> list[WorkingMemoryItem]:
         active_items = [item for item in items if item.status == "active"]
         return active_items[:_WORKING_MEMORY_LIMIT]
+
+    def _filter_slices_by_normalized_destination(
+        self,
+        destination: str,
+        slices: list[EpisodeSlice],
+    ) -> list[EpisodeSlice]:
+        if (
+            not destination
+            or not self.retrieval_config.stage3.destination_normalization_enabled
+        ):
+            return slices
+
+        matched_slices: list[EpisodeSlice] = []
+        for slice_ in slices:
+            candidate_destination = str(slice_.entities.get("destination", ""))
+            if match_destination(destination, candidate_destination).match_type != "none":
+                matched_slices.append(slice_)
+        return matched_slices
 
     def _build_v3_telemetry(
         self,

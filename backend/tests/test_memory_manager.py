@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from config import load_config
+from config import (
+    MemoryRetrievalConfig,
+    Stage3LaneConfig,
+    Stage3RecallConfig,
+    Stage3SemanticConfig,
+    load_config,
+)
 from memory.manager import MemoryManager
 from memory.recall_gate import apply_recall_short_circuit
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import RecallRerankResult
+from memory.recall_stage3_models import Stage3RecallResult, Stage3Telemetry
 from memory.v3_models import EpisodeSlice, MemoryProfileItem
 from state.models import TravelPlanState
 
@@ -741,3 +749,126 @@ async def test_generate_context_passes_active_plan_to_reranker_when_plan_is_heur
 
     assert seen["retrieval_plan"] is not None
     assert seen["retrieval_plan"].source == "profile"
+
+
+@pytest.mark.asyncio
+async def test_generate_context_filters_slices_by_normalized_destination_before_stage3(
+    tmp_path: Path,
+    monkeypatch,
+):
+    retrieval_config = MemoryRetrievalConfig(
+        stage3=replace(Stage3RecallConfig(), destination_normalization_enabled=True)
+    )
+    manager = MemoryManager(data_dir=str(tmp_path), retrieval_config=retrieval_config)
+    await manager.v3_store.append_episode_slice(
+        EpisodeSlice(
+            id="slice_kyoto_alias",
+            user_id="u1",
+            source_episode_id="ep_kyoto",
+            source_trip_id="trip_kyoto_old",
+            slice_type="accommodation_decision",
+            domains=["hotel"],
+            entities={"destination": "Kyoto"},
+            keywords=["住宿"],
+            content="上次京都住在四条。",
+            applicability="仅供住宿选择参考。",
+            created_at="2026-04-19T00:00:00",
+        )
+    )
+    await manager.v3_store.append_episode_slice(
+        EpisodeSlice(
+            id="slice_paris",
+            user_id="u1",
+            source_episode_id="ep_paris",
+            source_trip_id="trip_paris_old",
+            slice_type="accommodation_decision",
+            domains=["hotel"],
+            entities={"destination": "Paris"},
+            keywords=["住宿"],
+            content="上次巴黎住在左岸。",
+            applicability="仅供住宿选择参考。",
+            created_at="2026-04-19T00:00:01",
+        )
+    )
+
+    seen = {}
+
+    def fake_retrieve_recall_candidates(**kwargs):
+        seen["slice_ids"] = [slice_.id for slice_ in kwargs["slices"]]
+        return Stage3RecallResult(
+            candidates=[],
+            evidence_by_id={},
+            telemetry=Stage3Telemetry(
+                lanes_attempted=["symbolic"],
+                lanes_succeeded=["symbolic"],
+                zero_hit=True,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "memory.manager.retrieve_recall_candidates",
+        fake_retrieve_recall_candidates,
+    )
+
+    await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_now"),
+        user_message="还记得去年京都订的那家旅馆吗？",
+        recall_gate=True,
+        retrieval_plan=RecallRetrievalPlan(
+            source="episode_slice",
+            buckets=[],
+            domains=["hotel"],
+            destination="京都",
+            keywords=["住宿"],
+            top_k=5,
+            reason="test",
+        ),
+    )
+
+    assert seen["slice_ids"] == ["slice_kyoto_alias"]
+
+
+@pytest.mark.asyncio
+async def test_generate_context_reports_semantic_lane_error_when_embedding_provider_init_fails(
+    tmp_path: Path,
+    monkeypatch,
+):
+    retrieval_config = MemoryRetrievalConfig(
+        stage3=replace(
+            Stage3RecallConfig(),
+            symbolic=Stage3LaneConfig(enabled=False),
+            semantic=Stage3SemanticConfig(enabled=True, min_score=0.7, top_k=5),
+        )
+    )
+    manager = MemoryManager(data_dir=str(tmp_path), retrieval_config=retrieval_config)
+    attempts = {"count": 0}
+
+    class RaisingFastEmbedProvider:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+            attempts["count"] += 1
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr("memory.manager.FastEmbedProvider", RaisingFastEmbedProvider)
+
+    for _ in range(2):
+        _, recall = await manager.generate_context(
+            "u1",
+            TravelPlanState(session_id="s1", trip_id="trip_now"),
+            user_message="住宿按我习惯",
+            recall_gate=True,
+            retrieval_plan=RecallRetrievalPlan(
+                source="profile",
+                buckets=["stable_preferences"],
+                domains=["hotel"],
+                destination="",
+                keywords=["住宿"],
+                top_k=5,
+                reason="test",
+            ),
+        )
+
+        assert recall.stage3["lane_errors"]["semantic"] == "embedding_provider_missing"
+
+    assert attempts["count"] == 2
