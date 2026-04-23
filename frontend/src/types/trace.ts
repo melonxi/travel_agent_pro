@@ -33,14 +33,20 @@ export interface MemoryHit {
 export interface MemoryRecallTelemetry {
   stage0_decision?: string
   stage0_reason?: string
+  stage0_matched_rule?: string
+  stage0_signals?: Record<string, string[]>
   gate_needs_recall?: boolean | null
   gate_intent_type?: string
   final_recall_decision?: string
   fallback_used?: string
+  recall_skip_source?: string
+  query_plan_source?: string
   candidate_count?: number
+  recall_attempted_but_zero_hit?: boolean
   reranker_selected_ids?: string[]
   reranker_final_reason?: string
   reranker_fallback?: string
+  reranker_per_item_reason?: Record<string, string>
 }
 
 export type Significance = 'high' | 'medium' | 'low' | 'none'

@@ -180,10 +180,19 @@ interface BaseSSEEvent {
   slice_ids?: string[]
   matched_reasons?: string[]
   sources?: Record<string, number>
+  stage0_decision?: string
+  stage0_reason?: string
+  stage0_matched_rule?: string
+  stage0_signals?: Record<string, string[]>
+  query_plan_source?: string
+  query_plan_fallback?: string
+  recall_skip_source?: string
   candidate_count?: number
+  recall_attempted_but_zero_hit?: boolean
   reranker_selected_ids?: string[]
   reranker_final_reason?: string
   reranker_fallback?: string
+  reranker_per_item_reason?: Record<string, string>
   error?: string
   error_code?: string
   message?: string
