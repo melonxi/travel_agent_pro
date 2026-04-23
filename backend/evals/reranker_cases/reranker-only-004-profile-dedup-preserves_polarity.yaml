@@ -1,0 +1,59 @@
+id: reranker-only-004-profile-dedup-preserves_polarity
+name: Profile dedupe preserves same-key opposite polarity
+description: Same profile key with different polarity must not be merged before scoring.
+user_message: 这次航班座位按我的偏好安排
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+retrieval_plan:
+  source: profile
+  buckets: [stable_preferences]
+  domains: [flight]
+  destination: ""
+  keywords: [航班, 座位]
+  top_k: 5
+  reason: fixed_reranker_eval -> profile polarity dedupe
+config:
+  small_candidate_set_threshold: 1
+  profile_top_n: 3
+candidates:
+  - source: profile
+    item_id: profile_seat_window_prefer
+    bucket: stable_preferences
+    score: 0.9
+    matched_reason: [domain match on flight, keyword match on 座位]
+    content_summary: flight:seat_window=true
+    domains: [flight]
+    applicability: 适用于大多数航班选择。
+    polarity: prefer
+    key: seat_window
+    created_at: "2026-04-20T13:08:23+00:00"
+  - source: profile
+    item_id: profile_seat_window_avoid
+    bucket: stable_preferences
+    score: 0.8
+    matched_reason: [domain match on flight, keyword match on 座位]
+    content_summary: flight:seat_window=false
+    domains: [flight]
+    applicability: 适用于大多数航班选择。
+    polarity: avoid
+    key: seat_window
+    created_at: "2026-04-21T13:08:23+00:00"
+  - source: profile
+    item_id: profile_aisle_prefer
+    bucket: stable_preferences
+    score: 0.75
+    matched_reason: [domain match on flight, keyword match on 座位]
+    content_summary: flight:seat_aisle=true
+    domains: [flight]
+    applicability: 适用于大多数航班选择。
+    polarity: prefer
+    key: seat_aisle
+    created_at: "2026-04-19T13:08:23+00:00"
+expected:
+  selected_item_ids:
+    - profile_seat_window_avoid
+    - profile_seat_window_prefer
+    - profile_aisle_prefer
+  final_reason: source-aware weighted rerank selected 3 items (3 profile, 0 slice)
+  fallback_used: none

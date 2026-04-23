@@ -213,6 +213,9 @@ class TestGoldenCaseLoader:
             "recall-004-ack-preference-force",
             "recall-005-negated-profile-signal",
             "recall-006-recommend-fallback",
+            "reranker-001-tokyo-stay-hybrid-weighted",
+            "reranker-002-tokyo-itinerary-slice-weighted",
+            "reranker-003-kyoto-stay-hybrid-weighted",
         }
         assert all(
             any(

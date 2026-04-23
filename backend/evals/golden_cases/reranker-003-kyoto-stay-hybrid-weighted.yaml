@@ -1,0 +1,28 @@
+id: reranker-003-kyoto-stay-hybrid-weighted
+name: Kyoto stay history keeps destination-specific slices
+description: Historical Kyoto stay lookup should retain accommodation constraints plus Kyoto-specific stay slices through the weighted reranker.
+difficulty: memory
+messages:
+  - role: user
+    content: 我之前去京都住哪里？
+assertions:
+  - type: memory_recall_field
+    target: final_recall_decision
+    value: query_recall_enabled
+  - type: memory_recall_field
+    target: reranker_selected_ids
+    value:
+      - constraints:accommodation:avoid_capsule_hotel
+      - constraints:accommodation:avoid_hostel
+      - slice_ep_trip_25de5ff5b19b_stay_choice_01
+      - slice_ep_trip_4ebf9cc51c76_stay_choice_01
+  - type: memory_recall_field
+    target: reranker_final_reason
+    value: source-aware weighted rerank selected 4 items (2 profile, 2 slice)
+tags:
+  - memory_recall
+  - reranker_eval
+  - expect_recall
+  - weighted_rerank
+  - hybrid_history
+  - kyoto

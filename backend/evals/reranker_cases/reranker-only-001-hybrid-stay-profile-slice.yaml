@@ -1,0 +1,93 @@
+id: reranker-only-001-hybrid-stay-profile-slice
+name: Hybrid stay query selects profile constraints plus destination slices
+description: Fixed hybrid_history input should keep hard accommodation constraints and the best Tokyo stay slices.
+user_message: 我之前去东京的住宿和行程是怎么安排的？
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+  destination: 东京
+retrieval_plan:
+  source: hybrid_history
+  buckets: [constraints, stable_preferences]
+  domains: [hotel, accommodation]
+  destination: 东京
+  keywords: [住宿, 行程, 酒店]
+  top_k: 5
+  reason: fixed_reranker_eval -> hybrid stay history
+config:
+  small_candidate_set_threshold: 3
+  hybrid_top_n: 4
+  hybrid_profile_top_n: 2
+  hybrid_slice_top_n: 2
+candidates:
+  - source: profile
+    item_id: constraints:accommodation:avoid_capsule_hotel
+    bucket: constraints
+    score: 1.0
+    matched_reason: [domain match on accommodation, keyword match on 住宿]
+    content_summary: accommodation:avoid_capsule_hotel=true
+    domains: [accommodation]
+    applicability: 适用于所有住宿选择。
+    polarity: avoid
+    key: avoid_capsule_hotel
+    created_at: "2026-04-20T12:01:27+00:00"
+  - source: profile
+    item_id: constraints:accommodation:avoid_hostel
+    bucket: constraints
+    score: 1.0
+    matched_reason: [domain match on accommodation, keyword match on 住宿]
+    content_summary: accommodation:avoid_hostel=true
+    domains: [accommodation]
+    applicability: 适用于所有住宿选择。
+    polarity: avoid
+    key: avoid_hostel
+    created_at: "2026-04-20T11:51:12+00:00"
+  - source: profile
+    item_id: stable_preferences:hotel:prefer_quiet_hotel
+    bucket: stable_preferences
+    score: 0.9
+    matched_reason: [domain match on hotel]
+    content_summary: hotel:prefer_quiet_hotel=true
+    domains: [hotel]
+    applicability: 适用于大多数住宿选择。
+    polarity: prefer
+    key: prefer_quiet_hotel
+    created_at: "2026-04-20T13:08:23+00:00"
+  - source: episode_slice
+    item_id: slice_tokyo_recent_stay
+    bucket: stay_choice
+    score: 0.8
+    matched_reason: [exact destination match on 东京, keyword match on 住宿]
+    content_summary: 住宿选择：东京；area=新宿；hotel=新宿华盛顿酒店
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿偏好参考；库存和价格变化时需重新选择。
+    created_at: "2026-04-23T02:23:34+00:00"
+  - source: episode_slice
+    item_id: slice_tokyo_old_stay
+    bucket: stay_choice
+    score: 0.7
+    matched_reason: [exact destination match on 东京, keyword match on 酒店]
+    content_summary: 住宿选择：东京；area=银座；hotel=银座商务酒店
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿偏好参考；库存和价格变化时需重新选择。
+    created_at: "2026-04-22T15:02:15+00:00"
+  - source: episode_slice
+    item_id: slice_tokyo_itinerary
+    bucket: itinerary_pattern
+    score: 0.5
+    matched_reason: [exact destination match on 东京, keyword match on 行程]
+    content_summary: 行程骨架：东京；浅草寺、银座、新宿
+    domains: [itinerary, pace]
+    applicability: 仅供行程结构参考；当前日期、体力和预算变化时需重排。
+    created_at: "2026-04-23T02:23:34+00:00"
+expected:
+  selected_item_ids:
+    - constraints:accommodation:avoid_hostel
+    - slice_tokyo_old_stay
+    - slice_tokyo_recent_stay
+    - constraints:accommodation:avoid_capsule_hotel
+  final_reason: source-aware weighted rerank selected 4 items (2 profile, 2 slice)
+  fallback_used: none
+  reason_contains:
+    constraints:accommodation:avoid_capsule_hotel: bucket=
+    slice_tokyo_recent_stay: destination=1.00

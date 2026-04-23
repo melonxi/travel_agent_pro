@@ -1,0 +1,1972 @@
+{
+  "total_cases": 6,
+  "k": 5,
+  "overall_pass_rate": 0.9,
+  "unstable_cases": [
+    "recall-003-gate-failure-profile-cue"
+  ],
+  "highly_unstable_cases": [
+    "recall-003-gate-failure-profile-cue"
+  ],
+  "results": [
+    {
+      "case_id": "recall-001-style-force-query-fallback",
+      "k": 5,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "memory_recall_field:final_recall_decision": 0.0,
+        "memory_recall_field:query_plan_source": 0.0,
+        "memory_recall_field:recall_attempted_but_zero_hit": 0.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 13055.153166002128,
+        "max": 32007.901582983322,
+        "mean": 17518.64634139929,
+        "stddev": 8123.145660036715
+      },
+      "runs": [
+        {
+          "case_id": "recall-001-style-force-query-fallback",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 13055.2,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5050,
+            "total_output_tokens": 201,
+            "total_llm_duration_ms": 7019.0,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "force_recall",
+              "stage0_reason": "explicit_profile_history_query",
+              "stage0_matched_rule": "P1",
+              "stage0_signals": {
+                "history": [],
+                "style": [
+                  "老样子"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 1,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:flight:avoid_red_eye"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:flight:avoid_red_eye": "exact domain match on flight | bucket=constraints | bucket=1.00 domain=1.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912004.4276521
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5050,
+                "output_tokens": 201,
+                "calls": 1,
+                "duration_ms": 7019.018916995265
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-001-style-force-query-fallback",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 13563.5,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5050,
+            "total_output_tokens": 283,
+            "total_llm_duration_ms": 7510.0,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "force_recall",
+              "stage0_reason": "explicit_profile_history_query",
+              "stage0_matched_rule": "P1",
+              "stage0_signals": {
+                "history": [],
+                "style": [
+                  "老样子"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 1,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:flight:avoid_red_eye"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:flight:avoid_red_eye": "exact domain match on flight | bucket=constraints | bucket=1.00 domain=1.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912017.490251
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5050,
+                "output_tokens": 283,
+                "calls": 1,
+                "duration_ms": 7509.952499996871
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-001-style-force-query-fallback",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 14407.8,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5050,
+            "total_output_tokens": 395,
+            "total_llm_duration_ms": 8364.3,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "force_recall",
+              "stage0_reason": "explicit_profile_history_query",
+              "stage0_matched_rule": "P1",
+              "stage0_signals": {
+                "history": [],
+                "style": [
+                  "老样子"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 1,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:flight:avoid_red_eye"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:flight:avoid_red_eye": "exact domain match on flight | bucket=constraints | bucket=1.00 domain=1.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912031.0496
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5050,
+                "output_tokens": 395,
+                "calls": 1,
+                "duration_ms": 8364.346541988198
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-001-style-force-query-fallback",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 14558.9,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5050,
+            "total_output_tokens": 317,
+            "total_llm_duration_ms": 8520.9,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "force_recall",
+              "stage0_reason": "explicit_profile_history_query",
+              "stage0_matched_rule": "P1",
+              "stage0_signals": {
+                "history": [],
+                "style": [
+                  "老样子"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 1,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:flight:avoid_red_eye"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:flight:avoid_red_eye": "exact domain match on flight | bucket=constraints | bucket=1.00 domain=1.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912045.4604
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5050,
+                "output_tokens": 317,
+                "calls": 1,
+                "duration_ms": 8520.92158398591
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-001-style-force-query-fallback",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 32007.9,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5050,
+            "total_output_tokens": 478,
+            "total_llm_duration_ms": 25968.6,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "force_recall",
+              "stage0_reason": "explicit_profile_history_query",
+              "stage0_matched_rule": "P1",
+              "stage0_signals": {
+                "history": [],
+                "style": [
+                  "老样子"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 1,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:flight:avoid_red_eye"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:flight:avoid_red_eye": "exact domain match on flight | bucket=constraints | bucket=1.00 domain=1.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912060.011138
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5050,
+                "output_tokens": 478,
+                "calls": 1,
+                "duration_ms": 25968.58499996597
+              }
+            },
+            "by_tool": {}
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "recall-002-current-trip-fact-skip",
+      "k": 5,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "memory_recall_field:final_recall_decision": 0.0,
+        "memory_recall_field:recall_skip_source": 0.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 5222.984791966155,
+        "max": 27559.17312495876,
+        "mean": 16863.00444159424,
+        "stddev": 9678.458236587601
+      },
+      "runs": [
+        {
+          "case_id": "recall-002-current-trip-fact-skip",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 9902.0,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5018,
+            "total_output_tokens": 293,
+            "total_llm_duration_ms": 9863.0,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "skip_recall",
+              "stage0_reason": "current_trip_fact_question",
+              "stage0_matched_rule": "P3",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [],
+                "fact_scope": [
+                  "这次"
+                ],
+                "fact_field": [
+                  "预算"
+                ],
+                "ack_sys": []
+              },
+              "gate_needs_recall": false,
+              "gate_intent_type": "",
+              "final_recall_decision": "no_recall_applied",
+              "fallback_used": "none",
+              "recall_skip_source": "stage0_skip",
+              "query_plan_source": "",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912086.018655
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5018,
+                "output_tokens": 293,
+                "calls": 1,
+                "duration_ms": 9863.048415980302
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-002-current-trip-fact-skip",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 27559.2,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5018,
+            "total_output_tokens": 374,
+            "total_llm_duration_ms": 27525.8,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "skip_recall",
+              "stage0_reason": "current_trip_fact_question",
+              "stage0_matched_rule": "P3",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [],
+                "fact_scope": [
+                  "这次"
+                ],
+                "fact_field": [
+                  "预算"
+                ],
+                "ack_sys": []
+              },
+              "gate_needs_recall": false,
+              "gate_intent_type": "",
+              "final_recall_decision": "no_recall_applied",
+              "fallback_used": "none",
+              "recall_skip_source": "stage0_skip",
+              "query_plan_source": "",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912095.9174569
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5018,
+                "output_tokens": 374,
+                "calls": 1,
+                "duration_ms": 27525.8061249624
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-002-current-trip-fact-skip",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 25563.7,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5018,
+            "total_output_tokens": 445,
+            "total_llm_duration_ms": 25534.8,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "skip_recall",
+              "stage0_reason": "current_trip_fact_question",
+              "stage0_matched_rule": "P3",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [],
+                "fact_scope": [
+                  "这次"
+                ],
+                "fact_field": [
+                  "预算"
+                ],
+                "ack_sys": []
+              },
+              "gate_needs_recall": false,
+              "gate_intent_type": "",
+              "final_recall_decision": "no_recall_applied",
+              "fallback_used": "none",
+              "recall_skip_source": "stage0_skip",
+              "query_plan_source": "",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912123.474315
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5018,
+                "output_tokens": 445,
+                "calls": 1,
+                "duration_ms": 25534.81316595571
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-002-current-trip-fact-skip",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 16067.1,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5018,
+            "total_output_tokens": 236,
+            "total_llm_duration_ms": 16037.5,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "skip_recall",
+              "stage0_reason": "current_trip_fact_question",
+              "stage0_matched_rule": "P3",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [],
+                "fact_scope": [
+                  "这次"
+                ],
+                "fact_field": [
+                  "预算"
+                ],
+                "ack_sys": []
+              },
+              "gate_needs_recall": false,
+              "gate_intent_type": "",
+              "final_recall_decision": "no_recall_applied",
+              "fallback_used": "none",
+              "recall_skip_source": "stage0_skip",
+              "query_plan_source": "",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912149.042934
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5018,
+                "output_tokens": 236,
+                "calls": 1,
+                "duration_ms": 16037.489791982807
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-002-current-trip-fact-skip",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 5223.0,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5018,
+            "total_output_tokens": 233,
+            "total_llm_duration_ms": 5192.6,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "skip_recall",
+              "stage0_reason": "current_trip_fact_question",
+              "stage0_matched_rule": "P3",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [],
+                "fact_scope": [
+                  "这次"
+                ],
+                "fact_field": [
+                  "预算"
+                ],
+                "ack_sys": []
+              },
+              "gate_needs_recall": false,
+              "gate_intent_type": "",
+              "final_recall_decision": "no_recall_applied",
+              "fallback_used": "none",
+              "recall_skip_source": "stage0_skip",
+              "query_plan_source": "",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912165.106744
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5018,
+                "output_tokens": 233,
+                "calls": 1,
+                "duration_ms": 5192.604375013616
+              }
+            },
+            "by_tool": {}
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "recall-003-gate-failure-profile-cue",
+      "k": 5,
+      "pass_rate": 0.4,
+      "assertion_consistency": {
+        "memory_recall_field:final_recall_decision": 0.0,
+        "memory_recall_field:fallback_used": 0.0,
+        "memory_recall_field:query_plan_source": 0.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 18720.46841599513,
+        "max": 151271.45624998957,
+        "mean": 52138.30274140928,
+        "stddev": 56936.463293408524
+      },
+      "runs": [
+        {
+          "case_id": "recall-003-gate-failure-profile-cue",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 20782.4,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5083,
+            "total_output_tokens": 539,
+            "total_llm_duration_ms": 14742.0,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "needs_llm_gate",
+              "stage0_matched_rule": "P6",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 3,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:accommodation:avoid_capsule_hotel",
+                "constraints:accommodation:avoid_hostel"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:accommodation:avoid_capsule_hotel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "constraints:accommodation:avoid_hostel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "stable_preferences:hotel:prefer_quiet_hotel": "exact domain match on hotel | bucket=stable_preferences | bucket=0.82 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912176.338629
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5083,
+                "output_tokens": 539,
+                "calls": 1,
+                "duration_ms": 14742.023749975488
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-003-gate-failure-profile-cue",
+          "passed": false,
+          "assertions_passed": 2,
+          "assertions_total": 3,
+          "failures": [
+            "[memory_recall_field] memory_recall.fallback_used=query_plan_timeout, expected gate_timeout_heuristic_recall"
+          ],
+          "duration_ms": 19968.1,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5115,
+            "total_output_tokens": 233,
+            "total_llm_duration_ms": 9772.1,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "needs_llm_gate",
+              "stage0_matched_rule": "P6",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "profile_constraint_recall",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 3,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:accommodation:avoid_capsule_hotel",
+                "constraints:accommodation:avoid_hostel",
+                "stable_preferences:hotel:prefer_quiet_hotel"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:accommodation:avoid_capsule_hotel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.50 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "constraints:accommodation:avoid_hostel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.50 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "stable_preferences:hotel:prefer_quiet_hotel": "exact domain match on hotel | bucket=stable_preferences | bucket=0.82 domain=0.50 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912201.283539
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5115,
+                "output_tokens": 233,
+                "calls": 1,
+                "duration_ms": 9772.085750009865
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-003-gate-failure-profile-cue",
+          "passed": false,
+          "assertions_passed": 2,
+          "assertions_total": 3,
+          "failures": [
+            "[memory_recall_field] memory_recall.fallback_used=query_plan_timeout, expected gate_timeout_heuristic_recall"
+          ],
+          "duration_ms": 18720.5,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5115,
+            "total_output_tokens": 253,
+            "total_llm_duration_ms": 6986.8,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "needs_llm_gate",
+              "stage0_matched_rule": "P6",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "profile_constraint_recall",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 3,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:accommodation:avoid_capsule_hotel",
+                "constraints:accommodation:avoid_hostel",
+                "stable_preferences:hotel:prefer_quiet_hotel"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:accommodation:avoid_capsule_hotel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.50 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "constraints:accommodation:avoid_hostel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.50 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "stable_preferences:hotel:prefer_quiet_hotel": "exact domain match on hotel | bucket=stable_preferences | bucket=0.82 domain=0.50 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912222.773619
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5115,
+                "output_tokens": 253,
+                "calls": 1,
+                "duration_ms": 6986.828458961099
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-003-gate-failure-profile-cue",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 49949.1,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_llm_duration_ms": 0,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 0,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "needs_llm_gate",
+              "stage0_matched_rule": "P6",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 3,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:accommodation:avoid_capsule_hotel",
+                "constraints:accommodation:avoid_hostel"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:accommodation:avoid_capsule_hotel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "constraints:accommodation:avoid_hostel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "stable_preferences:hotel:prefer_quiet_hotel": "exact domain match on hotel | bucket=stable_preferences | bucket=0.82 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912235.8098822
+            },
+            "by_model": {},
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-003-gate-failure-profile-cue",
+          "passed": false,
+          "assertions_passed": 1,
+          "assertions_total": 3,
+          "failures": [
+            "[memory_recall_field] memory_recall.fallback_used=none, expected gate_timeout_heuristic_recall",
+            "[memory_recall_field] memory_recall.query_plan_source=llm, expected heuristic_fallback"
+          ],
+          "duration_ms": 151271.5,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5115,
+            "total_output_tokens": 282,
+            "total_llm_duration_ms": 141831.2,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "needs_llm_gate",
+              "stage0_matched_rule": "P6",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "profile_constraint_recall",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "none",
+              "recall_skip_source": "",
+              "query_plan_source": "llm",
+              "candidate_count": 3,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:accommodation:avoid_capsule_hotel",
+                "constraints:accommodation:avoid_hostel",
+                "stable_preferences:hotel:prefer_quiet_hotel"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:accommodation:avoid_capsule_hotel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.50 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "constraints:accommodation:avoid_hostel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.50 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "stable_preferences:hotel:prefer_quiet_hotel": "exact domain match on hotel | bucket=stable_preferences | bucket=0.82 domain=0.50 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912289.157231
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5115,
+                "output_tokens": 282,
+                "calls": 1,
+                "duration_ms": 141831.202249974
+              }
+            },
+            "by_tool": {}
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "recall-004-ack-preference-force",
+      "k": 5,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "memory_recall_field:stage0_matched_rule": 0.0,
+        "memory_recall_field:final_recall_decision": 0.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 10551.477792032529,
+        "max": 79102.97591600101,
+        "mean": 26003.452183003537,
+        "stddev": 29741.99106722038
+      },
+      "runs": [
+        {
+          "case_id": "recall-004-ack-preference-force",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 15418.1,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5020,
+            "total_output_tokens": 365,
+            "total_llm_duration_ms": 9377.4,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "force_recall",
+              "stage0_reason": "explicit_profile_history_query",
+              "stage0_matched_rule": "P1",
+              "stage0_signals": {
+                "history": [],
+                "style": [
+                  "按我偏好"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": [
+                  "好的"
+                ]
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": true,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912437.030735
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5020,
+                "output_tokens": 365,
+                "calls": 1,
+                "duration_ms": 9377.414583985228
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-004-ack-preference-force",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 11526.2,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5020,
+            "total_output_tokens": 269,
+            "total_llm_duration_ms": 5489.7,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "force_recall",
+              "stage0_reason": "explicit_profile_history_query",
+              "stage0_matched_rule": "P1",
+              "stage0_signals": {
+                "history": [],
+                "style": [
+                  "按我偏好"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": [
+                  "好的"
+                ]
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": true,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912452.448817
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5020,
+                "output_tokens": 269,
+                "calls": 1,
+                "duration_ms": 5489.683999971021
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-004-ack-preference-force",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 13418.5,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5020,
+            "total_output_tokens": 261,
+            "total_llm_duration_ms": 7377.0,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "force_recall",
+              "stage0_reason": "explicit_profile_history_query",
+              "stage0_matched_rule": "P1",
+              "stage0_signals": {
+                "history": [],
+                "style": [
+                  "按我偏好"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": [
+                  "好的"
+                ]
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": true,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912463.975478
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5020,
+                "output_tokens": 261,
+                "calls": 1,
+                "duration_ms": 7376.952292048372
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-004-ack-preference-force",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 79103.0,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_llm_duration_ms": 0,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 0,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "force_recall",
+              "stage0_reason": "explicit_profile_history_query",
+              "stage0_matched_rule": "P1",
+              "stage0_signals": {
+                "history": [],
+                "style": [
+                  "按我偏好"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": [
+                  "好的"
+                ]
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": true,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912477.3968189
+            },
+            "by_model": {},
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-004-ack-preference-force",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 10551.5,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5020,
+            "total_output_tokens": 207,
+            "total_llm_duration_ms": 4510.7,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "force_recall",
+              "stage0_reason": "explicit_profile_history_query",
+              "stage0_matched_rule": "P1",
+              "stage0_signals": {
+                "history": [],
+                "style": [
+                  "按我偏好"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": [
+                  "好的"
+                ]
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "query_plan_timeout",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": true,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912556.4899552
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5020,
+                "output_tokens": 207,
+                "calls": 1,
+                "duration_ms": 4510.745582985692
+              }
+            },
+            "by_tool": {}
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "recall-005-negated-profile-signal",
+      "k": 5,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "memory_recall_field:stage0_decision": 0.0,
+        "memory_recall_field:stage0_matched_rule": 0.0
+      },
+      "tool_overlap_ratio": 0.0,
+      "cost_stats": {
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 13905.399666982703,
+        "max": 64312.755416030996,
+        "mean": 35106.277624797076,
+        "stddev": 24392.7692068621
+      },
+      "runs": [
+        {
+          "case_id": "recall-005-negated-profile-signal",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 21924.7,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5019,
+            "total_output_tokens": 287,
+            "total_llm_duration_ms": 15880.4,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "negated_profile_history_signal",
+              "stage0_matched_rule": "P1N",
+              "stage0_signals": {
+                "history": [
+                  "按我的习惯"
+                ],
+                "style": [
+                  "按我的习惯"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": true,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912567.043485
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5019,
+                "output_tokens": 287,
+                "calls": 1,
+                "duration_ms": 15880.355416971724
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-005-negated-profile-signal",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 64312.8,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_llm_duration_ms": 0,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 0,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "negated_profile_history_signal",
+              "stage0_matched_rule": "P1N",
+              "stage0_signals": {
+                "history": [
+                  "按我的习惯"
+                ],
+                "style": [
+                  "按我的习惯"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": true,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912588.97026
+            },
+            "by_model": {},
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-005-negated-profile-signal",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 58793.8,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5098,
+            "total_output_tokens": 345,
+            "total_llm_duration_ms": 52750.3,
+            "total_tool_duration_ms": 0.1,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 1,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "negated_profile_history_signal",
+              "stage0_matched_rule": "P1N",
+              "stage0_signals": {
+                "history": [
+                  "按我的习惯"
+                ],
+                "style": [
+                  "按我的习惯"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": true,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912653.2830489
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5098,
+                "output_tokens": 345,
+                "calls": 1,
+                "duration_ms": 52750.28270803159
+              }
+            },
+            "by_tool": {
+              "add_preferences": {
+                "calls": 1,
+                "duration_ms": 0.1,
+                "errors": 0
+              }
+            }
+          }
+        },
+        {
+          "case_id": "recall-005-negated-profile-signal",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 13905.4,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5019,
+            "total_output_tokens": 420,
+            "total_llm_duration_ms": 7863.5,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "negated_profile_history_signal",
+              "stage0_matched_rule": "P1N",
+              "stage0_signals": {
+                "history": [
+                  "按我的习惯"
+                ],
+                "style": [
+                  "按我的习惯"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": true,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912712.0723672
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5019,
+                "output_tokens": 420,
+                "calls": 1,
+                "duration_ms": 7863.453375000972
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-005-negated-profile-signal",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 16594.7,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5019,
+            "total_output_tokens": 402,
+            "total_llm_duration_ms": 10544.3,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 0,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "negated_profile_history_signal",
+              "stage0_matched_rule": "P1N",
+              "stage0_signals": {
+                "history": [
+                  "按我的习惯"
+                ],
+                "style": [
+                  "按我的习惯"
+                ],
+                "recommend": [],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 0,
+              "recall_attempted_but_zero_hit": true,
+              "reranker_selected_ids": [],
+              "reranker_final_reason": "",
+              "reranker_fallback": "none",
+              "reranker_per_item_reason": {},
+              "timestamp": 1776912725.978366
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5019,
+                "output_tokens": 402,
+                "calls": 1,
+                "duration_ms": 10544.336875027511
+              }
+            },
+            "by_tool": {}
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "recall-006-recommend-fallback",
+      "k": 5,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "memory_recall_field:final_recall_decision": 0.0,
+        "memory_recall_field:query_plan_source": 0.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 9992.686666024383,
+        "max": 24371.109124971554,
+        "mean": 14022.476091398858,
+        "stddev": 5848.803747695325
+      },
+      "runs": [
+        {
+          "case_id": "recall-006-recommend-fallback",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 11574.3,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5081,
+            "total_output_tokens": 231,
+            "total_llm_duration_ms": 5540.7,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "needs_llm_gate_recommend",
+              "stage0_matched_rule": "P2",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [
+                  "怎么安排",
+                  "比较好"
+                ],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 3,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:accommodation:avoid_capsule_hotel",
+                "constraints:accommodation:avoid_hostel"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:accommodation:avoid_capsule_hotel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "constraints:accommodation:avoid_hostel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "stable_preferences:hotel:prefer_quiet_hotel": "exact domain match on hotel | bucket=stable_preferences | bucket=0.82 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912742.571518
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5081,
+                "output_tokens": 231,
+                "calls": 1,
+                "duration_ms": 5540.667374967597
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-006-recommend-fallback",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 12176.6,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5081,
+            "total_output_tokens": 197,
+            "total_llm_duration_ms": 6099.6,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "needs_llm_gate_recommend",
+              "stage0_matched_rule": "P2",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [
+                  "怎么安排",
+                  "比较好"
+                ],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 3,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:accommodation:avoid_capsule_hotel",
+                "constraints:accommodation:avoid_hostel"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:accommodation:avoid_capsule_hotel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "constraints:accommodation:avoid_hostel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "stable_preferences:hotel:prefer_quiet_hotel": "exact domain match on hotel | bucket=stable_preferences | bucket=0.82 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912754.154621
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5081,
+                "output_tokens": 197,
+                "calls": 1,
+                "duration_ms": 6099.562415969558
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-006-recommend-fallback",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 11997.8,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5081,
+            "total_output_tokens": 242,
+            "total_llm_duration_ms": 5962.3,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "needs_llm_gate_recommend",
+              "stage0_matched_rule": "P2",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [
+                  "怎么安排",
+                  "比较好"
+                ],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 3,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:accommodation:avoid_capsule_hotel",
+                "constraints:accommodation:avoid_hostel"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:accommodation:avoid_capsule_hotel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "constraints:accommodation:avoid_hostel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "stable_preferences:hotel:prefer_quiet_hotel": "exact domain match on hotel | bucket=stable_preferences | bucket=0.82 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912766.321515
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5081,
+                "output_tokens": 242,
+                "calls": 1,
+                "duration_ms": 5962.283875036519
+              }
+            },
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-006-recommend-fallback",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 24371.1,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_llm_duration_ms": 0,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 0,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "needs_llm_gate_recommend",
+              "stage0_matched_rule": "P2",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [
+                  "怎么安排",
+                  "比较好"
+                ],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 3,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:accommodation:avoid_capsule_hotel",
+                "constraints:accommodation:avoid_hostel"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:accommodation:avoid_capsule_hotel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "constraints:accommodation:avoid_hostel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "stable_preferences:hotel:prefer_quiet_hotel": "exact domain match on hotel | bucket=stable_preferences | bucket=0.82 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912778.3255308
+            },
+            "by_model": {},
+            "by_tool": {}
+          }
+        },
+        {
+          "case_id": "recall-006-recommend-fallback",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 9992.7,
+          "error": null,
+          "difficulty": "memory",
+          "stats": {
+            "total_input_tokens": 5081,
+            "total_output_tokens": 218,
+            "total_llm_duration_ms": 3953.2,
+            "total_tool_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+            "llm_call_count": 1,
+            "tool_call_count": 0,
+            "memory_hit_count": 1,
+            "last_memory_recall": {
+              "stage0_decision": "undecided",
+              "stage0_reason": "needs_llm_gate_recommend",
+              "stage0_matched_rule": "P2",
+              "stage0_signals": {
+                "history": [],
+                "style": [],
+                "recommend": [
+                  "怎么安排",
+                  "比较好"
+                ],
+                "fact_scope": [],
+                "fact_field": [],
+                "ack_sys": []
+              },
+              "gate_needs_recall": true,
+              "gate_intent_type": "gate_decision_unavailable",
+              "final_recall_decision": "query_recall_enabled",
+              "fallback_used": "gate_timeout_heuristic_recall",
+              "recall_skip_source": "",
+              "query_plan_source": "heuristic_fallback",
+              "candidate_count": 3,
+              "recall_attempted_but_zero_hit": false,
+              "reranker_selected_ids": [
+                "constraints:accommodation:avoid_capsule_hotel",
+                "constraints:accommodation:avoid_hostel"
+              ],
+              "reranker_final_reason": "small candidate set; skipped weighted rerank",
+              "reranker_fallback": "skipped_small_candidate_set",
+              "reranker_per_item_reason": {
+                "constraints:accommodation:avoid_capsule_hotel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "constraints:accommodation:avoid_hostel": "exact domain match on accommodation | bucket=constraints | bucket=1.00 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00",
+                "stable_preferences:hotel:prefer_quiet_hotel": "exact domain match on hotel | bucket=stable_preferences | bucket=0.82 domain=0.00 keyword=0.00 destination=0.00 recency=0.99 applicability=0.00 conflict=0.00"
+              },
+              "timestamp": 1776912802.69133
+            },
+            "by_model": {
+              "glm-5.1": {
+                "input_tokens": 5081,
+                "output_tokens": 218,
+                "calls": 1,
+                "duration_ms": 3953.1770829926245
+              }
+            },
+            "by_tool": {}
+          }
+        }
+      ]
+    }
+  ]
+}

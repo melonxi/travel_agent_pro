@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 import re
 from typing import Any
@@ -11,10 +11,25 @@ from memory.recall_query import RecallRetrievalPlan
 from memory.retrieval_candidates import RecallCandidate
 from state.models import TravelPlanState
 
-_NEGATIVE_HINTS = ("不要", "别", "不想", "不住", "不坐", "不订", "避开", "别选", "别住")
-_POSITIVE_HINTS = ("可以", "想", "要", "接受", "能", "安排", "优先", "就选")
+_NEGATIVE_HINTS = (
+    "不要",
+    "别",
+    "不想",
+    "不住",
+    "不坐",
+    "不订",
+    "避开",
+    "别选",
+    "别住",
+    "不要再",
+    "别再",
+    "就算了",
+    "算了",
+)
 _GENERIC_APPLICABILITY_HINTS = ("适用于所有", "适用于大多数", "大多数", "仅供", "参考")
 _FAMILY_HINTS = ("亲子", "家庭", "带孩子", "儿童")
+_PARENT_HINTS = ("爸妈", "父母", "长辈", "老人", "爷爷", "奶奶", "爸爸", "妈妈")
+_LOW_MOBILITY_HINTS = ("走路少", "少走路", "别太累", "太累", "腿脚", "坡")
 _TOKEN_SPLIT_RE = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff]+")
 
 _PROFILE_BUCKET_PRIOR = {
@@ -60,6 +75,7 @@ class _ScoredCandidate:
     final_score: float
     duplicate_group: str
     conflict_score: float
+    weak_relevance: bool
     reason: str
 
 
@@ -72,33 +88,77 @@ def choose_reranker_path(
     config: MemoryRerankerConfig | None = None,
 ) -> RecallRerankPath:
     reranker_config = config or MemoryRerankerConfig()
-    if len(candidates) <= reranker_config.small_candidate_set_threshold:
-        return _small_candidate_set_result(candidates)
+    if not candidates:
+        return RecallRerankPath(
+            selected_candidates=[],
+            result=RecallRerankResult(
+                selected_item_ids=[],
+                final_reason="",
+                per_item_reason={},
+                fallback_used="none",
+            ),
+        )
 
     weights = _intent_weights(user_message, retrieval_plan)
-    grouped: dict[str, list[_ScoredCandidate]] = {"profile": [], "episode_slice": []}
     per_item_reason: dict[str, str] = {}
-    duplicate_only_reasons: dict[str, str] = {}
+
+    # Always score every candidate and always run conflict filtering + dedup.
+    # The small-set fast path ONLY skips the weighted cross-source re-sort,
+    # not the integrity filters.
+    grouped: dict[str, list[_ScoredCandidate]] = {"profile": [], "episode_slice": []}
     for candidate in candidates:
-        scored = _score_candidate(candidate, user_message, plan, retrieval_plan, weights)
+        scored = _score_candidate(
+            candidate,
+            user_message,
+            plan,
+            retrieval_plan,
+            weights,
+            reranker_config.recency_half_life_days,
+        )
+        per_item_reason[candidate.item_id] = scored.reason
         if scored.conflict_score >= 0.95:
-            duplicate_only_reasons[candidate.item_id] = scored.reason
+            per_item_reason[candidate.item_id] = f"{scored.reason} | dropped as conflict"
+            continue
+        if scored.weak_relevance:
+            per_item_reason[candidate.item_id] = (
+                f"{scored.reason} | dropped as weak relevance"
+            )
             continue
         grouped[candidate.source].append(scored)
-        per_item_reason[candidate.item_id] = scored.reason
-
-    for source in grouped:
-        grouped[source] = _normalize_source_scores(grouped[source], source_prior=_source_prior(source, weights))
 
     deduped_profile, duplicate_profile_reasons = _dedupe_group(grouped["profile"])
     deduped_slices, duplicate_slice_reasons = _dedupe_group(grouped["episode_slice"])
     per_item_reason.update(duplicate_profile_reasons)
     per_item_reason.update(duplicate_slice_reasons)
-    per_item_reason.update(duplicate_only_reasons)
+
+    remaining_total = len(deduped_profile) + len(deduped_slices)
+    if remaining_total <= reranker_config.small_candidate_set_threshold:
+        selected = _select_candidates(
+            deduped_profile,
+            deduped_slices,
+            retrieval_plan,
+            reranker_config,
+            sort_hybrid=False,
+        )
+        selected_candidates = [scored.candidate for scored in selected]
+        result = RecallRerankResult(
+            selected_item_ids=[candidate.item_id for candidate in selected_candidates],
+            final_reason="small candidate set; skipped weighted rerank",
+            per_item_reason=per_item_reason,
+            fallback_used="skipped_small_candidate_set",
+        )
+        return RecallRerankPath(selected_candidates=selected_candidates, result=result)
+
+    normalized_profile = _normalize_source_scores(
+        deduped_profile, source_prior=weights.profile_source_prior
+    )
+    normalized_slices = _normalize_source_scores(
+        deduped_slices, source_prior=weights.slice_source_prior
+    )
 
     selected = _select_candidates(
-        deduped_profile,
-        deduped_slices,
+        normalized_profile,
+        normalized_slices,
         retrieval_plan,
         reranker_config,
     )
@@ -122,6 +182,7 @@ def choose_reranker_path(
 
 
 def _small_candidate_set_result(candidates: list[RecallCandidate]) -> RecallRerankPath:
+    # Retained for callers that intentionally short-circuit without scoring.
     per_item_reason = {
         candidate.item_id: _matched_reason_text(candidate)
         for candidate in candidates
@@ -157,6 +218,7 @@ def _score_candidate(
     plan: TravelPlanState,
     retrieval_plan: RecallRetrievalPlan | None,
     weights: _IntentWeights,
+    recency_half_life_days: int,
 ) -> _ScoredCandidate:
     bucket_score = _bucket_prior(candidate)
     domain_score = _jaccard(
@@ -165,10 +227,16 @@ def _score_candidate(
     )
     keyword_score = _keyword_overlap(candidate, retrieval_plan)
     destination_score = _destination_match(candidate, plan, retrieval_plan)
-    recency_score = _recency_score(candidate, 180)
-    applicability_score = _applicability_score(candidate, plan)
+    recency_score = _recency_score(candidate, recency_half_life_days)
+    applicability_score = _applicability_score(candidate, plan, user_message)
     conflict_score = _conflict_score(candidate, user_message)
     duplicate_group = _duplicate_group(candidate)
+    weak_relevance = (
+        domain_score <= 0.0
+        and keyword_score <= 0.0
+        and destination_score <= 0.0
+        and applicability_score <= 0.35
+    )
     raw_score = (
         weights.bucket_weight * bucket_score
         + weights.domain_weight * domain_score
@@ -191,6 +259,7 @@ def _score_candidate(
         final_score=raw_score,
         duplicate_group=duplicate_group,
         conflict_score=conflict_score,
+        weak_relevance=weak_relevance,
         reason=reason,
     )
 
@@ -219,6 +288,7 @@ def _normalize_source_scores(
                 final_score=source_prior + norm,
                 duplicate_group=scored.duplicate_group,
                 conflict_score=scored.conflict_score,
+                weak_relevance=scored.weak_relevance,
                 reason=scored.reason,
             )
         )
@@ -231,28 +301,28 @@ def _select_candidates(
     slice_candidates: list[_ScoredCandidate],
     retrieval_plan: RecallRetrievalPlan | None,
     config: MemoryRerankerConfig,
+    *,
+    sort_hybrid: bool = True,
 ) -> list[_ScoredCandidate]:
     source = retrieval_plan.source if retrieval_plan is not None else "hybrid_history"
     if source == "profile":
         selected = list(profile_candidates[: config.profile_top_n])
-        if len(selected) < config.profile_top_n:
-            remaining = config.profile_top_n - len(selected)
-            selected.extend(slice_candidates[:remaining])
-        selected.sort(key=lambda item: (-item.final_score, item.candidate.item_id))
-        return selected[: config.profile_top_n]
+        if selected:
+            return selected
+        return list(slice_candidates[: config.profile_top_n])
     if source == "episode_slice":
         selected = list(slice_candidates[: config.slice_top_n])
-        if len(selected) < config.slice_top_n:
-            remaining = config.slice_top_n - len(selected)
-            selected.extend(profile_candidates[:remaining])
-        selected.sort(key=lambda item: (-item.final_score, item.candidate.item_id))
-        return selected[: config.slice_top_n]
+        if selected:
+            return selected
+        return list(profile_candidates[: config.slice_top_n])
 
-    selected: list[_ScoredCandidate] = []
-    selected.extend(profile_candidates[: config.hybrid_profile_top_n])
-    selected.extend(slice_candidates[: config.hybrid_slice_top_n])
-    selected.sort(key=lambda item: (-item.final_score, item.candidate.item_id))
-    return selected[: config.hybrid_top_n]
+    # Hybrid intent: take top N from each source then sort cross-source.
+    merged: list[_ScoredCandidate] = []
+    merged.extend(profile_candidates[: config.hybrid_profile_top_n])
+    merged.extend(slice_candidates[: config.hybrid_slice_top_n])
+    if sort_hybrid:
+        merged.sort(key=lambda item: (-item.final_score, item.candidate.item_id))
+    return merged[: config.hybrid_top_n]
 
 
 def _dedupe_group(
@@ -275,10 +345,22 @@ def _dedupe_group(
 
 def _duplicate_group(candidate: RecallCandidate) -> str:
     if candidate.source == "episode_slice":
+        summary = _duplicate_text_key(candidate.content_summary)
+        if summary:
+            primary_domain = candidate.domains[0] if candidate.domains else candidate.bucket
+            return f"{candidate.source}:{candidate.bucket}:{primary_domain}:{summary}"
         return f"{candidate.source}:{candidate.item_id}"
     primary_domain = candidate.domains[0] if candidate.domains else candidate.bucket
+    key = candidate.key or "no_key"
     polarity = candidate.polarity or "neutral"
-    return f"{candidate.source}:{primary_domain}:{polarity}"
+    return f"{candidate.source}:{primary_domain}:{key}:{polarity}"
+
+
+def _duplicate_text_key(text: str) -> str:
+    tokens = _tokenize(text)
+    if not tokens:
+        return ""
+    return "|".join(tokens[:12])
 
 
 def _bucket_prior(candidate: RecallCandidate) -> float:
@@ -325,17 +407,28 @@ def _destination_match(
 def _recency_score(candidate: RecallCandidate, half_life_days: int) -> float:
     if not candidate.created_at:
         return max(candidate.score, 0.0)
+    raw = candidate.created_at
+    # Accept trailing `Z` as UTC shorthand.
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
     try:
-        created_at = datetime.fromisoformat(candidate.created_at)
+        created_at = datetime.fromisoformat(raw)
     except ValueError:
         return max(candidate.score, 0.0)
-    age_days = max((datetime.now() - created_at).days, 0)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    age_days = max((now - created_at).days, 0)
     if half_life_days <= 0:
         return 1.0
     return math.exp(-math.log(2) * age_days / float(half_life_days))
 
 
-def _applicability_score(candidate: RecallCandidate, plan: TravelPlanState) -> float:
+def _applicability_score(
+    candidate: RecallCandidate,
+    plan: TravelPlanState,
+    user_message: str,
+) -> float:
     text = " ".join(part for part in (candidate.applicability, candidate.content_summary) if part)
     score = 0.0
     if any(hint in text for hint in _GENERIC_APPLICABILITY_HINTS):
@@ -343,24 +436,103 @@ def _applicability_score(candidate: RecallCandidate, plan: TravelPlanState) -> f
     if plan.destination and plan.destination in text:
         score += 0.65
     if plan.travelers and plan.travelers.children > 0 and any(hint in text for hint in _FAMILY_HINTS):
-        score += 0.45
-    return min(score, 1.0)
+        # Specific applicability should outrank generic "destination + reference"
+        # matches when the current trip context includes children.
+        score += 0.70
+    if (
+        any(hint in user_message for hint in _PARENT_HINTS)
+        and any(hint in text for hint in _PARENT_HINTS)
+    ):
+        score += 0.55
+    if (
+        any(hint in user_message for hint in _LOW_MOBILITY_HINTS)
+        and any(hint in text for hint in _LOW_MOBILITY_HINTS)
+    ):
+        score += 0.55
+    return min(score, 1.25)
 
 
 def _conflict_score(candidate: RecallCandidate, user_message: str) -> float:
-    if candidate.source != "profile":
-        return 0.0
     text = user_message or ""
     if not _overlaps_with_message(candidate, text):
         return 0.0
     polarity = (candidate.polarity or "").lower()
-    has_negative = any(token in text for token in _NEGATIVE_HINTS)
-    has_positive = any(token in text for token in _POSITIVE_HINTS)
-    if polarity in {"avoid", "reject", "dislike"} and has_positive:
+    # Episode slices rarely carry an explicit polarity, but their bucket
+    # taxonomy is already oriented: rejected_option / pitfall imply "avoid".
+    if candidate.source == "episode_slice":
+        if candidate.bucket in {"rejected_option", "pitfall"} and _has_candidate_specific_positive(
+            candidate,
+            text,
+        ):
+            return 1.0
+        return 0.0
+
+    if polarity in {"avoid", "reject", "dislike"} and _has_candidate_specific_positive(
+        candidate,
+        text,
+    ):
         return 1.0
-    if polarity in {"prefer", "like", "must"} and has_negative:
+    if polarity in {"prefer", "like", "must"} and _has_candidate_specific_negative(
+        candidate,
+        text,
+    ):
         return 1.0
     return 0.0
+
+
+def _has_candidate_specific_negative(candidate: RecallCandidate, text: str) -> bool:
+    candidate_terms = {
+        term
+        for term in _candidate_terms(candidate)
+        if len(term) >= 2 and term in text
+    }
+    if not candidate_terms:
+        return False
+    negative_prefixes = ("不要", "别", "不想", "不住", "不坐", "不订", "避开", "别选", "别住", "不要再", "别再")
+    negative_suffixes = ("就算了", "算了")
+    for term in candidate_terms:
+        index = text.find(term)
+        while index >= 0:
+            before = text[max(0, index - 8):index]
+            after = text[index:index + len(term) + 8]
+            if any(token in before for token in negative_prefixes):
+                return True
+            if any(token in after for token in negative_suffixes):
+                return True
+            index = text.find(term, index + len(term))
+    return False
+
+
+def _has_candidate_specific_positive(candidate: RecallCandidate, text: str) -> bool:
+    candidate_terms = {
+        term
+        for term in _candidate_terms(candidate)
+        if len(term) >= 2 and term in text
+    }
+    if not candidate_terms:
+        return False
+    positive_prefixes = (
+        "可以",
+        "想",
+        "接受",
+        "能",
+        "安排",
+        "优先",
+        "就选",
+        "试试",
+        "换个",
+        "宁可",
+    )
+    for term in candidate_terms:
+        index = text.find(term)
+        while index >= 0:
+            before = text[max(0, index - 8):index]
+            if any(token in before for token in positive_prefixes):
+                return True
+            if "要" in before and "不要" not in before:
+                return True
+            index = text.find(term, index + len(term))
+    return False
 
 
 def _overlaps_with_message(candidate: RecallCandidate, user_message: str) -> bool:
@@ -390,7 +562,24 @@ def _tokenize(text: str) -> list[str]:
         return []
     raw_tokens = _TOKEN_SPLIT_RE.split(text)
     tokens = [token.strip().lower() for token in raw_tokens if token and len(token.strip()) > 1]
-    if any(phrase in text for phrase in ("红眼", "靠窗", "带孩子", "京都")):
+    if any(
+        phrase in text
+        for phrase in (
+            "红眼",
+            "靠窗",
+            "带孩子",
+            "京都",
+            "慢悠悠",
+            "走路少",
+            "少走路",
+            "太累",
+            "别太累",
+            "爸妈",
+            "安静",
+            "热闹",
+            "避世",
+        )
+    ):
         if "红眼" in text:
             tokens.append("红眼")
         if "靠窗" in text:
@@ -399,6 +588,24 @@ def _tokenize(text: str) -> list[str]:
             tokens.append("带孩子")
         if "京都" in text:
             tokens.append("京都")
+        if "慢悠悠" in text:
+            tokens.append("慢悠悠")
+        if "走路少" in text:
+            tokens.append("走路少")
+        if "少走路" in text:
+            tokens.append("少走路")
+        if "太累" in text:
+            tokens.append("太累")
+        if "别太累" in text:
+            tokens.append("别太累")
+        if "爸妈" in text:
+            tokens.append("爸妈")
+        if "安静" in text:
+            tokens.append("安静")
+        if "热闹" in text:
+            tokens.append("热闹")
+        if "避世" in text:
+            tokens.append("避世")
     return tokens
 
 

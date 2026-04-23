@@ -1,0 +1,65 @@
+id: reranker-only-003-slice-intent-no-profile-leak
+name: Episode slice intent does not leak profile candidates
+description: Fixed episode_slice intent should return slices only when slice candidates exist.
+user_message: 我上次去京都怎么安排行程的？
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+  destination: 京都
+retrieval_plan:
+  source: episode_slice
+  buckets: []
+  domains: [itinerary, budget]
+  destination: 京都
+  keywords: [行程, 预算, 安排]
+  top_k: 5
+  reason: fixed_reranker_eval -> past_trip itinerary lookup
+config:
+  small_candidate_set_threshold: 1
+  slice_top_n: 3
+candidates:
+  - source: profile
+    item_id: stable_preferences:pace:prefer_slow_pace
+    bucket: stable_preferences
+    score: 0.9
+    matched_reason: [domain match on pace]
+    content_summary: pace:prefer_slow_pace=slow
+    domains: [pace]
+    applicability: 适用于大多数行程节奏。
+    polarity: prefer
+    key: prefer_slow_pace
+    created_at: "2026-04-20T12:37:16+00:00"
+  - source: episode_slice
+    item_id: slice_kyoto_budget_recent
+    bucket: budget_signal
+    score: 0.75
+    matched_reason: [exact destination match on 京都, keyword match on 预算]
+    content_summary: 总结：京都；预算分配偏保守；住宿=祇園
+    domains: [budget]
+    applicability: 仅供预算分配参考；当前价格变化时需重新计算。京都
+    created_at: "2026-04-23T02:24:00+00:00"
+  - source: episode_slice
+    item_id: slice_kyoto_itinerary_recent
+    bucket: itinerary_pattern
+    score: 0.8
+    matched_reason: [exact destination match on 京都, keyword match on 行程]
+    content_summary: 每日节奏：京都；day=1 景点1；day=2 景点2；day=3 景点3
+    domains: [itinerary, pace]
+    applicability: 仅供行程结构参考；当前日期、体力和预算变化时需重排。京都
+    created_at: "2026-04-23T02:24:00+00:00"
+  - source: episode_slice
+    item_id: slice_kyoto_itinerary_old
+    bucket: itinerary_pattern
+    score: 0.7
+    matched_reason: [exact destination match on 京都, keyword match on 安排]
+    content_summary: 每日节奏：京都；偏轻松，单日一个主区域。
+    domains: [itinerary, pace]
+    applicability: 仅供行程结构参考；当前日期、体力和预算变化时需重排。京都
+    created_at: "2026-04-22T15:02:43+00:00"
+expected:
+  selected_item_ids:
+    - slice_kyoto_budget_recent
+    - slice_kyoto_itinerary_old
+    - slice_kyoto_itinerary_recent
+  final_reason: source-aware weighted rerank selected 3 items (0 profile, 3 slice)
+  fallback_used: none

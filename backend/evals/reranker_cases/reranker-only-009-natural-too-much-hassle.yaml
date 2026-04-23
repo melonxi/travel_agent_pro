@@ -1,0 +1,70 @@
+id: reranker-only-009-natural-too-much-hassle
+name: Natural expression "don't make it too much hassle"
+description: Casual wording about not making transport too much hassle should favor comfort constraints and tiring-transport pitfalls over weak budget memories.
+user_message: 这次别太折腾，交通安排舒服一点
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+retrieval_plan:
+  source: hybrid_history
+  buckets: [constraints, stable_preferences]
+  domains: [flight, train, pace]
+  destination: ""
+  keywords: [折腾, 舒服, 红眼, 中转, 节奏]
+  top_k: 5
+  reason: fixed_reranker_eval -> natural expression too much hassle
+config:
+  small_candidate_set_threshold: 1
+  hybrid_top_n: 4
+  hybrid_profile_top_n: 2
+  hybrid_slice_top_n: 2
+candidates:
+  - source: profile
+    item_id: constraints:flight:avoid_red_eye
+    bucket: constraints
+    score: 1.0
+    matched_reason: [domain match on flight, keyword match on 红眼]
+    content_summary: flight:avoid_red_eye=true
+    domains: [flight]
+    applicability: 适用于所有旅行，避免第二天疲惫。
+    polarity: avoid
+    key: avoid_red_eye
+    created_at: "2026-04-20T13:08:23+00:00"
+  - source: profile
+    item_id: stable_preferences:pace:prefer_slow_pace
+    bucket: stable_preferences
+    score: 0.9
+    matched_reason: [domain match on pace, keyword match on 节奏]
+    content_summary: pace:prefer_slow_pace=slow
+    domains: [pace]
+    applicability: 适用于大多数行程节奏。
+    polarity: prefer
+    key: prefer_slow_pace
+    created_at: "2026-04-20T12:37:16+00:00"
+  - source: episode_slice
+    item_id: slice_pitfall_long_layover
+    bucket: pitfall
+    score: 0.8
+    matched_reason: [domain match on flight, keyword match on 中转]
+    content_summary: 上次为了省钱选了长中转，整体很折腾，到达后很累。
+    domains: [flight, pace]
+    applicability: 仅供交通方式参考；避免长中转和过晚到达。
+    created_at: "2026-04-23T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_budget_saving_transport
+    bucket: budget_signal
+    score: 0.7
+    matched_reason: [domain match on budget]
+    content_summary: 上次交通为了省预算选择便宜班次。
+    domains: [budget]
+    applicability: 仅供预算参考。
+    created_at: "2026-04-23T00:00:00+00:00"
+expected:
+  selected_item_ids:
+    - constraints:flight:avoid_red_eye
+    - slice_pitfall_long_layover
+    - stable_preferences:pace:prefer_slow_pace
+  final_reason: source-aware weighted rerank selected 3 items (2 profile, 1 slice)
+  fallback_used: none
+  reason_contains:
+    slice_budget_saving_transport: dropped as weak relevance

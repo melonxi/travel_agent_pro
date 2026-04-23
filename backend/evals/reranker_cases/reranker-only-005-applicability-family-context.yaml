@@ -1,0 +1,63 @@
+id: reranker-only-005-applicability-family-context
+name: Family applicability beats generic stay slice
+description: When the current plan includes a child, a child-friendly stay slice should outrank generic accommodation memories.
+user_message: 这次带孩子去京都，住宿怎么安排比较合适？
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+  destination: 京都
+  travelers:
+    adults: 2
+    children: 1
+retrieval_plan:
+  source: hybrid_history
+  buckets: [stable_preferences]
+  domains: [hotel, accommodation]
+  destination: 京都
+  keywords: [住宿, 带孩子, 亲子]
+  top_k: 5
+  reason: fixed_reranker_eval -> family applicability
+config:
+  small_candidate_set_threshold: 1
+  hybrid_top_n: 3
+  hybrid_profile_top_n: 1
+  hybrid_slice_top_n: 2
+candidates:
+  - source: profile
+    item_id: stable_preferences:hotel:prefer_quiet_hotel
+    bucket: stable_preferences
+    score: 0.8
+    matched_reason: [domain match on hotel]
+    content_summary: hotel:prefer_quiet_hotel=true
+    domains: [hotel]
+    applicability: 适用于大多数住宿选择。
+    polarity: prefer
+    key: prefer_quiet_hotel
+    created_at: "2026-04-20T13:08:23+00:00"
+  - source: episode_slice
+    item_id: slice_kyoto_family_ryokan
+    bucket: stay_choice
+    score: 0.8
+    matched_reason: [exact destination match on 京都, keyword match on 带孩子]
+    content_summary: 京都亲子住宿：儿童友好旅馆，离地铁近，房间安静。
+    domains: [hotel, accommodation]
+    applicability: 适用于亲子、家庭、带孩子的京都住宿选择。
+    created_at: "2026-04-22T15:02:43+00:00"
+  - source: episode_slice
+    item_id: slice_kyoto_generic_station
+    bucket: stay_choice
+    score: 0.7
+    matched_reason: [exact destination match on 京都, keyword match on 住宿]
+    content_summary: 京都站商务酒店，交通方便但房间偏小。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。
+    created_at: "2026-04-23T02:24:00+00:00"
+expected:
+  selected_item_ids:
+    - slice_kyoto_family_ryokan
+    - stable_preferences:hotel:prefer_quiet_hotel
+    - slice_kyoto_generic_station
+  final_reason: source-aware weighted rerank selected 3 items (1 profile, 2 slice)
+  fallback_used: none
+  reason_contains:
+    slice_kyoto_family_ryokan: applicability=1.25

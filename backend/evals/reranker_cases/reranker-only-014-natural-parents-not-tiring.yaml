@@ -1,0 +1,71 @@
+id: reranker-only-014-natural-parents-not-tiring
+name: Natural expression "parents, not tiring"
+description: Natural wording about traveling with parents and avoiding tiring days should prioritize slow pace and accessibility memories over generic itinerary slices.
+user_message: 这次带爸妈，别太累，走路少一点
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+  travelers:
+    adults: 3
+    children: 0
+retrieval_plan:
+  source: hybrid_history
+  buckets: [stable_preferences, preference_hypotheses]
+  domains: [pace, accessibility, itinerary]
+  destination: ""
+  keywords: [爸妈, 太累, 走路少, 节奏]
+  top_k: 5
+  reason: fixed_reranker_eval -> natural expression parents not tiring
+config:
+  small_candidate_set_threshold: 1
+  hybrid_top_n: 3
+  hybrid_profile_top_n: 2
+  hybrid_slice_top_n: 1
+candidates:
+  - source: profile
+    item_id: stable_preferences:pace:prefer_slow_pace
+    bucket: stable_preferences
+    score: 0.9
+    matched_reason: [domain match on pace, keyword match on 节奏]
+    content_summary: pace:prefer_slow_pace=slow
+    domains: [pace]
+    applicability: 适用于大多数行程节奏。
+    polarity: prefer
+    key: prefer_slow_pace
+    created_at: "2026-04-20T12:37:16+00:00"
+  - source: profile
+    item_id: preference_hypotheses:accessibility:avoid_steep_slopes
+    bucket: preference_hypotheses
+    score: 0.7
+    matched_reason: [domain match on accessibility, keyword match on 走路少]
+    content_summary: accessibility:avoid_steep_slopes=true
+    domains: [accessibility]
+    applicability: 适用于带长辈、腿脚不便或需要少走路的行程。
+    polarity: avoid
+    key: avoid_steep_slopes
+    created_at: "2026-04-20T12:48:30+00:00"
+  - source: episode_slice
+    item_id: slice_tiring_walk_day
+    bucket: pitfall
+    score: 0.8
+    matched_reason: [domain match on itinerary, keyword match on 太累]
+    content_summary: 上次单日步行过多，体感太累。
+    domains: [itinerary, pace, accessibility]
+    applicability: 仅供行程结构参考；少走路时应避开。
+    created_at: "2026-04-23T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_generic_itinerary
+    bucket: itinerary_pattern
+    score: 0.6
+    matched_reason: [domain match on itinerary]
+    content_summary: 普通城市行程模板。
+    domains: [itinerary]
+    applicability: 仅供行程结构参考。
+    created_at: "2026-04-23T00:00:00+00:00"
+expected:
+  selected_item_ids:
+    - preference_hypotheses:accessibility:avoid_steep_slopes
+    - slice_tiring_walk_day
+    - stable_preferences:pace:prefer_slow_pace
+  final_reason: source-aware weighted rerank selected 3 items (2 profile, 1 slice)
+  fallback_used: none

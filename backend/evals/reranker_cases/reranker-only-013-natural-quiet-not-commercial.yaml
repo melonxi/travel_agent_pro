@@ -1,0 +1,58 @@
+id: reranker-only-013-natural-quiet-not-commercial
+name: Natural expression "quiet, not too commercial"
+description: Quiet/not commercial wording should favor quiet hotel/profile memories and reject noisy-commercial pitfalls.
+user_message: 住宿安静点，别太商业太吵
+plan:
+  session_id: reranker_eval
+  trip_id: trip_now
+retrieval_plan:
+  source: hybrid_history
+  buckets: [stable_preferences]
+  domains: [hotel, accommodation]
+  destination: ""
+  keywords: [安静, 商业, 吵, 住宿]
+  top_k: 5
+  reason: fixed_reranker_eval -> natural expression quiet not commercial
+config:
+  small_candidate_set_threshold: 1
+  hybrid_top_n: 3
+  hybrid_profile_top_n: 1
+  hybrid_slice_top_n: 2
+candidates:
+  - source: profile
+    item_id: stable_preferences:hotel:prefer_quiet_hotel
+    bucket: stable_preferences
+    score: 0.9
+    matched_reason: [domain match on hotel, keyword match on 安静]
+    content_summary: hotel:prefer_quiet_hotel=true
+    domains: [hotel]
+    applicability: 适用于大多数住宿选择。
+    polarity: prefer
+    key: prefer_quiet_hotel
+    created_at: "2026-04-20T13:08:23+00:00"
+  - source: episode_slice
+    item_id: slice_noisy_commercial_area
+    bucket: pitfall
+    score: 0.8
+    matched_reason: [domain match on hotel, keyword match on 商业]
+    content_summary: 上次住商业区，晚上很吵，不适合想安静休息。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。
+    created_at: "2026-04-23T00:00:00+00:00"
+  - source: episode_slice
+    item_id: slice_quiet_residential_area
+    bucket: stay_choice
+    score: 0.7
+    matched_reason: [domain match on hotel, keyword match on 安静]
+    content_summary: 上次住居民区，安静但交通稍慢。
+    domains: [hotel, accommodation]
+    applicability: 仅供住宿选择参考。
+    created_at: "2026-04-22T00:00:00+00:00"
+expected:
+  selected_item_ids:
+    - slice_noisy_commercial_area
+    - stable_preferences:hotel:prefer_quiet_hotel
+    - slice_quiet_residential_area
+  final_reason: source-aware weighted rerank selected 3 items (1 profile, 2 slice)
+  fallback_used: none
+
