@@ -126,6 +126,40 @@ def test_lexical_lane_does_not_recall_by_incidental_metadata_overlap() -> None:
     assert result.candidates == []
 
 
+def test_lexical_lane_does_not_recall_from_common_cjk_chars_and_incidental_bigram() -> None:
+    profile = UserMemoryProfile(
+        schema_version=3,
+        user_id="u1",
+        stable_preferences=[
+            MemoryProfileItem(
+                id="stable_preferences:pace:busy_market",
+                domain="pace",
+                key="busy_market",
+                value="这次喜欢热闹夜市和密集打卡",
+                polarity="prefer",
+                stability="stable",
+                confidence=0.9,
+                status="active",
+                recall_hints={"keywords": ["夜市", "打卡", "热闹"]},
+                applicability="适用于购物和餐饮安排。",
+                created_at="2026-04-01T00:00:00",
+                updated_at="2026-04-02T00:00:00",
+            )
+        ],
+    )
+
+    result = retrieve_recall_candidates(
+        query=_query(domains=[], keywords=[]),
+        profile=profile,
+        slices=[],
+        user_message="这次住宿想安静一点",
+        plan=TravelPlanState(session_id="s1", trip_id="now"),
+        config=_lexical_config(),
+    )
+
+    assert result.candidates == []
+
+
 def test_lexical_disabled_preserves_default_symbolic_only_output() -> None:
     profile = _quiet_profile()
     query = _query()
