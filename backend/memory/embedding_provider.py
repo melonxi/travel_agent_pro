@@ -18,6 +18,8 @@ class NullEmbeddingProvider:
 
 class CachedEmbeddingProvider:
     def __init__(self, provider: EmbeddingProvider, max_items: int = 10000) -> None:
+        if max_items < 1:
+            raise ValueError("max_items must be >= 1")
         self._provider = provider
         self._max_items = max_items
         self._cache: OrderedDict[str, list[float]] = OrderedDict()
@@ -34,6 +36,8 @@ class CachedEmbeddingProvider:
 
         if missing:
             vectors = self._provider.embed(missing)
+            if len(vectors) != len(missing):
+                raise ValueError("embedding_count_mismatch")
             for text, vector in zip(missing, vectors):
                 self._cache[text] = vector
                 self._cache.move_to_end(text)

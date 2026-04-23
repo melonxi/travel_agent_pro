@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from config import Stage3RecallConfig, Stage3SemanticConfig
+from config import Stage3LaneConfig, Stage3RecallConfig, Stage3SemanticConfig
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3 import retrieve_recall_candidates
 from memory.v3_models import MemoryProfileItem, UserMemoryProfile
@@ -20,8 +20,20 @@ class FakeEmbeddingProvider:
         return vectors
 
 
-def test_semantic_lane_recalls_synonymous_profile_when_enabled() -> None:
-    profile = UserMemoryProfile(
+class RaisingEmbeddingProvider:
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        del texts
+        raise RuntimeError("boom")
+
+
+class WrongCountEmbeddingProvider:
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        del texts
+        return [[1.0, 0.0]]
+
+
+def _quiet_profile() -> UserMemoryProfile:
+    return UserMemoryProfile(
         schema_version=3,
         user_id="u1",
         stable_preferences=[
@@ -40,11 +52,18 @@ def test_semantic_lane_recalls_synonymous_profile_when_enabled() -> None:
             )
         ],
     )
-    config = replace(
+
+
+def _semantic_config() -> Stage3RecallConfig:
+    return replace(
         Stage3RecallConfig(),
+        symbolic=Stage3LaneConfig(enabled=False),
         semantic=Stage3SemanticConfig(enabled=True, min_score=0.7, top_k=5),
     )
-    query = RecallRetrievalPlan(
+
+
+def _query() -> RecallRetrievalPlan:
+    return RecallRetrievalPlan(
         source="profile",
         buckets=["stable_preferences"],
         domains=["hotel"],
@@ -54,15 +73,21 @@ def test_semantic_lane_recalls_synonymous_profile_when_enabled() -> None:
         reason="test",
     )
 
-    result = retrieve_recall_candidates(
-        query=query,
-        profile=profile,
+
+def _retrieve_with_provider(embedding_provider: object | None):
+    return retrieve_recall_candidates(
+        query=_query(),
+        profile=_quiet_profile(),
         slices=[],
         user_message="这次住宿想安静一点",
         plan=TravelPlanState(session_id="s1", trip_id="now"),
-        config=config,
-        embedding_provider=FakeEmbeddingProvider(),
+        config=_semantic_config(),
+        embedding_provider=embedding_provider,
     )
+
+
+def test_semantic_lane_recalls_synonymous_profile_when_enabled() -> None:
+    result = _retrieve_with_provider(FakeEmbeddingProvider())
 
     assert [candidate.item_id for candidate in result.candidates] == [
         "stable_preferences:hotel:quiet"
@@ -70,3 +95,28 @@ def test_semantic_lane_recalls_synonymous_profile_when_enabled() -> None:
     evidence = result.evidence_by_id["stable_preferences:hotel:quiet"]
     assert "semantic" in evidence.lanes
     assert evidence.semantic_score is not None
+
+
+def test_semantic_lane_degrades_when_embedding_provider_missing() -> None:
+    result = _retrieve_with_provider(None)
+
+    assert result.candidates == []
+    assert "semantic" in result.telemetry.lanes_attempted
+    assert result.telemetry.lane_errors["semantic"] == "embedding_provider_missing"
+    assert "semantic" not in result.telemetry.lanes_succeeded
+
+
+def test_semantic_lane_degrades_when_embedding_provider_raises() -> None:
+    result = _retrieve_with_provider(RaisingEmbeddingProvider())
+
+    assert result.candidates == []
+    assert result.telemetry.lane_errors["semantic"].startswith("embedding_error:")
+    assert "semantic" not in result.telemetry.lanes_succeeded
+
+
+def test_semantic_lane_degrades_when_embedding_provider_returns_wrong_count() -> None:
+    result = _retrieve_with_provider(WrongCountEmbeddingProvider())
+
+    assert result.candidates == []
+    assert result.telemetry.lane_errors["semantic"] == "embedding_count_mismatch"
+    assert "semantic" not in result.telemetry.lanes_succeeded
