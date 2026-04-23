@@ -1,6 +1,6 @@
 import pytest
 
-from config import Stage3RecallConfig
+from config import Stage3FusionConfig, Stage3RecallConfig
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3 import retrieve_recall_candidates
 from memory.recall_stage3_lanes import (
@@ -164,6 +164,44 @@ def test_stage3_symbolic_default_large_result_matches_existing_order_without_fus
     ]
     assert len(result.candidates) == 40
     assert len(result.evidence_by_id) == 40
+
+
+def test_stage3_symbolic_default_bypass_leaves_evidence_unfused() -> None:
+    result = retrieve_recall_candidates(
+        query=_query(source="profile"),
+        profile=_profile(),
+        slices=[],
+        user_message="住宿按我习惯",
+        plan=TravelPlanState(session_id="s1", trip_id="now"),
+        config=Stage3RecallConfig(),
+    )
+
+    evidence = result.evidence_by_id["stable_preferences:hotel:preferred_area"]
+
+    assert evidence.lanes == ["symbolic"]
+    assert evidence.lane_ranks == {}
+    assert evidence.lane_scores == {}
+    assert evidence.fused_score == 0.0
+
+
+def test_stage3_symbolic_custom_fusion_caps_are_respected() -> None:
+    query = _query()
+    query.top_k = 20
+
+    result = retrieve_recall_candidates(
+        query=query,
+        profile=_large_profile(),
+        slices=_large_slices(),
+        user_message="上次京都住哪里",
+        plan=TravelPlanState(session_id="s1", trip_id="now"),
+        config=Stage3RecallConfig(fusion=Stage3FusionConfig(max_candidates=1)),
+    )
+
+    assert [candidate.item_id for candidate in result.candidates] == [
+        "stable_preferences:hotel:preferred_area:00"
+    ]
+    assert result.telemetry.total_candidates_before_fusion == 40
+    assert result.telemetry.total_candidates_after_fusion == 1
 
 
 def test_stage3_symbolic_default_reports_zero_hit() -> None:

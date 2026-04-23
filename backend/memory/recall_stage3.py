@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from config import Stage3RecallConfig
+from config import Stage3FusionConfig, Stage3RecallConfig
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3_fusion import fuse_lane_results
 from memory.recall_stage3_lanes import SymbolicLane
@@ -99,5 +99,6 @@ def _is_default_symbolic_only(
         and not config.semantic.enabled
         and not config.entity.enabled
         and not config.temporal.enabled
+        and config.fusion == Stage3FusionConfig()
         and telemetry.lanes_succeeded == ["symbolic"]
     )
