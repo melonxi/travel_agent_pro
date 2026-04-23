@@ -45,6 +45,14 @@ memory:
         local_files_only: true
         min_score: 0.61
         top_k: 9
+      entity:
+        enabled: true
+        top_k: 5
+        timeout_ms: 14
+      temporal:
+        enabled: true
+        top_k: 4
+        timeout_ms: 12
       source_widening:
         enabled: true
         min_primary_candidates: 2
@@ -68,6 +76,45 @@ memory:
     assert cfg.memory.retrieval.stage3.semantic.local_files_only is True
     assert cfg.memory.retrieval.stage3.semantic.min_score == 0.61
     assert cfg.memory.retrieval.stage3.semantic.top_k == 9
+    assert cfg.memory.retrieval.stage3.entity.enabled is True
+    assert cfg.memory.retrieval.stage3.entity.top_k == 5
+    assert cfg.memory.retrieval.stage3.entity.timeout_ms == 14
+    assert cfg.memory.retrieval.stage3.temporal.enabled is True
+    assert cfg.memory.retrieval.stage3.temporal.top_k == 4
+    assert cfg.memory.retrieval.stage3.temporal.timeout_ms == 12
     assert cfg.memory.retrieval.stage3.source_widening.enabled is True
     assert cfg.memory.retrieval.stage3.source_widening.min_primary_candidates == 2
     assert cfg.memory.retrieval.stage3.source_widening.max_secondary_candidates == 1
+
+
+def test_load_config_stage3_semantic_null_fields_fall_back_to_defaults(tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        """\
+memory:
+  retrieval:
+    stage3:
+      semantic:
+        enabled: true
+        provider: null
+        model_name: null
+        cache_dir: null
+      fusion:
+        lane_weights:
+          - [symbolic, 1.1]
+          - [semantic, 0.9]
+"""
+    )
+
+    cfg = load_config(str(cfg_file))
+
+    assert cfg.memory.retrieval.stage3.semantic.enabled is True
+    assert cfg.memory.retrieval.stage3.semantic.provider == "fastembed"
+    assert cfg.memory.retrieval.stage3.semantic.model_name == "BAAI/bge-small-zh-v1.5"
+    assert cfg.memory.retrieval.stage3.semantic.cache_dir == "backend/data/embedding_cache"
+    assert cfg.memory.retrieval.stage3.entity.enabled is False
+    assert cfg.memory.retrieval.stage3.temporal.enabled is False
+    assert cfg.memory.retrieval.stage3.fusion.lane_weights == (
+        ("symbolic", 1.1),
+        ("semantic", 0.9),
+    )
