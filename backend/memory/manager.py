@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 from config import MemoryRerankerConfig, MemoryRetrievalConfig
+from memory.embedding_provider import (
+    CachedEmbeddingProvider,
+    FastEmbedProvider,
+    NullEmbeddingProvider,
+)
 from memory.formatter import MemoryRecallTelemetry, format_v3_memory_context
+from memory.recall_stage3 import retrieve_recall_candidates
 from memory.retrieval_candidates import RecallCandidate
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import RecallRerankResult, choose_reranker_path
 from memory.symbolic_recall import (
     heuristic_retrieval_plan_from_message,
-    rank_episode_slices,
-    rank_profile_items,
     should_trigger_memory_recall,
 )
 from memory.v3_models import EpisodeSlice, WorkingMemoryItem
@@ -56,6 +60,29 @@ class MemoryManager:
     ):
         self.v3_store = FileMemoryV3Store(data_dir)
         self.retrieval_config = retrieval_config or MemoryRetrievalConfig()
+        self._embedding_provider = None
+
+    def _get_stage3_embedding_provider(self):
+        semantic_config = self.retrieval_config.stage3.semantic
+        if not semantic_config.enabled:
+            return None
+        if self._embedding_provider is not None:
+            return self._embedding_provider
+        if semantic_config.provider != "fastembed":
+            self._embedding_provider = NullEmbeddingProvider()
+            return self._embedding_provider
+        try:
+            self._embedding_provider = CachedEmbeddingProvider(
+                FastEmbedProvider(
+                    model_name=semantic_config.model_name,
+                    cache_dir=semantic_config.cache_dir,
+                    local_files_only=semantic_config.local_files_only,
+                ),
+                max_items=semantic_config.cache_max_items,
+            )
+        except Exception:
+            self._embedding_provider = NullEmbeddingProvider()
+        return self._embedding_provider
 
     async def generate_context(
         self,
@@ -113,21 +140,33 @@ class MemoryManager:
             final_recall_decision = "query_recall_enabled"
 
         recall_attempted = should_run_query_recall and active_plan is not None
+        stage3_result = None
         if should_run_query_recall and active_plan is not None:
-            query_profile_limit = (
-                active_plan.top_k if active_plan is not None else _QUERY_PROFILE_LIMIT
+            should_load_slices = (
+                active_plan.source in {"episode_slice", "hybrid_history"}
+                or self.retrieval_config.stage3.source_widening.enabled
             )
-            recall_candidates.extend(
-                rank_profile_items(active_plan, profile)[:query_profile_limit]
-            )
-            if active_plan.source in {"episode_slice", "hybrid_history"}:
+            candidate_slices = []
+            if should_load_slices:
+                destination_filter = (
+                    active_plan.destination
+                    if not self.retrieval_config.stage3.destination_normalization_enabled
+                    else None
+                )
                 candidate_slices = await self.v3_store.list_episode_slices(
                     user_id,
-                    destination=active_plan.destination or None,
+                    destination=destination_filter or None,
                 )
-                recall_candidates.extend(
-                    rank_episode_slices(active_plan, candidate_slices)[: active_plan.top_k]
-                )
+            stage3_result = retrieve_recall_candidates(
+                query=active_plan,
+                profile=profile,
+                slices=candidate_slices,
+                user_message=user_message,
+                plan=plan,
+                config=self.retrieval_config.stage3,
+                embedding_provider=self._get_stage3_embedding_provider(),
+            )
+            recall_candidates.extend(stage3_result.candidates[: active_plan.top_k * 2])
 
         selected_candidates = list(recall_candidates)
         rerank_result = RecallRerankResult(
@@ -140,7 +179,7 @@ class MemoryManager:
             selected_candidates, rerank_result = await select_recall_candidates(
                 user_message=user_message,
                 plan=plan,
-                retrieval_plan=retrieval_plan,
+                retrieval_plan=active_plan,
                 candidates=recall_candidates,
                 reranker_config=self.retrieval_config.reranker,
             )
@@ -158,6 +197,8 @@ class MemoryManager:
         telemetry.recall_attempted_but_zero_hit = (
             recall_attempted and len(recall_candidates) == 0
         )
+        if stage3_result is not None:
+            telemetry.stage3 = stage3_result.telemetry.to_dict()
         telemetry.reranker_selected_ids = list(rerank_result.selected_item_ids)
         telemetry.reranker_final_reason = rerank_result.final_reason
         telemetry.reranker_fallback = rerank_result.fallback_used
