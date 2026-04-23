@@ -8,6 +8,7 @@ from typing import Any
 
 from config import MemoryRerankerConfig
 from memory.recall_query import RecallRetrievalPlan
+from memory.recall_stage3_models import RetrievalEvidence
 from memory.retrieval_candidates import RecallCandidate
 from state.models import TravelPlanState
 
@@ -111,9 +112,11 @@ def choose_reranker_path(
     user_message: str,
     plan: TravelPlanState,
     retrieval_plan: RecallRetrievalPlan | None,
+    evidence_by_id: dict[str, RetrievalEvidence] | None = None,
     config: MemoryRerankerConfig | None = None,
 ) -> RecallRerankPath:
     reranker_config = config or MemoryRerankerConfig()
+    evidence_by_id = evidence_by_id or {}
     if not candidates:
         return RecallRerankPath(
             selected_candidates=[],
@@ -140,6 +143,7 @@ def choose_reranker_path(
             retrieval_plan,
             weights,
             reranker_config.recency_half_life_days,
+            evidence_by_id.get(candidate.item_id),
         )
         per_item_reason[candidate.item_id] = scored.reason
         if scored.conflict_score >= 0.95:
@@ -245,6 +249,7 @@ def _score_candidate(
     retrieval_plan: RecallRetrievalPlan | None,
     weights: _IntentWeights,
     recency_half_life_days: int,
+    _evidence: RetrievalEvidence | None = None,
 ) -> _ScoredCandidate:
     bucket_score = _bucket_prior(candidate)
     domain_score = _jaccard(

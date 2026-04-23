@@ -10,6 +10,7 @@ from memory.embedding_provider import (
 )
 from memory.formatter import MemoryRecallTelemetry, format_v3_memory_context
 from memory.recall_stage3 import retrieve_recall_candidates
+from memory.recall_stage3_models import RetrievalEvidence
 from memory.retrieval_candidates import RecallCandidate
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import RecallRerankResult, choose_reranker_path
@@ -33,14 +34,20 @@ async def select_recall_candidates(
     plan: TravelPlanState,
     retrieval_plan: RecallRetrievalPlan | None,
     candidates: list[RecallCandidate],
+    evidence_by_id: dict[str, RetrievalEvidence] | None = None,
     reranker_config: MemoryRerankerConfig | None = None,
 ) -> tuple[list[RecallCandidate], RecallRerankResult]:
     if not candidates:
+        # Keep this payload byte-for-byte aligned with Task 3B `_empty_rerank_result()`
+        # until the shared factory replaces this inline branch.
         return [], RecallRerankResult(
             selected_item_ids=[],
             final_reason="",
             per_item_reason={},
-            fallback_used="none",
+            selection_metrics={
+                "selected_pairwise_similarity_max": None,
+                "selected_pairwise_similarity_avg": None,
+            },
         )
 
     path = choose_reranker_path(
@@ -48,6 +55,7 @@ async def select_recall_candidates(
         user_message=user_message,
         plan=plan,
         retrieval_plan=retrieval_plan,
+        evidence_by_id=evidence_by_id or {},
         config=reranker_config,
     )
     return list(path.selected_candidates), path.result
@@ -180,12 +188,16 @@ class MemoryManager:
             per_item_reason={},
             fallback_used="none",
         )
+        stage3_evidence_by_id = (
+            stage3_result.evidence_by_id if stage3_result is not None else {}
+        )
         if recall_candidates:
             selected_candidates, rerank_result = await select_recall_candidates(
                 user_message=user_message,
                 plan=plan,
                 retrieval_plan=active_plan,
                 candidates=recall_candidates,
+                evidence_by_id=stage3_evidence_by_id,
                 reranker_config=self.retrieval_config.reranker,
             )
 
