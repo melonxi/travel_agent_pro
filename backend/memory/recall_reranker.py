@@ -257,6 +257,7 @@ def choose_reranker_path(
     )
     for scored in selected:
         per_item_reason[scored.candidate.item_id] = scored.reason
+        per_item_scores[scored.candidate.item_id] = scored.score_detail
 
     selected_candidates = [scored.candidate for scored in selected]
     profile_count = sum(1 for candidate in selected_candidates if candidate.source == "profile")
