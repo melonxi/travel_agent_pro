@@ -248,6 +248,8 @@ def choose_reranker_path(
     normalized_slices = _normalize_source_scores(
         deduped_slices, source_prior=intent_profile.slice_source_prior
     )
+    for scored in normalized_profile + normalized_slices:
+        per_item_scores[scored.candidate.item_id] = scored.score_detail
 
     selected = _select_candidates(
         normalized_profile,
@@ -257,7 +259,6 @@ def choose_reranker_path(
     )
     for scored in selected:
         per_item_reason[scored.candidate.item_id] = scored.reason
-        per_item_scores[scored.candidate.item_id] = scored.score_detail
 
     selected_candidates = [scored.candidate for scored in selected]
     profile_count = sum(1 for candidate in selected_candidates if candidate.source == "profile")
