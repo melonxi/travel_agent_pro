@@ -31,12 +31,19 @@ export interface MemoryHit {
 }
 
 export interface MemoryRecallTelemetry {
+  sources?: Record<string, number>
+  profile_ids?: string[]
+  working_memory_ids?: string[]
+  slice_ids?: string[]
+  matched_reasons?: string[]
   stage0_decision?: string
   stage0_reason?: string
   stage0_matched_rule?: string
   stage0_signals?: Record<string, string[]>
   gate_needs_recall?: boolean | null
   gate_intent_type?: string
+  gate_confidence?: number | null
+  gate_reason?: string
   final_recall_decision?: string
   fallback_used?: string
   recall_skip_source?: string
@@ -47,6 +54,9 @@ export interface MemoryRecallTelemetry {
   reranker_final_reason?: string
   reranker_fallback?: string
   reranker_per_item_reason?: Record<string, string>
+  reranker_per_item_scores?: Record<string, Record<string, number | string | null>>
+  reranker_intent_label?: string
+  reranker_selection_metrics?: Record<string, number | null>
 }
 
 export type Significance = 'high' | 'medium' | 'low' | 'none'

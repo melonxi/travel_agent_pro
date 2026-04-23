@@ -184,6 +184,12 @@ interface BaseSSEEvent {
   stage0_reason?: string
   stage0_matched_rule?: string
   stage0_signals?: Record<string, string[]>
+  gate_needs_recall?: boolean | null
+  gate_intent_type?: string
+  gate_confidence?: number | null
+  gate_reason?: string
+  final_recall_decision?: string
+  fallback_used?: string
   query_plan_source?: string
   query_plan_fallback?: string
   recall_skip_source?: string
@@ -193,6 +199,9 @@ interface BaseSSEEvent {
   reranker_final_reason?: string
   reranker_fallback?: string
   reranker_per_item_reason?: Record<string, string>
+  reranker_per_item_scores?: Record<string, Record<string, number | string | null>>
+  reranker_intent_label?: string
+  reranker_selection_metrics?: Record<string, number | null>
   error?: string
   error_code?: string
   message?: string
