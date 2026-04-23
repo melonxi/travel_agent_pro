@@ -16,7 +16,12 @@ from memory.manager import MemoryManager
 from memory.recall_gate import apply_recall_short_circuit
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import RecallRerankResult
-from memory.recall_stage3_models import Stage3RecallResult, Stage3Telemetry
+from memory.recall_stage3_models import (
+    RetrievalEvidence,
+    Stage3RecallResult,
+    Stage3Telemetry,
+)
+from memory.retrieval_candidates import RecallCandidate
 from memory.v3_models import EpisodeSlice, MemoryProfileItem
 from state.models import TravelPlanState
 
@@ -697,6 +702,81 @@ async def test_generate_context_attaches_stage3_telemetry(tmp_path: Path):
 
     assert recall.stage3["lanes_attempted"] == ["symbolic"]
     assert recall.stage3["zero_hit"] is False
+
+
+@pytest.mark.asyncio
+async def test_generate_context_passes_stage3_evidence_to_reranker(
+    tmp_path: Path,
+    monkeypatch,
+):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    seen = {}
+
+    def fake_retrieve_recall_candidates(**kwargs):
+        candidate = RecallCandidate(
+            source="profile",
+            item_id="profile_1",
+            bucket="stable_preferences",
+            score=1.0,
+            matched_reason=["exact domain match on hotel"],
+            content_summary="hotel:preferred_area=京都四条",
+            domains=["hotel"],
+            applicability="适用于大多数住宿选择。",
+        )
+        evidence = RetrievalEvidence(
+            item_id="profile_1",
+            source="profile",
+            lanes=["symbolic"],
+            fused_score=0.8,
+        )
+        return Stage3RecallResult(
+            candidates=[candidate],
+            evidence_by_id={"profile_1": evidence},
+            telemetry=Stage3Telemetry(
+                lanes_attempted=["symbolic"],
+                lanes_succeeded=["symbolic"],
+            ),
+        )
+
+    async def fake_select_recall_candidates(**kwargs):
+        seen["evidence_by_id"] = kwargs["evidence_by_id"]
+        return kwargs["candidates"], RecallRerankResult(
+            selected_item_ids=["profile_1"],
+            final_reason="fake",
+            per_item_reason={
+                "profile_1": (
+                    "bucket=0.82 domain=1.00 keyword=0.00 destination=0.00 "
+                    "recency=1.00 applicability=0.35 conflict=0.00"
+                )
+            },
+        )
+
+    monkeypatch.setattr(
+        "memory.manager.retrieve_recall_candidates",
+        fake_retrieve_recall_candidates,
+    )
+    monkeypatch.setattr(
+        "memory.manager.select_recall_candidates",
+        fake_select_recall_candidates,
+    )
+
+    await manager.generate_context(
+        "u1",
+        TravelPlanState(session_id="s1", trip_id="trip_now"),
+        user_message="住宿按我习惯",
+        recall_gate=True,
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="",
+            keywords=["住宿"],
+            top_k=5,
+            reason="test",
+        ),
+    )
+
+    assert "profile_1" in seen["evidence_by_id"]
 
 
 @pytest.mark.asyncio

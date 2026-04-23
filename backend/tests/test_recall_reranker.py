@@ -1,11 +1,16 @@
 from dataclasses import dataclass
 
+import pytest
+
+from memory.manager import select_recall_candidates
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import (
+    RecallRerankPath,
     RecallRerankResult,
     SignalScoreDetail,
     choose_reranker_path,
 )
+from memory.recall_stage3_models import RetrievalEvidence
 from memory.retrieval_candidates import RecallCandidate
 from state.models import TravelPlanState, Travelers
 
@@ -67,6 +72,80 @@ def test_recall_rerank_result_supports_structured_score_payload():
 
     assert result.intent_label == "profile"
     assert result.per_item_scores["profile_1"].rule_score == 0.71
+
+
+@pytest.mark.asyncio
+async def test_select_recall_candidates_forwards_evidence_to_choose_reranker_path(
+    monkeypatch,
+):
+    seen = {}
+
+    def fake_choose_reranker_path(**kwargs):
+        seen["evidence_by_id"] = kwargs["evidence_by_id"]
+        return RecallRerankPath(
+            selected_candidates=kwargs["candidates"],
+            result=RecallRerankResult(
+                selected_item_ids=[
+                    candidate.item_id for candidate in kwargs["candidates"]
+                ],
+                final_reason="fake",
+                per_item_reason={},
+            ),
+        )
+
+    monkeypatch.setattr("memory.manager.choose_reranker_path", fake_choose_reranker_path)
+
+    candidates = [make_candidate(item_id="profile_1")]
+    evidence_by_id = {
+        "profile_1": RetrievalEvidence(
+            item_id="profile_1",
+            source="profile",
+            lanes=["symbolic"],
+            fused_score=0.8,
+        )
+    }
+
+    selected, result = await select_recall_candidates(
+        user_message="住宿按我习惯",
+        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="",
+            keywords=["住宿"],
+            top_k=5,
+            reason="test",
+        ),
+        candidates=candidates,
+        evidence_by_id=evidence_by_id,
+    )
+
+    assert [candidate.item_id for candidate in selected] == ["profile_1"]
+    assert result.selected_item_ids == ["profile_1"]
+    assert seen["evidence_by_id"] == evidence_by_id
+
+
+def test_choose_reranker_path_treats_missing_evidence_as_empty():
+    candidate = make_candidate(item_id="profile_missing_evidence")
+
+    path = choose_reranker_path(
+        candidates=[candidate],
+        user_message="住宿按我习惯",
+        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
+        retrieval_plan=RecallRetrievalPlan(
+            source="profile",
+            buckets=["stable_preferences"],
+            domains=["hotel"],
+            destination="",
+            keywords=["住宿"],
+            top_k=5,
+            reason="test",
+        ),
+        evidence_by_id={},
+    )
+
+    assert path.result.selected_item_ids == ["profile_missing_evidence"]
 
 
 def test_choose_reranker_path_skips_scoring_when_candidate_set_is_small():
