@@ -8,6 +8,7 @@ import DeliverablesCard from './components/DeliverablesCard'
 import Phase3Workbench from './components/Phase3Workbench'
 import SessionSidebar from './components/SessionSidebar'
 import TraceViewer from './components/TraceViewer'
+import MemoryTracePanel from './components/MemoryTracePanel'
 import type { PhaseTransitionEvent, TravelPlanState } from './types/plan'
 import type { SessionMeta } from './types/session'
 
@@ -66,10 +67,9 @@ export default function App() {
   const [sessionList, setSessionList] = useState<SessionMeta[]>([])
   const [chatKey, setChatKey] = useState(0)
   const [bootstrapping, setBootstrapping] = useState(true)
-  const [rightTab, setRightTab] = useState<'plan' | 'trace'>('plan')
+  const [rightTab, setRightTab] = useState<'plan' | 'trace' | 'memory'>('plan')
   const [traceTrigger, setTraceTrigger] = useState(0)
   const [memoryRefreshTrigger, setMemoryRefreshTrigger] = useState(0)
-  const [recalledIds, setRecalledIds] = useState<string[]>([])
   const { dark, toggle: toggleTheme } = useTheme()
   const initializedRef = useRef(false)
   const showPhase3Workbench = Boolean(
@@ -142,12 +142,13 @@ export default function App() {
     })
   }, [])
 
-  const handleMemoryRecall = useCallback((itemIds: string[]) => {
-    setRecalledIds(itemIds)
+  const handleMemoryRecall = useCallback((_itemIds: string[]) => {
+    // Recall highlighting moved to the Memory tab (MemoryTracePanel reads from trace).
+    // Kept as a no-op to preserve the ChatPanel event contract.
   }, [])
 
   useEffect(() => {
-    setRecalledIds([])
+    // Reset any session-scoped UI when switching sessions.
   }, [sessionId])
 
   const handleStreamEnd = useCallback(() => {
@@ -275,7 +276,6 @@ export default function App() {
         <SessionSidebar
           sessions={sessionList}
           activeSessionId={sessionId}
-          recalledIds={recalledIds}
           memoryRefreshTrigger={memoryRefreshTrigger}
           onSelectSession={(id) => {
             void handleSelectSession(id)
@@ -308,6 +308,12 @@ export default function App() {
               onClick={() => setRightTab('trace')}
             >
               Trace
+            </button>
+            <button
+              className={`right-tab ${rightTab === 'memory' ? 'active' : ''}`}
+              onClick={() => setRightTab('memory')}
+            >
+              Memory
             </button>
           </div>
           {rightTab === 'plan' ? (
@@ -360,8 +366,10 @@ export default function App() {
                 </>
               )}
             </>
-          ) : (
+          ) : rightTab === 'trace' ? (
             <TraceViewer sessionId={sessionId} refreshTrigger={traceTrigger} />
+          ) : (
+            <MemoryTracePanel sessionId={sessionId} refreshTrigger={traceTrigger} />
           )}
         </div>
       </div>
