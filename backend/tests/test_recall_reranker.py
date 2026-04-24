@@ -1,8 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
 
-from config import IntentWeightProfile
+from config import IntentWeightProfile, RerankerEvidenceConfig
 from memory.manager import select_recall_candidates
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import (
@@ -34,6 +34,13 @@ class DummyRerankerConfig:
     hybrid_profile_top_n: int = 2
     hybrid_slice_top_n: int = 2
     recency_half_life_days: int = 180
+    evidence: RerankerEvidenceConfig = field(
+        default_factory=lambda: RerankerEvidenceConfig(
+            lane_fused_weight=0.0,
+            lexical_score_weight=0.0,
+            semantic_score_weight=0.0,
+        )
+    )
 
 
 @dataclass(frozen=True)
