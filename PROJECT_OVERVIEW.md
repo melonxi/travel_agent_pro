@@ -348,7 +348,8 @@ LLM API 异常
 - **TraceViewer** — 分阶段分组的 Trace 视图，按 significance 分级展示，连续 thinking 自动折叠
 - **Phase3Workbench** — 旅行画像/候选池/骨架/锁定/风险 五卡片
 - **ThinkingBubble** — stage-aware 等待气泡，展示 narration hint
-- **MemoryCenter** — 右滑抽屉；只展示 v3 `profile`、当前 session/trip 的 `working-memory`、`episodes` 与 `episode-slices`
+- **MemoryCenter** — 右滑抽屉；只展示/管理 v3 `profile`、当前 session/trip 的 `working-memory`、`episodes` 与 `episode-slices`；卡片按 header(domain/confidence/time) + body(content/source/applicability) + actions 分层，不再混合本轮召回追踪
+- **MemoryTracePanel** — 右侧面板第三个 Tab（Plan / Trace / Memory），纯只读地展示本轮 `memory_recall` 结构化命中（profile / working / slice 分组、reranker 分数）与本轮记忆提取工具调用的输入输出；数据源复用 `useTrace` 的 `iterations[].memory_recall` 与 `tool_calls`，不调用新后端接口
 - **MapView / Timeline / BudgetChart** — 地图、时间线、预算可视化
 - **useSSE / useMemory / useTrace** — SSE 连接、记忆 CRUD、Trace 拉取三个 Hook
 

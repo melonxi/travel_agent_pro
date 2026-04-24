@@ -7,7 +7,6 @@ import type { SessionMeta } from '../types/session'
 interface Props {
   sessions: SessionMeta[]
   activeSessionId: string | null
-  recalledIds?: string[]
   memoryRefreshTrigger?: number
   onSelectSession: (sessionId: string) => void
   onNewSession: () => void
@@ -17,7 +16,6 @@ interface Props {
 export default function SessionSidebar({
   sessions,
   activeSessionId,
-  recalledIds,
   memoryRefreshTrigger = 0,
   onSelectSession,
   onNewSession,
@@ -60,7 +58,7 @@ export default function SessionSidebar({
             &#9654;
           </button>
         </aside>
-        <MemoryCenter open={memoryOpen} onClose={() => setMemoryOpen(false)} memory={memory} recalledIds={recalledIds} />
+        <MemoryCenter open={memoryOpen} onClose={() => setMemoryOpen(false)} memory={memory} />
       </>
     )
   }
@@ -128,7 +126,7 @@ export default function SessionSidebar({
           )}
         </button>
       </aside>
-      <MemoryCenter open={memoryOpen} onClose={() => setMemoryOpen(false)} memory={memory} recalledIds={recalledIds} />
+      <MemoryCenter open={memoryOpen} onClose={() => setMemoryOpen(false)} memory={memory} />
     </>
   )
 }

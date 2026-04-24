@@ -15,7 +15,6 @@ interface MemoryCenterProps {
   open: boolean;
   onClose: () => void;
   memory: UseMemoryReturn;
-  recalledIds?: string[];
 }
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -65,105 +64,108 @@ function getDomainLabel(domain: string): string {
   return DOMAIN_LABELS[domain] ?? domain;
 }
 
-function getProfileBucketLabel(bucket: 'constraints' | 'rejections' | 'stable_preferences' | 'preference_hypotheses'): string {
-  switch (bucket) {
-    case 'constraints':
-      return '长期约束';
-    case 'rejections':
-      return '明确拒绝';
-    case 'stable_preferences':
-      return '稳定偏好';
-    case 'preference_hypotheses':
-      return '偏好假设';
-  }
-}
-
 function ProfileCard({
   item,
   bucket,
-  recalled,
   onConfirm,
   onReject,
   onDelete,
 }: {
   item: MemoryProfileItem;
   bucket: 'constraints' | 'rejections' | 'stable_preferences' | 'preference_hypotheses';
-  recalled?: boolean;
   onConfirm?: (id: string) => void;
   onReject?: (id: string) => void;
   onDelete?: (id: string) => void;
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const level = confidenceLevel(item.confidence);
-  const cardClass = ['memory-card', recalled && 'is-recalled']
-    .filter(Boolean)
-    .join(' ');
+  const isPending = item.status === 'pending';
+  const isRejected = item.status === 'rejected';
   const firstQuoteRef = item.source_refs.find(
     (ref) => typeof ref.quote === 'string' && ref.quote.trim().length > 0,
   );
   const firstQuote =
     typeof firstQuoteRef?.quote === 'string' ? firstQuoteRef.quote : undefined;
+  const cardClass = [
+    'memory-card',
+    isPending && 'is-pending',
+    isRejected && 'is-rejected',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <div className={cardClass}>
-      <div className="memory-card-body">
-        <span className="memory-domain-tag">{getDomainLabel(item.domain)}</span>
-        <div className="memory-content">{formatValue(item.value)}</div>
-        {item.applicability && <div className="memory-source">{item.applicability}</div>}
-        {firstQuote && <div className="memory-source">{firstQuote}</div>}
-      </div>
-
-      <div className="memory-meta">
-        <span className="memory-badge scope-global">{getProfileBucketLabel(bucket)}</span>
-        <span className="memory-badge domain">{item.key}</span>
-        <span className="memory-confidence">
-          <span className={`memory-confidence-dot ${level}`} />
+      <div className="memory-card-header">
+        <span className="memory-domain-pill">{getDomainLabel(item.domain)}</span>
+        <span
+          className={`memory-confidence-pill level-${level}`}
+          title={`系统置信度 ${(item.confidence * 100).toFixed(0)}%`}
+        >
+          <span className="memory-confidence-dot" />
           {level === 'high' ? '高' : level === 'medium' ? '中' : '低'}
         </span>
-        {item.status && <span className="memory-badge domain">{item.status}</span>}
         <span className="memory-time">{formatRelativeTime(item.updated_at || item.created_at)}</span>
       </div>
 
-      {item.status === 'pending' && (
+      <div className="memory-card-body">
+        <div className="memory-content">{formatValue(item.value)}</div>
+        {firstQuote && (
+          <div className="memory-source">
+            <span className="memory-source-label">原话</span>
+            <span className="memory-source-text">{firstQuote}</span>
+          </div>
+        )}
+        {item.applicability && (
+          <div className="memory-applicability">{item.applicability}</div>
+        )}
+      </div>
+
+      {(isPending || (item.status === 'active' && bucket !== 'preference_hypotheses')) && (
         <div className="memory-actions">
-          <button className="memory-action-btn confirm" onClick={() => onConfirm?.(item.id)}>
-            ✓ 确认
-          </button>
-          <button className="memory-action-btn reject" onClick={() => onReject?.(item.id)}>
-            ✗ 拒绝
-          </button>
+          {isPending && (
+            <>
+              <button className="memory-action-btn confirm" onClick={() => onConfirm?.(item.id)}>
+                确认
+              </button>
+              <button className="memory-action-btn reject" onClick={() => onReject?.(item.id)}>
+                拒绝
+              </button>
+            </>
+          )}
+          {item.status === 'active' && !confirmingDelete && (
+            <button className="memory-action-btn delete" onClick={() => setConfirmingDelete(true)}>
+              删除
+            </button>
+          )}
+          {item.status === 'active' && confirmingDelete && (
+            <div className="memory-delete-confirm">
+              <span>确认删除？</span>
+              <button
+                className="memory-action-btn danger"
+                onClick={() => {
+                  onDelete?.(item.id);
+                  setConfirmingDelete(false);
+                }}
+              >
+                删除
+              </button>
+              <button className="memory-action-btn" onClick={() => setConfirmingDelete(false)}>
+                取消
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {item.status === 'active' && !confirmingDelete && (
-        <div className="memory-actions">
-          <button className="memory-action-btn delete" onClick={() => setConfirmingDelete(true)}>
-            删除
-          </button>
-        </div>
-      )}
-
-      {item.status === 'active' && confirmingDelete && (
-        <div className="memory-delete-confirm">
-          <span>确定删除此记忆？</span>
-          <button
-            className="confirm-yes"
-            onClick={() => {
-              onDelete?.(item.id);
-              setConfirmingDelete(false);
-            }}
-          >
-            确定
-          </button>
-          <button onClick={() => setConfirmingDelete(false)}>取消</button>
-        </div>
+      {bucket === 'preference_hypotheses' && isPending && (
+        <div className="memory-hint">偏好假设：系统观察到的信号，确认后将沉淀为稳定偏好</div>
       )}
     </div>
   );
 }
 
-function EpisodeCard({ episode, recalled }: { episode: ArchivedTripEpisode; recalled?: boolean }) {
-  const cardClass = ['memory-card', recalled && 'is-recalled'].filter(Boolean).join(' ');
+function EpisodeCard({ episode }: { episode: ArchivedTripEpisode }) {
   const dateLabel =
     episode.dates && typeof episode.dates.start === 'string' && typeof episode.dates.end === 'string'
       ? `${episode.dates.start} - ${episode.dates.end}`
@@ -172,82 +174,86 @@ function EpisodeCard({ episode, recalled }: { episode: ArchivedTripEpisode; reca
   const decisionCount = Array.isArray(episode.decision_log) ? episode.decision_log.length : 0;
 
   return (
-    <div className={cardClass}>
+    <div className="memory-card">
+      <div className="memory-card-header">
+        <span className="memory-domain-pill dest">{episode.destination ?? '历史旅行'}</span>
+        {dateLabel && <span className="memory-time">{dateLabel}</span>}
+        <span className="memory-time">{formatRelativeTime(episode.created_at)}</span>
+      </div>
       <div className="memory-card-body">
-        <span className="memory-domain-tag">{episode.destination ?? '历史旅行'}</span>
         <div className="memory-content">{episode.final_plan_summary || '暂无摘要'}</div>
         {lessonCount > 0 && (
           <div className="memory-source">
-            复盘：
-            {episode.lesson_log
-              .map((lesson) => String(lesson.content ?? lesson.kind ?? ''))
-              .filter(Boolean)
-              .join('；')}
+            <span className="memory-source-label">复盘</span>
+            <span className="memory-source-text">
+              {episode.lesson_log
+                .map((lesson) => String(lesson.content ?? lesson.kind ?? ''))
+                .filter(Boolean)
+                .join('；')}
+            </span>
           </div>
         )}
       </div>
-
-      <div className="memory-meta">
-        <span className="memory-badge scope-trip">历史旅行</span>
-        {dateLabel && <span className="memory-badge domain">{dateLabel}</span>}
-        <span className="memory-badge domain">决策 {decisionCount}</span>
-        <span className="memory-badge domain">复盘 {lessonCount}</span>
-        <span className="memory-time">{formatRelativeTime(episode.created_at)}</span>
+      <div className="memory-meta-line">
+        <span>决策 {decisionCount}</span>
+        <span>·</span>
+        <span>复盘 {lessonCount}</span>
       </div>
     </div>
   );
 }
 
-function SliceCard({ slice, recalled }: { slice: EpisodeSlice; recalled?: boolean }) {
-  const cardClass = ['memory-card', recalled && 'is-recalled'].filter(Boolean).join(' ');
-
+function SliceCard({ slice }: { slice: EpisodeSlice }) {
   return (
-    <div className={cardClass}>
-      <div className="memory-card-body">
-        <span className="memory-domain-tag">{slice.slice_type}</span>
-        <div className="memory-content">{slice.content}</div>
-        {slice.applicability && <div className="memory-source">{slice.applicability}</div>}
-      </div>
-
-      <div className="memory-meta">
-        <span className="memory-badge scope-trip">历史切片</span>
-        {slice.domains.map((domain) => (
-          <span key={domain} className="memory-badge domain">
-            {domain}
-          </span>
-        ))}
-        {slice.keywords.slice(0, 2).map((keyword) => (
-          <span key={keyword} className="memory-badge domain">
-            {keyword}
-          </span>
-        ))}
+    <div className="memory-card">
+      <div className="memory-card-header">
+        <span className="memory-domain-pill">{slice.slice_type}</span>
         <span className="memory-time">{formatRelativeTime(slice.created_at)}</span>
       </div>
+      <div className="memory-card-body">
+        <div className="memory-content">{slice.content}</div>
+        {slice.applicability && <div className="memory-applicability">{slice.applicability}</div>}
+      </div>
+      {(slice.domains.length > 0 || slice.keywords.length > 0) && (
+        <div className="memory-meta-line">
+          {slice.domains.map((domain) => (
+            <span key={domain}>{getDomainLabel(domain)}</span>
+          ))}
+          {slice.keywords.slice(0, 3).map((keyword) => (
+            <span key={keyword} className="muted">
+              #{keyword}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function WorkingMemoryCard({ item, recalled }: { item: WorkingMemoryItem; recalled?: boolean }) {
-  const cardClass = ['memory-card', recalled && 'is-recalled'].filter(Boolean).join(' ');
-
+function WorkingMemoryCard({ item }: { item: WorkingMemoryItem }) {
   return (
-    <div className={cardClass}>
-      <div className="memory-card-body">
-        <span className="memory-domain-tag">{item.kind}</span>
-        <div className="memory-content">{item.content}</div>
-        {item.reason && <div className="memory-source">{item.reason}</div>}
-      </div>
-
-      <div className="memory-meta">
-        <span className="memory-badge scope-trip">当前会话工作记忆</span>
-        {item.domains.map((domain) => (
-          <span key={domain} className="memory-badge domain">
-            {getDomainLabel(domain)}
-          </span>
-        ))}
-        <span className="memory-badge domain">P{item.phase}</span>
+    <div className="memory-card">
+      <div className="memory-card-header">
+        <span className="memory-domain-pill">{item.kind}</span>
+        <span className="memory-phase-pill">P{item.phase}</span>
         <span className="memory-time">{formatRelativeTime(item.created_at)}</span>
       </div>
+      <div className="memory-card-body">
+        <div className="memory-content">{item.content}</div>
+        {item.reason && (
+          <div className="memory-source">
+            <span className="memory-source-label">原因</span>
+            <span className="memory-source-text">{item.reason}</span>
+          </div>
+        )}
+      </div>
+      {item.domains.length > 0 && (
+        <div className="memory-meta-line">
+          {item.domains.map((domain) => (
+            <span key={domain}>{getDomainLabel(domain)}</span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -307,7 +313,6 @@ export default function MemoryCenter({
   open,
   onClose,
   memory,
-  recalledIds = [],
 }: MemoryCenterProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('profile');
 
@@ -321,11 +326,13 @@ export default function MemoryCenter({
     actions,
   } = memory;
 
+  const { fetchMemories } = actions;
+
   useEffect(() => {
     if (open) {
-      void actions.fetchMemories();
+      void fetchMemories();
     }
-  }, [open, actions]);
+  }, [open, fetchMemories]);
 
   useEffect(() => {
     if (!open) return;
@@ -399,7 +406,6 @@ export default function MemoryCenter({
                 key={item.id}
                 item={item}
                 bucket="constraints"
-                recalled={recalledIds.includes(item.id)}
                 onDelete={actions.deleteMemory}
               />
             ))}
@@ -413,7 +419,6 @@ export default function MemoryCenter({
                 key={item.id}
                 item={item}
                 bucket="rejections"
-                recalled={recalledIds.includes(item.id)}
                 onDelete={actions.deleteMemory}
               />
             ))}
@@ -427,7 +432,6 @@ export default function MemoryCenter({
                 key={item.id}
                 item={item}
                 bucket="stable_preferences"
-                recalled={recalledIds.includes(item.id)}
                 onDelete={actions.deleteMemory}
               />
             ))}
@@ -453,7 +457,6 @@ export default function MemoryCenter({
                 key={item.id}
                 item={item}
                 bucket="preference_hypotheses"
-                recalled={recalledIds.includes(item.id)}
                 onConfirm={actions.confirmMemory}
                 onReject={actions.rejectMemory}
                 onDelete={actions.deleteMemory}
@@ -480,7 +483,6 @@ export default function MemoryCenter({
               <EpisodeCard
                 key={episode.id}
                 episode={episode}
-                recalled={recalledIds.includes(episode.id)}
               />
             ))}
           </Section>
@@ -500,7 +502,6 @@ export default function MemoryCenter({
           <SliceCard
             key={slice.id}
             slice={slice}
-            recalled={recalledIds.includes(slice.id)}
           />
         ))}
       </Section>
@@ -551,7 +552,6 @@ export default function MemoryCenter({
                 <WorkingMemoryCard
                   key={item.id}
                   item={item}
-                  recalled={recalledIds.includes(item.id)}
                 />
               ))}
             </Section>
