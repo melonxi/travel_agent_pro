@@ -7,7 +7,8 @@ def test_memory_retrieval_config_stage3_defaults():
     assert isinstance(cfg.stage3, Stage3RecallConfig)
     assert cfg.stage3.symbolic.enabled is True
     assert cfg.stage3.lexical.enabled is False
-    assert cfg.stage3.semantic.enabled is False
+    assert cfg.stage3.semantic.enabled is True
+    assert cfg.stage3.semantic.local_files_only is True
     assert cfg.stage3.entity.enabled is False
     assert cfg.stage3.temporal.enabled is False
     assert cfg.stage3.destination_normalization_enabled is False
@@ -28,7 +29,10 @@ def test_memory_retrieval_config_reranker_defaults_include_evidence_blocks():
     assert cfg.reranker.evidence.symbolic_hit_weight == 0.0
     assert cfg.reranker.evidence.lexical_hit_weight == 0.0
     assert cfg.reranker.evidence.semantic_hit_weight == 0.0
-    assert cfg.reranker.evidence.lane_fused_weight == 0.0
+    assert cfg.reranker.evidence.lane_fused_weight == 0.25
+    assert cfg.reranker.evidence.lexical_score_weight == 0.08
+    assert cfg.reranker.evidence.semantic_score_weight == 0.15
+    assert cfg.reranker.evidence.destination_match_type_weight == 0.0
     assert cfg.reranker.dynamic_budget.enabled is False
     assert dict(cfg.reranker.intent_weights)["profile"].profile_source_prior == 1.0
 
@@ -48,7 +52,7 @@ memory:
     cfg = load_config(str(cfg_file))
 
     assert cfg.memory.retrieval.reranker.hybrid_top_n == 5
-    assert cfg.memory.retrieval.reranker.evidence.semantic_score_weight == 0.0
+    assert cfg.memory.retrieval.reranker.evidence.semantic_score_weight == 0.15
     assert cfg.memory.retrieval.reranker.dynamic_budget.enabled is False
 
 
@@ -149,3 +153,30 @@ memory:
         ("symbolic", 1.1),
         ("semantic", 0.9),
     )
+
+
+def test_load_config_production_rollback_yaml_restores_phase_zero_behavior(tmp_path):
+    """Production can restore pre-phase-1 behavior by writing the documented rollback snippet."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        """\
+memory:
+  retrieval:
+    stage3:
+      semantic:
+        enabled: false
+    reranker:
+      evidence:
+        lane_fused_weight: 0.0
+        semantic_score_weight: 0.0
+        lexical_score_weight: 0.0
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(str(cfg_file))
+
+    assert cfg.memory.retrieval.stage3.semantic.enabled is False
+    assert cfg.memory.retrieval.reranker.evidence.lane_fused_weight == 0.0
+    assert cfg.memory.retrieval.reranker.evidence.semantic_score_weight == 0.0
+    assert cfg.memory.retrieval.reranker.evidence.lexical_score_weight == 0.0
