@@ -98,9 +98,9 @@ class RerankerEvidenceConfig:
     symbolic_hit_weight: float = 0.0
     lexical_hit_weight: float = 0.0
     semantic_hit_weight: float = 0.0
-    lane_fused_weight: float = 0.0
-    lexical_score_weight: float = 0.0
-    semantic_score_weight: float = 0.0
+    lane_fused_weight: float = 0.25
+    lexical_score_weight: float = 0.08
+    semantic_score_weight: float = 0.15
     destination_match_type_weight: float = 0.0
 
 
@@ -159,11 +159,11 @@ class Stage3LaneConfig:
 
 @dataclass(frozen=True)
 class Stage3SemanticConfig(Stage3LaneConfig):
-    enabled: bool = False
+    enabled: bool = True
     provider: str = "fastembed"
     model_name: str = "BAAI/bge-small-zh-v1.5"
     cache_dir: str = "backend/data/embedding_cache"
-    local_files_only: bool = False
+    local_files_only: bool = True
     min_score: float = 0.58
     cache_max_items: int = 10000
     cache_max_mb: int = 64
@@ -555,12 +555,12 @@ def _build_memory_config(
                     semantic_hit_weight=float(
                         evidence_raw.get("semantic_hit_weight", 0.0)
                     ),
-                    lane_fused_weight=float(evidence_raw.get("lane_fused_weight", 0.0)),
+                    lane_fused_weight=float(evidence_raw.get("lane_fused_weight", 0.25)),
                     lexical_score_weight=float(
-                        evidence_raw.get("lexical_score_weight", 0.0)
+                        evidence_raw.get("lexical_score_weight", 0.08)
                     ),
                     semantic_score_weight=float(
-                        evidence_raw.get("semantic_score_weight", 0.0)
+                        evidence_raw.get("semantic_score_weight", 0.15)
                     ),
                     destination_match_type_weight=float(
                         evidence_raw.get("destination_match_type_weight", 0.0)
