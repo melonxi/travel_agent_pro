@@ -115,7 +115,12 @@ async def test_generate_context_uses_retrieval_plan_for_slice_recall(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_generate_context_applies_top_k_to_episode_slice_candidates(tmp_path: Path):
-    manager = MemoryManager(data_dir=str(tmp_path))
+    manager = MemoryManager(
+        data_dir=str(tmp_path),
+        retrieval_config=MemoryRetrievalConfig(
+            stage3=Stage3RecallConfig(semantic=Stage3SemanticConfig(enabled=False))
+        ),
+    )
     for idx in range(3):
         await manager.v3_store.append_episode_slice(
             EpisodeSlice(
