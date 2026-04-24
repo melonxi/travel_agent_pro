@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from config import Stage3LaneConfig, Stage3RecallConfig
+from config import Stage3LaneConfig, Stage3RecallConfig, Stage3SemanticConfig
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3 import retrieve_recall_candidates
 from memory.v3_models import EpisodeSlice, MemoryProfileItem, UserMemoryProfile
@@ -170,7 +170,7 @@ def test_lexical_disabled_preserves_default_symbolic_only_output() -> None:
         slices=[],
         user_message="住宿按我习惯",
         plan=TravelPlanState(session_id="s1", trip_id="now"),
-        config=Stage3RecallConfig(),
+        config=Stage3RecallConfig(semantic=Stage3SemanticConfig(enabled=False)),
     )
     disabled_result = retrieve_recall_candidates(
         query=query,
@@ -178,7 +178,10 @@ def test_lexical_disabled_preserves_default_symbolic_only_output() -> None:
         slices=[],
         user_message="住宿按我习惯",
         plan=TravelPlanState(session_id="s1", trip_id="now"),
-        config=replace(Stage3RecallConfig(), lexical=Stage3LaneConfig(enabled=False)),
+        config=replace(
+            Stage3RecallConfig(semantic=Stage3SemanticConfig(enabled=False)),
+            lexical=Stage3LaneConfig(enabled=False),
+        ),
     )
 
     assert [candidate.item_id for candidate in disabled_result.candidates] == [

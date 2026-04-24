@@ -1,6 +1,6 @@
 import pytest
 
-from config import Stage3FusionConfig, Stage3RecallConfig
+from config import Stage3FusionConfig, Stage3RecallConfig, Stage3SemanticConfig
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3 import retrieve_recall_candidates
 from memory.recall_stage3_lanes import (
@@ -126,7 +126,7 @@ def test_stage3_symbolic_default_matches_existing_symbolic_candidates() -> None:
         slices=slices,
         user_message="上次京都住哪里",
         plan=TravelPlanState(session_id="s1", trip_id="now"),
-        config=Stage3RecallConfig(),
+        config=Stage3RecallConfig(semantic=Stage3SemanticConfig(enabled=False)),
     )
 
     assert [candidate.item_id for candidate in result.candidates] == [
@@ -156,7 +156,7 @@ def test_stage3_symbolic_default_large_result_matches_existing_order_without_fus
         slices=slices,
         user_message="上次京都住哪里",
         plan=TravelPlanState(session_id="s1", trip_id="now"),
-        config=Stage3RecallConfig(),
+        config=Stage3RecallConfig(semantic=Stage3SemanticConfig(enabled=False)),
     )
 
     assert [candidate.item_id for candidate in result.candidates] == [
@@ -173,7 +173,7 @@ def test_stage3_symbolic_default_bypass_leaves_evidence_unfused() -> None:
         slices=[],
         user_message="住宿按我习惯",
         plan=TravelPlanState(session_id="s1", trip_id="now"),
-        config=Stage3RecallConfig(),
+        config=Stage3RecallConfig(semantic=Stage3SemanticConfig(enabled=False)),
     )
 
     evidence = result.evidence_by_id["stable_preferences:hotel:preferred_area"]
@@ -189,7 +189,7 @@ def test_stage3_default_config_keeps_only_symbolic_lane_enabled() -> None:
 
     assert config.symbolic.enabled is True
     assert config.lexical.enabled is False
-    assert config.semantic.enabled is False
+    assert config.semantic.enabled is True
     assert config.entity.enabled is False
     assert config.temporal.enabled is False
 

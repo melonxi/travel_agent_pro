@@ -700,7 +700,7 @@ async def test_generate_context_attaches_stage3_telemetry(tmp_path: Path):
         ),
     )
 
-    assert recall.stage3["lanes_attempted"] == ["symbolic"]
+    assert recall.stage3["lanes_attempted"] == ["symbolic", "semantic"]
     assert recall.stage3["zero_hit"] is False
 
 
