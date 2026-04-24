@@ -54,3 +54,4 @@ screenshots/
 
 # Playwright MCP runtime data
 .playwright-mcp/
+.playwright-cli/
