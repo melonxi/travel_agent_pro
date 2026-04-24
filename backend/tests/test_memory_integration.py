@@ -1047,7 +1047,7 @@ async def test_chat_stream_passes_stage0_style_signals_to_heuristic_fallback(
 
 
 @pytest.mark.asyncio
-async def test_query_plan_prompt_includes_recent_user_window_for_context(
+async def test_query_plan_prompt_separates_latest_and_previous_messages(
     monkeypatch, app
 ):
     observed_prompt = {"content": ""}
@@ -1095,20 +1095,23 @@ async def test_query_plan_prompt_includes_recent_user_window_for_context(
             json={"message": "换个吧", "user_id": "u1"},
         )
 
-    assert "recent_user_window" in observed_prompt["content"]
-    assert "还是按我以前住酒店的习惯来" in observed_prompt["content"]
-    assert "换个吧" in observed_prompt["content"]
+    assert "检索计划必须主要基于 latest_user_message" in observed_prompt["content"]
+    assert "previous_user_messages 只用于解析 latest_user_message" in observed_prompt["content"]
+    assert "plan_facts 只用于抽取目的地" in observed_prompt["content"]
+    assert 'latest_user_message="换个吧"' in observed_prompt["content"]
+    assert 'previous_user_messages=["还是按我以前住酒店的习惯来"]' in observed_prompt["content"]
+    assert "recent_user_window" not in observed_prompt["content"]
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_reuses_gate_memory_summary_for_query_prompt(
+async def test_chat_stream_builds_query_plan_memory_summary_after_gate(
     monkeypatch, app_extraction_disabled
 ):
     build_recall_retrieval_plan = _get_closure_value(
         app_extraction_disabled, "_build_recall_retrieval_plan"
     )
     original_summary = _get_function_closure_value(
-        build_recall_retrieval_plan, "_build_gate_memory_summary"
+        build_recall_retrieval_plan, "_build_memory_prompt_summary"
     )
     call_count = {"count": 0}
 
@@ -1117,7 +1120,7 @@ async def test_chat_stream_reuses_gate_memory_summary_for_query_prompt(
         return await original_summary(*args, **kwargs)
 
     _set_function_closure_value(
-        build_recall_retrieval_plan, "_build_gate_memory_summary", counting_summary
+        build_recall_retrieval_plan, "_build_memory_prompt_summary", counting_summary
     )
 
     async def fake_collect_forced_tool_call_arguments(llm, *, messages, tool_def):
@@ -1162,7 +1165,7 @@ async def test_chat_stream_reuses_gate_memory_summary_for_query_prompt(
         assert call_count["count"] == 1
     finally:
         _set_function_closure_value(
-            build_recall_retrieval_plan, "_build_gate_memory_summary", original_summary
+            build_recall_retrieval_plan, "_build_memory_prompt_summary", original_summary
         )
 
 
@@ -1431,6 +1434,137 @@ async def test_chat_stream_keeps_conservative_recall_fields_for_invalid_gate_pay
     assert '"fallback_used": "invalid_tool_payload_heuristic_recall"' in resp.text
     assert '"query_plan_source": "heuristic_fallback"' in resp.text
     assert '"final_recall_decision": "query_recall_enabled"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_recall_gate_prompt_treats_open_ended_personalized_requests_as_recall(
+    monkeypatch, app
+):
+    captured: dict[str, str] = {}
+
+    class CapturingRecallGateProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            captured[tool_name] = messages[0].content
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_gate",
+                    name=tool_name,
+                    arguments={
+                        "needs_recall": False,
+                        "intent_type": "no_recall_needed",
+                        "reason": "test only captures prompt",
+                        "confidence": 0.8,
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+    monkeypatch.setattr(
+        "main.create_llm_provider", lambda _config: CapturingRecallGateProvider()
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "想去有好吃的地方玩", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    prompt = captured["decide_memory_recall"]
+    assert "如果当前请求需要回答“什么更适合这个用户”，就应该召回" in prompt
+    assert "必须以 latest_user_message 为主要判断依据" in prompt
+    assert "previous_user_messages 只用于理解 latest_user_message" in prompt
+    assert "current_trip_facts 只用于识别 latest_user_message" in prompt
+    assert "即使它引用了 current_trip_facts，也应倾向于 needs_recall=true" in prompt
+    assert 'latest_user_message="想去有好吃的地方玩"' in prompt
+    assert "previous_user_messages=[]" in prompt
+    assert "current_trip_facts=" in prompt
+    assert "开放式旅行请求" in prompt
+    assert "好吃" in prompt
+    assert "想去有好吃的地方玩" in prompt
+    assert "最近用户消息" not in prompt
+    assert "必须调用 decide_memory_recall" not in prompt
+    assert "现有记忆概览" not in prompt
+    assert "memory_summary" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_recall_gate_prompt_separates_latest_and_previous_messages(
+    monkeypatch, app
+):
+    captured: dict[str, str] = {}
+
+    async def fake_collect_forced_tool_call_arguments(llm, *, messages, tool_def):
+        tool_name = tool_def["name"]
+        if tool_name == "decide_memory_recall":
+            captured[tool_name] = messages[0].content
+            return {
+                "needs_recall": True,
+                "intent_type": "mixed_or_ambiguous",
+                "reason": "latest message continues prior recommendation",
+                "confidence": 0.8,
+            }
+        if tool_name == "build_recall_retrieval_plan":
+            return {
+                "source": "hybrid_history",
+                "buckets": ["constraints", "rejections", "stable_preferences"],
+                "domains": ["destination"],
+                "destination": "",
+                "keywords": ["轻松"],
+                "top_k": 3,
+                "reason": "mixed_or_ambiguous -> continuation",
+            }
+        return {
+            "should_extract": False,
+            "routes": {"profile": False, "working_memory": False},
+            "reason": "trip_state_only",
+            "message": "本轮只是当前行程事实",
+        }
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    monkeypatch.setattr("agent.loop.AgentLoop.run", fake_run)
+    monkeypatch.setattr(
+        "main._collect_forced_tool_call_arguments",
+        fake_collect_forced_tool_call_arguments,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+        await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "想去几个适合我的城市", "user_id": "u1"},
+        )
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "换个更轻松的", "user_id": "u1"},
+        )
+
+    assert resp.status_code == 200
+    prompt = captured["decide_memory_recall"]
+    assert 'latest_user_message="换个更轻松的"' in prompt
+    assert 'previous_user_messages=["想去几个适合我的城市"]' in prompt
+    assert "不能因为更早消息本身需要召回" in prompt
 
 
 @pytest.mark.asyncio

@@ -218,7 +218,6 @@ class MemoryRecallDecision:
     fallback_used: str = "none"
     recall_skip_source: str = ""
     gate_user_window: list[str] = field(default_factory=list)
-    memory_summary: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -403,8 +402,8 @@ def _build_recall_query_tool() -> dict[str, Any]:
 
 def _build_recall_query_prompt(
     *,
-    user_message: str,
-    recent_user_window: list[str],
+    latest_user_message: str,
+    previous_user_messages: list[str],
     gate_intent_type: str,
     gate_reason: str,
     gate_confidence: float | None,
@@ -416,6 +415,9 @@ def _build_recall_query_prompt(
         [
             "你是旅行记忆召回规划器。",
             "Recall gate 已经确认需要召回。你不要重新判断要不要 recall，只输出检索计划。",
+            "检索计划必须主要基于 latest_user_message。",
+            "previous_user_messages 只用于解析 latest_user_message 中的省略、指代和承接关系，不能让更早消息覆盖当前请求。",
+            "plan_facts 只用于抽取目的地、当前对象、预算、同行人等检索参数，不用于重新判断是否需要 recall。",
             "你的计划会驱动符号检索，不是语义向量检索；domains、destination、keywords 必须精确、可被下游字符串匹配消费。",
             "source 决策规则：profile_preference_recall -> profile；profile_constraint_recall -> profile；past_trip_experience_recall -> episode_slice 或 hybrid_history；mixed_or_ambiguous -> hybrid_history。",
             "buckets 仅在 source=profile 或 hybrid_history 时填写。profile_constraint_recall 优先 constraints/rejections；profile_preference_recall 优先 constraints/rejections/stable_preferences；mixed_or_ambiguous 可加 preference_hypotheses。",
@@ -423,8 +425,8 @@ def _build_recall_query_prompt(
             "destination 只允许填写目的地名称；无法可靠推断时填空字符串。",
             "top_k 表示每个 source 的候选预算，不是总候选数。",
             "reason 只写一行简短遥测说明，不要展开推理过程。",
-            f"user_message={json.dumps(user_message, ensure_ascii=False)}",
-            f"recent_user_window={json.dumps(recent_user_window, ensure_ascii=False)}",
+            f"latest_user_message={json.dumps(latest_user_message, ensure_ascii=False)}",
+            f"previous_user_messages={json.dumps(previous_user_messages, ensure_ascii=False)}",
             f"gate_intent_type={json.dumps(gate_intent_type, ensure_ascii=False)}",
             f"gate_reason={json.dumps(gate_reason, ensure_ascii=False)}",
             f"gate_confidence={json.dumps(gate_confidence, ensure_ascii=False)}",
@@ -1500,7 +1502,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     _EXTRACTION_GATE_TIMEOUT_SECONDS = 30.0
     _EXTRACTION_TIMEOUT_SECONDS = 40.0
 
-    async def _build_gate_memory_summary(
+    async def _build_memory_prompt_summary(
         *,
         user_id: str,
         session_id: str,
@@ -1650,7 +1652,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         user_id: str,
         user_messages: list[str],
         plan_snapshot: TravelPlanState,
-        memory_summary: dict[str, Any] | None = None,
     ) -> MemoryRecallDecision:
         stage0 = apply_recall_short_circuit(user_messages[-1] if user_messages else "")
         stage0_signals = _stage0_signals_to_dict(stage0.signals)
@@ -1663,7 +1664,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 stage0_signals=stage0_signals,
                 intent_type="",
                 reason=stage0.reason,
-                memory_summary=memory_summary or {},
             )
         if stage0.decision == "skip_recall":
             return MemoryRecallDecision(
@@ -1675,7 +1675,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 intent_type="",
                 reason=stage0.reason,
                 recall_skip_source="stage0_skip",
-                memory_summary=memory_summary or {},
             )
         if not config.memory.retrieval.recall_gate_enabled:
             return MemoryRecallDecision(
@@ -1687,7 +1686,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 intent_type="no_recall_needed",
                 reason="recall_gate_disabled",
                 recall_skip_source="gate_disabled",
-                memory_summary=memory_summary or {},
             )
         gate_window = build_gate_user_window(
             user_messages=user_messages,
@@ -1704,24 +1702,34 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 intent_type="no_recall_needed",
                 reason="no_user_messages",
                 recall_skip_source="no_user_messages",
-                memory_summary=memory_summary or {},
             )
 
-        if memory_summary is None:
-            memory_summary = await _build_gate_memory_summary(
-                user_id=user_id,
-                session_id=session_id,
-                plan_snapshot=plan_snapshot,
-            )
+        latest_user_message = gate_window[-1]
+        previous_user_messages = gate_window[:-1]
         prompt = "\n".join(
             [
                 "你是旅行记忆召回判定器。",
-                "如果用户在问当前行程事实、继续当前规划或无需引用过往偏好/历史经历，则 needs_recall=false。",
-                "只有在需要调取长期画像、历史偏好或过往旅行经历时，needs_recall=true。",
-                f"最近用户消息：{json.dumps(gate_window, ensure_ascii=False)}",
-                f"当前旅行事实：{json.dumps(_memory_plan_facts(plan_snapshot), ensure_ascii=False)}",
-                f"现有记忆概览：{json.dumps(memory_summary, ensure_ascii=False)}",
-                "必须调用 decide_memory_recall 工具输出结果。",
+                "你的任务是判断：为了更好地回答用户当前请求，是否应该调取用户的长期画像、历史偏好、长期约束、过去旅行经验或当前会话工作记忆。",
+                "判定对象：必须以 latest_user_message 为主要判断依据。",
+                "previous_user_messages 只用于理解 latest_user_message 中的省略、指代和承接关系，不能因为更早消息本身需要召回，就把当前轮判成 needs_recall=true。",
+                "current_trip_facts 只用于识别 latest_user_message 是否在询问当前行程中已经明确存在的事实。",
+                "如果 latest_user_message 是对当前行程做个性化评价、选择、优化、推荐或取舍，即使它引用了 current_trip_facts，也应倾向于 needs_recall=true。",
+                "核心原则：",
+                "1. 如果用户请求涉及个性化选择、推荐、排序、取舍、规划风格、目的地选择、住宿选择、交通选择、餐饮偏好、活动偏好、预算倾向、体力节奏、同行人需求、避雷避坑，即使用户没有明确说“按我的偏好”或“像以前一样”，也应倾向于 needs_recall=true。",
+                "2. 如果用户表达的是“我想要/我喜欢/我不喜欢/我偏好/我受不了/我希望/我在意/我不想要”这类个人特征、偏好或约束，并且这些信息可能影响后续推荐或规划，应倾向于 needs_recall=true，用于结合已有画像避免重复提问或冲突建议。",
+                "3. 如果用户提出开放式旅行请求，例如“想去好玩的地方”“想去好吃的地方”“帮我安排住宿”“这几个哪个更适合”“怎么安排比较好”，这通常需要个性化判断，应召回相关画像和历史经验。",
+                "4. 如果用户只是在询问当前行程中已经明确存在的事实，例如“我这次预算是多少”“酒店是哪家”“几号出发”“现在目的地是哪里”，不需要召回历史记忆，needs_recall=false。",
+                "5. 如果用户只是确认、继续、寒暄、系统操作或没有实际规划含义，例如“好的”“继续”“就这个”“重新开始”，通常 needs_recall=false。",
+                "6. 如果当前请求既可能是普通查询，也可能受个人偏好影响，采用保守召回策略，needs_recall=true。召回比漏召更可接受，因为后续 reranker 会过滤无关记忆。",
+                "请特别注意：",
+                "- 不要只在用户显式提到“历史、上次、以前、按我偏好”时才召回。",
+                "- 用户说“好吃、舒服、轻松、不折腾、适合我、好玩、自然、安静、方便、省心、亲子、老人友好、预算别太高”等主观标准时，通常都需要召回用户画像。",
+                "- 如果当前请求需要回答“什么更适合这个用户”，就应该召回。",
+                "- 如果只是回答“当前计划里已经写了什么事实”，才跳过召回。",
+                f"latest_user_message={json.dumps(latest_user_message, ensure_ascii=False)}",
+                f"previous_user_messages={json.dumps(previous_user_messages, ensure_ascii=False)}",
+                f"current_trip_facts={json.dumps(_memory_plan_facts(plan_snapshot), ensure_ascii=False)}",
+                "输出字段语义：needs_recall 表示 latest_user_message 是否需要召回；intent_type 必须使用工具枚举；reason 简短说明为什么需要或不需要召回；confidence 为 0 到 1 的置信度。",
             ]
         )
         recall_gate_model = config.memory.retrieval.recall_gate_model or config.llm.model
@@ -1784,7 +1792,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             fallback_used=gate_decision.fallback_used,
             recall_skip_source="" if gate_decision.needs_recall else "gate_false",
             gate_user_window=list(gate_window),
-            memory_summary=dict(memory_summary),
         )
 
     async def _build_recall_retrieval_plan(
@@ -1802,20 +1809,22 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         memory_summary: dict[str, Any] | None = None,
     ) -> RecallQueryPlanResult:
         query_llm = create_llm_provider(config.llm)
-        recent_user_window = build_gate_user_window(
+        query_window = build_gate_user_window(
             user_messages=user_messages,
             max_messages=_GATE_MAX_USER_MESSAGES,
             max_chars=_GATE_MAX_CHARS,
         )
+        latest_user_message = query_window[-1] if query_window else user_message
+        previous_user_messages = query_window[:-1]
         if memory_summary is None:
-            memory_summary = await _build_gate_memory_summary(
+            memory_summary = await _build_memory_prompt_summary(
                 user_id=user_id,
                 session_id=session_id,
                 plan_snapshot=plan_snapshot,
             )
         prompt = _build_recall_query_prompt(
-            user_message=user_message,
-            recent_user_window=recent_user_window,
+            latest_user_message=latest_user_message,
+            previous_user_messages=previous_user_messages,
             gate_intent_type=gate_intent_type,
             gate_reason=gate_reason,
             gate_confidence=gate_confidence,
@@ -1910,7 +1919,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 message="本轮没有可提取的用户消息",
             )
 
-        memory_summary = await _build_gate_memory_summary(
+        memory_summary = await _build_memory_prompt_summary(
             user_id=user_id,
             session_id=session_id,
             plan_snapshot=plan_snapshot,
@@ -3919,13 +3928,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                         for message in messages
                         if message.role == Role.USER and message.content
                     ]
-                    recall_memory_summary = recall_decision.memory_summary
-                    if not recall_memory_summary:
-                        recall_memory_summary = await _build_gate_memory_summary(
-                            user_id=req.user_id,
-                            session_id=plan.session_id,
-                            plan_snapshot=plan,
-                        )
                     if (
                         recall_decision.fallback_used
                         in _GATE_HEURISTIC_RECALL_FALLBACKS
@@ -3944,7 +3946,6 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                             stage0_decision=recall_decision.stage0_decision,
                             stage0_signals=recall_decision.stage0_signals,
                             plan_snapshot=plan,
-                            memory_summary=recall_memory_summary,
                         )
                         retrieval_plan = query_plan_result.plan
                         query_plan_source = query_plan_result.query_plan_source

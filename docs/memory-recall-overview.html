@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>记忆召回机制总览</title>
+  <style>
+    :root{--paper:#faf7f2;--paper2:#f2ede4;--ink:#1c1917;--muted:#57534e;--soft:#78716c;--rule:rgba(28,25,23,.14);--accent:#b5523a;--tint:rgba(181,82,58,.08);--white:#fffdf9;--link:#2563eb}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 1px 1px,rgba(28,25,23,.08) 1px,transparent 0) 0 0/22px 22px,var(--paper);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.56}
+    main{width:min(1180px,calc(100vw - 32px));margin:0 auto;padding:44px 0 64px} h1{margin:0 0 12px;font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:clamp(36px,5vw,60px);line-height:1.04;word-break:keep-all} h2{margin:0;font-size:19px} h3{margin:8px 0 8px;font-size:16px}.lead{max-width:830px;color:var(--muted);font-size:17px;margin:0}.top{display:grid;grid-template-columns:1.25fr .75fr;gap:28px;align-items:end}.box,section{border:1px solid var(--rule);background:rgba(255,253,249,.74);border-radius:10px;padding:22px}.box{font-size:13px;color:var(--muted)}section{margin-top:28px}.head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:16px}.hint{font-size:13px;color:var(--soft)}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}.tag{display:inline-flex;min-height:18px;padding:1px 6px;border:1px solid rgba(120,113,108,.28);border-radius:3px;color:var(--soft);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+    .pipeline{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.stage{display:block;text-decoration:none;color:inherit;border:1px solid var(--rule);background:var(--white);border-radius:8px;padding:15px;min-height:150px}.stage:hover{border-color:var(--accent);background:var(--tint)}.stage .num{color:var(--accent);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-weight:700}.stage p,.card p,.why p{margin:0;color:var(--muted);font-size:14px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card,.why{border:1px solid var(--rule);background:var(--white);border-radius:8px;padding:16px}.whygrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.flow{overflow-x:auto;border:1px solid var(--rule);background:var(--paper2);border-radius:8px;padding:10px}svg{display:block;width:100%;min-width:980px;height:auto}.node{fill:#fffdf9;stroke:#57534e}.focus{fill:rgba(181,82,58,.08);stroke:#b5523a}.text{font:700 13px Inter,system-ui;fill:#1c1917}.sub{font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:#57534e}.arrow{stroke:#57534e;stroke-width:1.2;fill:none}.note{border-left:3px solid var(--accent);background:var(--tint);border-radius:0 8px 8px 0;padding:12px 14px;color:var(--muted);font-size:14px}.links{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}.links a{display:block;border:1px solid var(--rule);background:var(--white);border-radius:8px;padding:12px;color:var(--link);text-decoration:none;font-weight:700}.links a:hover{border-color:var(--link)}
+    @media(max-width:900px){.top,.pipeline,.grid,.whygrid,.links{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <main>
+    <header class="top">
+      <div>
+        <h1>记忆召回机制总览</h1>
+        <p class="lead">这套召回架构把“是否需要记忆、该查哪里、怎么拿候选、最终选哪些”拆成 5 个 stage。它服务的是旅行规划场景：用户偏好会强烈影响方案质量，但当前行程事实又必须保持权威、干净、可解释。</p>
+      </div>
+      <div class="box">
+        <strong>入口文件</strong><br>
+        <code>backend/main.py</code><br>
+        <code>backend/memory/manager.py</code><br>
+        <code>backend/memory/recall_*.py</code>
+      </div>
+    </header>
+
+    <section>
+      <div class="head"><h2>各 Stage 入口</h2><span class="hint">每页都解释 what / how / why / travel fit。</span></div>
+      <div class="pipeline">
+        <a class="stage" href="./memory-recall-stage0-visual.html"><span class="num">Stage 0</span><h3>硬规则短路</h3><p>用词表和优先级规则先处理强确定样本：直接召回、直接跳过或交给 LLM gate。</p></a>
+        <a class="stage" href="./memory-recall-stage1-gate.html"><span class="num">Stage 1</span><h3>LLM Gate</h3><p>对 undecided 样本做语义判断：当前请求是否需要长期画像、历史经验或工作记忆。</p></a>
+        <a class="stage" href="./memory-recall-stage2-retrieval-plan.html"><span class="num">Stage 2</span><h3>Retrieval Plan</h3><p>把“需要召回”转成结构化查询计划：source、buckets、domains、destination、keywords。</p></a>
+        <a class="stage" href="./memory-recall-stage3-candidate-generation.html"><span class="num">Stage 3</span><h3>候选生成</h3><p>按查询计划从 profile 和 episode slices 中生成候选，并附带 lane evidence。</p></a>
+        <a class="stage" href="./memory-recall-stage4-reranker.html"><span class="num">Stage 4</span><h3>Reranker</h3><p>融合规则分、source prior、语义/词法证据，选出最终进入 prompt 的记忆。</p></a>
+      </div>
+    </section>
+
+    <section>
+      <div class="head"><h2>整体数据流</h2><span class="hint">每一层只回答一个问题。</span></div>
+      <div class="flow">
+        <svg viewBox="0 0 1120 300" role="img" aria-label="memory recall overview pipeline">
+          <defs><marker id="a" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#57534e"/></marker></defs>
+          <path class="arrow" d="M180 150H275" marker-end="url(#a)"/><path class="arrow" d="M415 150H510" marker-end="url(#a)"/><path class="arrow" d="M650 150H745" marker-end="url(#a)"/><path class="arrow" d="M885 150H980" marker-end="url(#a)"/>
+          <rect x="30" y="104" width="150" height="92" rx="8" class="focus"/><text x="105" y="138" text-anchor="middle" class="text">用户消息</text><text x="105" y="162" text-anchor="middle" class="sub">current turn</text>
+          <rect x="275" y="88" width="140" height="124" rx="8" class="node"/><text x="345" y="124" text-anchor="middle" class="text">Stage 0/1</text><text x="345" y="148" text-anchor="middle" class="sub">是否召回?</text><text x="345" y="170" text-anchor="middle" class="sub">need recall</text>
+          <rect x="510" y="88" width="140" height="124" rx="8" class="node"/><text x="580" y="124" text-anchor="middle" class="text">Stage 2</text><text x="580" y="148" text-anchor="middle" class="sub">查哪里?</text><text x="580" y="170" text-anchor="middle" class="sub">query contract</text>
+          <rect x="745" y="88" width="140" height="124" rx="8" class="node"/><text x="815" y="124" text-anchor="middle" class="text">Stage 3</text><text x="815" y="148" text-anchor="middle" class="sub">拿哪些候选?</text><text x="815" y="170" text-anchor="middle" class="sub">candidates + evidence</text>
+          <rect x="980" y="88" width="120" height="124" rx="8" class="focus"/><text x="1040" y="124" text-anchor="middle" class="text">Stage 4</text><text x="1040" y="148" text-anchor="middle" class="sub">选哪些?</text><text x="1040" y="170" text-anchor="middle" class="sub">prompt context</text>
+        </svg>
+      </div>
+    </section>
+
+    <section>
+      <div class="head"><h2>为什么要这样设计</h2><span class="hint">核心是旅行规划里的“个性化”和“当前事实权威”之间的张力。</span></div>
+      <div class="whygrid">
+        <div class="why"><span class="tag">Problem</span><h3>旅行偏好强个性化</h3><p>同一句“想去好吃的地方玩”，不同用户的答案可能完全不同：有人不吃辣、有人带孩子、有人讨厌赶路。没有历史画像，Agent 容易给出泛泛推荐。</p></div>
+        <div class="why"><span class="tag">Problem</span><h3>当前行程事实不能被历史污染</h3><p>“这次预算多少”“酒店是哪家”应该从 <code>TravelPlanState</code> 取权威事实，而不是从旧旅行记忆里猜。否则会把过去计划误带入当前计划。</p></div>
+        <div class="why"><span class="tag">Architecture</span><h3>先判定，再检索，再重排</h3><p>如果把所有历史都常驻 prompt，会增加噪音和成本；如果只靠单次向量检索，会缺少规则可解释性。分层后，每一步都能单独观察和回归。</p></div>
+        <div class="why"><span class="tag">UX</span><h3>召回结果要可解释</h3><p>前端 trace 可以看到 gate、query plan、candidate_count、reranker scores。用户和开发者能判断：是没召回、没命中，还是被 reranker 过滤了。</p></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="head"><h2>和旅行场景的适配</h2><span class="hint">不是通用聊天记忆，而是服务行程规划的记忆。</span></div>
+      <div class="grid">
+        <div class="card"><span class="tag">Profile</span><h3>长期画像</h3><p>饮食禁忌、住宿偏好、预算倾向、体力节奏、亲子/老人需求。适合跨旅行复用。</p></div>
+        <div class="card"><span class="tag">Working</span><h3>当前工作记忆</h3><p>当前 session/trip 内的临时拒绝、局部取舍和短期上下文。只服务当前会话。</p></div>
+        <div class="card"><span class="tag">Slices</span><h3>历史旅行切片</h3><p>过去行程模式、住宿选择、交通选择、踩坑和被拒选项。适合从经验中迁移。</p></div>
+      </div>
+      <p class="note">当前旅行事实仍由 <code>TravelPlanState</code> 权威提供；记忆召回只负责补充“这个用户可能更适合什么”。</p>
+    </section>
+
+    <section>
+      <div class="head"><h2>推荐阅读路径</h2><span class="hint">从非代码理解到工程调试。</span></div>
+      <div class="links">
+        <a href="./memory-recall-stage0-visual.html">Stage 0</a>
+        <a href="./memory-recall-stage1-gate.html">Stage 1</a>
+        <a href="./memory-recall-stage2-retrieval-plan.html">Stage 2</a>
+        <a href="./memory-recall-stage3-candidate-generation.html">Stage 3</a>
+        <a href="./memory-recall-stage4-reranker.html">Stage 4</a>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

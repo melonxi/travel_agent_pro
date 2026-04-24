@@ -165,7 +165,11 @@ def _signal_has_negation_prefix(message: str, token: str) -> bool:
 def build_recall_gate_tool() -> dict[str, Any]:
     return {
         "name": "decide_memory_recall",
-        "description": "Decide whether the current user message needs profile recall.",
+        "description": (
+            "Decide whether the latest user message needs memory recall. "
+            "Previous user messages are auxiliary context only for resolving "
+            "references or continuation, and must not independently trigger recall."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
