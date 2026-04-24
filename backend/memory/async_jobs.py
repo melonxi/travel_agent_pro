@@ -20,6 +20,7 @@ def _clip_user_messages(
     *,
     max_messages: int,
     max_chars: int,
+    preserve_latest_message: bool = False,
 ) -> list[str]:
     recent = [message for message in user_messages if message][-max_messages:]
     if not recent:
@@ -29,6 +30,10 @@ def _clip_user_messages(
     total_chars = 0
     for message in reversed(recent):
         message_len = len(message)
+        if not kept and preserve_latest_message:
+            kept.append(message)
+            total_chars += message_len
+            continue
         if kept and total_chars + message_len > max_chars:
             break
         if not kept and message_len > max_chars:
@@ -50,6 +55,7 @@ def build_gate_user_window(
         user_messages,
         max_messages=max_messages,
         max_chars=max_chars,
+        preserve_latest_message=True,
     )
 
 

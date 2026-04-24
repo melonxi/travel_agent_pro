@@ -1,0 +1,1099 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Memory Recall Stage 0 Visual Guide</title>
+  <style>
+    :root {
+      --paper: #faf7f2;
+      --paper-2: #f2ede4;
+      --ink: #1c1917;
+      --muted: #57534e;
+      --soft: #78716c;
+      --rule: rgba(28, 25, 23, 0.14);
+      --rule-strong: rgba(120, 113, 108, 0.28);
+      --accent: #b5523a;
+      --accent-tint: rgba(181, 82, 58, 0.08);
+      --ok: #256f4a;
+      --skip: #6f5f25;
+      --wait: #3b5f87;
+      --white: #fffdf9;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 1px 1px, rgba(28,25,23,0.08) 1px, transparent 0) 0 0 / 22px 22px,
+        var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 44px 0 64px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+      gap: 28px;
+      align-items: end;
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-weight: 400;
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 1.02;
+      letter-spacing: 0;
+      word-break: keep-all;
+    }
+
+    .lead {
+      max-width: 760px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .source {
+      border: 1px solid var(--rule);
+      background: rgba(255,255,255,0.48);
+      border-radius: 8px;
+      padding: 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .source code,
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+      color: var(--ink);
+    }
+
+    section {
+      margin-top: 28px;
+      border: 1px solid var(--rule);
+      background: rgba(255,253,249,0.72);
+      border-radius: 10px;
+      padding: 22px;
+    }
+
+    .section-head {
+      display: flex;
+      gap: 12px;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .hint {
+      color: var(--soft);
+      font-size: 13px;
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .stage {
+      min-height: 92px;
+      border: 1px solid var(--rule);
+      background: var(--white);
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .stage.active {
+      border-color: var(--accent);
+      background: var(--accent-tint);
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      padding: 1px 6px;
+      border: 1px solid var(--rule-strong);
+      border-radius: 3px;
+      color: var(--soft);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .stage-title {
+      margin-top: 9px;
+      font-weight: 700;
+    }
+
+    .stage-desc {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .flow-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--rule);
+      background: var(--paper-2);
+      border-radius: 8px;
+      padding: 8px;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      min-width: 980px;
+      height: auto;
+    }
+
+    .node-label {
+      fill: var(--ink);
+      font-size: 14px;
+      font-weight: 700;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    .node-sub {
+      fill: var(--muted);
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .arrow-label {
+      fill: var(--muted);
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .decision {
+      fill: var(--white);
+      stroke: var(--ink);
+      stroke-width: 1.2;
+    }
+
+    .step {
+      fill: var(--white);
+      stroke: var(--muted);
+      stroke-width: 1;
+    }
+
+    .focal {
+      fill: var(--accent-tint);
+      stroke: var(--accent);
+      stroke-width: 1.2;
+    }
+
+    .out-force { fill: rgba(37,111,74,0.10); stroke: var(--ok); }
+    .out-skip { fill: rgba(111,95,37,0.10); stroke: var(--skip); }
+    .out-wait { fill: rgba(59,95,135,0.10); stroke: var(--wait); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      border: 1px solid var(--rule);
+      background: var(--white);
+      border-radius: 8px;
+      padding: 15px;
+    }
+
+    .card h3 {
+      margin: 8px 0 8px;
+      font-size: 16px;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .decision-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 14px;
+    }
+
+    .decision-card {
+      border-radius: 8px;
+      padding: 15px;
+      border: 1px solid var(--rule-strong);
+      background: var(--white);
+    }
+
+    .decision-card.force { border-color: rgba(37,111,74,0.45); }
+    .decision-card.skip { border-color: rgba(111,95,37,0.45); }
+    .decision-card.wait { border-color: rgba(59,95,135,0.45); }
+
+    .decision-card .name {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-weight: 700;
+      font-size: 15px;
+    }
+
+    .rules {
+      display: grid;
+      grid-template-columns: 0.78fr 1.22fr 0.9fr 0.9fr;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--white);
+    }
+
+    .rules > div {
+      padding: 10px 12px;
+      border-right: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+      font-size: 13px;
+    }
+
+    .rules > div:nth-child(4n) { border-right: none; }
+    .rules > div:nth-last-child(-n + 4) { border-bottom: none; }
+    .rules .head {
+      font-weight: 700;
+      background: rgba(28,25,23,0.04);
+      color: var(--ink);
+    }
+
+    .examples {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .example {
+      border: 1px solid var(--rule);
+      background: var(--white);
+      border-radius: 8px;
+      padding: 13px;
+    }
+
+    .quote {
+      min-height: 48px;
+      margin-bottom: 10px;
+      font-weight: 650;
+    }
+
+    .path {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .note {
+      border-left: 3px solid var(--accent);
+      padding: 12px 14px;
+      background: var(--accent-tint);
+      color: var(--muted);
+      border-radius: 0 8px 8px 0;
+      font-size: 14px;
+    }
+
+    .why-grid {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 14px;
+    }
+
+    .why-card {
+      border: 1px solid var(--rule);
+      background: var(--white);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .why-card h3 {
+      margin: 8px 0 8px;
+      font-size: 16px;
+    }
+
+    .why-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .trade-row {
+      display: grid;
+      grid-template-columns: 0.72fr 1.28fr;
+      gap: 10px;
+      align-items: start;
+      padding: 10px 0;
+      border-top: 1px solid var(--rule);
+    }
+
+    .trade-row:first-child {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    .trade-key {
+      font-weight: 700;
+    }
+
+    .trade-value {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .knowhow {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .playbook {
+      border: 1px solid var(--rule);
+      background: var(--white);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .playbook h3 {
+      margin: 8px 0 10px;
+      font-size: 16px;
+    }
+
+    .playbook ol {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .playbook li + li {
+      margin-top: 7px;
+    }
+
+    .split-table {
+      display: grid;
+      grid-template-columns: 0.85fr 1.15fr 1.15fr;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--white);
+    }
+
+    .split-table > div {
+      padding: 11px 12px;
+      border-right: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+      font-size: 13px;
+    }
+
+    .split-table > div:nth-child(3n) { border-right: none; }
+    .split-table > div:nth-last-child(-n + 3) { border-bottom: none; }
+    .split-table .head {
+      font-weight: 700;
+      background: rgba(28,25,23,0.04);
+    }
+
+    .vocab-table {
+      display: grid;
+      grid-template-columns: 0.72fr 0.7fr 1.58fr;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--white);
+    }
+
+    .vocab-table > div {
+      padding: 11px 12px;
+      border-right: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+      font-size: 13px;
+    }
+
+    .vocab-table > div:nth-child(3n) { border-right: none; }
+    .vocab-table > div:nth-last-child(-n + 3) { border-bottom: none; }
+    .vocab-table .head {
+      font-weight: 700;
+      background: rgba(28,25,23,0.04);
+    }
+
+    .tokens {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .token {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 7px;
+      border: 1px solid var(--rule);
+      border-radius: 5px;
+      background: rgba(28,25,23,0.03);
+      color: var(--ink);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .rationale {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .rationale-card {
+      border: 1px solid var(--rule);
+      background: var(--white);
+      border-radius: 8px;
+      padding: 15px;
+    }
+
+    .rationale-card h3 {
+      margin: 8px 0 8px;
+      font-size: 15px;
+    }
+
+    .rationale-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .page-nav {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .page-nav a,
+    .page-nav span {
+      display: block;
+      min-height: 64px;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: var(--white);
+      text-decoration: none;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .page-nav span {
+      color: var(--soft);
+      background: rgba(28,25,23,0.03);
+    }
+
+    .page-nav small {
+      display: block;
+      color: var(--soft);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    .page-nav a:hover {
+      border-color: var(--accent);
+      background: var(--accent-tint);
+    }
+
+    @media (max-width: 900px) {
+      header,
+      .grid,
+      .decision-list,
+      .examples,
+      .why-grid,
+      .knowhow,
+      .rationale,
+      .page-nav {
+        grid-template-columns: 1fr;
+      }
+
+      .pipeline {
+        grid-template-columns: 1fr;
+      }
+
+      .rules {
+        grid-template-columns: 1fr;
+      }
+
+      .rules > div,
+      .rules > div:nth-child(4n),
+      .rules > div:nth-last-child(-n + 4) {
+        border-right: none;
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .rules > div:last-child {
+        border-bottom: none;
+      }
+
+      .split-table {
+        grid-template-columns: 1fr;
+      }
+
+      .split-table > div,
+      .split-table > div:nth-child(3n),
+      .split-table > div:nth-last-child(-n + 3) {
+        border-right: none;
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .split-table > div:last-child {
+        border-bottom: none;
+      }
+
+      .vocab-table {
+        grid-template-columns: 1fr;
+      }
+
+      .vocab-table > div,
+      .vocab-table > div:nth-child(3n),
+      .vocab-table > div:nth-last-child(-n + 3) {
+        border-right: none;
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .vocab-table > div:last-child {
+        border-bottom: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div style="margin-bottom:18px">
+      <a href="./memory-recall-overview.html" style="color:#2563eb;text-decoration:none;font-weight:700">← 记忆召回总览</a>
+    </div>
+    <header>
+      <div>
+        <h1>记忆召回 Stage 0：硬规则短路</h1>
+        <p class="lead">
+          Stage 0 是记忆召回链路的第一道闸门。它不调用 LLM，只看最后一条用户消息中的固定词表信号，然后快速输出三类结果：
+          直接召回、直接跳过、或交给 LLM gate。
+        </p>
+      </div>
+      <div class="source">
+        <div><strong>代码来源</strong></div>
+        <div><code>backend/memory/recall_signals.py</code></div>
+        <div><code>backend/memory/recall_gate.py</code></div>
+        <div><code>backend/main.py::_decide_memory_recall</code></div>
+      </div>
+    </header>
+
+    <section>
+      <div class="section-head">
+        <h2>它在完整召回链路中的位置</h2>
+        <span class="hint">Stage 0 只负责第一步，后面还有 LLM gate、检索计划、候选生成和重排。</span>
+      </div>
+      <div class="pipeline">
+        <div class="stage active">
+          <span class="tag">Stage 0</span>
+          <div class="stage-title">硬规则短路</div>
+          <div class="stage-desc">词表匹配 + 优先级规则，输出三类决策。</div>
+        </div>
+        <div class="stage">
+          <span class="tag">Stage 1</span>
+          <div class="stage-title">LLM Gate</div>
+          <div class="stage-desc">只处理 undecided，判断是否需要召回。</div>
+        </div>
+        <div class="stage">
+          <span class="tag">Stage 2</span>
+          <div class="stage-title">Retrieval Plan</div>
+          <div class="stage-desc">决定查 profile、slice 还是 hybrid_history。</div>
+        </div>
+        <div class="stage">
+          <span class="tag">Stage 3</span>
+          <div class="stage-title">候选生成</div>
+          <div class="stage-desc">symbolic / semantic / lexical lane 产出候选。</div>
+        </div>
+        <div class="stage">
+          <span class="tag">Stage 4</span>
+          <div class="stage-title">Reranker</div>
+          <div class="stage-desc">按规则和 evidence 重排，选中注入上下文。</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Stage 0 的核心流程</h2>
+        <span class="hint">按优先级从上到下判断；第一个命中的规则直接返回。</span>
+      </div>
+      <div class="flow-wrap">
+        <svg viewBox="0 0 1120 900" role="img" aria-label="Stage 0 recall gate flowchart">
+          <defs>
+            <marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+              <polygon points="0 0, 9 3.5, 0 7" fill="#57534e"></polygon>
+            </marker>
+            <marker id="arrow-accent" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+              <polygon points="0 0, 9 3.5, 0 7" fill="#b5523a"></polygon>
+            </marker>
+          </defs>
+
+          <line x1="560" y1="92" x2="560" y2="142" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></line>
+          <line x1="560" y1="218" x2="560" y2="276" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></line>
+          <line x1="560" y1="352" x2="560" y2="408" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></line>
+          <line x1="560" y1="504" x2="560" y2="560" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></line>
+          <line x1="560" y1="656" x2="560" y2="712" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></line>
+
+          <path d="M 660 314 C 760 314, 800 314, 850 314" fill="none" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arrow-accent)"></path>
+          <text x="728" y="302" class="arrow-label">否定? 否 / P1</text>
+
+          <path d="M 660 466 C 760 466, 800 466, 850 466" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></path>
+          <text x="722" y="454" class="arrow-label">是 / P2</text>
+
+          <path d="M 660 618 C 760 618, 800 618, 850 618" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></path>
+          <text x="714" y="606" class="arrow-label">是 / P3</text>
+
+          <path d="M 660 770 C 760 770, 800 770, 850 770" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></path>
+          <text x="714" y="758" class="arrow-label">是 / P4</text>
+
+          <path d="M 460 314 C 350 314, 300 314, 260 314" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></path>
+          <text x="310" y="302" class="arrow-label">否定? 是 / P1N</text>
+
+          <path d="M 460 162 C 350 162, 300 162, 260 162" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></path>
+          <text x="348" y="150" class="arrow-label">空 / P5</text>
+
+          <path d="M 560 808 L 560 842 L 260 842" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"></path>
+          <text x="430" y="834" class="arrow-label">都没命中 / P6</text>
+
+          <rect x="410" y="32" width="300" height="60" rx="28" class="focal"></rect>
+          <text x="560" y="58" text-anchor="middle" class="node-label">最后一条 user message</text>
+          <text x="560" y="76" text-anchor="middle" class="node-sub">Stage 0 只看最后一句</text>
+
+          <rect x="390" y="142" width="340" height="76" rx="6" class="step"></rect>
+          <text x="560" y="171" text-anchor="middle" class="node-label">Layer 1：词表信号抽取</text>
+          <text x="560" y="192" text-anchor="middle" class="node-sub">history / style / recommend / fact / ack</text>
+
+          <polygon points="560,276 660,314 560,352 460,314" class="decision"></polygon>
+          <text x="560" y="310" text-anchor="middle" class="node-label">history 或 style?</text>
+          <text x="560" y="329" text-anchor="middle" class="node-sub">上次 / 按我习惯 / 老样子</text>
+
+          <polygon points="560,408 660,466 560,504 460,466" class="decision"></polygon>
+          <text x="560" y="462" text-anchor="middle" class="node-label">recommend?</text>
+          <text x="560" y="481" text-anchor="middle" class="node-sub">推荐 / 怎么安排 / 比较好</text>
+
+          <polygon points="560,560 660,618 560,656 460,618" class="decision"></polygon>
+          <text x="560" y="614" text-anchor="middle" class="node-label">当前事实问句?</text>
+          <text x="560" y="633" text-anchor="middle" class="node-sub">这次 + 预算/酒店/日期...</text>
+
+          <polygon points="560,712 660,770 560,808 460,770" class="decision"></polygon>
+          <text x="560" y="766" text-anchor="middle" class="node-label">仅确认/系统词?</text>
+          <text x="560" y="785" text-anchor="middle" class="node-sub">继续 / 好的 / 就这个</text>
+
+          <rect x="850" y="274" width="210" height="80" rx="6" class="out-force"></rect>
+          <text x="955" y="305" text-anchor="middle" class="node-label">force_recall</text>
+          <text x="955" y="327" text-anchor="middle" class="node-sub">直接进入召回</text>
+
+          <rect x="850" y="426" width="210" height="80" rx="6" class="out-wait"></rect>
+          <text x="955" y="457" text-anchor="middle" class="node-label">undecided</text>
+          <text x="955" y="479" text-anchor="middle" class="node-sub">交给 LLM gate</text>
+
+          <rect x="850" y="578" width="210" height="80" rx="6" class="out-skip"></rect>
+          <text x="955" y="609" text-anchor="middle" class="node-label">skip_recall</text>
+          <text x="955" y="631" text-anchor="middle" class="node-sub">当前事实，不查历史</text>
+
+          <rect x="850" y="730" width="210" height="80" rx="6" class="out-skip"></rect>
+          <text x="955" y="761" text-anchor="middle" class="node-label">skip_recall</text>
+          <text x="955" y="783" text-anchor="middle" class="node-sub">确认/系统操作</text>
+
+          <rect x="50" y="122" width="210" height="80" rx="6" class="out-wait"></rect>
+          <text x="155" y="153" text-anchor="middle" class="node-label">undecided</text>
+          <text x="155" y="175" text-anchor="middle" class="node-sub">空消息 / P5</text>
+
+          <rect x="50" y="274" width="210" height="80" rx="6" class="out-wait"></rect>
+          <text x="155" y="305" text-anchor="middle" class="node-label">undecided</text>
+          <text x="155" y="327" text-anchor="middle" class="node-sub">否定旧偏好 / P1N</text>
+
+          <rect x="50" y="802" width="210" height="80" rx="6" class="out-wait"></rect>
+          <text x="155" y="833" text-anchor="middle" class="node-label">undecided</text>
+          <text x="155" y="855" text-anchor="middle" class="node-sub">兜底 / P6</text>
+        </svg>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>三类输出怎么理解</h2>
+        <span class="hint">这是理解 Stage 0 的关键：规则很多，出口只有三个。</span>
+      </div>
+      <div class="decision-list">
+        <div class="decision-card force">
+          <span class="tag">DIRECT</span>
+          <div class="name">force_recall</div>
+          <p>规则层已经足够确定：用户在引用历史、习惯或偏好。直接进入后续召回，不再问 LLM gate 要不要召回。</p>
+        </div>
+        <div class="decision-card skip">
+          <span class="tag">STOP</span>
+          <div class="name">skip_recall</div>
+          <p>规则层已经足够确定：用户只是问当前行程事实，或只是确认/继续。不要查历史记忆，避免噪音。</p>
+        </div>
+        <div class="decision-card wait">
+          <span class="tag">DEFER</span>
+          <div class="name">undecided</div>
+          <p>规则层不做最终判断。把最近用户消息窗口交给 LLM gate，让模型结合上下文判断是否需要召回。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>为什么要有 Stage 0</h2>
+        <span class="hint">Know why：它不是为了聪明，而是为了把明确样本从不稳定模型判断里拿出来。</span>
+      </div>
+      <div class="why-grid">
+        <div class="why-card">
+          <span class="tag">WHY</span>
+          <h3>它解决的是召回门控的可靠性问题</h3>
+          <p>
+            记忆召回不是越多越好。召回太少会漏掉用户长期偏好，召回太多会把无关历史塞进 prompt。
+            Stage 0 用硬规则先处理最明确的两端：明显要召回的历史/偏好线索，以及明显不该召回的当前事实和确认语。
+          </p>
+        </div>
+        <div class="why-card">
+          <span class="tag">DESIGN</span>
+          <h3>它把判断拆成“确定”和“不确定”</h3>
+          <div class="trade-row">
+            <div class="trade-key">确定要召回</div>
+            <div class="trade-value">例如“按我的习惯”“像上次”，规则直接输出 <code>force_recall</code>，减少 LLM gate 漏判。</div>
+          </div>
+          <div class="trade-row">
+            <div class="trade-key">确定不用召回</div>
+            <div class="trade-value">例如“这次预算多少”“继续”，规则直接输出 <code>skip_recall</code>，避免污染上下文。</div>
+          </div>
+          <div class="trade-row">
+            <div class="trade-key">不确定</div>
+            <div class="trade-value">例如推荐、兜底、否定旧偏好，统一输出 <code>undecided</code>，交给 Stage 1 用上下文判断。</div>
+          </div>
+        </div>
+      </div>
+      <p class="note">
+        Stage 0 的核心设计不是“尽量自己判断”，而是“只在高确定性场景抢先判断”。这让它可解释、可测试，也不和 LLM gate 抢复杂语义理解的职责。
+      </p>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>为什么这些场景不直接在 Stage 0 决策</h2>
+        <span class="hint">Know why：很多用户话术看起来像关键词，其实需要上下文。</span>
+      </div>
+      <div class="split-table">
+        <div class="head">场景</div>
+        <div class="head">不直接判定的原因</div>
+        <div class="head">交给谁处理</div>
+
+        <div>推荐类请求</div>
+        <div>“推荐”“怎么安排”“比较好”经常需要个性化，但也可能只是普通任务推进。硬规则只负责识别它值得细判。</div>
+        <div><code>P2 → undecided → Stage 1 LLM gate</code></div>
+
+        <div>否定旧偏好</div>
+        <div>“不要按我的习惯”不是简单跳过召回。它可能需要知道旧偏好是什么，再避免继续沿用。</div>
+        <div><code>P1N → undecided → Stage 1 LLM gate</code></div>
+
+        <div>开放式主观请求</div>
+        <div>“想去好吃的地方玩”没有命中 Stage 0 词表，但语义上可能强依赖用户画像。硬规则不猜语义。</div>
+        <div><code>P6 → undecided → Stage 1 LLM gate</code></div>
+
+        <div>多轮承接语</div>
+        <div>“换个吧”“再轻松点”只看最后一句容易误判，必须结合最近几轮用户消息。</div>
+        <div><code>Stage 1/2</code> 使用最近用户窗口</div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>流程为什么按这个顺序设计</h2>
+        <span class="hint">Know why：优先级不是随便排的，它在控制漏召回和误召回的边界。</span>
+      </div>
+      <div class="rationale">
+        <div class="rationale-card">
+          <span class="tag">1</span>
+          <h3>先处理空消息</h3>
+          <p>空消息没有语义，直接进入 <code>undecided</code>。这样不会把空输入误判成确认、事实问题或推荐请求。</p>
+        </div>
+        <div class="rationale-card">
+          <span class="tag">2</span>
+          <h3>历史/偏好信号优先</h3>
+          <p>“上次”“按我的习惯”是最强召回信号。它们放在前面，能避免被“这次酒店”等事实词抢先拦截。</p>
+        </div>
+        <div class="rationale-card">
+          <span class="tag">3</span>
+          <h3>推荐信号早于事实跳过</h3>
+          <p>“这次酒店怎么安排比较好”同时含有事实词和推荐词。先看 recommend，才能把个性化推荐交给 LLM gate。</p>
+        </div>
+        <div class="rationale-card">
+          <span class="tag">4</span>
+          <h3>事实和确认才直接跳过</h3>
+          <p>只有非常像当前计划查询或确认操作时才 <code>skip_recall</code>，降低把用户偏好请求误当成普通事实问句的风险。</p>
+        </div>
+      </div>
+      <p class="note">
+        这个顺序有效，是因为它把“强召回信号”放在最高优先级，把“强跳过信号”限制在更窄条件里，并把所有有语义歧义的样本交给 Stage 1。工程目标不是让 Stage 0 覆盖所有语言，而是让它稳定处理高置信度样本。
+      </p>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>开发者改规则时的 Know-how</h2>
+        <span class="hint">Know how：先判断问题属于“硬信号缺失”还是“语义判断缺失”。</span>
+      </div>
+      <div class="knowhow">
+        <div class="playbook">
+          <span class="tag">WHEN</span>
+          <h3>什么时候改 Stage 0</h3>
+          <ol>
+            <li>某个话术总是高确定性，例如“照旧”“按我的习惯”。</li>
+            <li>它不需要上下文也能稳定判断为召回或跳过。</li>
+            <li>加入词表后不会明显误伤其他意图。</li>
+            <li>能写成小而明确的规则测试。</li>
+          </ol>
+        </div>
+        <div class="playbook">
+          <span class="tag">WHEN</span>
+          <h3>什么时候改 Stage 1 prompt</h3>
+          <ol>
+            <li>用户话术依赖主观语义，例如“好吃”“舒服”“适合老人”。</li>
+            <li>需要结合最近几轮消息或记忆概览才能判断。</li>
+            <li>同一个词在不同上下文下可能应该召回，也可能不该召回。</li>
+            <li>目标是提升模型对“个性化请求”的理解边界。</li>
+          </ol>
+        </div>
+      </div>
+      <p class="note">
+        实用判断：如果你能用“只要出现这个短语就一定这样处理”描述它，优先改 Stage 0；如果你必须说“要看上下文”，优先改 Stage 1。
+      </p>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>完整信号词表</h2>
+        <span class="hint">这些词来自 <code>recall_signals.py</code>。Stage 0 只做子串匹配，不做语义扩展。</span>
+      </div>
+      <div class="vocab-table">
+        <div class="head">信号类别</div>
+        <div class="head">主要用途</div>
+        <div class="head">完整触发词</div>
+
+        <div><code>history</code></div>
+        <div>识别用户在引用过去说过的话、过去旅行或上次经验。</div>
+        <div class="tokens">
+          <span class="token">我是不是说过</span>
+          <span class="token">按我的习惯</span>
+          <span class="token">上次</span>
+          <span class="token">之前</span>
+          <span class="token">以前</span>
+          <span class="token">跟之前一样</span>
+          <span class="token">跟以前一样</span>
+          <span class="token">像那次</span>
+          <span class="token">像上次</span>
+        </div>
+
+        <div><code>style</code></div>
+        <div>识别稳定偏好、规划风格和体感节奏。</div>
+        <div class="tokens">
+          <span class="token">按我偏好</span>
+          <span class="token">按我的偏好</span>
+          <span class="token">照我偏好</span>
+          <span class="token">照我的偏好</span>
+          <span class="token">按我习惯</span>
+          <span class="token">按我的习惯</span>
+          <span class="token">照我习惯</span>
+          <span class="token">照我的习惯</span>
+          <span class="token">照旧</span>
+          <span class="token">老样子</span>
+          <span class="token">老规矩</span>
+          <span class="token">常规偏好</span>
+          <span class="token">平时喜欢</span>
+          <span class="token">像我平时</span>
+          <span class="token">别太折腾</span>
+          <span class="token">轻松点</span>
+          <span class="token">舒服点</span>
+        </div>
+
+        <div><code>recommend</code></div>
+        <div>识别需要选择、推荐、排序或安排的请求；Stage 0 不直接召回，只交给 LLM gate。</div>
+        <div class="tokens">
+          <span class="token">推荐</span>
+          <span class="token">帮我选</span>
+          <span class="token">帮我订</span>
+          <span class="token">帮我安排</span>
+          <span class="token">哪家</span>
+          <span class="token">哪趟</span>
+          <span class="token">哪个更</span>
+          <span class="token">更合适</span>
+          <span class="token">适合我</span>
+          <span class="token">怎么订</span>
+          <span class="token">怎么安排</span>
+          <span class="token">比较好</span>
+          <span class="token">换一家</span>
+          <span class="token">换一个</span>
+          <span class="token">哪里</span>
+        </div>
+
+        <div><code>fact_scope</code></div>
+        <div>识别用户在问当前这次行程。</div>
+        <div class="tokens">
+          <span class="token">这次</span>
+          <span class="token">本次</span>
+          <span class="token">当前</span>
+          <span class="token">现在</span>
+        </div>
+
+        <div><code>fact_field</code></div>
+        <div>识别当前计划中的事实字段；必须和 <code>fact_scope</code> 同时命中才会触发 P3。</div>
+        <div class="tokens">
+          <span class="token">预算</span>
+          <span class="token">几号</span>
+          <span class="token">出发</span>
+          <span class="token">骨架</span>
+          <span class="token">日期</span>
+          <span class="token">酒店</span>
+          <span class="token">航班</span>
+          <span class="token">车次</span>
+          <span class="token">目的地</span>
+          <span class="token">天数</span>
+        </div>
+
+        <div><code>ack_sys</code></div>
+        <div>识别确认、继续或系统操作。只有其他信号都为空时才触发 P4。</div>
+        <div class="tokens">
+          <span class="token">继续</span>
+          <span class="token">好的</span>
+          <span class="token">嗯</span>
+          <span class="token">OK</span>
+          <span class="token">ok</span>
+          <span class="token">就这个</span>
+          <span class="token">重新开始</span>
+        </div>
+      </div>
+      <p class="note">
+        词表完整展示的价值在于可审计：当某句话没有按预期走 Stage 0，先看它是否真的命中这些子串；如果没命中，就不是 Stage 0 “理解错了”，而是这句话应该进入 P6，让 Stage 1 处理。
+      </p>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>P 规则表</h2>
+        <span class="hint">Stage 0 是优先级规则，第一个匹配项立即返回。</span>
+      </div>
+      <div class="rules">
+        <div class="head">规则</div>
+        <div class="head">触发条件</div>
+        <div class="head">输出</div>
+        <div class="head">直觉解释</div>
+
+        <div><code>P1</code></div>
+        <div>命中 <code>history</code> 或 <code>style</code>，且没有否定前缀。</div>
+        <div><code>force_recall</code></div>
+        <div>用户明显在说过去、习惯或偏好。</div>
+
+        <div><code>P1N</code></div>
+        <div>命中 <code>history/style</code>，但词前有“不要/不按/不照/不是/不想”等否定语境。</div>
+        <div><code>undecided</code></div>
+        <div>可能是在拒绝旧偏好，交给模型细判。</div>
+
+        <div><code>P2</code></div>
+        <div>命中 <code>recommend</code>：推荐、帮我选、怎么安排、比较好等。</div>
+        <div><code>undecided</code></div>
+        <div>推荐类经常需要个性化，但仍交给 LLM gate 判定。</div>
+
+        <div><code>P3</code></div>
+        <div>同时命中 <code>fact_scope</code> 和 <code>fact_field</code>，且没有 history/style/recommend。</div>
+        <div><code>skip_recall</code></div>
+        <div>这是在问当前计划事实，不查历史。</div>
+
+        <div><code>P4</code></div>
+        <div>只命中 <code>ack_sys</code>，其他信号为空。</div>
+        <div><code>skip_recall</code></div>
+        <div>确认或系统操作，不需要召回。</div>
+
+        <div><code>P5</code></div>
+        <div>空消息或纯空白。</div>
+        <div><code>undecided</code></div>
+        <div>没有足够信息，保持保守。</div>
+
+        <div><code>P6</code></div>
+        <div>以上都没命中。</div>
+        <div><code>undecided</code></div>
+        <div>兜底：让 LLM gate 结合上下文判断。</div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>用例走读</h2>
+        <span class="hint">同一套规则如何处理不同类型的用户消息。</span>
+      </div>
+      <div class="examples">
+        <div class="example">
+          <div class="quote">“按我的习惯来，别太折腾。”</div>
+          <div class="path"><code>style</code> 命中 → <code>P1</code> → <code>force_recall</code></div>
+        </div>
+        <div class="example">
+          <div class="quote">“这次预算是多少？”</div>
+          <div class="path"><code>fact_scope + fact_field</code> → <code>P3</code> → <code>skip_recall</code></div>
+        </div>
+        <div class="example">
+          <div class="quote">“住宿怎么安排比较好？”</div>
+          <div class="path"><code>recommend</code> 命中 → <code>P2</code> → <code>undecided</code> → LLM gate</div>
+        </div>
+        <div class="example">
+          <div class="quote">“想去有好吃的地方玩。”</div>
+          <div class="path">Stage 0 未命中 → <code>P6</code> → <code>undecided</code> → LLM gate</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>设计取舍</h2>
+        <span class="hint">为什么 Stage 0 不直接做成智能判断器。</span>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <span class="tag">FAST</span>
+          <h3>便宜、稳定、可回归</h3>
+          <p>Stage 0 是纯字符串规则，不消耗 LLM，不受模型波动影响。适合处理明确的强信号和明确的跳过场景。</p>
+        </div>
+        <div class="card">
+          <span class="tag">SAFE</span>
+          <h3>不确定就交给模型</h3>
+          <p>推荐类、否定旧偏好、兜底样本都输出 undecided，让 Stage 1 用最近消息窗口和记忆概览做更细判断。</p>
+        </div>
+        <div class="card">
+          <span class="tag">LIMIT</span>
+          <h3>只看最后一句</h3>
+          <p>Stage 0 当前只处理最后一条 user message。承接语、多轮上下文依赖主要由 Stage 1 和 Stage 2 补足。</p>
+        </div>
+      </div>
+      <p class="note">
+        记住一句话：Stage 0 不是“完整理解用户意图”的地方，而是“快速处理显而易见的情况”的硬规则闸门。
+      </p>
+    </section>
+    <nav class="page-nav" aria-label="Stage navigation">
+      <span><small>Previous</small>这是第一个 Stage</span>
+      <a href="./memory-recall-overview.html"><small>Overview</small>记忆召回总览</a>
+      <a href="./memory-recall-stage1-gate.html"><small>Next</small>Stage 1：LLM Gate →</a>
+    </nav>
+  </main>
+</body>
+</html>

@@ -30,6 +30,53 @@ def test_build_gate_user_window_uses_recent_user_messages_and_char_cap():
     ]
 
 
+def test_build_gate_user_window_preserves_latest_message_when_over_char_cap():
+    latest = "最后一条：" + "我想去有好吃的地方玩，不能吃辣，也不喜欢鱼。" * 80
+
+    window = build_gate_user_window(
+        [
+            "第一条：我想先看看东京。",
+            "第二条：我不吃辣。",
+            latest,
+        ],
+        max_messages=3,
+        max_chars=120,
+    )
+
+    assert window == [latest]
+
+
+def test_build_gate_user_window_drops_older_messages_as_whole_units():
+    window = build_gate_user_window(
+        [
+            "第一条：" + "A" * 20,
+            "第二条：" + "B" * 20,
+            "第三条：" + "C" * 20,
+        ],
+        max_messages=3,
+        max_chars=55,
+    )
+
+    assert window == [
+        "第二条：" + "B" * 20,
+        "第三条：" + "C" * 20,
+    ]
+
+
+def test_build_extraction_user_window_keeps_legacy_tail_clipping():
+    latest = "最后一条：" + "这是一条很长的待提取信息。" * 20
+
+    window = build_extraction_user_window(
+        [latest],
+        last_consumed_user_count=0,
+        submitted_user_count=1,
+        max_messages=8,
+        max_chars=30,
+    )
+
+    assert window == [latest[-30:]]
+
+
 def test_build_extraction_user_window_uses_incremental_messages_since_last_consumed():
     window = build_extraction_user_window(
         [
