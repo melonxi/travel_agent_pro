@@ -11,6 +11,7 @@ def test_phase5_parallel_defaults():
     assert cfg.phase5_parallel.worker_max_iterations == 60
     assert cfg.phase5_parallel.worker_timeout_seconds == 1200
     assert cfg.phase5_parallel.fallback_to_serial is True
+    assert cfg.phase5_parallel.artifact_root == "./data/phase5_runs"
 
 
 def test_phase5_parallel_disabled():
@@ -28,12 +29,15 @@ phase5:
   parallel:
     enabled: false
     max_workers: 3
+    artifact_root: "{artifact_root}"
 """
+    artifact_root = tmp_path / "phase5-artifacts"
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(yaml_content)
+    config_file.write_text(yaml_content.format(artifact_root=artifact_root))
     cfg = load_config(str(config_file))
     assert cfg.phase5_parallel.enabled is False
     assert cfg.phase5_parallel.max_workers == 3
+    assert cfg.phase5_parallel.artifact_root == str(artifact_root)
     # Other fields should have defaults
     assert cfg.phase5_parallel.worker_max_iterations == 60
     assert cfg.phase5_parallel.worker_timeout_seconds == 1200

@@ -252,6 +252,7 @@ class Phase5ParallelConfig:
     worker_max_iterations: int = 60
     worker_timeout_seconds: int = 1200
     fallback_to_serial: bool = True
+    artifact_root: str = "./data/phase5_runs"
 
 
 @dataclass(frozen=True)
@@ -596,6 +597,7 @@ def _build_phase5_parallel_config(raw: dict) -> Phase5ParallelConfig:
         worker_max_iterations=int(p5.get("worker_max_iterations", 60)),
         worker_timeout_seconds=int(p5.get("worker_timeout_seconds", 1200)),
         fallback_to_serial=_as_bool(p5.get("fallback_to_serial"), True),
+        artifact_root=str(p5.get("artifact_root", "./data/phase5_runs")),
     )
 
 
