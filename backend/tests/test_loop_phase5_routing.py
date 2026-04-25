@@ -187,7 +187,7 @@ async def test_parallel_orchestrator_fires_after_final_iteration_phase_promotion
 
     orchestrator_fired = False
 
-    async def _fake_orchestrator():
+    async def _fake_orchestrator(**kwargs):
         nonlocal orchestrator_fired
         orchestrator_fired = True
         yield LLMChunk(type=ChunkType.DONE)
@@ -314,3 +314,76 @@ async def test_parallel_wrapper_returns_final_dayplans_via_handoff(monkeypatch):
     ]
     assert success_tasks
     assert success_tasks[-1].result == {"fallback": False}
+
+
+@pytest.mark.asyncio
+async def test_parallel_phase5_handoff_commits_via_standard_tool_and_transitions(monkeypatch):
+    from phase.router import PhaseRouter
+    from state.models import Accommodation, DateRange, TravelPlanState
+    from tests.helpers.register_plan_tools import register_all_plan_tools
+
+    plan = TravelPlanState(session_id="s-parallel-commit", phase=5)
+    plan.destination = "東京"
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.selected_skeleton_id = "plan_A"
+    plan.skeleton_plans = [{"id": "plan_A", "days": [{}]}]
+    plan.accommodation = Accommodation(area="新宿")
+
+    final_dayplans = [{
+        "day": 1,
+        "date": "2026-05-01",
+        "notes": "并行生成",
+        "activities": [{
+            "name": "测试活动",
+            "location": {"name": "测试活动", "lat": 35.0, "lng": 139.0},
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "category": "activity",
+            "cost": 0,
+        }],
+    }]
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs):
+            self.final_dayplans = final_dayplans
+            self.final_issues = []
+
+        async def run(self):
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行摘要")
+
+    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+
+    agent = AgentLoop(
+        llm=MagicMock(),
+        tool_engine=engine,
+        hooks=HookManager(),
+        phase_router=PhaseRouter(),
+        context_manager=_StubContextManager(),
+        plan=plan,
+        memory_mgr=_StubMemoryManager(),
+        user_id="u",
+        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+    )
+
+    chunks = [
+        chunk
+        async for chunk in agent.run(
+            [Message(role=Role.USER, content="继续")],
+            phase=5,
+        )
+    ]
+
+    assert plan.phase == 7
+    assert len(plan.daily_plans) == 1
+    assert plan.daily_plans[0].day == 1
+    assert any(c.type == ChunkType.TOOL_RESULT for c in chunks)
+    assert any(
+        c.type == ChunkType.PHASE_TRANSITION
+        and c.phase_info["from_phase"] == 5
+        and c.phase_info["to_phase"] == 7
+        for c in chunks
+    )
+    assert chunks[-1].type == ChunkType.DONE
