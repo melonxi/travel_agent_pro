@@ -102,10 +102,10 @@ travel_agent_pro/
 - 核心定位：路径规划优化问题——最小化无效移动，最大化体验密度
 - **双执行模式**：
   - **串行模式**（默认回退）：AgentLoop 内 LLM 逐日生成，与原有流程一致
-  - **并行 Orchestrator-Workers 模式**：Python Orchestrator（纯代码调度器，非 LLM）将骨架拆分为 N 个 DayTask，经 `_compile_day_tasks` 注入跨天约束（forbidden_pois / mobility_envelope / date_role），并行派发 N 个 Day Worker（轻量 LLM Agent，独立上下文），Worker 完成后优先通过 worker-only `submit_day_plan_candidate` 工具把候选 DayPlan 写入 run-scoped JSON artifact（`phase5.parallel.artifact_root/{session_id}/{run_id}/day_N_attempt_M.json`），Orchestrator 收集结果后读取 artifact 候选并做全局验证（POI 去重 / 预算检查 / 天数覆盖 / 时间冲突 / 语义去重 / 交通衔接 / 节奏匹配），error 级问题触发最多 1 轮 re-dispatch（注入 repair_hints 重跑受影响天），最后统一写入 `replace_all_daily_plans`
+  - **并行 Orchestrator-Workers 模式**：Python Orchestrator（纯代码调度器，非 LLM）将骨架拆分为 N 个 DayTask，经 `_compile_day_tasks` 注入跨天约束（forbidden_pois / mobility_envelope / date_role），并行派发 N 个 Day Worker（轻量 LLM Agent，独立上下文），Worker 完成后优先通过 worker-only `submit_day_plan_candidate` 工具把候选 DayPlan 写入 run-scoped JSON artifact（`phase5.parallel.artifact_root/{session_id}/{run_id}/day_N_attempt_M.json`），Orchestrator 收集结果后读取 artifact 候选并做全局验证（POI 去重 / 预算检查 / 天数覆盖 / 时间冲突 / 语义去重 / 交通衔接 / 节奏匹配），error 级问题触发最多 1 轮 re-dispatch（注入 repair_hints 重跑受影响天）。验证后的 final dayplans 不由 Orchestrator 直接写入 `TravelPlanState`；而是作为内部 handoff 交还给 AgentLoop，由 AgentLoop 构造内部 `replace_all_day_plans` 工具调用并走标准 `_execute_tool_batch -> detect_phase_transition` 链路，从而复用 Phase 5 → Phase 7 的现有阶段推进、hook、telemetry 和工具结果事件
   - 并行模式通过 `config.yaml` 的 `phase5.parallel` 段控制（`enabled` / `max_workers` / `worker_timeout_seconds` / `fallback_to_serial`）
   - Worker 共享相同 system prompt prefix → KV-Cache 命中率 ~93.75%（Manus pattern）
-  - Worker 只有只读工具和候选提交工具；候选提交只写 staging artifact，不改 `TravelPlanState.daily_plans`，正式写入仍由 Orchestrator 统一完成
+  - Worker 只有只读工具和候选提交工具；候选提交只写 staging artifact，不改 `TravelPlanState.daily_plans`，正式写入由 AgentLoop 经 `replace_all_day_plans` 标准工具路径完成
   - 失败率 >50% 自动降级到串行模式
 - **Day Worker 提示词止血策略**：Day Worker 具备有限补救 + 保守落地的收敛策略——优先通过 `submit_day_plan_candidate` 结构化提交候选 DayPlan；若模型仍以最终文本输出 JSON，保留 `extract_dayplan_json` 兼容路径并尝试有限次数 JSON 修复，补救失败则保守落地（返回当前已有结果而非无限重试）
 - **Day Worker loop 保护机制**：Worker 内部循环具备四重收敛保障——**重复查询抑制**（同 query 滑动窗口去重，避免搜索死循环）、**补救链阈值**（连续补救轮次上限，超限即保守落地）、**后半程强制收口**（迭代过半后强制聚焦已有结果，不再启动新搜索）、**JSON 修复回合**（输出 JSON 解析失败时限定修复轮次，避免在格式修复上无限循环）

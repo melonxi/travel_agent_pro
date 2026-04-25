@@ -2054,7 +2054,7 @@ async def test_phase3_to_phase5_transition_rechecks_parallel_routing():
 
     parallel_calls = 0
 
-    async def fake_parallel_runner():
+    async def fake_parallel_runner(*, messages=None, original_user_message=None):
         nonlocal parallel_calls
         parallel_calls += 1
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="parallel phase5")
