@@ -934,8 +934,8 @@ class TestWorkerArtifactHandoff:
             async for chunk in orch.run():
                 chunks.append(chunk)
 
-        assert [day.day for day in plan.daily_plans] == [1, 2, 3]
-        assert plan.daily_plans[0].notes == "artifact day 1"
+        assert [dp["day"] for dp in orch.final_dayplans] == [1, 2, 3]
+        assert orch.final_dayplans[0]["notes"] == "artifact day 1"
         assert any(tmp_path.glob(f"{plan.session_id}/*/day_1_attempt_1.json"))
 
     @pytest.mark.asyncio
@@ -1028,8 +1028,8 @@ class TestWorkerArtifactHandoff:
             async for _ in orch.run():
                 pass
 
-        assert any(day.notes == "artifact repair result" for day in plan.daily_plans)
-        assert not any(day.notes == "memory repair result" for day in plan.daily_plans)
+        assert any(dp["notes"] == "artifact repair result" for dp in orch.final_dayplans)
+        assert not any(dp["notes"] == "memory repair result" for dp in orch.final_dayplans)
 
 
 class TestCompileDayTasksInjection:
@@ -1076,3 +1076,55 @@ class TestCompileDayTasksInjection:
         tasks = orch._compile_day_tasks(base_tasks)
         for t in tasks:
             assert t.day_constraints == []
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_exposes_final_dayplans_without_writing_plan(monkeypatch):
+    plan = _make_plan_with_skeleton()
+    assert plan.daily_plans == []
+
+    def activity(name: str) -> dict:
+        return {
+            "name": name,
+            "location": {"name": name, "lat": 35.0, "lng": 139.0},
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "category": "activity",
+            "cost": 0,
+        }
+
+    async def _fake_worker(**kwargs):
+        day = kwargs["task"].day
+        return DayWorkerResult(
+            day=day,
+            date=f"2026-05-0{day}",
+            success=True,
+            dayplan={
+                "day": day,
+                "date": f"2026-05-0{day}",
+                "notes": f"day {day}",
+                "activities": [activity(f"POI {day}")],
+            },
+            iterations=1,
+        )
+
+    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
+
+    orch = Phase5Orchestrator(
+        plan=plan,
+        llm=AsyncMock(),
+        tool_engine=AsyncMock(),
+        config=Phase5ParallelConfig(enabled=True, max_workers=3),
+    )
+
+    chunks = [chunk async for chunk in orch.run()]
+
+    assert plan.daily_plans == []
+    assert [dp["day"] for dp in orch.final_dayplans] == [1, 2, 3]
+    assert any(
+        c.type == ChunkType.TEXT_DELTA
+        and c.content
+        and "已完成 3/3 天的行程规划" in c.content
+        for c in chunks
+    )
+    assert not any(c.type == ChunkType.DONE for c in chunks)

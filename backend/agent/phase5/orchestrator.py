@@ -32,7 +32,6 @@ from config import Phase5ParallelConfig
 from llm.base import LLMProvider
 from llm.types import ChunkType, LLMChunk
 from state.models import TravelPlanState
-from state.plan_writers import replace_all_daily_plans
 from tools.engine import ToolEngine
 
 logger = logging.getLogger(__name__)
@@ -148,6 +147,8 @@ class Phase5Orchestrator:
         self.llm = llm
         self.tool_engine = tool_engine
         self.config = config or Phase5ParallelConfig()
+        self.final_dayplans: list[dict[str, Any]] = []
+        self.final_issues: list[GlobalValidationIssue] = []
 
     def _find_selected_skeleton(self) -> dict[str, Any] | None:
         if not self.plan.selected_skeleton_id or not self.plan.skeleton_plans:
@@ -864,13 +865,14 @@ class Phase5Orchestrator:
                     for ui in unresolved:
                         logger.warning("Unresolved after re-dispatch: %s", ui.description)
 
-            # 9. Write results
+            # 9. Expose results for AgentLoop to commit via the standard write-tool path.
+            self.final_dayplans = list(dayplans)
+            self.final_issues = list(issues)
             if dayplans:
-                replace_all_daily_plans(self.plan, dayplans)
                 yield self._build_progress_chunk(
                     worker_statuses,
                     total_days,
-                    f"已写入 {len(dayplans)} 天行程",
+                    f"已生成 {len(dayplans)} 天行程，准备写入规划状态...",
                 )
 
             # 10. Generate summary text
@@ -890,4 +892,3 @@ class Phase5Orchestrator:
 
             summary_text = "\n".join(summary_lines)
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content=summary_text)
-            yield LLMChunk(type=ChunkType.DONE)
