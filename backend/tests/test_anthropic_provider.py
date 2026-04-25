@@ -59,6 +59,30 @@ def test_convert_tool_result_ignores_metadata(provider):
     assert payload == {"status": "success", "data": {"result": 1}}
 
 
+def test_convert_tool_error_includes_repair_fields(provider):
+    messages = [
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc_1",
+                status="error",
+                error="POI '淄博市博物馆' 重复出现在 plans[0].days[1].candidate_pois[0] 和 plans[0].days[2].locked_pois[0]",
+                error_code="INVALID_VALUE",
+                suggestion="请把 '淄博市博物馆' 只保留在其中一天",
+            ),
+        )
+    ]
+    _, converted = provider._split_system_and_convert(messages)
+    payload = json.loads(converted[0]["content"][0]["content"])
+    assert payload == {
+        "status": "error",
+        "data": None,
+        "error": "POI '淄博市博物馆' 重复出现在 plans[0].days[1].candidate_pois[0] 和 plans[0].days[2].locked_pois[0]",
+        "error_code": "INVALID_VALUE",
+        "suggestion": "请把 '淄博市博物馆' 只保留在其中一天",
+    }
+
+
 def test_convert_tools(provider):
     tool_defs = [
         {

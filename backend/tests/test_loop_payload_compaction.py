@@ -40,6 +40,31 @@ def test_estimate_message_tokens_counts_tool_calls_and_tool_results():
     assert estimate_message_tokens(tool_result_message) >= 300
 
 
+def test_estimate_message_tokens_counts_tool_error_repair_fields():
+    short_error = Message(
+        role=Role.TOOL,
+        tool_result=ToolResult(
+            tool_call_id="tc1",
+            status="error",
+            error="bad",
+            error_code="INVALID_VALUE",
+            suggestion="fix",
+        ),
+    )
+    long_error = Message(
+        role=Role.TOOL,
+        tool_result=ToolResult(
+            tool_call_id="tc1",
+            status="error",
+            error="bad" * 500,
+            error_code="INVALID_VALUE",
+            suggestion="fix" * 500,
+        ),
+    )
+
+    assert estimate_message_tokens(long_error) > estimate_message_tokens(short_error)
+
+
 def test_estimate_messages_tokens_includes_tool_schemas():
     messages = [Message(role=Role.USER, content="帮我查京都樱花")]
     tools = [

@@ -1,7 +1,7 @@
 import pytest
 
-from agent.day_worker import run_day_worker
-from agent.worker_prompt import DayTask
+from agent.phase5.day_worker import run_day_worker
+from agent.phase5.worker_prompt import DayTask
 from agent.types import ToolCall
 from llm.types import ChunkType, LLMChunk
 from state.models import TravelPlanState, DateRange
