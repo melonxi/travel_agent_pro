@@ -29,6 +29,10 @@ class DayTask:
     fallback_slots: list[dict] = field(default_factory=list)
     date_role: str = "full_day"
     repair_hints: list[str] = field(default_factory=list)
+    day_budget: int | None = None
+    day_constraints: list[dict[str, str]] = field(default_factory=list)
+    arrival_time: str | None = None
+    departure_time: str | None = None
 
 
 _WORKER_ROLE = """## 角色
@@ -167,25 +171,36 @@ def build_shared_prefix(plan: TravelPlanState) -> str:
             line += f"、{plan.travelers.children} 儿童"
         parts.append(line)
     if plan.trip_brief:
-        parts.append("- 旅行画像：")
-        for key, val in plan.trip_brief.items():
-            if key in ("dates", "total_days"):
+        _BRIEF_EXCLUDE = {"dates", "total_days", "budget_per_day"}
+        _BRIEF_INCLUDE = {"goal", "pace", "departure_city", "style", "must_do", "avoid"}
+        parts.append("- 旅行画像（全局）：")
+        for key in sorted(plan.trip_brief.keys()):
+            if key in _BRIEF_EXCLUDE:
                 continue
-            parts.append(f"  - {key}: {val}")
+            if key in _BRIEF_INCLUDE:
+                parts.append(f"  - {key}: {plan.trip_brief[key]}")
     if plan.accommodation:
         parts.append(f"- 住宿区域：{plan.accommodation.area}")
         if plan.accommodation.hotel:
             parts.append(f"- 住宿酒店：{plan.accommodation.hotel}")
     if plan.budget:
         parts.append(f"- 总预算：{plan.budget.total} {plan.budget.currency}")
+        total_days = plan.dates.total_days if plan.dates else 0
+        if total_days > 0:
+            daily_avg = round(plan.budget.total / total_days)
+            parts.append(f"- 日均参考：约 {daily_avg} {plan.budget.currency}/天")
     if plan.preferences:
-        pref_strs = [f"{p.key}: {p.value}" for p in plan.preferences if p.key]
+        pref_strs = sorted([f"{p.key}: {p.value}" for p in plan.preferences if p.key])
         if pref_strs:
             parts.append(f"- 用户偏好：{'; '.join(pref_strs)}")
+
+    # Only global hard constraints in shared prefix; day-level constraints go to suffix
     if plan.constraints:
-        cons_strs = [f"[{c.type}] {c.description}" for c in plan.constraints]
-        if cons_strs:
-            parts.append(f"- 用户约束：{'; '.join(cons_strs)}")
+        global_constraints = sorted(
+            [f"[{c.type}] {c.description}" for c in plan.constraints if c.type == "hard"]
+        )
+        if global_constraints:
+            parts.append(f"- 全局硬约束：{'; '.join(global_constraints)}")
 
     # 角色和规则
     parts.append("\n---\n")
@@ -225,9 +240,34 @@ def _build_constraint_block(task: DayTask) -> str:
         lines.append(f"- **移动限制**: 最多跨 {max_hops} 个区域, 单段交通 ≤ {max_leg} 分钟")
 
     if task.date_role == "arrival_day":
-        lines.append("- **到达日**: 注意大交通到达时间，首活动须留足接驳缓冲")
+        lines.append("\n### 🛬 到达日约束")
+        if task.arrival_time:
+            lines.append(f"- 预计到达时间：{task.arrival_time}")
+            lines.append(f"- 首活动开始时间不得早于 {task.arrival_time} + 2 小时")
+        else:
+            lines.append("- 首活动开始时间须留出至少 2 小时接驳缓冲")
+        lines.append("- 建议首活动安排在住宿区域附近，降低接驳风险")
     elif task.date_role == "departure_day":
-        lines.append("- **离开日**: 注意大交通离开时间，末活动须留足前往交通枢纽的时间")
+        lines.append("\n### 🛫 离开日约束")
+        if task.departure_time:
+            lines.append(f"- 预计出发时间：{task.departure_time}")
+            lines.append(f"- 末活动结束时间不得晚于 {task.departure_time} 前 3 小时")
+        else:
+            lines.append("- 末活动结束时间须留出至少 3 小时前往交通枢纽")
+        lines.append("- 建议末活动安排在交通枢纽附近")
+    elif task.date_role == "arrival_departure_day":
+        lines.append("\n### 🛬🛫 到达+离开日约束")
+        if task.arrival_time:
+            lines.append(f"- 预计到达时间：{task.arrival_time}")
+            lines.append(f"- 首活动不得早于 {task.arrival_time} + 2 小时")
+        else:
+            lines.append("- 首活动须留出至少 2 小时接驳缓冲")
+        if task.departure_time:
+            lines.append(f"- 预计出发时间：{task.departure_time}")
+            lines.append(f"- 末活动不得晚于 {task.departure_time} 前 3 小时")
+        else:
+            lines.append("- 末活动须留出至少 3 小时前往交通枢纽")
+        lines.append("- 建议只安排住宿附近或交通枢纽附近的轻松活动")
 
     if task.fallback_slots:
         lines.append("\n### 备选方案")
@@ -257,13 +297,21 @@ def build_day_suffix(task: DayTask) -> str:
     if "core_activities" in sk:
         activities = sk["core_activities"]
         if isinstance(activities, list):
-            parts.append(f"- 核心活动：{'、'.join(str(a) for a in activities)}")
+            parts.append(f"- 方向性活动线索：{'、'.join(str(a) for a in activities)}")
         else:
-            parts.append(f"- 核心活动：{activities}")
+            parts.append(f"- 方向性活动线索：{activities}")
+        parts.append("  （线索仅供参考，具体 POI 由下方 locked_pois / candidate_pois 决定）")
     if "fatigue" in sk:
         parts.append(f"- 疲劳等级：{sk['fatigue']}")
     if "budget_level" in sk:
         parts.append(f"- 预算等级：{sk['budget_level']}")
+    if task.day_budget is not None:
+        parts.append(f"- 建议日预算：约 {task.day_budget} 元/天（仅供参考，硬性约束以总预算为准）")
+
+    if task.day_constraints:
+        parts.append("- 天级别约束：")
+        for c in task.day_constraints:
+            parts.append(f"  - [{c['type']}] {c['description']}")
 
     # 节奏 → 活动数量范围
     pace = task.pace
@@ -280,8 +328,8 @@ def build_day_suffix(task: DayTask) -> str:
         parts.append(constraint_block)
 
     parts.append(
-        "\n请执行以上 DayTask，为这一天生成完整 DayPlan。"
-        "先用只读工具补齐信息和优化路线；"
+        "\n请执行以上 DayTask。"
+        "优先补齐核心 POI 的坐标与开放时间；"
         "完成后调用 `submit_day_plan_candidate` 提交候选 DayPlan。"
     )
 

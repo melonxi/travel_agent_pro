@@ -258,3 +258,53 @@ def test_build_shared_prefix_no_soul_md():
     prefix = build_shared_prefix(plan)
     assert "一次只问一个问题" not in prefix
     assert "提供 2-3 个选项" not in prefix
+
+
+def test_build_shared_prefix_stable_ordering():
+    """Same plan object produces identical output (stable sorted fields)."""
+    plan1 = _make_plan()
+    plan2 = _make_plan()
+    assert build_shared_prefix(plan1) == build_shared_prefix(plan2)
+
+
+def test_build_shared_prefix_excludes_soft_constraints():
+    plan = _make_plan()
+    plan.constraints = [
+        Constraint(type="hard", description="不去迪士尼"),
+        Constraint(type="soft", description="尽量住民宿"),
+    ]
+    prefix = build_shared_prefix(plan)
+    assert "不去迪士尼" in prefix
+    assert "尽量住民宿" not in prefix
+
+
+def test_day_task_new_fields_default():
+    task = DayTask(day=1, date="2026-05-01", skeleton_slice={}, pace="balanced")
+    assert task.day_budget is None
+    assert task.day_constraints == []
+    assert task.arrival_time is None
+    assert task.departure_time is None
+
+
+def test_core_activities_labeled_as_directional():
+    task = DayTask(
+        day=1, date="2026-05-01",
+        skeleton_slice={"area": "新宿", "core_activities": ["购物", "美食"]},
+        pace="balanced",
+    )
+    suffix = build_day_suffix(task)
+    assert "方向性活动线索" in suffix
+    assert "仅供参考" in suffix
+
+
+def test_suffix_contains_arrival_departure_day():
+    task = DayTask(
+        day=1, date="2026-05-01", skeleton_slice={}, pace="balanced",
+        date_role="arrival_departure_day",
+        arrival_time="10:00",
+        departure_time="18:00",
+    )
+    suffix = build_day_suffix(task)
+    assert "到达+离开日" in suffix
+    assert "10:00" in suffix
+    assert "18:00" in suffix
