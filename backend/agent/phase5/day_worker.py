@@ -19,7 +19,7 @@ from typing import Any, Callable
 from opentelemetry import trace
 
 from agent.types import Message, Role, ToolCall, ToolResult
-from agent.worker_prompt import DayTask, build_shared_prefix, build_day_suffix
+from agent.phase5.worker_prompt import DayTask, build_day_suffix, build_shared_prefix
 from llm.base import LLMProvider
 from llm.types import ChunkType
 from state.models import TravelPlanState
