@@ -64,8 +64,8 @@ def test_build_shared_prefix_prefers_submit_tool_handoff():
     plan = _make_plan()
     prefix = build_shared_prefix(plan)
 
-    assert "优先调用 `submit_day_plan_candidate` 工具提交 DayPlan" in prefix
-    assert "不要在自然语言正文里重复粘贴完整 JSON" in prefix
+    assert "submit_day_plan_candidate" in prefix
+    assert "不要在自然语言正文中输出完整 DayPlan JSON" in prefix
     assert "不会直接写入最终行程状态" in prefix
     assert "最后一条消息" not in prefix
 
@@ -241,3 +241,20 @@ def test_dayplan_schema_has_category_enum_and_structural_errors():
     assert "枚举之一" in prefix
     assert "常见结构错误" in prefix
     assert "location" in prefix
+
+
+def test_build_shared_prefix_contains_role():
+    plan = _make_plan()
+    prefix = build_shared_prefix(plan)
+    assert "单日行程落地规划师" in prefix
+    assert "完成优于完美" in prefix
+    assert "无用户交互" in prefix
+    assert "forbidden_pois" in prefix
+    assert "唯一合法路径" in prefix
+
+
+def test_build_shared_prefix_no_soul_md():
+    plan = _make_plan()
+    prefix = build_shared_prefix(plan)
+    assert "一次只问一个问题" not in prefix
+    assert "提供 2-3 个选项" not in prefix
