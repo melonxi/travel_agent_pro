@@ -2,7 +2,7 @@
 import json
 import pytest
 
-from agent.day_worker import (
+from agent.phase5.day_worker import (
     DayWorkerResult,
     _MAX_POI_RECOVERY,
     _MAX_SAME_QUERY,
@@ -13,7 +13,7 @@ from agent.day_worker import (
     run_day_worker,
 )
 from agent.types import ToolCall, ToolResult
-from agent.worker_prompt import DayTask
+from agent.phase5.worker_prompt import DayTask
 from llm.types import ChunkType, LLMChunk
 from state.models import DateRange, TravelPlanState
 

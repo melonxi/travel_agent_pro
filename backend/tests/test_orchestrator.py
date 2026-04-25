@@ -2,14 +2,14 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from agent.orchestrator import (
+from agent.phase5.orchestrator import (
     Phase5Orchestrator,
     GlobalValidationIssue,
     _derive_theme,
     _format_error,
 )
-from agent.day_worker import DayWorkerResult
-from agent.worker_prompt import DayTask
+from agent.phase5.day_worker import DayWorkerResult
+from agent.phase5.worker_prompt import DayTask
 from config import Phase5ParallelConfig
 from llm.types import ChunkType
 from state.models import (
@@ -365,7 +365,7 @@ async def test_orchestrator_broadcasts_theme_at_init(monkeypatch):
             iterations=1,
         )
 
-    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
 
     chunks = [c async for c in orch.run()]
     progress_chunks = [
@@ -407,7 +407,7 @@ async def test_orchestrator_broadcasts_current_tool_mid_run(monkeypatch):
             iterations=1,
         )
 
-    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
 
     chunks = [c async for c in orch.run()]
     progress_chunks = [
@@ -445,7 +445,7 @@ async def test_orchestrator_populates_activity_count_on_success(monkeypatch):
             iterations=1,
         )
 
-    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
 
     chunks = [c async for c in orch.run()]
     last_progress = [
@@ -480,7 +480,7 @@ async def test_orchestrator_populates_error_on_failure(monkeypatch):
             iterations=5,
         )
 
-    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
 
     chunks = [c async for c in orch.run()]
     progress = [
@@ -533,7 +533,7 @@ async def test_orchestrator_retry_resets_dynamic_fields(monkeypatch):
             dayplan={"day": day, "activities": []}, iterations=1,
         )
 
-    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
 
     chunks = [c async for c in orch.run()]
     progress = [
@@ -577,7 +577,7 @@ async def test_orchestrator_long_error_truncated_to_80(monkeypatch):
             error="x" * 200, iterations=5,
         )
 
-    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
     chunks = [c async for c in orch.run()]
     progress = [
         c for c in chunks
@@ -614,7 +614,7 @@ async def test_orchestrator_error_code_propagated_on_failure(monkeypatch):
             iterations=5,
         )
 
-    monkeypatch.setattr("agent.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
     chunks = [c async for c in orch.run()]
     progress = [
         c for c in chunks
@@ -864,7 +864,7 @@ class TestBacktrackProtocol:
         mock_llm = AsyncMock()
         mock_tool_engine = AsyncMock()
 
-        with patch("agent.orchestrator.run_day_worker") as mock_worker:
+        with patch("agent.phase5.orchestrator.run_day_worker") as mock_worker:
             async def side_effect(**kwargs):
                 day = kwargs["task"].day
                 if day == 1:

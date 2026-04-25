@@ -8,7 +8,7 @@ the end-to-end flow: split → spawn → collect → validate → write.
 import json
 import pytest
 
-from agent.orchestrator import Phase5Orchestrator
+from agent.phase5.orchestrator import Phase5Orchestrator
 from agent.types import ToolResult
 from config import Phase5ParallelConfig
 from llm.types import ChunkType, LLMChunk

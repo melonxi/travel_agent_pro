@@ -1908,6 +1908,35 @@ async def test_progress_tracks_partial_text():
 
 
 @pytest.mark.asyncio
+async def test_progress_tracks_partial_text_when_llm_stream_errors():
+    async def fake_chat(messages, **kwargs):
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="hello")
+        raise LLMError(
+            code=LLMErrorCode.TRANSIENT,
+            message="stream failed",
+            retryable=True,
+            provider="test",
+            model="fake",
+            failure_phase="streaming",
+        )
+
+    mock_llm = MagicMock()
+    mock_llm.provider_name = "openai"
+    mock_llm.model = "gpt-4o"
+    mock_llm.chat = fake_chat
+    engine = ToolEngine()
+    hooks = HookManager()
+
+    loop = AgentLoop(llm=mock_llm, tool_engine=engine, hooks=hooks)
+    messages = [Message(role=Role.USER, content="hi")]
+    with pytest.raises(LLMError):
+        async for _ in loop.run(messages, phase=1):
+            pass
+
+    assert loop.progress == IterationProgress.PARTIAL_TEXT
+
+
+@pytest.mark.asyncio
 async def test_phase3_step_change_rebuilds_system_message():
     """子阶段从 brief 推进到 candidate 时，system message 必须被重建。"""
     plan = TravelPlanState(session_id="s1", phase=3, destination="东京")

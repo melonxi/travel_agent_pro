@@ -1,7 +1,7 @@
 # backend/tests/test_worker_prompt.py
 import pytest
 
-from agent.worker_prompt import (
+from agent.phase5.worker_prompt import (
     build_shared_prefix,
     build_day_suffix,
     DayTask,

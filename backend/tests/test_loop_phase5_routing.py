@@ -5,6 +5,10 @@ import pytest
 
 from agent.hooks import HookManager
 from agent.loop import AgentLoop
+from agent.phase5.parallel import (
+    should_enter_parallel_phase5_at_iteration_boundary,
+    should_enter_parallel_phase5_now,
+)
 from agent.types import Message, Role, ToolCall
 from config import Phase5ParallelConfig
 from llm.types import ChunkType, LLMChunk
@@ -27,6 +31,22 @@ class TestPhase5Routing:
 
         config = Phase5ParallelConfig(enabled=True)
         assert AgentLoop.should_use_parallel_phase5(plan, config) is True
+
+    def test_named_phase5_guards_share_current_eligibility_rules(self):
+        from state.models import TravelPlanState, DateRange, Accommodation
+
+        plan = TravelPlanState(session_id="test-routing-named")
+        plan.phase = 5
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-02")
+        plan.selected_skeleton_id = "plan_A"
+        plan.skeleton_plans = [{"id": "plan_A", "days": [{}, {}]}]
+        plan.accommodation = Accommodation(area="新宿")
+        plan.daily_plans = []
+
+        config = Phase5ParallelConfig(enabled=True)
+
+        assert should_enter_parallel_phase5_now(plan, config) is True
+        assert should_enter_parallel_phase5_at_iteration_boundary(plan, config) is True
 
     def test_should_not_use_parallel_when_disabled(self):
         from state.models import TravelPlanState, DateRange, Accommodation
@@ -207,7 +227,7 @@ async def test_parallel_orchestrator_emits_internal_task_lifecycle(monkeypatch):
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="完成")
             yield LLMChunk(type=ChunkType.DONE)
 
-    monkeypatch.setattr("agent.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
 
     agent = AgentLoop(
         llm=MagicMock(),
