@@ -113,6 +113,7 @@ async def test_run_day_worker_puts_day_task_in_user_message():
     assert first_call_messages[1].role.value == "user"
     assert "第 1 天" in first_call_messages[1].content
     assert "请执行以上 DayTask" in first_call_messages[1].content
+    assert "工具调用预算" in first_call_messages[1].content
 
 
 @pytest.mark.asyncio
@@ -267,7 +268,7 @@ async def test_run_day_worker_retries_once_when_first_final_output_is_not_json()
     assert len(llm.calls) == 2
     repair_message = llm.calls[1][-1]
     assert repair_message.role.value == "system"
-    assert "只输出合法 DayPlan JSON" in repair_message.content
+    assert "submit_day_plan_candidate" in repair_message.content
     assert "day" in repair_message.content
     assert "date" in repair_message.content
     assert "activities" in repair_message.content
@@ -403,7 +404,7 @@ async def test_late_emit_hint_added_when_past_60_percent():
     late_emit_found = False
     for call_msgs in llm.calls:
         for msg in call_msgs:
-            if msg.role.value == "system" and "收口阶段" in msg.content:
+            if msg.role.value == "system" and "工具调用预算" in msg.content:
                 late_emit_found = True
     assert late_emit_found
 
@@ -538,3 +539,15 @@ def test_submit_schema_has_inline_properties():
     desc = schema["description"]
     assert "INVALID_DAYPLAN" in desc
     assert "SUBMIT_UNAVAILABLE" in desc
+
+
+def test_forced_emit_prompt_no_fake_coordinates():
+    from agent.phase5.day_worker import _FORCED_EMIT_PROMPT
+    assert "0,0" not in _FORCED_EMIT_PROMPT or "绝不" in _FORCED_EMIT_PROMPT
+    assert "绝不在 location 中填入 0,0 假坐标" in _FORCED_EMIT_PROMPT
+
+
+def test_json_repair_prompt_references_submit_tool():
+    from agent.phase5.day_worker import _JSON_REPAIR_PROMPT
+    assert "submit_day_plan_candidate" in _JSON_REPAIR_PROMPT
+    assert "day" in _JSON_REPAIR_PROMPT
