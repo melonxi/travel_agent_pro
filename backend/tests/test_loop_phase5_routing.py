@@ -389,3 +389,55 @@ async def test_parallel_phase5_handoff_commits_via_standard_tool_and_transitions
     # Exactly one terminal DONE — orchestrator must not emit its own DONE.
     assert sum(1 for c in chunks if c.type == ChunkType.DONE) == 1
     assert chunks[-1].type == ChunkType.DONE
+
+
+@pytest.mark.asyncio
+async def test_parallel_phase5_without_handoff_does_not_commit_or_transition(monkeypatch):
+    from phase.router import PhaseRouter
+    from state.models import Accommodation, DateRange, TravelPlanState
+    from tests.helpers.register_plan_tools import register_all_plan_tools
+
+    plan = TravelPlanState(session_id="s-no-handoff", phase=5)
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.selected_skeleton_id = "plan_A"
+    plan.skeleton_plans = [{"id": "plan_A", "days": [{}]}]
+    plan.accommodation = Accommodation(area="新宿")
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs):
+            self.final_dayplans = []
+            self.final_issues = []
+
+        async def run(self):
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行失败，等待串行")
+
+    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+
+    agent = AgentLoop(
+        llm=MagicMock(),
+        tool_engine=engine,
+        hooks=HookManager(),
+        phase_router=PhaseRouter(),
+        context_manager=_StubContextManager(),
+        plan=plan,
+        memory_mgr=_StubMemoryManager(),
+        user_id="u",
+        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+    )
+
+    chunks = [
+        chunk
+        async for chunk in agent.run(
+            [Message(role=Role.USER, content="继续")],
+            phase=5,
+        )
+    ]
+
+    assert plan.phase == 5
+    assert plan.daily_plans == []
+    assert not any(c.type == ChunkType.TOOL_RESULT for c in chunks)
+    assert not any(c.type == ChunkType.PHASE_TRANSITION for c in chunks)
+    assert chunks[-1].type == ChunkType.DONE
