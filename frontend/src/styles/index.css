@@ -760,7 +760,8 @@ body::after {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: 16px 18px;
-  max-width: 380px;
+  width: min(100%, 560px);
+  min-width: 0;
   animation: bubbleIn 250ms ease-out;
 }
 
@@ -801,13 +802,22 @@ body::after {
 
 .parallel-worker {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 8px 10px;
+  min-width: 0;
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   font-size: 0.8rem;
   transition: background 0.25s ease, opacity 0.25s ease;
+}
+
+.parallel-worker-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .parallel-worker-icon {
@@ -825,22 +835,22 @@ body::after {
 }
 
 .parallel-worker-theme {
-  color: var(--accent-gold);
+  color: var(--accent-amber);
   font-size: 0.78rem;
-  min-width: 110px;
-  flex-shrink: 0;
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .parallel-worker-status {
+  display: block;
   color: var(--text-secondary);
   font-size: 0.75rem;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .parallel-worker--running {
