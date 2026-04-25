@@ -38,17 +38,27 @@ _MAX_POI_RECOVERY = 3
 ERROR_NEEDS_PHASE3_REPLAN = "NEEDS_PHASE3_REPLAN"
 
 _JSON_REPAIR_PROMPT = (
-    "只输出合法 DayPlan JSON，必须包含 `day`、`date`、`activities`。"
+    "你刚才的回复没有触发 submit_day_plan_candidate，也未输出可解析的 DayPlan JSON。\n"
+    "请基于上文中已收集的 POI 信息和路线，立即调用 submit_day_plan_candidate 提交。\n"
+    "若提交工具返回 SUBMIT_UNAVAILABLE，则在文本里输出符合 schema 的 DayPlan JSON（用 ```json 代码块包裹），"
+    "必须包含 day、date、activities 字段。"
 )
 
 _FORCED_EMIT_PROMPT = (
-    "你已陷入重复查询/补救循环，请立即停止调用工具，直接输出 DayPlan JSON。"
-    "必须包含 `day`、`date`、`activities`。"
+    "同一查询已达到重复上限（2次）或补救链已耗尽（3次）。"
+    "请立即停止所有工具调用，基于已有信息提交 DayPlan。\n"
+    "若信息确实不全：\n"
+    "- 只保留已拿到坐标的 POI，缺少坐标的 POI 不纳入活动\n"
+    "- 缺营业时间：在 notes 标注「请出行前确认营业时间」\n"
+    "- 缺票价：cost 写 0，在 notes 标注「票价以现场为准」\n"
+    "- 绝不在 location 中填入 0,0 假坐标\n"
+    "不要再为了「再查一次」而调用任何工具。"
 )
 
 _LATE_EMIT_PROMPT = (
-    "你已进入收口阶段。不要再为细节重复搜索；"
-    "请基于已知信息立即提交 DayPlan，无法确认的事实写入 notes。"
+    "你已使用大部分工具调用预算。"
+    "请在下一轮提交 DayPlan；如还需 1-2 个工具补齐核心信息可继续，但不要超过 2 个调用就必须提交。"
+    "无法确认的事实写入 notes 字段。"
 )
 
 _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA = {
@@ -279,10 +289,16 @@ async def run_day_worker(
     tracer = trace.get_tracer("day-worker")
 
     day_suffix = build_day_suffix(task)
+    iteration_note = (
+        f"\n\n你的工具调用预算：同一查询最多 {_MAX_SAME_QUERY} 次，"
+        f"同一 POI 信息最多 {_MAX_POI_RECOVERY} 次，"
+        f"总迭代上限 {max_iterations} 轮。"
+        "优先补齐核心 POI 的坐标与开放时间，无需为每个细节反复搜索。"
+    )
 
     messages: list[Message] = [
         Message(role=Role.SYSTEM, content=shared_prefix),
-        Message(role=Role.USER, content=day_suffix),
+        Message(role=Role.USER, content=day_suffix + iteration_note),
     ]
 
     # Build tool list: only read tools for Phase 5
