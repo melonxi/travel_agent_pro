@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass, field
 from math import radians, sin, cos, sqrt, atan2
 from typing import Any, AsyncIterator
 
 from opentelemetry import trace
 
+from agent.phase5.candidate_store import Phase5CandidateStore
 from agent.phase5.day_worker import DayWorkerResult, run_day_worker
 from agent.phase5.worker_prompt import (
     DayTask,
@@ -211,6 +213,46 @@ class Phase5Orchestrator:
                     sorted_tasks[0].date_role = "arrival_day"
                 if sorted_tasks[-1].date_role == "full_day":
                     sorted_tasks[-1].date_role = "departure_day"
+
+        # 5. Inject day budget (soft hint)
+        if self.plan.budget and self.plan.dates:
+            total_days = self.plan.dates.total_days
+            if total_days > 0:
+                daily_avg = round(self.plan.budget.total / total_days)
+                for t in tasks:
+                    t.day_budget = daily_avg
+
+        # 5b. Inject day-level (non-hard) constraints
+        if self.plan.constraints:
+            day_level = [
+                {"type": c.type, "description": c.description}
+                for c in self.plan.constraints
+                if c.type != "hard"
+            ]
+            if day_level:
+                for t in tasks:
+                    t.day_constraints = day_level
+
+        # 6. Inject arrival/departure times from transport
+        transport = self.plan.selected_transport
+        if isinstance(transport, dict) and tasks:
+            arrival_min = _extract_transport_time(transport, "outbound")
+            departure_min = _extract_transport_time(transport, "return")
+            sorted_tasks = sorted(tasks, key=lambda x: x.day)
+            if arrival_min is not None and sorted_tasks[0].date_role == "arrival_day":
+                hh, mm = divmod(arrival_min, 60)
+                sorted_tasks[0].arrival_time = f"{hh:02d}:{mm:02d}"
+            if departure_min is not None and sorted_tasks[-1].date_role == "departure_day":
+                hh, mm = divmod(departure_min, 60)
+                sorted_tasks[-1].departure_time = f"{hh:02d}:{mm:02d}"
+            # Handle arrival_departure_day (single-day trips)
+            if len(sorted_tasks) == 1 and sorted_tasks[0].date_role == "arrival_departure_day":
+                if arrival_min is not None:
+                    hh, mm = divmod(arrival_min, 60)
+                    sorted_tasks[0].arrival_time = f"{hh:02d}:{mm:02d}"
+                if departure_min is not None:
+                    hh, mm = divmod(departure_min, 60)
+                    sorted_tasks[0].departure_time = f"{hh:02d}:{mm:02d}"
 
         return tasks
 
@@ -467,6 +509,8 @@ class Phase5Orchestrator:
 
             # 2. Build shared prefix
             shared_prefix = build_shared_prefix(self.plan)
+            run_id = f"phase5_{uuid.uuid4().hex[:12]}"
+            candidate_store = Phase5CandidateStore(self.config.artifact_root)
 
             # 3. Initialize per-worker status tracking
             worker_statuses: list[dict[str, Any]] = [
@@ -529,6 +573,9 @@ class Phase5Orchestrator:
                         max_iterations=self.config.worker_max_iterations,
                         timeout_seconds=self.config.worker_timeout_seconds,
                         on_progress=_make_progress_cb(idx),
+                        candidate_store=candidate_store,
+                        run_id=run_id,
+                        attempt=1,
                     )
 
             pending: dict[asyncio.Task, DayTask] = {}
@@ -662,6 +709,9 @@ class Phase5Orchestrator:
                     max_iterations=self.config.worker_max_iterations,
                     timeout_seconds=self.config.worker_timeout_seconds,
                     on_progress=_make_progress_cb(idx),
+                    candidate_store=candidate_store,
+                    run_id=run_id,
+                    attempt=2,
                 )
                 if retry_result.success:
                     successes.append(retry_result)
@@ -716,8 +766,15 @@ class Phase5Orchestrator:
                 return
 
             # 8. Sort and validate
+            artifact_candidates = candidate_store.load_latest_candidates(
+                self.plan.session_id, run_id
+            )
             dayplans = sorted(
-                [r.dayplan for r in successes if r.dayplan],
+                (
+                    [c["dayplan"] for c in artifact_candidates if c.get("dayplan")]
+                    if artifact_candidates
+                    else [r.dayplan for r in successes if r.dayplan]
+                ),
                 key=lambda dp: dp.get("day", 0),
             )
 
@@ -766,17 +823,30 @@ class Phase5Orchestrator:
                         max_iterations=self.config.worker_max_iterations,
                         timeout_seconds=self.config.worker_timeout_seconds,
                         on_progress=_make_progress_cb(idx),
+                        candidate_store=candidate_store,
+                        run_id=run_id,
+                        attempt=3,
                     )
                     if rd_result.success and rd_result.dayplan:
+                        latest_by_day = {
+                            c["day"]: c["dayplan"]
+                            for c in candidate_store.load_latest_candidates(
+                                self.plan.session_id, run_id
+                            )
+                            if c.get("dayplan")
+                        }
+                        replacement_dayplan = latest_by_day.get(
+                            rd_day, rd_result.dayplan
+                        )
                         # Replace in dayplans list
                         dayplans = [
                             dp for dp in dayplans if dp.get("day") != rd_day
                         ]
-                        dayplans.append(rd_result.dayplan)
+                        dayplans.append(replacement_dayplan)
                         dayplans.sort(key=lambda dp: dp.get("day", 0))
                         worker_statuses[idx]["status"] = "done"
                         worker_statuses[idx]["activity_count"] = len(
-                            rd_result.dayplan.get("activities", [])
+                            replacement_dayplan.get("activities", [])
                         )
                     else:
                         worker_statuses[idx]["status"] = "failed"

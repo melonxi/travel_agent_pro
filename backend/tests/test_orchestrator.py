@@ -886,3 +886,193 @@ class TestBacktrackProtocol:
             text_chunks = [c for c in chunks if c.type == ChunkType.TEXT_DELTA]
             combined_text = "".join(c.content for c in text_chunks if c.content)
             assert "骨架分配失败" in combined_text or "NEEDS_PHASE3_REPLAN" in combined_text or "回退" in combined_text
+
+
+class TestWorkerArtifactHandoff:
+    @pytest.mark.asyncio
+    async def test_orchestrator_loads_worker_candidate_artifacts(self, tmp_path):
+        plan = _make_plan_with_skeleton()
+
+        async def fake_worker(**kwargs):
+            task = kwargs["task"]
+            candidate_store = kwargs["candidate_store"]
+            run_id = kwargs["run_id"]
+            attempt = kwargs["attempt"]
+            dayplan = {
+                "day": task.day,
+                "date": task.date,
+                "notes": f"artifact day {task.day}",
+                "activities": [],
+            }
+            candidate_store.submit_candidate(
+                session_id=plan.session_id,
+                run_id=run_id,
+                worker_id=f"day_{task.day}_attempt_{attempt}",
+                expected_day=task.day,
+                attempt=attempt,
+                dayplan=dayplan,
+            )
+            return DayWorkerResult(
+                day=task.day,
+                date=task.date,
+                success=True,
+                dayplan=None,
+            )
+
+        with patch("agent.phase5.orchestrator.run_day_worker", side_effect=fake_worker):
+            orch = Phase5Orchestrator(
+                plan=plan,
+                llm=AsyncMock(),
+                tool_engine=AsyncMock(),
+                config=Phase5ParallelConfig(
+                    max_workers=3,
+                    fallback_to_serial=False,
+                    artifact_root=str(tmp_path),
+                ),
+            )
+            chunks = []
+            async for chunk in orch.run():
+                chunks.append(chunk)
+
+        assert [day.day for day in plan.daily_plans] == [1, 2, 3]
+        assert plan.daily_plans[0].notes == "artifact day 1"
+        assert any(tmp_path.glob(f"{plan.session_id}/*/day_1_attempt_1.json"))
+
+    @pytest.mark.asyncio
+    async def test_redispatch_uses_artifact_candidate_over_memory_result(self, tmp_path):
+        plan = _make_plan_with_skeleton()
+        plan.skeleton_plans = [
+            {
+                "id": "plan_A",
+                "name": "平衡版",
+                "days": [
+                    {"area": "A", "theme": "A"},
+                    {"area": "B", "theme": "B"},
+                    {"area": "C", "theme": "C"},
+                ],
+            }
+        ]
+
+        async def fake_worker(**kwargs):
+            task = kwargs["task"]
+            candidate_store = kwargs["candidate_store"]
+            run_id = kwargs["run_id"]
+            attempt = kwargs["attempt"]
+            if attempt == 1:
+                name = "重复景点" if task.day in (1, 2) else "第三天"
+                dayplan = {
+                    "day": task.day,
+                    "date": task.date,
+                    "notes": f"initial day {task.day}",
+                    "activities": [
+                        {
+                            "name": name,
+                            "location": {"name": name, "lat": 35.0, "lng": 139.0},
+                            "start_time": "09:00",
+                            "end_time": "10:00",
+                            "category": "activity",
+                            "cost": 0,
+                        }
+                    ],
+                }
+            else:
+                artifact_name = "artifact repair"
+                dayplan = {
+                    "day": task.day,
+                    "date": task.date,
+                    "notes": "artifact repair result",
+                    "activities": [
+                        {
+                            "name": artifact_name,
+                            "location": {
+                                "name": artifact_name,
+                                "lat": 35.1,
+                                "lng": 139.1,
+                            },
+                            "start_time": "09:00",
+                            "end_time": "10:00",
+                            "category": "activity",
+                            "cost": 0,
+                        }
+                    ],
+                }
+            candidate_store.submit_candidate(
+                session_id=plan.session_id,
+                run_id=run_id,
+                worker_id=f"day_{task.day}_attempt_{attempt}",
+                expected_day=task.day,
+                attempt=attempt,
+                dayplan=dayplan,
+            )
+            memory_result = dict(dayplan)
+            if attempt == 3:
+                memory_result["notes"] = "memory repair result"
+            return DayWorkerResult(
+                day=task.day,
+                date=task.date,
+                success=True,
+                dayplan=memory_result,
+            )
+
+        with patch("agent.phase5.orchestrator.run_day_worker", side_effect=fake_worker):
+            orch = Phase5Orchestrator(
+                plan=plan,
+                llm=AsyncMock(),
+                tool_engine=AsyncMock(),
+                config=Phase5ParallelConfig(
+                    max_workers=3,
+                    fallback_to_serial=False,
+                    artifact_root=str(tmp_path),
+                ),
+            )
+            async for _ in orch.run():
+                pass
+
+        assert any(day.notes == "artifact repair result" for day in plan.daily_plans)
+        assert not any(day.notes == "memory repair result" for day in plan.daily_plans)
+
+
+class TestCompileDayTasksInjection:
+    def _make_orch(self, plan):
+        from state.models import Constraint  # local import to avoid changing file header
+        return Phase5Orchestrator(
+            plan=plan,
+            llm=None,
+            tool_engine=None,
+            config=Phase5ParallelConfig(),
+        )
+
+    def test_compile_day_tasks_injects_day_constraints(self):
+        from state.models import Constraint
+        plan = _make_plan_with_skeleton()
+        plan.constraints = [
+            Constraint(type="hard", description="不去迪士尼"),
+            Constraint(type="soft", description="尽量住民宿"),
+        ]
+        orch = self._make_orch(plan)
+        base_tasks = orch._split_tasks()
+        tasks = orch._compile_day_tasks(base_tasks)
+        for t in tasks:
+            assert len(t.day_constraints) == 1
+            assert t.day_constraints[0]["type"] == "soft"
+            assert t.day_constraints[0]["description"] == "尽量住民宿"
+
+    def test_compile_day_tasks_injects_day_budget(self):
+        plan = _make_plan_with_skeleton()
+        orch = self._make_orch(plan)
+        base_tasks = orch._split_tasks()
+        tasks = orch._compile_day_tasks(base_tasks)
+        for t in tasks:
+            assert t.day_budget == 10000  # 30000 / 3 days
+
+    def test_compile_day_tasks_no_day_constraints_when_all_hard(self):
+        from state.models import Constraint
+        plan = _make_plan_with_skeleton()
+        plan.constraints = [
+            Constraint(type="hard", description="不去迪士尼"),
+        ]
+        orch = self._make_orch(plan)
+        base_tasks = orch._split_tasks()
+        tasks = orch._compile_day_tasks(base_tasks)
+        for t in tasks:
+            assert t.day_constraints == []
