@@ -35,7 +35,7 @@ requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["agent*", "llm*", "state*", "phase*", "tools*", "context*", "memory*", "harness*", "telemetry*", "storage*"]
+include = ["agent*", "api*", "llm*", "state*", "phase*", "tools*", "context*", "memory*", "harness*", "telemetry*", "storage*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -95,17 +95,21 @@ class OpenAIProvider:
         result: list[dict[str, Any]] = []
         for msg in messages:
             if msg.role == Role.TOOL and msg.tool_result:
+                payload: dict[str, Any] = {
+                    "status": msg.tool_result.status,
+                    "data": msg.tool_result.data,
+                }
+                if msg.tool_result.error is not None:
+                    payload["error"] = msg.tool_result.error
+                if msg.tool_result.error_code is not None:
+                    payload["error_code"] = msg.tool_result.error_code
+                if msg.tool_result.suggestion is not None:
+                    payload["suggestion"] = msg.tool_result.suggestion
                 result.append(
                     {
                         "role": "tool",
                         "tool_call_id": msg.tool_result.tool_call_id,
-                        "content": json.dumps(
-                            {
-                                "status": msg.tool_result.status,
-                                "data": msg.tool_result.data,
-                            },
-                            ensure_ascii=False,
-                        ),
+                        "content": json.dumps(payload, ensure_ascii=False),
                     }
                 )
             elif msg.role == Role.ASSISTANT and msg.tool_calls:
