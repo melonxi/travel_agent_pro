@@ -56,16 +56,23 @@ def estimate_message_tokens(message: Message) -> int:
         parts.extend(_tool_call_parts(message.tool_calls))
 
     if message.tool_result:
-        parts.append(
-            _safe_dump(
-                {
-                    "status": message.tool_result.status,
-                    "data": message.tool_result.data,
-                }
-            )
-        )
+        parts.append(_safe_dump(_tool_result_prompt_payload(message.tool_result)))
 
     return sum(_estimate_text_tokens(part) for part in parts)
+
+
+def _tool_result_prompt_payload(result: ToolResult) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": result.status,
+        "data": result.data,
+    }
+    if result.error is not None:
+        payload["error"] = result.error
+    if result.error_code is not None:
+        payload["error_code"] = result.error_code
+    if result.suggestion is not None:
+        payload["suggestion"] = result.suggestion
+    return payload
 
 
 def compact_messages_for_prompt(

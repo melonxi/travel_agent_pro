@@ -20,8 +20,8 @@ from typing import Any, AsyncIterator
 
 from opentelemetry import trace
 
-from agent.day_worker import DayWorkerResult, run_day_worker
-from agent.worker_prompt import (
+from agent.phase5.day_worker import DayWorkerResult, run_day_worker
+from agent.phase5.worker_prompt import (
     DayTask,
     build_shared_prefix,
     split_skeleton_to_day_tasks,
