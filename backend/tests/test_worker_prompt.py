@@ -60,6 +60,16 @@ def test_build_shared_prefix_contains_fallback_guardrails():
     assert "写入 notes" in prefix
 
 
+def test_build_shared_prefix_prefers_submit_tool_handoff():
+    plan = _make_plan()
+    prefix = build_shared_prefix(plan)
+
+    assert "优先调用 `submit_day_plan_candidate` 工具提交 DayPlan" in prefix
+    assert "不要在自然语言正文里重复粘贴完整 JSON" in prefix
+    assert "不会直接写入最终行程状态" in prefix
+    assert "最后一条消息" not in prefix
+
+
 def test_build_day_suffix():
     task = DayTask(
         day=3,
@@ -77,6 +87,8 @@ def test_build_day_suffix():
     assert "2026-05-03" in suffix
     assert "浅草/上野" in suffix
     assert "浅草寺" in suffix
+    assert "调用 `submit_day_plan_candidate` 提交候选 DayPlan" in suffix
+    assert "最后输出 JSON" not in suffix
 
 
 def test_day_suffix_differs_per_day():
@@ -221,3 +233,11 @@ class TestSplitExtractsNewFields:
         assert tasks[0].locked_pois == []
         assert tasks[0].candidate_pois == []
         assert tasks[0].area_cluster == []
+
+
+def test_dayplan_schema_has_category_enum_and_structural_errors():
+    plan = _make_plan()
+    prefix = build_shared_prefix(plan)
+    assert "枚举之一" in prefix
+    assert "常见结构错误" in prefix
+    assert "location" in prefix

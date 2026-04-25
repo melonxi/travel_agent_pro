@@ -19,6 +19,10 @@ from typing import Any, Callable
 from opentelemetry import trace
 
 from agent.types import Message, Role, ToolCall, ToolResult
+from agent.phase5.candidate_store import (
+    Phase5CandidateStore,
+    Phase5CandidateValidationError,
+)
 from agent.phase5.worker_prompt import DayTask, build_day_suffix, build_shared_prefix
 from llm.base import LLMProvider
 from llm.types import ChunkType
@@ -44,8 +48,134 @@ _FORCED_EMIT_PROMPT = (
 
 _LATE_EMIT_PROMPT = (
     "你已进入收口阶段。不要再为细节重复搜索；"
-    "请基于已知信息立即输出 DayPlan JSON，无法确认的事实写入 notes。"
+    "请基于已知信息立即提交 DayPlan，无法确认的事实写入 notes。"
 )
+
+_SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA = {
+    "name": "submit_day_plan_candidate",
+    "description": (
+        "提交你这一天的最终 DayPlan 候选给 Orchestrator。这是你完成本任务的唯一交付动作。\n"
+        "\n"
+        "【何时调用】\n"
+        "- 当天活动序列已确定，所有 locked POI 已包含\n"
+        "- 已用 get_poi_info 补齐你引用的 POI 信息（无法补齐的字段写 notes）\n"
+        "- 时间表已留出交通/缓冲，活动数符合 pace 要求\n"
+        "\n"
+        "【何时不要调用】\n"
+        "- 仍有 locked POI 未纳入活动\n"
+        "- start_time/end_time 还未定（不要提交占位符）\n"
+        "- 同一 POI 在你的活动列表中重复出现\n"
+        "\n"
+        "【提交后】\n"
+        "- 此次提交是候选，Orchestrator 会做跨天校验，可能要求你修复重新提交\n"
+        "- 提交成功后只输出一句确认（如：「已提交第 N 天」），不要粘贴整个 JSON\n"
+        "- 提交失败时，根据 error_code 修正后最多再调一次；仍失败则在最终文本输出合法 JSON 兜底\n"
+        "\n"
+        "【错误码 → 动作】\n"
+        "- INVALID_DAYPLAN（day 不匹配）→ 把 dayplan.day 改为当前任务天数\n"
+        "- INVALID_DAYPLAN（字段缺失）→ 补齐 day/date/activities，每个 activity 含 name/location/start_time/end_time/category/cost\n"
+        "- INVALID_DAYPLAN（location 非对象）→ location 必须是 {name, lat, lng}，不是字符串\n"
+        "- SUBMIT_UNAVAILABLE → 此运行未注入 candidate_store，改为在最终文本输出合法 DayPlan JSON（用 ```json 代码块包裹）"
+    ),
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "dayplan": {
+                "type": "object",
+                "description": "完整 DayPlan。day 必须等于你当前任务的天数；activities 至少 2 项；所有时间用 24 小时 HH:MM 格式。",
+                "additionalProperties": False,
+                "required": ["day", "date", "activities"],
+                "properties": {
+                    "day": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "天数（1-based），必须等于当前任务的 day。",
+                    },
+                    "date": {
+                        "type": "string",
+                        "pattern": r"^\d{4}-\d{2}-\d{2}$",
+                        "description": "ISO 日期，YYYY-MM-DD。",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "当天补充说明（可选）。无法从工具确认的事实写在这里或活动 notes 里。",
+                    },
+                    "activities": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": [
+                                "name",
+                                "location",
+                                "start_time",
+                                "end_time",
+                                "category",
+                                "cost",
+                            ],
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "活动/POI 名称。",
+                                },
+                                "location": {
+                                    "type": "object",
+                                    "required": ["name", "lat", "lng"],
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "lat": {"type": "number", "minimum": -90, "maximum": 90},
+                                        "lng": {"type": "number", "minimum": -180, "maximum": 180},
+                                    },
+                                    "description": "必须是对象 {name, lat, lng}，不能是字符串。lat/lng 来自 get_poi_info 返回值。",
+                                },
+                                "start_time": {
+                                    "type": "string",
+                                    "pattern": r"^\d{2}:\d{2}$",
+                                    "description": "24 小时制 HH:MM。",
+                                },
+                                "end_time": {
+                                    "type": "string",
+                                    "pattern": r"^\d{2}:\d{2}$",
+                                    "description": "晚于 start_time。",
+                                },
+                                "category": {
+                                    "type": "string",
+                                    "enum": [
+                                        "shrine", "museum", "food", "transport",
+                                        "activity", "shopping", "park",
+                                        "viewpoint", "experience",
+                                    ],
+                                    "description": "活动类别枚举。餐饮使用 food。",
+                                },
+                                "cost": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "description": "人民币数字；免费写 0；估算时取保守上限。",
+                                },
+                                "transport_from_prev": {
+                                    "type": "string",
+                                    "description": "从上一活动到本活动的交通方式（步行/地铁/出租/巴士等）。",
+                                },
+                                "transport_duration_min": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "上一活动到本活动的交通时长（分钟）。优先使用 calculate_route 返回值。",
+                                },
+                                "notes": {
+                                    "type": "string",
+                                    "description": "可选。无法确认的信息写在这里，例如「需提前预约（未确认链接）」。",
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        },
+        "required": ["dayplan"],
+    },
+}
 
 
 def _should_force_emit(iteration: int, max_iterations: int) -> bool:
@@ -132,12 +262,15 @@ async def run_day_worker(
     max_iterations: int = 10,
     timeout_seconds: int = 120,
     on_progress: OnProgress = None,
+    candidate_store: Phase5CandidateStore | None = None,
+    run_id: str | None = None,
+    attempt: int = 1,
 ) -> DayWorkerResult:
     """Run a single Day Worker agent loop.
 
     The worker operates in its own isolated context:
-    - system message = shared_prefix + day_suffix
-    - user message = "请开始规划"
+    - system message = shared_prefix
+    - user message = day_suffix
     - loops: LLM call → execute tools → LLM call → ... → extract JSON
 
     The worker does NOT have write tools. It only uses read tools
@@ -146,17 +279,19 @@ async def run_day_worker(
     tracer = trace.get_tracer("day-worker")
 
     day_suffix = build_day_suffix(task)
-    system_content = shared_prefix + day_suffix
 
     messages: list[Message] = [
-        Message(role=Role.SYSTEM, content=system_content),
-        Message(role=Role.USER, content="请开始规划这一天的行程。"),
+        Message(role=Role.SYSTEM, content=shared_prefix),
+        Message(role=Role.USER, content=day_suffix),
     ]
 
     # Build tool list: only read tools for Phase 5
     worker_tools = _get_worker_tools(tool_engine)
+    if candidate_store is not None and run_id:
+        worker_tools.append(_SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA)
 
     iterations = 0
+    submitted_dayplan: dict[str, Any] | None = None
     emit_repair_attempted = False
     repair_round_pending = False
     forced_emit_mode = False
@@ -211,6 +346,14 @@ async def run_day_worker(
                         messages.append(
                             Message(role=Role.ASSISTANT, content=assistant_text)
                         )
+                        if submitted_dayplan is not None:
+                            return DayWorkerResult(
+                                day=task.day,
+                                date=task.date,
+                                success=True,
+                                dayplan=submitted_dayplan,
+                                iterations=iterations,
+                            )
                         dayplan = extract_dayplan_json(assistant_text)
                         if dayplan is not None:
                             return DayWorkerResult(
@@ -298,8 +441,39 @@ async def run_day_worker(
                             },
                         )
 
-                    # Execute tools (all read, can be parallel)
-                    results = await tool_engine.execute_batch(tool_calls)
+                    # Execute tools. The worker-only submit tool is handled here
+                    # because it writes to the Phase 5 staging area, not the
+                    # shared TravelPlanState tool registry.
+                    results: list[ToolResult] = []
+                    external_tool_calls: list[ToolCall] = []
+                    external_positions: list[int] = []
+                    for pos, call in enumerate(tool_calls):
+                        if call.name == "submit_day_plan_candidate":
+                            result = _submit_day_plan_candidate(
+                                call=call,
+                                plan=plan,
+                                task=task,
+                                candidate_store=candidate_store,
+                                run_id=run_id,
+                                attempt=attempt,
+                            )
+                            if result.status == "success":
+                                submitted_dayplan = result.data["dayplan"]
+                            results.append(result)
+                        else:
+                            results.append(
+                                ToolResult(tool_call_id=call.id, status="skipped")
+                            )
+                            external_tool_calls.append(call)
+                            external_positions.append(pos)
+
+                    if external_tool_calls:
+                        external_results = await tool_engine.execute_batch(
+                            external_tool_calls
+                        )
+                        for pos, result in zip(external_positions, external_results):
+                            results[pos] = result
+
                     for tc, result in zip(tool_calls, results):
                         messages.append(Message(role=Role.TOOL, tool_result=result))
 
@@ -316,6 +490,14 @@ async def run_day_worker(
                         date=task.date,
                         success=True,
                         dayplan=dayplan,
+                        iterations=iterations,
+                    )
+                if submitted_dayplan is not None:
+                    return DayWorkerResult(
+                        day=task.day,
+                        date=task.date,
+                        success=True,
+                        dayplan=submitted_dayplan,
                         iterations=iterations,
                     )
                 return DayWorkerResult(
@@ -366,3 +548,56 @@ def _get_worker_tools(tool_engine: ToolEngine) -> list[dict[str, Any]]:
         if tool_def is not None:
             all_tools.append(tool_def.to_schema())
     return all_tools
+
+
+def _submit_day_plan_candidate(
+    *,
+    call: ToolCall,
+    plan: TravelPlanState,
+    task: DayTask,
+    candidate_store: Phase5CandidateStore | None,
+    run_id: str | None,
+    attempt: int,
+) -> ToolResult:
+    if candidate_store is None or not run_id:
+        return ToolResult(
+            tool_call_id=call.id,
+            status="error",
+            error="submit_day_plan_candidate is unavailable in this worker",
+            error_code="SUBMIT_UNAVAILABLE",
+            suggestion="Output DayPlan JSON in the final response instead.",
+        )
+
+    dayplan = call.arguments.get("dayplan")
+    if not isinstance(dayplan, dict):
+        return ToolResult(
+            tool_call_id=call.id,
+            status="error",
+            error="dayplan must be an object",
+            error_code="INVALID_DAYPLAN",
+            suggestion="Call submit_day_plan_candidate with a complete dayplan object.",
+        )
+
+    try:
+        result = candidate_store.submit_candidate(
+            session_id=plan.session_id,
+            run_id=run_id,
+            worker_id=f"day_{task.day}_attempt_{attempt}",
+            expected_day=task.day,
+            attempt=attempt,
+            dayplan=dayplan,
+        )
+    except Phase5CandidateValidationError as exc:
+        return ToolResult(
+            tool_call_id=call.id,
+            status="error",
+            error=str(exc),
+            error_code="INVALID_DAYPLAN",
+            suggestion=f"Submit a DayPlan whose day is {task.day}.",
+        )
+
+    return ToolResult(
+        tool_call_id=call.id,
+        status="success",
+        data={**result, "dayplan": dayplan},
+    )

@@ -2,6 +2,7 @@
 import json
 import pytest
 
+from agent.phase5.candidate_store import Phase5CandidateStore
 from agent.phase5.day_worker import (
     DayWorkerResult,
     _MAX_POI_RECOVERY,
@@ -80,6 +81,81 @@ class _ToolEngineWithResults:
 
 def _tc(name: str, call_id: str = "call_1", **kwargs) -> ToolCall:
     return ToolCall(id=call_id, name=name, arguments=kwargs)
+
+
+@pytest.mark.asyncio
+async def test_run_day_worker_puts_day_task_in_user_message():
+    llm = _LLMStub(
+        [
+            [
+                LLMChunk(
+                    type=ChunkType.TEXT_DELTA,
+                    content='{"day": 1, "date": "2026-05-01", "activities": []}',
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+        ]
+    )
+
+    result = await run_day_worker(
+        llm=llm,
+        tool_engine=_ToolEngineStub(),
+        plan=_stub_plan(),
+        task=_task(),
+        shared_prefix="SHARED PREFIX",
+        timeout_seconds=5,
+    )
+
+    assert result.success is True
+    first_call_messages = llm.calls[0]
+    assert first_call_messages[0].role.value == "system"
+    assert first_call_messages[0].content == "SHARED PREFIX"
+    assert first_call_messages[1].role.value == "user"
+    assert "第 1 天" in first_call_messages[1].content
+    assert "请执行以上 DayTask" in first_call_messages[1].content
+
+
+@pytest.mark.asyncio
+async def test_run_day_worker_accepts_submit_day_plan_candidate_tool(tmp_path):
+    dayplan = {"day": 1, "date": "2026-05-01", "notes": "submitted", "activities": []}
+    llm = _LLMStub(
+        [
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc(
+                        "submit_day_plan_candidate",
+                        call_id="submit_1",
+                        dayplan=dayplan,
+                    ),
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(type=ChunkType.TEXT_DELTA, content="已提交第 1 天计划。"),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+        ]
+    )
+    store = Phase5CandidateStore(tmp_path)
+
+    result = await run_day_worker(
+        llm=llm,
+        tool_engine=_ToolEngineStub(),
+        plan=_stub_plan(),
+        task=_task(),
+        shared_prefix="",
+        timeout_seconds=5,
+        candidate_store=store,
+        run_id="run_1",
+        attempt=1,
+    )
+
+    assert result.success is True
+    assert result.dayplan == dayplan
+    loaded = store.load_latest_candidates("s-day-worker", "run_1")
+    assert len(loaded) == 1
+    assert loaded[0]["dayplan"] == dayplan
 
 
 def test_extract_dayplan_json_from_code_block():
@@ -445,3 +521,20 @@ async def test_recovery_chain_triggers_forced_emit():
 
     assert result.success is True
     assert result.dayplan == {"day": 1, "date": "2026-05-01", "activities": []}
+
+
+def test_submit_schema_has_inline_properties():
+    from agent.phase5.day_worker import _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA
+    schema = _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA
+    assert schema["name"] == "submit_day_plan_candidate"
+    dayplan = schema["parameters"]["properties"]["dayplan"]
+    assert dayplan["type"] == "object"
+    assert "day" in dayplan["properties"]
+    assert "activities" in dayplan["properties"]
+    act_item = dayplan["properties"]["activities"]["items"]
+    assert act_item["properties"]["location"]["type"] == "object"
+    assert "lat" in act_item["properties"]["location"]["properties"]
+    assert "enum" in act_item["properties"]["category"]
+    desc = schema["description"]
+    assert "INVALID_DAYPLAN" in desc
+    assert "SUBMIT_UNAVAILABLE" in desc
