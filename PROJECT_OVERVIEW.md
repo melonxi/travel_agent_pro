@@ -102,22 +102,24 @@ travel_agent_pro/
 - 核心定位：路径规划优化问题——最小化无效移动，最大化体验密度
 - **双执行模式**：
   - **串行模式**（默认回退）：AgentLoop 内 LLM 逐日生成，与原有流程一致
-  - **并行 Orchestrator-Workers 模式**：Python Orchestrator（纯代码调度器，非 LLM）将骨架拆分为 N 个 DayTask，经 `_compile_day_tasks` 注入跨天约束（forbidden_pois / mobility_envelope / date_role），并行派发 N 个 Day Worker（轻量 LLM Agent，独立上下文），收集结果后做全局验证（POI 去重 / 预算检查 / 天数覆盖 / 时间冲突 / 语义去重 / 交通衔接 / 节奏匹配），error 级问题触发最多 1 轮 re-dispatch（注入 repair_hints 重跑受影响天），最后统一写入 `replace_all_daily_plans`
+  - **并行 Orchestrator-Workers 模式**：Python Orchestrator（纯代码调度器，非 LLM）将骨架拆分为 N 个 DayTask，经 `_compile_day_tasks` 注入跨天约束（forbidden_pois / mobility_envelope / date_role），并行派发 N 个 Day Worker（轻量 LLM Agent，独立上下文），Worker 完成后优先通过 worker-only `submit_day_plan_candidate` 工具把候选 DayPlan 写入 run-scoped JSON artifact（`phase5.parallel.artifact_root/{session_id}/{run_id}/day_N_attempt_M.json`），Orchestrator 收集结果后读取 artifact 候选并做全局验证（POI 去重 / 预算检查 / 天数覆盖 / 时间冲突 / 语义去重 / 交通衔接 / 节奏匹配），error 级问题触发最多 1 轮 re-dispatch（注入 repair_hints 重跑受影响天），最后统一写入 `replace_all_daily_plans`
   - 并行模式通过 `config.yaml` 的 `phase5.parallel` 段控制（`enabled` / `max_workers` / `worker_timeout_seconds` / `fallback_to_serial`）
   - Worker 共享相同 system prompt prefix → KV-Cache 命中率 ~93.75%（Manus pattern）
-  - Worker 只有只读工具，写入由 Orchestrator 统一完成
+  - Worker 只有只读工具和候选提交工具；候选提交只写 staging artifact，不改 `TravelPlanState.daily_plans`，正式写入仍由 Orchestrator 统一完成
   - 失败率 >50% 自动降级到串行模式
-- **Day Worker 提示词止血策略**：Day Worker 具备有限补救 + 保守落地的收敛策略——当 JSON 输出格式异常或工具调用失败时，先尝试有限次数的补救（如 JSON 修复），补救失败则保守落地（返回当前已有结果而非无限重试）
+- **Day Worker 提示词止血策略**：Day Worker 具备有限补救 + 保守落地的收敛策略——优先通过 `submit_day_plan_candidate` 结构化提交候选 DayPlan；若模型仍以最终文本输出 JSON，保留 `extract_dayplan_json` 兼容路径并尝试有限次数 JSON 修复，补救失败则保守落地（返回当前已有结果而非无限重试）
 - **Day Worker loop 保护机制**：Worker 内部循环具备四重收敛保障——**重复查询抑制**（同 query 滑动窗口去重，避免搜索死循环）、**补救链阈值**（连续补救轮次上限，超限即保守落地）、**后半程强制收口**（迭代过半后强制聚焦已有结果，不再启动新搜索）、**JSON 修复回合**（输出 JSON 解析失败时限定修复轮次，避免在格式修复上无限循环）
 - **Worker 失败错误类别**：Worker 失败时输出结构化错误码，便于 Orchestrator 诊断与降级决策——`REPEATED_QUERY_LOOP`（重复查询死循环被抑制）、`RECOVERY_CHAIN_EXHAUSTED`（补救链耗尽仍无法恢复）、`JSON_EMIT_FAILED`（JSON 输出经修复回合仍无法解析）、`TIMEOUT`（Worker 超时）、`LLM_ERROR`（LLM 调用不可恢复错误）、`NEEDS_PHASE3_REPLAN`（locked_pois 全部不可行，需回退 Phase 3 重调骨架）
 - **Worker 约束注入**：DayTask 携带 `locked_pois`/`candidate_pois`/`forbidden_pois`/`area_cluster`/`mobility_envelope`/`date_role`/`repair_hints` 等约束字段，由 `_build_constraint_block` 渲染为中文 prompt 硬约束块注入 Worker 上下文
+- **submit_day_plan_candidate 工具 schema**：内联完整 JSON Schema（activities items 含 location/start_time/end_time/category/cost 的类型约束 + category enum + pattern + additionalProperties: False）+ 5 段式 description（何时调用 / 何时不要 / 提交后语义 / 错误码动作映射），确保 LLM 输出结构合规
+- **_DAYPLAN_SCHEMA**：已补充 category enum（shrine/museum/food/transport/activity/shopping/park/viewpoint/experience）+ 常见结构错误示例（location 字符串 / cost 字符串 / end_time ≤ start_time / category 非枚举），以 submit schema 为单一事实源
 - **增量生成策略**（串行模式）：按1-2天增量调用 `assemble_day_plan`，非一次性全量
 - **Prompt 已迁移**：Phase 5 使用 `optimize_day_route`（路线辅助，不写状态）、`save_day_plan` / `replace_all_day_plans`（状态写入）与 `request_backtrack`（回退）
 - 流程：expand（骨架→日期）→ assemble（活动+时间）→ validate（开放/距离/天气/预算）→ commit
 - 产出：`daily_plans[]`，每天含完整 Activity 列表
 - Phase 5+ 上下文中 trip_brief 注入时排除 `dates`/`total_days`（已由 `plan.dates` 权威提供），避免重复信号
 - 运行时上下文必须注入骨架内容、`trip_brief` 字段、偏好和约束
-- **并行模式文件**：`agent/phase5/orchestrator.py`（调度器核心）、`agent/phase5/day_worker.py`（单日 Worker 执行引擎）、`agent/phase5/worker_prompt.py`（共享前缀 + 日别后缀模板）；Phase 5 不再在 `agent/` 根目录保留同名兼容文件
+- **并行模式文件**：`agent/phase5/orchestrator.py`（调度器核心）、`agent/phase5/day_worker.py`（单日 Worker 执行引擎）、`agent/phase5/worker_prompt.py`（共享前缀 + 日别后缀模板）、`agent/phase5/candidate_store.py`（run-scoped 候选 DayPlan artifact 写入与读取）；Phase 5 不再在 `agent/` 根目录保留同名兼容文件
 
 ### Phase 7 — 出发前查漏（skill-card）
 - 角色：出发前查漏官；扫描全计划，生成带优先级的检查清单

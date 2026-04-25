@@ -54,11 +54,32 @@ _WORKER_ROLE = """## 角色
 - 如果已经具备区域、主题、核心活动和基本时间结构，应优先输出保守版 DayPlan。
 - 当工具仍无法补齐细节时，可以基于骨架、区域连续性和常识性节奏完成保守安排。
 - 不得编造具体营业时间、具体票价、明确预约要求；无法确认的事实写入 notes。
-- 当系统提示进入收口模式时，必须停止继续调工具并直接输出 DayPlan JSON。"""
+- 当系统提示进入收口模式时，必须停止继续调工具并直接提交 DayPlan。
 
-_DAYPLAN_SCHEMA = """## DayPlan 严格 JSON 结构
+## 交付方式
 
-完成规划后，你的**最后一条消息**必须包含一个 JSON 代码块，格式如下：
+你完成单日规划后，必须优先调用 `submit_day_plan_candidate` 工具提交 DayPlan。
+
+提交成功后，只输出一句简短确认，例如："已提交第 2 天计划。"
+
+不要在自然语言正文里重复粘贴完整 JSON，除非系统明确提示提交工具不可用。
+
+如果 `submit_day_plan_candidate` 返回错误：
+- 根据错误信息修正 DayPlan 后再次提交。
+- 如果错误说明 day 不匹配，必须把 day 改为当前任务天数。
+- 如果错误说明字段缺失，必须补齐字段。
+- 最多修正 1 次；仍失败时，再在最终文本中输出合法 DayPlan JSON 作为兜底。
+
+## 状态写入边界
+
+`submit_day_plan_candidate` 只提交候选 DayPlan 给 Orchestrator 校验。
+它不会直接写入最终行程状态。
+你不能假设提交后计划已经最终确认。
+Orchestrator 会统一做跨天校验、必要重派和最终写入。"""
+
+_DAYPLAN_SCHEMA = """## DayPlan 结构要求
+
+无论是调用 `submit_day_plan_candidate`，还是在工具不可用时通过最终文本兜底输出，都必须使用以下结构：
 
 ```json
 {
@@ -83,9 +104,17 @@ _DAYPLAN_SCHEMA = """## DayPlan 严格 JSON 结构
 
 硬约束：
 - location 必须是 dict（含 name, lat, lng），不能是字符串
-- start_time / end_time 必须是 "HH:MM" 格式
-- cost 是数字（人民币），没有时填 0
-- category 必须提供（shrine, museum, food, transport, activity, shopping, park 等）"""
+- start_time / end_time 必须是 "HH:MM" 格式，且 end_time > start_time
+- cost 是数字（人民币），没有时填 0；不能是字符串如 "100元"
+- category 必须是以下枚举之一：shrine, museum, food, transport, activity, shopping, park, viewpoint, experience
+
+常见结构错误（绝对不允许）：
+1. `"location": "浅草寺"` → 必须是 `{"name": "浅草寺", "lat": 35.7148, "lng": 139.7967}`
+2. `"cost": "100元"` → 必须是数字 `100`
+3. `"start_time": "09:00", "end_time": "09:00"` → end_time 必须晚于 start_time
+4. `"category": "景点"` → 必须使用枚举值（如 shrine, museum, park 等）
+
+完整字段定义和约束请以 `submit_day_plan_candidate` 工具的参数 schema 为准。"""
 
 
 def _load_soul() -> str:
@@ -230,8 +259,9 @@ def build_day_suffix(task: DayTask) -> str:
         parts.append(constraint_block)
 
     parts.append(
-        "\n请为这一天生成完整的 DayPlan JSON。"
-        "先用工具补齐信息和优化路线，最后输出 JSON。"
+        "\n请执行以上 DayTask，为这一天生成完整 DayPlan。"
+        "先用只读工具补齐信息和优化路线；"
+        "完成后调用 `submit_day_plan_candidate` 提交候选 DayPlan。"
     )
 
     return "\n".join(parts)
