@@ -60,11 +60,13 @@ export default function ParallelProgress({ totalDays, workers, hint }: Props) {
               key={w.day}
               className={`parallel-worker parallel-worker--${w.status}`}
             >
-              <span className="parallel-worker-icon">{STATUS_ICON[w.status]}</span>
-              <span className="parallel-worker-label">第 {w.day} 天</span>
-              {w.theme && (
-                <span className="parallel-worker-theme">{w.theme}</span>
-              )}
+              <div className="parallel-worker-main">
+                <span className="parallel-worker-icon">{STATUS_ICON[w.status]}</span>
+                <span className="parallel-worker-label">第 {w.day} 天</span>
+                {w.theme && (
+                  <span className="parallel-worker-theme">{w.theme}</span>
+                )}
+              </div>
               <span className="parallel-worker-status">{renderTail(w)}</span>
             </div>
           ))}
