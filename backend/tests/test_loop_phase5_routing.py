@@ -210,7 +210,7 @@ async def test_parallel_orchestrator_fires_after_final_iteration_phase_promotion
 
 @pytest.mark.asyncio
 async def test_parallel_orchestrator_emits_internal_task_lifecycle(monkeypatch):
-    from state.models import Accommodation, DateRange, DayPlan, TravelPlanState
+    from state.models import Accommodation, DateRange, TravelPlanState
 
     plan = TravelPlanState(session_id="s-phase5", phase=5)
     plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
@@ -220,10 +220,10 @@ async def test_parallel_orchestrator_emits_internal_task_lifecycle(monkeypatch):
 
     class FakeOrchestrator:
         def __init__(self, **kwargs):
-            self.plan = kwargs["plan"]
+            self.final_dayplans = [{"day": 1, "date": "2026-05-01"}]
+            self.final_issues = []
 
         async def run(self):
-            self.plan.daily_plans = [DayPlan(day=1, date="2026-05-01")]
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="完成")
             yield LLMChunk(type=ChunkType.DONE)
 
@@ -248,3 +248,57 @@ async def test_parallel_orchestrator_emits_internal_task_lifecycle(monkeypatch):
         task and task.kind == "phase5_orchestration" and task.status == "success"
         for task in tasks
     )
+
+
+@pytest.mark.asyncio
+async def test_parallel_wrapper_returns_final_dayplans_via_handoff(monkeypatch):
+    from agent.phase5.parallel import run_parallel_phase5_orchestrator
+    from state.models import Accommodation, DateRange, TravelPlanState
+
+    plan = TravelPlanState(session_id="s-handoff", phase=5)
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.selected_skeleton_id = "plan_A"
+    plan.skeleton_plans = [{"id": "plan_A", "days": [{}]}]
+    plan.accommodation = Accommodation(area="新宿")
+
+    final_dayplans = [{
+        "day": 1,
+        "date": "2026-05-01",
+        "notes": "ok",
+        "activities": [{
+            "name": "测试活动",
+            "location": {"name": "测试活动", "lat": 35.0, "lng": 139.0},
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "category": "activity",
+            "cost": 0,
+        }],
+    }]
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs):
+            self.final_dayplans = final_dayplans
+            self.final_issues = []
+
+        async def run(self):
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行完成")
+
+    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+
+    handoffs = []
+    chunks = [
+        chunk
+        async for chunk in run_parallel_phase5_orchestrator(
+            plan=plan,
+            llm=MagicMock(),
+            tool_engine=ToolEngine(),
+            config=Phase5ParallelConfig(enabled=True),
+            on_handoff=handoffs.append,
+        )
+    ]
+
+    assert len(handoffs) == 1
+    assert handoffs[0].dayplans == final_dayplans
+    assert handoffs[0].issues == []
+    assert plan.daily_plans == []
+    assert any(c.type == ChunkType.INTERNAL_TASK for c in chunks)

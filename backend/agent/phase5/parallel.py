@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import time
-from typing import Any, AsyncIterator
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Callable
 
 from agent.internal_tasks import InternalTask
 from config import Phase5ParallelConfig
 from llm.types import ChunkType, LLMChunk
+
+
+@dataclass(frozen=True)
+class Phase5ParallelHandoff:
+    dayplans: list[dict[str, Any]]
+    issues: list[Any]
 
 
 def should_use_parallel_phase5(
@@ -59,6 +66,7 @@ async def run_parallel_phase5_orchestrator(
     llm: Any,
     tool_engine: Any,
     config: Phase5ParallelConfig | None,
+    on_handoff: Callable[[Phase5ParallelHandoff], None] | None = None,
 ) -> AsyncIterator[LLMChunk]:
     from agent.phase5.orchestrator import Phase5Orchestrator
 
@@ -105,7 +113,17 @@ async def run_parallel_phase5_orchestrator(
         )
         raise
 
-    completed = bool(getattr(plan, "daily_plans", None))
+    final_dayplans = list(getattr(orchestrator, "final_dayplans", []) or [])
+    final_issues = list(getattr(orchestrator, "final_issues", []) or [])
+    if final_dayplans and on_handoff is not None:
+        on_handoff(
+            Phase5ParallelHandoff(
+                dayplans=final_dayplans,
+                issues=final_issues,
+            )
+        )
+
+    completed = bool(final_dayplans)
     yield LLMChunk(
         type=ChunkType.INTERNAL_TASK,
         internal_task=InternalTask(
