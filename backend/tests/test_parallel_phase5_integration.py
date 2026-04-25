@@ -91,11 +91,11 @@ class MockLLM:
         self._day_responses = day_responses
 
     async def chat(self, messages, **kwargs):
-        # Extract day number from system message
-        system_msg = messages[0].content or ""
+        # Extract day number from user message (day_suffix is in messages[1])
+        day_msg = messages[1].content if len(messages) > 1 else (messages[0].content or "")
         day_num = 1
         for d in range(1, 20):
-            if f"第 {d} 天" in system_msg:
+            if f"第 {d} 天" in day_msg:
                 day_num = d
                 break
 
