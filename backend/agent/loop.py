@@ -208,14 +208,92 @@ class AgentLoop:
     ) -> bool:
         return should_use_parallel_phase5(plan, config)
 
-    async def _run_parallel_phase5_orchestrator(self) -> AsyncIterator[LLMChunk]:
+    async def _run_parallel_phase5_orchestrator(
+        self,
+        *,
+        messages: list[Message] | None = None,
+        original_user_message: Message | None = None,
+    ) -> AsyncIterator[LLMChunk]:
+        _handoff: Any | None = None
+
+        def _capture_handoff(handoff: Any) -> None:
+            nonlocal _handoff
+            _handoff = handoff
+
         async for chunk in run_parallel_phase5_orchestrator(
             plan=self.plan,
             llm=self.llm,
             tool_engine=self.tool_engine,
             config=self.phase5_parallel_config,
+            on_handoff=_capture_handoff,
         ):
             yield chunk
+
+        if _handoff is None or not _handoff.dayplans:
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        if messages is None or original_user_message is None:
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+
+        commit_call = ToolCall(
+            id="internal_phase5_parallel_commit",
+            name="replace_all_day_plans",
+            arguments={"days": list(_handoff.dayplans)},
+            human_label="写入并行逐日行程",
+        )
+        # Preserve the same message-history shape as a normal assistant tool call.
+        # _execute_tool_batch() appends the matching TOOL message and then existing
+        # phase-transition detection can reason over a standard write-tool batch.
+        messages.append(
+            Message(
+                role=Role.ASSISTANT,
+                content=None,
+                tool_calls=[commit_call],
+            )
+        )
+
+        phase_before_batch = self.plan.phase if self.plan is not None else 5
+        phase3_step_before_batch = (
+            getattr(self.plan, "phase3_step", None) if self.plan is not None else None
+        )
+        batch_outcome: ToolBatchOutcome | None = None
+        async for batch_item in self._execute_tool_batch(
+            tool_calls=[commit_call],
+            messages=messages,
+        ):
+            if isinstance(batch_item, LLMChunk):
+                yield batch_item
+            else:
+                batch_outcome = batch_item
+
+        if batch_outcome is None:
+            raise RuntimeError("Parallel Phase 5 commit finished without an outcome")
+
+        transition_detection = await detect_phase_transition(
+            plan=self.plan,
+            phase_router=self.phase_router,
+            hooks=self.hooks,
+            batch_outcome=batch_outcome,
+            phase_before_batch=phase_before_batch,
+            phase3_step_before_batch=phase3_step_before_batch,
+            current_phase=phase_before_batch,
+            drain_internal_task_events=self._drain_internal_task_events,
+        )
+        for task in transition_detection.internal_tasks:
+            yield LLMChunk(type=ChunkType.INTERNAL_TASK, internal_task=task)
+
+        if transition_detection.request is not None:
+            async for transition_item in self._handle_phase_transition(
+                messages=messages,
+                request=transition_detection.request,
+                original_user_message=original_user_message,
+            ):
+                if isinstance(transition_item, LLMChunk):
+                    yield transition_item
+
+        yield LLMChunk(type=ChunkType.DONE)
 
     async def run(
         self,
@@ -247,7 +325,10 @@ class AgentLoop:
                     self.plan,
                     self.phase5_parallel_config,
                 ):
-                    async for chunk in self._run_parallel_phase5_orchestrator():
+                    async for chunk in self._run_parallel_phase5_orchestrator(
+                        messages=messages,
+                        original_user_message=original_user_message,
+                    ):
                         yield chunk
                     return
 
@@ -421,7 +502,10 @@ class AgentLoop:
                 self.plan,
                 self.phase5_parallel_config,
             ):
-                async for chunk in self._run_parallel_phase5_orchestrator():
+                async for chunk in self._run_parallel_phase5_orchestrator(
+                    messages=messages,
+                    original_user_message=original_user_message,
+                ):
                     yield chunk
                 return
 
