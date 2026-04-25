@@ -386,4 +386,6 @@ async def test_parallel_phase5_handoff_commits_via_standard_tool_and_transitions
         and c.phase_info["to_phase"] == 7
         for c in chunks
     )
+    # Exactly one terminal DONE — orchestrator must not emit its own DONE.
+    assert sum(1 for c in chunks if c.type == ChunkType.DONE) == 1
     assert chunks[-1].type == ChunkType.DONE
