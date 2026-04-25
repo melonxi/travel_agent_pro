@@ -308,3 +308,12 @@ def test_suffix_contains_arrival_departure_day():
     assert "到达+离开日" in suffix
     assert "10:00" in suffix
     assert "18:00" in suffix
+
+
+def test_forbidden_pois_explains_why():
+    task = DayTask(
+        day=2, date="2026-05-02", skeleton_slice={}, pace="balanced",
+        forbidden_pois=["明治神宫"],
+    )
+    suffix = build_day_suffix(task)
+    assert "跨天 POI 重复" in suffix or "已被其他天锁定" in suffix
