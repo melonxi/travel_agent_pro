@@ -302,3 +302,15 @@ async def test_parallel_wrapper_returns_final_dayplans_via_handoff(monkeypatch):
     assert handoffs[0].issues == []
     assert plan.daily_plans == []
     assert any(c.type == ChunkType.INTERNAL_TASK for c in chunks)
+
+    # Verify the terminal internal task signals success with no fallback
+    success_tasks = [
+        c.internal_task
+        for c in chunks
+        if c.type == ChunkType.INTERNAL_TASK
+        and c.internal_task
+        and c.internal_task.kind == "phase5_orchestration"
+        and c.internal_task.status == "success"
+    ]
+    assert success_tasks
+    assert success_tasks[-1].result == {"fallback": False}

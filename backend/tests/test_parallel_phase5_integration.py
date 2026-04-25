@@ -147,15 +147,16 @@ async def test_parallel_happy_path():
     async for chunk in orch.run():
         chunks.append(chunk)
 
-    # Verify daily_plans were written
-    assert len(plan.daily_plans) == 3
-    assert plan.daily_plans[0].day == 1
-    assert plan.daily_plans[1].day == 2
-    assert plan.daily_plans[2].day == 3
+    # Orchestrator collects results in final_dayplans; plan.daily_plans stays empty
+    assert len(orch.final_dayplans) == 3
+    assert orch.final_dayplans[0]["day"] == 1
+    assert orch.final_dayplans[1]["day"] == 2
+    assert orch.final_dayplans[2]["day"] == 3
+    assert plan.daily_plans == []
 
-    # Verify DONE chunk was emitted
+    # DONE is now AgentLoop's responsibility; orchestrator must not emit it
     done_chunks = [c for c in chunks if c.type == ChunkType.DONE]
-    assert len(done_chunks) == 1
+    assert len(done_chunks) == 0
 
     progress_chunks = [
         c for c in chunks
@@ -195,8 +196,9 @@ async def test_parallel_detects_poi_duplicate():
     async for chunk in orch.run():
         chunks.append(chunk)
 
-    # Plans still written (validation is advisory for now)
-    assert len(plan.daily_plans) == 3
+    # Plans still written to orch.final_dayplans (validation is advisory for now)
+    assert len(orch.final_dayplans) == 3
+    assert plan.daily_plans == []
 
     # Check that summary mentions the duplicate issue specifically
     text_chunks = [c for c in chunks if c.type == ChunkType.TEXT_DELTA]
