@@ -31,10 +31,10 @@
 ```
 travel_agent_pro/
 ├── backend/                    # Python 后端
-│   ├── main.py                 # FastAPI 入口，API 端点，会话管理，SSE 流
+│   ├── main.py                 # FastAPI 应用装配入口，负责依赖实例化、lifespan、路由注册和兼容导出
 │   ├── run.py                  # RunRecord / IterationProgress（LLM 韧性追踪）
 │   ├── config.py               # 配置加载（.env + config.yaml）
-│   ├── agent/                  # Agent 循环：loop / compaction / hooks / internal_tasks / reflection / tool_choice / narration / types / orchestrator / day_worker / worker_prompt
+│   ├── agent/                  # AgentLoop facade + execution helpers + Phase 5 orchestrator-workers subsystem
 │   ├── llm/                    # LLM 抽象：base Protocol / errors / factory / openai_provider / anthropic_provider
 │   ├── state/                  # 旅行状态模型：models / manager / intake / plan_writers
 │   ├── memory/                 # v3 分层记忆：v3_models / v3_store / archival / episode_slices / manager / extraction / policy / formatter / symbolic_recall / recall_stage3*
@@ -45,7 +45,7 @@ travel_agent_pro/
 │   ├── harness/                # 5 层守护：guardrail / validator / judge / feasibility
 │   ├── evals/                  # 评估管线：models / runner / stability / failure_report / golden_cases
 │   ├── telemetry/              # 可观测 + 成本：setup / attributes / decorators / stats
-│   ├── api/                    # API 模块：trace 视图构建
+│   ├── api/                    # API 层：schemas / trace / routes / orchestration；routes 按 HTTP 资源分组，orchestration 按 agent / chat / memory / session / common 子包承载请求编排
 │   └── tests/                  # pytest 测试套件（含 test_plan_tools/ Phase 1/3/5 写工具专项）
 │
 ├── frontend/                   # React 前端
@@ -117,7 +117,7 @@ travel_agent_pro/
 - 产出：`daily_plans[]`，每天含完整 Activity 列表
 - Phase 5+ 上下文中 trip_brief 注入时排除 `dates`/`total_days`（已由 `plan.dates` 权威提供），避免重复信号
 - 运行时上下文必须注入骨架内容、`trip_brief` 字段、偏好和约束
-- **并行模式新增文件**：`agent/orchestrator.py`（调度器核心）、`agent/day_worker.py`（单日 Worker 执行引擎）、`agent/worker_prompt.py`（共享前缀 + 日别后缀模板）
+- **并行模式文件**：`agent/phase5/orchestrator.py`（调度器核心）、`agent/phase5/day_worker.py`（单日 Worker 执行引擎）、`agent/phase5/worker_prompt.py`（共享前缀 + 日别后缀模板）；Phase 5 不再在 `agent/` 根目录保留同名兼容文件
 
 ### Phase 7 — 出发前查漏（skill-card）
 - 角色：出发前查漏官；扫描全计划，生成带优先级的检查清单
@@ -167,16 +167,18 @@ travel_agent_pro/
 ```
 用户消息 (POST /api/chat/{id})
     ↓
-[main.py] 加载会话+方案，追加 user message
-    ├─ 同步：`memory_recall` → system prompt
-    └─ 异步：提交 session 级 memory job snapshot
+[api.routes.chat_routes + api.orchestration.*] 加载会话+方案，追加 user message
+    ├─ 同步：`api.orchestration.memory.turn` 编排 `memory_recall` → system prompt
+    └─ 异步：提交 session 级 memory job snapshot，由 `api.orchestration.memory.orchestration` 调度提取任务
     ↓
 [AgentLoop.run()] 进入迭代循环
     │
-    ├─ Phase 5 并行分流检查（should_use_parallel_phase5）
-    │   └─ 条件满足 → Phase5Orchestrator.run() → split → spawn workers → collect → validate → write → return
+    ├─ Phase 5 并行分流检查（agent/phase5/parallel.py::should_enter_parallel_phase5_now / should_enter_parallel_phase5_at_iteration_boundary）
+    │   └─ 条件满足 → agent/phase5/orchestrator.py::Phase5Orchestrator.run() → split → spawn workers → collect → validate → write → return
     │
     ├─ 取消检查点（迭代开始 / LLM 流式 chunk 前 / 工具执行前）
+    │
+    ├─ [agent/execution/llm_turn.py] 单轮 LLM 调用与流式 chunk 解析
     │
     ├─ [Hook: before_llm_call]
     │   ├─ ContextManager.build_system_message() → soul + 阶段提示 + 状态快照
@@ -185,10 +187,11 @@ travel_agent_pro/
     │
     ├─ [ToolChoiceDecider] → 当前始终返回 "auto"（split 工具后移除强制）
     ├─ [LLMProvider.chat()] → 流式输出 text_delta + tool_calls
+    │   └─ AgentLoop.progress 实时更新，用于异常续写 continuation 判定
     │
     ├─ [ToolGuardrail + ToolEngine.execute/execute_batch] → 顺序/并行调度
     │
-    ├─ [PhaseRouter] → 阶段变化检测 + 转换前质量门控
+    ├─ [agent/execution/phase_transition.py + PhaseRouter] → 统一阶段变化检测 + 转换前质量门控
     │
     ├─ [Hook: after_tool_call]
     │   ├─ validator.validate_incremental → 实时约束检查
@@ -264,7 +267,7 @@ LLM API 异常
     ├─ BAD_REQUEST / STREAM_INTERRUPTED / PROTOCOL_ERROR → 不重试，通知用户
     └─ 裸 APIError → classify_opaque_api_error 兜底（状态码/关键词/保守 TRANSIENT）
     ↓
-[main.py] → SSE error 事件（error_code / retryable / can_continue / user_message）
+[api.orchestration.chat.stream] → SSE error 事件（error_code / retryable / can_continue / user_message）
     ↓
 [RunRecord] → 基于 IterationProgress 判定 can_continue
     ↓
@@ -283,10 +286,10 @@ LLM API 异常
 - `ToolGuardrail` 在写入前拦截提示注入、空字段、日期回溯与非法预算；`update_trip_basics.budget` 支持数值、对象与可解析的数值字符串，非正数/非数字会被拒绝
 - **读写分类**：`side_effect="read"`（搜索/查询、`search_travel_services`、`optimize_day_route` 等）并行执行；`side_effect="write"`（17 个 plan-writing tools，以及 `generate_summary`）顺序执行
 - **状态写入分层**：`backend/state/plan_writers.py` 提供共享的纯函数 mutation layer；`tools.plan_tools.*` 负责参数 schema、输入规范化与错误边界，再委托到共享 writer 完成落盘
-- **运行时写后处理**：`backend/main.py` 把 `PLAN_WRITER_TOOL_NAMES` 统一视作状态写工具；所有 writers 都会触发 `validate_incremental` / `validate_lock_budget`、SSE `state_update`、accept memory 事件、以及 backtrack rebuild。若工具结果显式返回 `previous_value` / `new_value`，`SessionStats.state_changes` 优先记录工具返回的规范化值；`request_backtrack` 只保留 rebuild/transition 语义，不伪造字段 diff
+- **API 编排写后处理**：`backend/api/orchestration/agent/builder.py` 只装配 `AgentLoop`，`agent/tools.py` 负责工具注册，`agent/hooks.py` 注册实时校验、soft judge 和 quality gate hooks；`backend/api/orchestration/chat/stream.py` 负责 SSE 主循环，`chat/events.py` 负责事件序列化，`chat/finalization.py` 负责 run 收尾和保底持久化；`memory/orchestration.py` 组装记忆召回、提取、任务流和 episode 归档，`memory/contracts.py` 承载共享 dataclass 契约，`memory/recall_planning.py` 承载 recall gate fallback 与 retrieval-plan tool/prompt，`memory/extraction.py` / `memory/tasks.py` / `memory/episodes.py` 分别承载记忆提取、后台任务流和归档 episode 派生；`backend/api/routes/internal_task_routes.py` 承载 `/api/internal-tasks/...`，不再混入 `memory_routes.py`；`backend/api/orchestration/session/backtrack.py` 承载关键词回退与 reset trip 判定，`session/persistence.py` 承载消息/会话恢复落盘，`session/deliverables.py` 承载 Phase 7 交付物冻结，`common/telemetry_helpers.py` 与 `common/llm_errors.py` 承载 API 编排通用辅助逻辑。若工具结果显式返回 `previous_value` / `new_value`，`SessionStats.state_changes` 优先记录工具返回的规范化值；`request_backtrack` 只保留 rebuild/transition 语义，不伪造字段 diff
 - **Phase 3 工具门控**：brief → candidate → skeleton → lock 逐级放开工具子集，并把 split plan tools 纳入白名单（如 brief 的 `set_trip_brief` / `add_preferences` / `add_constraints`，lock 的交通住宿锁定工具）；每个子阶段向前开放下一阶段写入工具实现"前瞻容错"（brief 可写 `set_candidate_pool`/`set_shortlist`，candidate 可写 `set_skeleton_plans`/`select_skeleton`）；`phase3_step` 由路由推断
 - **Phase 3 工具描述**：所有 11 个 Phase 3 工具的 `description` 采用四段式结构——功能说明 / 触发条件 / 禁止行为 / 写入后效果，引导 LLM 正确选择工具
-- **Phase 3 状态修复**：`AgentLoop` 覆盖全部 4 个子阶段的状态修复——brief 检测画像描述未写入、candidate 检测候选池/短名单缺失及跳阶信号、skeleton 检测骨架信号词但状态为空、lock 按类别（交通/住宿/风险/备选）独立检测；每个子阶段允许两次修复尝试（首次 + retry）
+- **Phase 3 状态修复**：`agent/execution/repair_hints.py` 覆盖全部 4 个子阶段的状态修复——brief 检测画像描述未写入、candidate 检测候选池/短名单缺失及跳阶信号、skeleton 检测骨架信号词但状态为空、lock 按类别（交通/住宿/风险/备选）独立检测；`AgentLoop` 统一记录已消费 hint key，每个子阶段允许两次修复尝试（首次 + retry）
 - **重复搜索拦截**：`AgentLoop._should_skip_redundant_update` 检测 `web_search`/`xiaohongshu_search_notes`/`quick_travel_search` 的同 query/keyword 重复调用（≥2 次），维护最近 20 条搜索记录滑动窗口，跳过时返回 `REDUNDANT_SEARCH` 错误码
 
 ### 工具清单
