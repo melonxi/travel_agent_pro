@@ -113,7 +113,8 @@ travel_agent_pro/
 - **Worker 约束注入**：DayTask 携带 `locked_pois`/`candidate_pois`/`forbidden_pois`/`area_cluster`/`mobility_envelope`/`date_role`/`repair_hints` 等约束字段，由 `_build_constraint_block` 渲染为中文 prompt 硬约束块注入 Worker 上下文
 - **submit_day_plan_candidate 工具 schema**：内联完整 JSON Schema（activities items 含 location/start_time/end_time/category/cost 的类型约束 + category enum + pattern + additionalProperties: False）+ 5 段式 description（何时调用 / 何时不要 / 提交后语义 / 错误码动作映射），确保 LLM 输出结构合规
 - **_DAYPLAN_SCHEMA**：已补充 category enum（shrine/museum/food/transport/activity/shopping/park/viewpoint/experience）+ 常见结构错误示例（location 字符串 / cost 字符串 / end_time ≤ start_time / category 非枚举），以 submit schema 为单一事实源
-- **增量生成策略**（串行模式）：按1-2天增量调用 `assemble_day_plan`，非一次性全量
+- **Day Worker 身份（soul.md 已移除）**：Worker 不再注入 soul.md（已删除 `_SOUL_PATH`/`_load_soul`），改为 `_WORKER_ROLE` 模块常量直接内联 Worker 专属身份，包含并发语境、无用户交互声明、完成优于完美、优先级层次、交付唯一路径。这消除了 soul.md 中"一次只问一个问题/提供选项"等对 Worker 不适用的行为指引。
+
 - **Prompt 已迁移**：Phase 5 使用 `optimize_day_route`（路线辅助，不写状态）、`save_day_plan` / `replace_all_day_plans`（状态写入）与 `request_backtrack`（回退）
 - 流程：expand（骨架→日期）→ assemble（活动+时间）→ validate（开放/距离/天气/预算）→ commit
 - 产出：`daily_plans[]`，每天含完整 Activity 列表
