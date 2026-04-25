@@ -115,7 +115,8 @@ travel_agent_pro/
 - **DayTask 扩展（4 个新字段）**：`day_budget`（软性日预算提示）、`day_constraints`（天级别非硬约束列表）、`arrival_time`（到达时间 HH:MM）、`departure_time`（出发时间 HH:MM），全部有默认值向后兼容
 - **orchestrator `_compile_day_tasks` 扩展**：步骤 5/5b/6 注入 day_budget（总预算/天数取整）、day_constraints（过滤 non-hard）、arrival_time/departure_time（从 selected_transport 提取 + arrival_departure_day 单天支持）
 - **`_build_constraint_block` 增强**：arrival/departure/arrival_departure_day 三种 date_role 都有具体时间锚点描述（+ 无时间时的兜底缓冲文案），emoji 图标区分到达/离开/混合日
-- **submit_day_plan_candidate 工具 schema**：内联完整 JSON Schema（activities items 含 location/start_time/end_time/category/cost 的类型约束 + category enum + pattern + additionalProperties: False）+ 5 段式 description（何时调用 / 何时不要 / 提交后语义 / 错误码动作映射），确保 LLM 输出结构合规
+- **`_build_constraint_block` 约束层级**：locked_pois/candidate_pois/forbidden_pois 用 ⛔/✅/🚫 图标区分层级 + 违反后果声明（locked 违反 = DayPlan 无效；forbidden 违反 = 跨天 POI 重复触发重新分配），repair_hints 加粗聚焦 + "本轮必须逐一解决"指令
+（activities items 含 location/start_time/end_time/category/cost 的类型约束 + category enum + pattern + additionalProperties: False）+ 5 段式 description（何时调用 / 何时不要 / 提交后语义 / 错误码动作映射），确保 LLM 输出结构合规
 - **_DAYPLAN_SCHEMA**：已补充 category enum（shrine/museum/food/transport/activity/shopping/park/viewpoint/experience）+ 常见结构错误示例（location 字符串 / cost 字符串 / end_time ≤ start_time / category 非枚举），以 submit schema 为单一事实源
 - **Day Worker 身份（soul.md 已移除）**：Worker 不再注入 soul.md（已删除 `_SOUL_PATH`/`_load_soul`），改为 `_WORKER_ROLE` 模块常量直接内联 Worker 专属身份，包含并发语境、无用户交互声明、完成优于完美、优先级层次、交付唯一路径。这消除了 soul.md 中"一次只问一个问题/提供选项"等对 Worker 不适用的行为指引。
 

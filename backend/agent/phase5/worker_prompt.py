@@ -224,14 +224,17 @@ def _build_constraint_block(task: DayTask) -> str:
     lines.append("\n## 硬约束（必须遵守）\n")
 
     if task.locked_pois:
-        lines.append(f"- **必须包含的活动**: {', '.join(task.locked_pois)}")
+        lines.append(f"- ⛔ **必须包含**（违反 = DayPlan 无效，Orchestrator 会要求重做）：{', '.join(task.locked_pois)}")
     if task.candidate_pois:
-        lines.append(f"- **允许使用的候选池**: {', '.join(task.candidate_pois)}")
-        lines.append("- 优先从候选池选取，如需额外补充须在同 area_cluster 内")
+        lines.append(f"- ✅ **优先选取**（候选池，具体 POI 由你从中选 2-3 个）：{', '.join(task.candidate_pois)}")
+        lines.append("  - 如候选池中所有 POI 均不可行，才在同 area_cluster 内自行补充")
     if task.forbidden_pois:
-        lines.append(f"- **禁止使用（已分配给其他天）**: {', '.join(task.forbidden_pois)}")
+        lines.append(
+            f"- 🚫 **禁止使用**（已被其他天锁定，违反 = 跨天 POI 重复，触发 Orchestrator 重新分配）："
+            f"{', '.join(task.forbidden_pois)}"
+        )
     if task.area_cluster:
-        lines.append(f"- **当日区域**: {', '.join(task.area_cluster)}")
+        lines.append(f"- **当日区域**：{', '.join(task.area_cluster)}")
 
     env = task.mobility_envelope
     if env:
@@ -277,9 +280,9 @@ def _build_constraint_block(task: DayTask) -> str:
             lines.append(f"- 如 {target} 不可行 → 替换为: {', '.join(alts)}")
 
     if task.repair_hints:
-        lines.append("\n### ⚠️ 修复要求（上一轮校验发现的问题）")
+        lines.append("\n### ⚠️ 修复要求（上一轮校验发现的问题，**本轮必须逐一解决**）")
         for hint in task.repair_hints:
-            lines.append(f"- {hint}")
+            lines.append(f"- **{hint}**")
 
     return "\n".join(lines)
 
