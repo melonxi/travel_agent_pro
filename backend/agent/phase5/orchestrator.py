@@ -6,7 +6,7 @@ The orchestrator is pure Python (not an LLM agent). It:
 2. Builds a shared prompt prefix (maximizing KV-Cache hits)
 3. Spawns N Day Workers in parallel via asyncio
 4. Collects results and performs global validation
-5. Writes validated DayPlans to state
+5. Exposes validated DayPlans as ``final_dayplans`` for AgentLoop to commit via the standard write-tool path
 6. Retries or falls back to serial on failures
 """
 
@@ -763,7 +763,8 @@ class Phase5Orchestrator:
                     type=ChunkType.TEXT_DELTA,
                     content=f"\n\n⚠️ {reason}\n需要回退到 Phase 3 重新调整骨架方案。\n",
                 )
-                yield LLMChunk(type=ChunkType.DONE)
+                # final_dayplans stays [] on this error path.
+                # AgentLoop owns the terminal DONE for all parallel Phase 5 paths.
                 return
 
             # 8. Sort and validate
