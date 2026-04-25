@@ -93,7 +93,7 @@ _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA = {
         "properties": {
             "dayplan": {
                 "type": "object",
-                "description": "完整 DayPlan。day 必须等于你当前任务的天数；activities 至少 2 项；所有时间用 24 小时 HH:MM 格式。",
+                "description": "完整 DayPlan。day 必须等于你当前任务的天数；activities 数量按 pace 要求（relaxed 2-3 / balanced 3-4 / intensive 4-5），到达/离开日最少 1 项；所有时间用 24 小时 HH:MM 格式。",
                 "additionalProperties": False,
                 "required": ["day", "date", "activities"],
                 "properties": {
@@ -293,7 +293,7 @@ async def run_day_worker(
         f"\n\n你的工具调用预算：同一查询最多 {_MAX_SAME_QUERY} 次，"
         f"同一 POI 信息最多 {_MAX_POI_RECOVERY} 次，"
         f"总迭代上限 {max_iterations} 轮。"
-        "优先补齐核心 POI 的坐标与开放时间，无需为每个细节反复搜索。"
+        "优先补齐核心 POI 的坐标和票价；开放时间不确定写入 notes，无需为每个细节反复搜索。"
     )
 
     messages: list[Message] = [

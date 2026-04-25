@@ -61,7 +61,7 @@ _WORKER_ROLE = """## 角色
 - 严格基于骨架安排展开，不要偷偷替换区域或主题。
 - 区域连续性优先于景点密度——同一天的活动应在地理上聚拢。
 - 时间安排必须留出现实缓冲（交通延误、排队、休息），不要把活动首尾无缝拼死。
-- 用 get_poi_info 补齐缺失的坐标、票价、开放时间。
+- 用 get_poi_info 补齐缺失的坐标和票价；开放时间无法结构化保存，关键不确定性写入 notes。
 - 用 optimize_day_route 优化活动顺序。
 - 用 calculate_route 验证关键移动是否可行。
 - 餐饮可作为活动（category="food"），安排在合理时段。
@@ -123,9 +123,9 @@ _DAYPLAN_SCHEMA = """## DayPlan 结构要求
       "end_time": "HH:MM",
       "category": "<类别>",
       "cost": <人民币数字>,
-      "transport_from_prev": "<从上一地点的交通方式>",
-      "transport_duration_min": <分钟数>,
-      "notes": "<可选备注>"
+      "transport_from_prev": "<可选：从上一地点的交通方式>",
+      "transport_duration_min": "<可选：分钟数>",
+      "notes": "<可选：开放时间不确定等无法结构化保存的信息写这里>"
     }
   ]
 }
@@ -332,7 +332,7 @@ def build_day_suffix(task: DayTask) -> str:
 
     parts.append(
         "\n请执行以上 DayTask。"
-        "优先补齐核心 POI 的坐标与开放时间；"
+        "优先补齐核心 POI 的坐标和票价（开放时间不确定写 notes）；"
         "完成后调用 `submit_day_plan_candidate` 提交候选 DayPlan。"
     )
 
