@@ -211,8 +211,8 @@ class AgentLoop:
     async def _run_parallel_phase5_orchestrator(
         self,
         *,
-        messages: list[Message] | None = None,
-        original_user_message: Message | None = None,
+        messages: list[Message],
+        original_user_message: Message,
     ) -> AsyncIterator[LLMChunk]:
         _handoff: Any | None = None
 
@@ -230,10 +230,6 @@ class AgentLoop:
             yield chunk
 
         if _handoff is None or not _handoff.dayplans:
-            yield LLMChunk(type=ChunkType.DONE)
-            return
-
-        if messages is None or original_user_message is None:
             yield LLMChunk(type=ChunkType.DONE)
             return
 
@@ -270,6 +266,33 @@ class AgentLoop:
 
         if batch_outcome is None:
             raise RuntimeError("Parallel Phase 5 commit finished without an outcome")
+
+        if not batch_outcome.saw_state_update:
+            commit_result = None
+            for message in reversed(messages):
+                result = message.tool_result
+                if result and result.tool_call_id == commit_call.id:
+                    commit_result = result
+                    break
+            detail = (
+                commit_result.error
+                if commit_result is not None and commit_result.error
+                else "replace_all_day_plans 未成功写入状态"
+            )
+            suggestion = (
+                f" {commit_result.suggestion}"
+                if commit_result is not None and commit_result.suggestion
+                else ""
+            )
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content=(
+                    "\n\n⚠️ 并行行程写入失败，当前行程尚未保存到规划状态。"
+                    f"原因：{detail}{suggestion}"
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
 
         transition_detection = await detect_phase_transition(
             plan=self.plan,

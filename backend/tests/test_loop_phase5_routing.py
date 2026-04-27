@@ -210,6 +210,7 @@ async def test_parallel_orchestrator_fires_after_final_iteration_phase_promotion
 
 @pytest.mark.asyncio
 async def test_parallel_orchestrator_emits_internal_task_lifecycle(monkeypatch):
+    from agent.phase5.parallel import run_parallel_phase5_orchestrator
     from state.models import Accommodation, DateRange, TravelPlanState
 
     plan = TravelPlanState(session_id="s-phase5", phase=5)
@@ -225,19 +226,18 @@ async def test_parallel_orchestrator_emits_internal_task_lifecycle(monkeypatch):
 
         async def run(self):
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="完成")
-            yield LLMChunk(type=ChunkType.DONE)
 
     monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
 
-    agent = AgentLoop(
-        llm=MagicMock(),
-        tool_engine=ToolEngine(),
-        hooks=HookManager(),
-        plan=plan,
-        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
-    )
-
-    chunks = [chunk async for chunk in agent._run_parallel_phase5_orchestrator()]
+    chunks = [
+        chunk
+        async for chunk in run_parallel_phase5_orchestrator(
+            plan=plan,
+            llm=MagicMock(),
+            tool_engine=ToolEngine(),
+            config=Phase5ParallelConfig(enabled=True),
+        )
+    ]
     tasks = [chunk.internal_task for chunk in chunks if chunk.type == ChunkType.INTERNAL_TASK]
 
     assert any(
@@ -389,6 +389,126 @@ async def test_parallel_phase5_handoff_commits_via_standard_tool_and_transitions
     # Exactly one terminal DONE — orchestrator must not emit its own DONE.
     assert sum(1 for c in chunks if c.type == ChunkType.DONE) == 1
     assert chunks[-1].type == ChunkType.DONE
+
+
+@pytest.mark.asyncio
+async def test_parallel_phase5_handoff_commit_failure_is_reported(monkeypatch):
+    from phase.router import PhaseRouter
+    from state.models import Accommodation, DateRange, TravelPlanState
+    from tests.helpers.register_plan_tools import register_all_plan_tools
+
+    plan = TravelPlanState(session_id="s-parallel-commit-fail", phase=5)
+    plan.destination = "東京"
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.selected_skeleton_id = "plan_A"
+    plan.skeleton_plans = [{"id": "plan_A", "days": [{}]}]
+    plan.accommodation = Accommodation(area="新宿")
+
+    invalid_dayplans = [{
+        "day": 1,
+        "date": "2026-05-01",
+        "notes": "缺少 activities 必填字段",
+        "activities": [{
+            "name": "测试活动",
+            "location": {"name": "测试活动", "lat": 35.0, "lng": 139.0},
+            # missing start_time/end_time/category/cost
+        }],
+    }]
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs):
+            self.final_dayplans = invalid_dayplans
+            self.final_issues = []
+
+        async def run(self):
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行摘要")
+
+    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+
+    agent = AgentLoop(
+        llm=MagicMock(),
+        tool_engine=engine,
+        hooks=HookManager(),
+        phase_router=PhaseRouter(),
+        context_manager=_StubContextManager(),
+        plan=plan,
+        memory_mgr=_StubMemoryManager(),
+        user_id="u",
+        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+    )
+
+    chunks = [
+        chunk
+        async for chunk in agent.run(
+            [Message(role=Role.USER, content="继续")],
+            phase=5,
+        )
+    ]
+
+    assert plan.phase == 5
+    assert plan.daily_plans == []
+    assert any(
+        c.type == ChunkType.TOOL_RESULT
+        and c.tool_result
+        and c.tool_result.status == "error"
+        for c in chunks
+    )
+    assert any(
+        c.type == ChunkType.TEXT_DELTA
+        and c.content
+        and "并行行程写入失败" in c.content
+        for c in chunks
+    )
+    assert not any(c.type == ChunkType.PHASE_TRANSITION for c in chunks)
+    assert chunks[-1].type == ChunkType.DONE
+
+
+@pytest.mark.asyncio
+async def test_parallel_phase5_handoff_requires_commit_context(monkeypatch):
+    from state.models import Accommodation, DateRange, TravelPlanState
+
+    plan = TravelPlanState(session_id="s-missing-context", phase=5)
+    plan.destination = "東京"
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.selected_skeleton_id = "plan_A"
+    plan.skeleton_plans = [{"id": "plan_A", "days": [{}]}]
+    plan.accommodation = Accommodation(area="新宿")
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs):
+            self.final_dayplans = [{
+                "day": 1,
+                "date": "2026-05-01",
+                "notes": "并行生成",
+                "activities": [{
+                    "name": "测试活动",
+                    "location": {"name": "测试活动", "lat": 35.0, "lng": 139.0},
+                    "start_time": "09:00",
+                    "end_time": "10:00",
+                    "category": "activity",
+                    "cost": 0,
+                }],
+            }]
+            self.final_issues = []
+
+        async def run(self):
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行摘要")
+
+    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+
+    agent = AgentLoop(
+        llm=MagicMock(),
+        tool_engine=ToolEngine(),
+        hooks=HookManager(),
+        plan=plan,
+        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+    )
+
+    with pytest.raises(TypeError):
+        chunks = [chunk async for chunk in agent._run_parallel_phase5_orchestrator()]
 
 
 @pytest.mark.asyncio
