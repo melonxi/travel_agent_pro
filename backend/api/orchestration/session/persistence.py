@@ -212,18 +212,21 @@ class SessionPersistence:
 
         self.phase_router.sync_phase_state(plan)
         compression_events: list[dict] = []
-        agent = self.build_agent(
-            plan,
-            meta["user_id"],
-            compression_events=compression_events,
-        )
-        return {
+        session: dict = {
             "plan": plan,
             "messages": restored_messages,
-            "agent": agent,
+            "agent": None,
             "needs_rebuild": False,
             "user_id": meta["user_id"],
             "compression_events": compression_events,
             "stats": SessionStats(),
             "_pending_system_notes": [],
+            "persisted_count": len(restored_messages),
         }
+        session["agent"] = self.build_agent(
+            plan,
+            meta["user_id"],
+            session=session,
+            compression_events=compression_events,
+        )
+        return session

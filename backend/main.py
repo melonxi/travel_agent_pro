@@ -150,7 +150,25 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         allow_headers=["*"],
     )
 
-    def _build_agent(plan, user_id: str, compression_events: list[dict] | None = None):
+    def _build_agent(
+        plan,
+        user_id: str,
+        *,
+        session: dict | None = None,
+        compression_events: list[dict] | None = None,
+    ):
+        on_phase_rebuild = None
+        if session is not None:
+            async def on_phase_rebuild(*, messages, from_phase, from_step):
+                new_count = await session_persistence.persist_messages(
+                    plan.session_id,
+                    messages,
+                    phase=from_phase,
+                    phase3_step=from_step,
+                    persisted_count=session.get("persisted_count", 0),
+                )
+                session["persisted_count"] = new_count
+
         return build_agent(
             plan=plan,
             user_id=user_id,
@@ -169,6 +187,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 )
             ),
             compression_events=compression_events,
+            on_phase_rebuild=on_phase_rebuild,
         )
 
     session_persistence = SessionPersistence(
