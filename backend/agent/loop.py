@@ -24,6 +24,7 @@ from agent.execution.message_rebuild import (
     rebuild_messages_for_phase3_step_change,
     rebuild_messages_for_phase_change,
 )
+from agent.execution.phase_rebuild_callback import invoke_phase_rebuild_callback
 from agent.execution.phase_transition import (
     PhaseTransitionRequest,
     detect_phase_transition,
@@ -609,36 +610,6 @@ class AgentLoop:
     def _copy_message(self, message: Message) -> Message:
         return copy_message(message)
 
-    async def _invoke_phase_rebuild_callback(
-        self,
-        *,
-        messages: list[Message],
-        from_phase: int,
-        from_step: str | None,
-    ) -> None:
-        """Flush messages with pre-rebuild phase tag. Failures are non-fatal.
-
-        Note: callback receives a shallow copy of messages; mutating that list does
-        not affect the subsequent rebuild. Message objects themselves are not deep-copied.
-        """
-        if self.on_phase_rebuild is None:
-            return
-        try:
-            await self.on_phase_rebuild(
-                messages=list(messages),  # 浅拷贝避免 callback mutate 影响 rebuild
-                from_phase=from_phase,
-                from_step=from_step,
-            )
-        except Exception as exc:  # noqa: BLE001 - persistence failures must not block rebuild
-            logging.getLogger(__name__).warning(
-                "on_phase_rebuild callback failed (from_phase=%s, from_step=%s, n_messages=%d): %s",
-                from_phase,
-                from_step,
-                len(messages),
-                exc,
-                exc_info=True,
-            )
-
     async def _rebuild_messages_for_phase_change(
         self,
         messages: list[Message],
@@ -648,10 +619,8 @@ class AgentLoop:
         original_user_message: Message,
         result: ToolResult,
     ) -> list[Message]:
-        await self._invoke_phase_rebuild_callback(
-            messages=messages,
-            from_phase=from_phase,
-            from_step=from_step,
+        await invoke_phase_rebuild_callback(
+            self.on_phase_rebuild, messages=messages, from_phase=from_phase, from_step=from_step
         )
         return await rebuild_messages_for_phase_change(
             phase_router=self.phase_router,
@@ -673,10 +642,8 @@ class AgentLoop:
         original_user_message: Message,
         from_step: str | None,
     ) -> list[Message]:
-        await self._invoke_phase_rebuild_callback(
-            messages=messages,
-            from_phase=3,
-            from_step=from_step,
+        await invoke_phase_rebuild_callback(
+            self.on_phase_rebuild, messages=messages, from_phase=3, from_step=from_step
         )
         return await rebuild_messages_for_phase3_step_change(
             phase_router=self.phase_router,
