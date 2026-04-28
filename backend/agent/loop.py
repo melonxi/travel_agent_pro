@@ -65,6 +65,9 @@ class PhaseTransitionOutcome:
     tools: list[dict]
 
 
+ContextRebuildCallback = Callable[..., Awaitable[None]]
+
+
 class AgentLoop:
     def __init__(
         self,
@@ -92,6 +95,7 @@ class AgentLoop:
         phase5_parallel_config: Phase5ParallelConfig | None = None,
         internal_task_events: list[InternalTask] | None = None,
         on_before_message_rebuild: Callable[..., Awaitable[None]] | None = None,
+        on_context_rebuild: ContextRebuildCallback | None = None,
     ):
         if deps is not None:
             llm = deps.llm
@@ -152,6 +156,7 @@ class AgentLoop:
             internal_task_events if internal_task_events is not None else []
         )
         self.on_before_message_rebuild = on_before_message_rebuild
+        self.on_context_rebuild = on_context_rebuild
         self._progress: IterationProgress = IterationProgress.NO_OUTPUT
         self._search_history = SearchHistoryTracker()
 
@@ -524,6 +529,8 @@ class AgentLoop:
                         ] = await self._rebuild_messages_for_phase3_step_change(
                             messages=messages,
                             original_user_message=original_user_message,
+                            from_phase3_step=phase3_step_before_batch,
+                            to_phase3_step=phase3_step_after_batch,
                         )
                         tools = self.tool_engine.get_tools_for_phase(
                             current_phase,
@@ -642,6 +649,36 @@ class AgentLoop:
     def _copy_message(self, message: Message) -> Message:
         return copy_message(message)
 
+    async def _notify_context_rebuild(
+        self,
+        *,
+        messages: list[Message],
+        from_phase: int,
+        from_phase3_step: str | None,
+        to_phase: int,
+        to_phase3_step: str | None,
+        rebuild_reason: str,
+    ) -> None:
+        if self.on_context_rebuild is None:
+            return
+        try:
+            await self.on_context_rebuild(
+                messages=messages,
+                from_phase=from_phase,
+                from_phase3_step=from_phase3_step,
+                to_phase=to_phase,
+                to_phase3_step=to_phase3_step,
+                rebuild_reason=rebuild_reason,
+            )
+        except Exception:
+            logger.warning(
+                "context rebuild callback failed phase=%s phase3_step=%s reason=%s",
+                from_phase,
+                from_phase3_step,
+                rebuild_reason,
+                exc_info=True,
+            )
+
     async def _rebuild_messages_for_phase_change(
         self,
         messages: list[Message],
@@ -650,6 +687,22 @@ class AgentLoop:
         original_user_message: Message,
         result: ToolResult,
     ) -> list[Message]:
+        rebuild_reason = (
+            "backtrack"
+            if self._is_backtrack_result(result)
+            or (isinstance(result.data, dict) and "backtrack" in result.data)
+            else "phase_forward"
+        )
+        await self._notify_context_rebuild(
+            messages=messages,
+            from_phase=from_phase,
+            from_phase3_step=(
+                getattr(self.plan, "phase3_step", None) if from_phase == 3 else None
+            ),
+            to_phase=to_phase,
+            to_phase3_step=getattr(self.plan, "phase3_step", None),
+            rebuild_reason=rebuild_reason,
+        )
         return await rebuild_messages_for_phase_change(
             phase_router=self.phase_router,
             context_manager=self.context_manager,
@@ -668,7 +721,18 @@ class AgentLoop:
         self,
         messages: list[Message],
         original_user_message: Message,
+        *,
+        from_phase3_step: str | None,
+        to_phase3_step: str | None,
     ) -> list[Message]:
+        await self._notify_context_rebuild(
+            messages=messages,
+            from_phase=3,
+            from_phase3_step=from_phase3_step,
+            to_phase=3,
+            to_phase3_step=to_phase3_step,
+            rebuild_reason="phase3_step_change",
+        )
         return await rebuild_messages_for_phase3_step_change(
             phase_router=self.phase_router,
             context_manager=self.context_manager,
