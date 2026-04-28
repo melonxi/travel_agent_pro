@@ -186,6 +186,9 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         state_mgr=state_mgr,
         phase_router=phase_router,
         build_agent=_build_agent,
+        context_manager=context_mgr,
+        memory_mgr=memory_mgr,
+        memory_enabled=config.memory.enabled,
     )
 
     register_session_routes(
