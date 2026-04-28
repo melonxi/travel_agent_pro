@@ -30,7 +30,12 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_call_id TEXT,
     provider_state TEXT,
     created_at   TEXT NOT NULL,
-    seq          INTEGER NOT NULL
+    seq          INTEGER NOT NULL,
+    phase        INTEGER,
+    phase3_step  TEXT,
+    history_seq  INTEGER,
+    run_id       TEXT,
+    trip_id      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS plan_snapshots (
@@ -94,10 +99,33 @@ class Database:
             rows = await cursor.fetchall()
 
         existing_columns = {row["name"] for row in rows}
-        if "provider_state" not in existing_columns:
+        missing_columns = (
+            ("provider_state", "TEXT"),
+            ("phase", "INTEGER"),
+            ("phase3_step", "TEXT"),
+            ("history_seq", "INTEGER"),
+            ("run_id", "TEXT"),
+            ("trip_id", "TEXT"),
+        )
+        for column_name, column_type in missing_columns:
+            if column_name in existing_columns:
+                continue
             await self.conn.execute(
-                "ALTER TABLE messages ADD COLUMN provider_state TEXT"
+                f"ALTER TABLE messages ADD COLUMN {column_name} {column_type}"
             )
+
+        await self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_session_history_unique "
+            "ON messages(session_id, history_seq) WHERE history_seq IS NOT NULL"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_history "
+            "ON messages(session_id, history_seq)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_phase "
+            "ON messages(session_id, phase, phase3_step, history_seq)"
+        )
 
     async def close(self) -> None:
         if self._conn is None:
