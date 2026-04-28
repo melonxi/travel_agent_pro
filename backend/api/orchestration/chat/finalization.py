@@ -8,6 +8,30 @@ from api.orchestration.chat.events import done_event, event_json
 logger = logging.getLogger(__name__)
 
 
+async def persist_unflushed_messages(
+    *,
+    deps,
+    session,
+    plan,
+    messages,
+    phase: int,
+    phase3_step: str | None,
+    run_id: str | None,
+    trip_id: str | None,
+) -> None:
+    next_history_seq = int(session.get("next_history_seq", 0))
+    next_history_seq = await deps.persist_messages(
+        plan.session_id,
+        messages,
+        phase=phase,
+        phase3_step=phase3_step,
+        run_id=run_id,
+        trip_id=trip_id,
+        next_history_seq=next_history_seq,
+    )
+    session["next_history_seq"] = next_history_seq
+
+
 async def finalize_agent_run(
     *,
     deps,
@@ -22,7 +46,16 @@ async def finalize_agent_run(
         run.finished_at = time.time()
 
     await deps.state_mgr.save(plan)
-    await deps.persist_messages(plan.session_id, messages)
+    await persist_unflushed_messages(
+        deps=deps,
+        session=session,
+        plan=plan,
+        messages=messages,
+        phase=plan.phase,
+        phase3_step=getattr(plan, "phase3_step", None),
+        run_id=run.run_id,
+        trip_id=getattr(plan, "trip_id", None),
+    )
     await deps.session_store.update(
         plan.session_id,
         phase=plan.phase,
@@ -65,7 +98,16 @@ async def persist_run_safely(*, deps, session, plan, messages, run) -> None:
             run.status = "cancelled"
             run.finished_at = time.time()
         await deps.state_mgr.save(plan)
-        await deps.persist_messages(plan.session_id, messages)
+        await persist_unflushed_messages(
+            deps=deps,
+            session=session,
+            plan=plan,
+            messages=messages,
+            phase=plan.phase,
+            phase3_step=getattr(plan, "phase3_step", None),
+            run_id=run.run_id,
+            trip_id=getattr(plan, "trip_id", None),
+        )
         await deps.session_store.update(
             plan.session_id,
             phase=plan.phase,

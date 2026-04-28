@@ -227,6 +227,8 @@ travel_agent_pro/
 
 `AgentLoop` 在 phase 转换和 Phase 3 子步骤导致 runtime messages 被重建前，支持调用 `on_before_message_rebuild` 异步回调；回调异常会被记录为 warning 并继续重建，保证编排层可以先 flush 当前完整消息尾部，再让 runtime view 收缩。
 
+Chat/continue 路由会为每个 run 安装该 pre-rebuild flush 回调，并用 session 内 `next_history_seq` 在中途 flush、正常收尾和取消保底持久化之间共享同一个单调 cursor；`/api/messages/{session_id}` 对在线会话返回当前 runtime view（过滤 system message），离线恢复路径则通过 `MessageStore.load_frontend_view()` 返回持久化历史中的前端可见视图。
+
 ### Internal task stream
 后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务。当前有两条通道：
 - chat SSE `/api/chat/{id}`：承载与当前回答强绑定的任务，例如 `memory_recall`、`soft_judge`、`quality_gate`

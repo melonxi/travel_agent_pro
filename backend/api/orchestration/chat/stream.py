@@ -18,7 +18,11 @@ from api.orchestration.chat.events import (
     event_json,
     passthrough_chunk_event,
 )
-from api.orchestration.chat.finalization import finalize_agent_run, persist_run_safely
+from api.orchestration.chat.finalization import (
+    finalize_agent_run,
+    persist_run_safely,
+    persist_unflushed_messages,
+)
 from api.orchestration.common.telemetry_helpers import (
     _plan_writer_updated_fields as plan_writer_updated_fields,
     _record_llm_usage_stats as record_llm_usage_stats,
@@ -300,6 +304,16 @@ async def run_agent_stream(
                 )
                 snapshot_path = await deps.state_mgr.save_snapshot(plan)
                 from_phase = plan.phase
+                await persist_unflushed_messages(
+                    deps=deps,
+                    session=session,
+                    plan=plan,
+                    messages=messages,
+                    phase=from_phase,
+                    phase3_step=getattr(plan, "phase3_step", None),
+                    run_id=run.run_id,
+                    trip_id=getattr(plan, "trip_id", None),
+                )
                 deps.phase_router.prepare_backtrack(
                     plan,
                     backtrack_target,

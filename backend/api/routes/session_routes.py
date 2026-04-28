@@ -45,6 +45,7 @@ def register_session_routes(
             "compression_events": compression_events,
             "stats": SessionStats(),
             "_pending_system_notes": [],
+            "next_history_seq": 0,
         }
         await session_store.create(plan.session_id, "default_user")
         return {"session_id": plan.session_id, "phase": plan.phase}
@@ -107,13 +108,8 @@ def register_session_routes(
 
     @app.get("/api/messages/{session_id}")
     async def get_messages(session_id: str):
-        await ensure_storage_ready()
-        meta = await session_store.load(session_id)
-        if meta is None or meta["status"] == "deleted":
-            raise HTTPException(status_code=404, detail="Session not found")
-        rows = await message_store.load_all(session_id)
-        return [
-            {
+        def _serialize_message_row(row):
+            return {
                 "role": row["role"],
                 "content": row["content"],
                 "tool_calls": (
@@ -122,8 +118,45 @@ def register_session_routes(
                 "tool_call_id": row.get("tool_call_id"),
                 "seq": row["seq"],
             }
-            for row in rows
-        ]
+
+        def _serialize_runtime_message(message, index: int):
+            tool_calls = None
+            if message.tool_calls:
+                tool_calls = [
+                    {
+                        "id": call.id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                        "human_label": call.human_label,
+                    }
+                    for call in message.tool_calls
+                ]
+            tool_call_id = (
+                message.tool_result.tool_call_id
+                if message.tool_result is not None
+                else None
+            )
+            return {
+                "role": message.role.value,
+                "content": message.content,
+                "tool_calls": tool_calls,
+                "tool_call_id": tool_call_id,
+                "seq": index,
+            }
+
+        await ensure_storage_ready()
+        meta = await session_store.load(session_id)
+        if meta is None or meta["status"] == "deleted":
+            raise HTTPException(status_code=404, detail="Session not found")
+        session = sessions.get(session_id)
+        if session is not None:
+            return [
+                _serialize_runtime_message(message, index)
+                for index, message in enumerate(session.get("messages", []))
+                if message.role.value != "system"
+            ]
+        rows = await message_store.load_frontend_view(session_id)
+        return [_serialize_message_row(row) for row in rows]
 
     @app.get("/api/archives/{session_id}")
     async def get_archive(session_id: str):
