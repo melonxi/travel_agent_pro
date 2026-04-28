@@ -78,11 +78,25 @@ class SessionPersistence:
     phase_router: object
     build_agent: Callable[..., object]
 
-    async def persist_messages(self, session_id: str, messages: list[Message]) -> None:
+    async def persist_messages(
+        self,
+        session_id: str,
+        messages: list[Message],
+        *,
+        phase: int,
+        phase3_step: str | None,
+        run_id: str | None,
+        trip_id: str | None,
+        next_history_seq: int,
+    ) -> int:
         await self.ensure_storage_ready()
-        await self.db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         rows: list[dict[str, object]] = []
-        for index, message in enumerate(messages):
+        messages_to_mark: list[tuple[Message, int]] = []
+        cursor = next_history_seq
+        for message in messages:
+            if message.history_persisted:
+                continue
+
             tool_calls_json = None
             if message.tool_calls:
                 tool_calls_json = json.dumps(
@@ -110,6 +124,8 @@ class SessionPersistence:
                     ensure_ascii=False,
                 )
 
+            assigned_history_seq = cursor
+            cursor += 1
             rows.append(
                 {
                     "role": message.role.value,
@@ -117,11 +133,21 @@ class SessionPersistence:
                     "tool_calls": tool_calls_json,
                     "tool_call_id": tool_call_id,
                     "provider_state": provider_state_json,
-                    "seq": index,
+                    "seq": assigned_history_seq,
+                    "phase": phase,
+                    "phase3_step": phase3_step,
+                    "history_seq": assigned_history_seq,
+                    "run_id": run_id,
+                    "trip_id": trip_id,
                 }
             )
+            messages_to_mark.append((message, assigned_history_seq))
 
         await self.message_store.append_batch(session_id, rows)
+        for message, assigned_history_seq in messages_to_mark:
+            message.history_persisted = True
+            message.history_seq = assigned_history_seq
+        return cursor
 
     async def restore_session(self, session_id: str) -> dict | None:
         await self.ensure_storage_ready()
@@ -169,9 +195,17 @@ class SessionPersistence:
                     tool_calls=tool_calls,
                     tool_result=tool_result,
                     provider_state=provider_state,
+                    history_persisted=True,
+                    history_seq=(
+                        int(row["history_seq"])
+                        if row.get("history_seq") is not None
+                        else None
+                    ),
                 )
             )
 
+        max_history_seq = await self.message_store.max_history_seq(session_id)
+        next_history_seq = 0 if max_history_seq is None else max_history_seq + 1
         self.phase_router.sync_phase_state(plan)
         compression_events: list[dict] = []
         agent = self.build_agent(
@@ -188,4 +222,5 @@ class SessionPersistence:
             "compression_events": compression_events,
             "stats": SessionStats(),
             "_pending_system_notes": [],
+            "next_history_seq": next_history_seq,
         }

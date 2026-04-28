@@ -41,6 +41,8 @@ class Message:
     name: str | None = None
     provider_state: dict[str, Any] | None = None
     incomplete: bool = False
+    history_persisted: bool = False
+    history_seq: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"role": self.role.value}

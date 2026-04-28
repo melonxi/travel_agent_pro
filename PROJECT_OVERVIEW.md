@@ -223,6 +223,8 @@ travel_agent_pro/
 ### Session message history metadata
 `messages` 表已具备 append-only history 所需的元数据列：`phase`、`phase3_step`、`history_seq`、`run_id`、`trip_id`。`history_seq` 通过 `(session_id, history_seq)` 唯一索引约束单 session 内历史顺序，旧数据允许这些列为空；`MessageStore` 支持写入这些元数据，并提供 `max_history_seq()` 与过滤 system row 的 `load_frontend_view()` helper。
 
+`SessionPersistence.persist_messages()` 现在只 append 尚未落盘的 runtime `Message`，用 session 级 `next_history_seq` 分配 durable `history_seq`，并在写入成功后把内存消息标记为 `history_persisted`。恢复 session 时会把 DB 历史消息标记为已持久化、保留已有 `history_seq`，并通过 `MessageStore.max_history_seq()` 初始化下一次 append 的 `next_history_seq`。
+
 ### Internal task stream
 后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务。当前有两条通道：
 - chat SSE `/api/chat/{id}`：承载与当前回答强绑定的任务，例如 `memory_recall`、`soft_judge`、`quality_gate`
