@@ -4,6 +4,10 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from api.orchestration.session.context_segments import (
+    ContextSegment,
+    derive_context_segments,
+)
 from api.orchestration.session.runtime_view import (
     HistoryMessage,
     build_runtime_view_for_restore,
@@ -146,6 +150,19 @@ class SessionPersistence:
     context_manager: object | None = None
     memory_mgr: object | None = None
     memory_enabled: bool = False
+
+    async def list_context_segments(self, session_id: str) -> list[ContextSegment]:
+        await self.ensure_storage_ready()
+        rows = await self.message_store.load_all(session_id)
+        return derive_context_segments(rows)
+
+    async def load_context_segment_messages(
+        self,
+        session_id: str,
+        context_epoch: int,
+    ) -> list[dict]:
+        await self.ensure_storage_ready()
+        return await self.message_store.load_by_context_epoch(session_id, context_epoch)
 
     async def persist_messages(
         self,

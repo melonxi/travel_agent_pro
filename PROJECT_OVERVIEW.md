@@ -225,6 +225,8 @@ travel_agent_pro/
 
 Context segment 不单独建表；`api.orchestration.session.context_segments` 会按 `(session_id, context_epoch)` 从 `messages` rows 纯计算出分段、run_ids、history_seq 范围和 rebuild reason，legacy 空 epoch rows 不参与精确分段。
 
+Context segment 检查目前只开放在 service/helper 层：`SessionPersistence.list_context_segments()` 返回派生摘要，`load_context_segment_messages()` 返回指定 epoch 的内部 raw rows；没有 HTTP debug route，`/api/messages/{session_id}` 仍保持前端聊天视图职责。
+
 `SessionPersistence.persist_messages()` 现在只 append 尚未落盘的 runtime `Message`，用 session 级 `next_history_seq` 分配 durable `history_seq`，并在写入成功后把内存消息标记为 `history_persisted`。恢复 session 时会把 DB 历史消息标记为已持久化、保留已有 `history_seq`，并通过 `MessageStore.max_history_seq()` 初始化下一次 append 的 `next_history_seq`。
 
 恢复 session 时后端会加载完整 append-only `history_view` 作为内部 `history_messages`，用于保留历史事实和初始化后续写入游标；传给 `AgentLoop` 的 `session["messages"]` 则是由当前 plan、phase prompt、memory context、可用工具和最新安全 user anchor 重建的短 `runtime_view`。恢复不会 replay 旧阶段 tool 结果、Phase 3 旧子步骤流水账或 backtrack 前的旧目标阶段 segment。
