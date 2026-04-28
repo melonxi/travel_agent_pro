@@ -103,6 +103,10 @@ def deserialize_history_message(row: dict[str, object]) -> HistoryMessage:
     history_seq = int(raw_history_seq) if raw_history_seq is not None else None
     raw_phase = row.get("phase")
     phase = int(raw_phase) if raw_phase is not None else None
+    raw_context_epoch = row.get("context_epoch")
+    context_epoch = (
+        int(raw_context_epoch) if raw_context_epoch is not None else None
+    )
 
     return HistoryMessage(
         message=Message(
@@ -121,6 +125,12 @@ def deserialize_history_message(row: dict[str, object]) -> HistoryMessage:
             else None
         ),
         history_seq=history_seq,
+        context_epoch=context_epoch,
+        rebuild_reason=(
+            str(row["rebuild_reason"])
+            if row.get("rebuild_reason") is not None
+            else None
+        ),
         run_id=str(row["run_id"]) if row.get("run_id") is not None else None,
         trip_id=str(row["trip_id"]) if row.get("trip_id") is not None else None,
     )

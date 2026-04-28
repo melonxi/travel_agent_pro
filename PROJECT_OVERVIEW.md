@@ -229,7 +229,7 @@ Context segment 检查目前只开放在 service/helper 层：`SessionPersistenc
 
 `SessionPersistence.persist_messages()` 现在只 append 尚未落盘的 runtime `Message`，用 session 级 `next_history_seq` 分配 durable `history_seq`，并在写入成功后把内存消息标记为 `history_persisted`。恢复 session 时会把 DB 历史消息标记为已持久化、保留已有 `history_seq`，通过历史 rows 初始化下一次 append 的 `next_history_seq` 和 `current_context_epoch`；restore 本身不推进 epoch，直到下一次 runtime-context rebuild boundary 才变化。
 
-恢复 session 时后端会加载完整 append-only `history_view` 作为内部 `history_messages`，用于保留历史事实和初始化后续写入游标；传给 `AgentLoop` 的 `session["messages"]` 则是由当前 plan、phase prompt、memory context、可用工具和最新安全 user anchor 重建的短 `runtime_view`。恢复不会 replay 旧阶段 tool 结果、Phase 3 旧子步骤流水账或 backtrack 前的旧目标阶段 segment。
+恢复 session 时后端会加载完整 append-only `history_view` 作为内部 `history_messages`，用于保留历史事实和初始化后续写入游标；传给 `AgentLoop` 的 `session["messages"]` 则是由当前 plan、phase prompt、memory context、可用工具和最新安全 user anchor 重建的短 `runtime_view`。恢复可读取 `context_epoch` metadata 来优先选择最新 epoch 的 anchor，但不会 replay 旧阶段 tool 结果、Phase 3 旧子步骤流水账、backtrack 前的旧目标阶段 segment，或任何旧 segment body。
 
 `AgentLoop` 在 phase 转换和 Phase 3 子步骤导致 runtime messages 被重建前，支持调用 `on_before_message_rebuild` 异步回调；回调异常会被记录为 warning 并继续重建，保证编排层可以先 flush 当前完整消息尾部，再让 runtime view 收缩。生产聊天编排使用 `on_context_rebuild` 作为统一 runtime-context boundary：phase forward、Phase 3 step change 和 backtrack 都先把旧 runtime messages 写入旧 `current_context_epoch`，再将 epoch 加 1，并把新 epoch 第一条落盘消息标记 `rebuild_reason`。
 
