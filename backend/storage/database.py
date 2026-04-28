@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_calls   TEXT,
     tool_call_id TEXT,
     provider_state TEXT,
+    phase        INTEGER,
+    phase3_step  TEXT,
     created_at   TEXT NOT NULL,
     seq          INTEGER NOT NULL
 );
@@ -90,13 +92,23 @@ class Database:
             )
 
     async def _migrate_messages_table(self) -> None:
+        # NOTE: Column names/types are source-level constants only.
+        # SQLite DDL cannot bind identifiers, so we interpolate via f-string.
+        # NEVER read these from config or external input.
         async with self.conn.execute("PRAGMA table_info(messages)") as cursor:
             rows = await cursor.fetchall()
 
         existing_columns = {row["name"] for row in rows}
-        if "provider_state" not in existing_columns:
+        missing_columns: tuple[tuple[str, str], ...] = (
+            ("provider_state", "TEXT"),
+            ("phase", "INTEGER"),
+            ("phase3_step", "TEXT"),
+        )
+        for column_name, column_type in missing_columns:
+            if column_name in existing_columns:
+                continue
             await self.conn.execute(
-                "ALTER TABLE messages ADD COLUMN provider_state TEXT"
+                f"ALTER TABLE messages ADD COLUMN {column_name} {column_type}"
             )
 
     async def close(self) -> None:
