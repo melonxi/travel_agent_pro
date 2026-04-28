@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content      TEXT,
     tool_calls   TEXT,
     tool_call_id TEXT,
+    provider_state TEXT,
     created_at   TEXT NOT NULL,
     seq          INTEGER NOT NULL
 );
@@ -68,6 +69,7 @@ class Database:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(_SCHEMA)
         await self._migrate_sessions_table()
+        await self._migrate_messages_table()
         await self._conn.commit()
 
     async def _migrate_sessions_table(self) -> None:
@@ -85,6 +87,16 @@ class Database:
                 continue
             await self.conn.execute(
                 f"ALTER TABLE sessions ADD COLUMN {column_name} {column_type}"
+            )
+
+    async def _migrate_messages_table(self) -> None:
+        async with self.conn.execute("PRAGMA table_info(messages)") as cursor:
+            rows = await cursor.fetchall()
+
+        existing_columns = {row["name"] for row in rows}
+        if "provider_state" not in existing_columns:
+            await self.conn.execute(
+                "ALTER TABLE messages ADD COLUMN provider_state TEXT"
             )
 
     async def close(self) -> None:

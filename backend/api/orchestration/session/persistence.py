@@ -103,6 +103,12 @@ class SessionPersistence:
             if message.tool_result is not None:
                 content = serialize_tool_result(message.tool_result)
                 tool_call_id = message.tool_result.tool_call_id
+            provider_state_json = None
+            if message.provider_state:
+                provider_state_json = json.dumps(
+                    message.provider_state,
+                    ensure_ascii=False,
+                )
 
             rows.append(
                 {
@@ -110,6 +116,7 @@ class SessionPersistence:
                     "content": content,
                     "tool_calls": tool_calls_json,
                     "tool_call_id": tool_call_id,
+                    "provider_state": provider_state_json,
                     "seq": index,
                 }
             )
@@ -151,6 +158,9 @@ class SessionPersistence:
                     row["tool_call_id"],
                     row.get("content"),
                 )
+            provider_state = None
+            if row.get("provider_state"):
+                provider_state = json.loads(row["provider_state"])
 
             restored_messages.append(
                 Message(
@@ -158,6 +168,7 @@ class SessionPersistence:
                     content=row.get("content") if tool_result is None else None,
                     tool_calls=tool_calls,
                     tool_result=tool_result,
+                    provider_state=provider_state,
                 )
             )
 

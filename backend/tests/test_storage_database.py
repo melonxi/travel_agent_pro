@@ -85,3 +85,42 @@ async def test_initialize_migrates_legacy_sessions_schema(tmp_path):
     assert "last_run_id" in column_names
     assert "last_run_status" in column_names
     assert "last_run_error" in column_names
+
+
+@pytest.mark.asyncio
+async def test_initialize_migrates_legacy_messages_schema(tmp_path):
+    db_path = tmp_path / "legacy-messages.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+            session_id   TEXT PRIMARY KEY,
+            user_id      TEXT NOT NULL DEFAULT 'default_user',
+            title        TEXT,
+            phase        INTEGER NOT NULL DEFAULT 1,
+            status       TEXT NOT NULL DEFAULT 'active',
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        );
+        CREATE TABLE messages (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id   TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+            role         TEXT NOT NULL,
+            content      TEXT,
+            tool_calls   TEXT,
+            tool_call_id TEXT,
+            created_at   TEXT NOT NULL,
+            seq          INTEGER NOT NULL
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    database = Database(str(db_path))
+    await database.initialize()
+    columns = await database.fetch_all("PRAGMA table_info(messages)")
+    await database.close()
+
+    column_names = {column["name"] for column in columns}
+    assert "provider_state" in column_names
