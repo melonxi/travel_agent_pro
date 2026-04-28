@@ -220,6 +220,15 @@ travel_agent_pro/
 ### Pending system notes
 工具执行阶段产生的 SYSTEM 消息（如实时约束检查）不会立刻 append 到消息历史，而是缓存到 session 级缓冲区，在下一次 LLM 调用前统一 flush。目的是保证 `assistant.tool_calls → 全部 tool 答复` 的协议序列原子性；并行 tool_calls 期间任何 SYSTEM 都落在整组 tool 之后、下一次 assistant 之前。缓冲区不落盘。
 
+### Session message history persistence
+会话消息持久化采用 append-only history：SQLite `messages` 是完整历史事实源，`session["messages"]` 仍是可被 phase rebuild 替换的短 runtime prompt 工作集。`messages` 表具备完整历史所需的元数据列：`phase`、`phase3_step`、`history_seq`、`run_id`、`trip_id`。`history_seq` 通过 `(session_id, history_seq)` 唯一索引约束单 session 内历史顺序，旧数据允许这些列为空；`MessageStore` 支持写入这些元数据，并提供 `max_history_seq()` 与过滤 system row 的 `load_frontend_view()` helper。
+
+`SessionPersistence.persist_messages()` 现在只 append 尚未落盘的 runtime `Message`，用 session 级 `next_history_seq` 分配 durable `history_seq`，并在写入成功后把内存消息标记为 `history_persisted`。恢复 session 时会把 DB 历史消息标记为已持久化、保留已有 `history_seq`，并通过 `MessageStore.max_history_seq()` 初始化下一次 append 的 `next_history_seq`。
+
+`AgentLoop` 在 phase 转换和 Phase 3 子步骤导致 runtime messages 被重建前，支持调用 `on_before_message_rebuild` 异步回调；回调异常会被记录为 warning 并继续重建，保证编排层可以先 flush 当前完整消息尾部，再让 runtime view 收缩。
+
+Chat/continue 路由会为每个 run 安装该 pre-rebuild flush 回调，并用 session 内 `next_history_seq` 在中途 flush、正常收尾和取消保底持久化之间共享同一个单调 cursor；fallback backtrack 在 `trip_id` 轮转前也会先 flush 当前 runtime 消息。`/api/messages/{session_id}` 在一期仍返回前端聊天窗口可消费视图，不作为完整内部 history/debug API：在线会话返回当前 runtime view（过滤 system message），离线恢复路径通过 `MessageStore.load_frontend_view()` 返回持久化历史中的前端可见视图。
+
 ### Internal task stream
 后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务。当前有两条通道：
 - chat SSE `/api/chat/{id}`：承载与当前回答强绑定的任务，例如 `memory_recall`、`soft_judge`、`quality_gate`
@@ -236,6 +245,7 @@ travel_agent_pro/
 - `docs/learning/interview-stress-test/`、`docs/mind/`：学习型架构评审与阶段性洞察，当前包含记忆系统写入语境、稳定性、TripEpisode 职责边界与 working memory 取舍分析
 - `docs/learning/2026-04-19-Phase*.md` 与 `docs/learning/assets/phase5-parallel-orchestration/`：面向初学者的 Phase 转换机制、Phase 5 并行 Orchestrator-Workers 生命周期说明和配图
 - `docs/superpowers/specs/`、`docs/superpowers/plans/`：规格与实施计划，包含 v3-only memory cutover、Memory Extraction Routing 设计，以及 Phase 3 `candidate_pois` 全局唯一性设计与实施计划（把重复 POI 拦截在 `set_skeleton_plans` 写入边界，而不是留给 Phase 5 并行 worker 事后去重）
+- `docs/superpowers/specs/2026-04-28-context-history-preservation-design.md`、`docs/superpowers/specs/2026-04-28-context-runtime-restore-design.md`、`docs/superpowers/specs/2026-04-28-context-history-segmentation-design.md` 及对应 `docs/superpowers/plans/2026-04-28-context-*.md`：上下文持久化三期设计与实施计划，分别处理 append-only 历史保全与 pre-rebuild flush、恢复期 history/runtime view 分离、以及基于 `context_epoch` 的历史分段和诊断能力；旧 `2026-04-28-dual-track-context-persistence-*` 文档已标记为 superseded，不再作为实施依据
 - `docs/superpowers/specs/2026-04-23-reranker-stage4-upgrade-v2-design.md`、`docs/superpowers/specs/2026-04-23-stage3-recall-upgrade-v2-design.md`、`docs/superpowers/plans/2026-04-23-stage3-hybrid-recall-upgrade-v2.md`：记录记忆召回 Stage 4 reranker 语义增强边界、Stage 3 hybrid recall 候选生成设计，以及默认 embedding/runtime 决策（`BAAI/bge-small-zh-v1.5` + FastEmbed/ONNX Runtime CPU）；当前 plan 已把 `987b104` 的 runtime spike 作为前置条件，避免执行时重复安装依赖或下载模型。
 - `docs/superpowers/specs/2026-04-19-internal-task-visibility-design.md`：内部耗时任务可见性设计，定义 `internal_task` SSE、系统任务卡片、soft judge / quality gate / memory / compaction / reflection / Phase 5 orchestration 的统一聊天流展示模型
 - `docs/agent-tool-design-guide.md`：Agent 工具设计评审准则，新增或重塑工具前应对照其命名、schema、返回值、错误反馈与评估清单
@@ -537,6 +547,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase5.par
 ## 17. 测试体系
 
 - **后端单元测试**：覆盖 Agent 循环（含白名单前瞻容错、跨阶段状态修复、重复搜索拦截）、LLM 供应商（含错误归一化+重试）、状态管理、阶段路由、工具执行、存储（含 run 追踪）、压缩、验证、遥测、护栏、可行性、评估管线、Trace 通道、RunRecord/IterationProgress；plan tools 回归集中位于 `backend/tests/test_plan_tools/`（含 `test_phase3_tools.py`、`test_trip_basics.py` 与 `test_daily_plans.py`），`infer_phase3_step_from_state` 对污染的 `skeleton_plans` 具备 reader-side 过滤防御
+- **上下文历史保全回归**：`backend/tests/test_context_history_preservation.py` 模拟 Phase 1→3→5 多次 runtime rebuild，断言旧阶段 assistant/tool/tool-result 仍完整保存在 append-only DB history，同时 `/api/messages` 继续返回前端当前 runtime view
 - **测试基线语义**：未知 Anthropic 异常遵循共享 `classify_opaque_api_error` 逻辑，默认归类为 `LLM_TRANSIENT_ERROR`；`validate_lock_budget` 的占比提示基于 `DateRange.total_days` 的 inclusive 天数语义；并行 `add_constraints` 用 `items` 作为增量状态写入参数，约束提示通过 `_pending_system_notes` 在下一轮 LLM 调用前 flush
 - **Memory 集成测试策略**：`backend/tests/test_memory_integration.py` 以公开 chat 流程和 schema-conformant fake tool payload 验证 Phase 7 episode 归档与 EpisodeSlice 派生写入幂等、chat 与 memory extraction 解耦、route-aware split extractor forced tool call 语义、profile-only / working-only / no-route 三类路由写入与跳过行为、split internal-task 生命周期、timeout/warning/partial-failure 语义，以及 session 级 each-turn memory extraction 排队行为；需要观测后台调度器时通过 `app.state` 暴露的测试钩子读取，而不是依赖路由闭包捕获细节
 - **记忆/遥测测试整理**：遗留的 `test_memory.py` 与 `test_telemetry_integration.py` 已并入 `test_memory_manager.py`、`test_telemetry_setup.py`；`test_memory_manager.py` 中只验证 episode slice `top_k` 语义的用例会显式关闭 Stage 3 semantic lane，避免语义候选干扰该用例的排序边界；记忆文档同步补充了 `memory_recall` / `memory_hits` 的可观测性现状与 `TripEpisode` 仍未进入主召回链路的限制

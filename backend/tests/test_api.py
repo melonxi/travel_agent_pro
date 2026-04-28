@@ -45,6 +45,18 @@ def _get_state_manager(app):
     raise RuntimeError("Cannot locate state_mgr")
 
 
+def _get_message_store(app):
+    for route in app.routes:
+        endpoint = getattr(route, "endpoint", None)
+        if endpoint is None or not hasattr(endpoint, "__closure__"):
+            continue
+        free_vars = getattr(endpoint.__code__, "co_freevars", ())
+        for name, cell in zip(free_vars, endpoint.__closure__ or ()):
+            if name == "message_store":
+                return cell.cell_contents
+    raise RuntimeError("Cannot locate message_store")
+
+
 async def _wait_for_memory_scheduler_idle(
     app,
     session_id: str,
@@ -1184,3 +1196,110 @@ async def test_apply_message_fallbacks_restores_travelers_from_message():
     assert plan.travelers is not None
     assert plan.travelers.adults == 2
     assert plan.travelers.children == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_finalization_does_not_duplicate_preflushed_messages(app):
+    async def fake_run(self, messages, phase, tools_override=None):
+        messages.append(Message(role=Role.ASSISTANT, content="查了小红书，东京适合"))
+        await self.on_before_message_rebuild(
+            messages=messages,
+            from_phase=1,
+            from_phase3_step=None,
+        )
+        messages[:] = [
+            Message(role=Role.SYSTEM, content="phase 3 system"),
+            Message(role=Role.ASSISTANT, content="进入方案设计"),
+            messages[-2],
+        ]
+        messages.append(Message(role=Role.ASSISTANT, content="继续问预算"))
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续问预算")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    with patch("agent.loop.AgentLoop.run", fake_run):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            await client.post(f"/api/chat/{session_id}", json={"message": "去东京"})
+
+            rows = await _get_message_store(app).load_all(session_id)
+
+    assert [row["history_seq"] for row in rows] == list(range(len(rows)))
+    assert [row["content"] for row in rows].count("去东京") == 1
+    assert [row["content"] for row in rows].count("查了小红书，东京适合") == 1
+    assert [row["content"] for row in rows].count("继续问预算") == 1
+
+
+@pytest.mark.asyncio
+async def test_api_messages_uses_active_runtime_view_not_full_internal_history(app):
+    async def fake_run(self, messages, phase, tools_override=None):
+        messages.append(Message(role=Role.ASSISTANT, content="旧阶段工具结论"))
+        await self.on_before_message_rebuild(
+            messages=messages,
+            from_phase=1,
+            from_phase3_step=None,
+        )
+        messages[:] = [
+            Message(role=Role.SYSTEM, content="phase 3 system"),
+            Message(role=Role.ASSISTANT, content="进入方案设计"),
+            messages[-2],
+        ]
+        messages.append(Message(role=Role.ASSISTANT, content="当前 runtime 回复"))
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="当前 runtime 回复")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    with patch("agent.loop.AgentLoop.run", fake_run):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            await client.post(f"/api/chat/{session_id}", json={"message": "去东京"})
+            messages_resp = await client.get(f"/api/messages/{session_id}")
+
+    payload = messages_resp.json()
+    assert messages_resp.status_code == 200
+    assert [message["role"] for message in payload] == [
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert [message["content"] for message in payload] == [
+        "进入方案设计",
+        "去东京",
+        "当前 runtime 回复",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stream_persists_unflushed_messages_once(app):
+    async def fake_run(self, messages, phase, tools_override=None):
+        messages.append(Message(role=Role.ASSISTANT, content="开始查"))
+        await self.on_before_message_rebuild(
+            messages=messages,
+            from_phase=1,
+            from_phase3_step=None,
+        )
+        messages.append(Message(role=Role.ASSISTANT, content="取消前新增"))
+        self.cancel_event.set()
+        raise asyncio.CancelledError()
+        yield LLMChunk(type=ChunkType.DONE)
+
+    with patch("agent.loop.AgentLoop.run", fake_run):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+
+            with pytest.raises((asyncio.CancelledError, AssertionError)):
+                await client.post(f"/api/chat/{session_id}", json={"message": "去东京"})
+
+            rows = await _get_message_store(app).load_all(session_id)
+
+    assert [row["history_seq"] for row in rows] == list(range(len(rows)))
+    assert [row["content"] for row in rows].count("去东京") == 1
+    assert [row["content"] for row in rows].count("开始查") == 1
+    assert [row["content"] for row in rows].count("取消前新增") == 1

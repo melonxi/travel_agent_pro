@@ -124,3 +124,62 @@ async def test_initialize_migrates_legacy_messages_schema(tmp_path):
 
     column_names = {column["name"] for column in columns}
     assert "provider_state" in column_names
+
+
+@pytest.mark.asyncio
+async def test_messages_schema_contains_history_columns_and_indexes(db: Database):
+    columns = await db.fetch_all("PRAGMA table_info(messages)")
+    column_names = {column["name"] for column in columns}
+
+    assert {"phase", "phase3_step", "history_seq", "run_id", "trip_id"} <= column_names
+
+    indexes = await db.fetch_all("PRAGMA index_list(messages)")
+    index_names = {index["name"] for index in indexes}
+    assert "idx_messages_history" in index_names
+    assert "idx_messages_phase" in index_names
+    assert "idx_messages_session_history_unique" in index_names
+
+
+@pytest.mark.asyncio
+async def test_initialize_migrates_legacy_messages_history_schema(tmp_path):
+    db_path = tmp_path / "legacy-history-messages.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+            session_id   TEXT PRIMARY KEY,
+            user_id      TEXT NOT NULL DEFAULT 'default_user',
+            title        TEXT,
+            phase        INTEGER NOT NULL DEFAULT 1,
+            status       TEXT NOT NULL DEFAULT 'active',
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        );
+        CREATE TABLE messages (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id   TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+            role         TEXT NOT NULL,
+            content      TEXT,
+            tool_calls   TEXT,
+            tool_call_id TEXT,
+            provider_state TEXT,
+            created_at   TEXT NOT NULL,
+            seq          INTEGER NOT NULL
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    database = Database(str(db_path))
+    await database.initialize()
+    columns = await database.fetch_all("PRAGMA table_info(messages)")
+    indexes = await database.fetch_all("PRAGMA index_list(messages)")
+    await database.close()
+
+    column_names = {column["name"] for column in columns}
+    index_names = {index["name"] for index in indexes}
+    assert {"phase", "phase3_step", "history_seq", "run_id", "trip_id"} <= column_names
+    assert "idx_messages_history" in index_names
+    assert "idx_messages_phase" in index_names
+    assert "idx_messages_session_history_unique" in index_names
