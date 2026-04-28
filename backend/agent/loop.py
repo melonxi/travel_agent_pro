@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
@@ -24,7 +22,6 @@ from agent.execution.message_rebuild import (
     rebuild_messages_for_phase3_step_change,
     rebuild_messages_for_phase_change,
 )
-from agent.execution.phase_rebuild_callback import invoke_phase_rebuild_callback
 from agent.execution.phase_transition import (
     PhaseTransitionRequest,
     detect_phase_transition,
@@ -90,7 +87,6 @@ class AgentLoop:
         cancel_event: asyncio.Event | None = None,
         phase5_parallel_config: Phase5ParallelConfig | None = None,
         internal_task_events: list[InternalTask] | None = None,
-        on_phase_rebuild: Callable[..., Awaitable[None]] | None = None,
     ):
         if deps is not None:
             llm = deps.llm
@@ -152,7 +148,6 @@ class AgentLoop:
         )
         self._progress: IterationProgress = IterationProgress.NO_OUTPUT
         self._search_history = SearchHistoryTracker()
-        self.on_phase_rebuild = on_phase_rebuild
 
     @property
     def progress(self) -> IterationProgress:
@@ -518,7 +513,6 @@ class AgentLoop:
                         ] = await self._rebuild_messages_for_phase3_step_change(
                             messages=messages,
                             original_user_message=original_user_message,
-                            from_step=phase3_step_before_batch,
                         )
                         tools = self.tool_engine.get_tools_for_phase(
                             current_phase,
@@ -594,7 +588,6 @@ class AgentLoop:
             messages=messages,
             from_phase=request.from_phase,
             to_phase=request.to_phase,
-            from_step=request.from_step,
             original_user_message=original_user_message,
             result=request.result,
         )
@@ -615,13 +608,9 @@ class AgentLoop:
         messages: list[Message],
         from_phase: int,
         to_phase: int,
-        from_step: str | None,
         original_user_message: Message,
         result: ToolResult,
     ) -> list[Message]:
-        await invoke_phase_rebuild_callback(
-            self.on_phase_rebuild, messages=messages, from_phase=from_phase, from_step=from_step
-        )
         return await rebuild_messages_for_phase_change(
             phase_router=self.phase_router,
             context_manager=self.context_manager,
@@ -640,11 +629,7 @@ class AgentLoop:
         self,
         messages: list[Message],
         original_user_message: Message,
-        from_step: str | None,
     ) -> list[Message]:
-        await invoke_phase_rebuild_callback(
-            self.on_phase_rebuild, messages=messages, from_phase=3, from_step=from_step
-        )
         return await rebuild_messages_for_phase3_step_change(
             phase_router=self.phase_router,
             context_manager=self.context_manager,

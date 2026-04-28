@@ -26,7 +26,6 @@ def build_agent(
     create_llm_provider_func,
     collect_forced_tool_call_arguments,
     compression_events: list[dict] | None = None,
-    on_phase_rebuild=None,
 ):
     llm = create_llm_provider_func(config.llm)
 
@@ -75,5 +74,4 @@ def build_agent(
         parallel_tool_execution=config.parallel_tool_execution,
         phase5_parallel_config=config.phase5_parallel,
         internal_task_events=internal_task_events,
-        on_phase_rebuild=on_phase_rebuild,
     )
