@@ -4,7 +4,55 @@ from memory.recall_query import (
     fallback_retrieval_plan,
     parse_recall_query_tool_arguments,
 )
+import pytest
+
+from agent.types import Message, Role, ToolCall
+from api.orchestration.memory.recall_planning import _collect_forced_tool_call_arguments
+from llm.errors import LLMError, LLMErrorCode
+from llm.types import ChunkType, LLMChunk
 from main import _build_recall_query_tool
+
+
+class _ToolChoiceRejectingLLM:
+    def __init__(self) -> None:
+        self.tool_choices = []
+
+    async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+        self.tool_choices.append(tool_choice)
+        if tool_choice is not None:
+            raise LLMError(
+                code=LLMErrorCode.BAD_REQUEST,
+                message="LLM provider rejected request",
+                retryable=False,
+                provider="openai",
+                model="deepseek/deepseek-v4-flash-free",
+                raw_error="deepseek-reasoner does not support this tool_choice",
+            )
+        yield LLMChunk(
+            type=ChunkType.TOOL_CALL_START,
+            tool_call=ToolCall(
+                id="tc_1",
+                name="decide_memory_recall",
+                arguments={"needs_recall": False},
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_collect_forced_tool_call_arguments_retries_without_unsupported_tool_choice():
+    llm = _ToolChoiceRejectingLLM()
+
+    result = await _collect_forced_tool_call_arguments(
+        llm,
+        messages=[Message(role=Role.USER, content="prompt")],
+        tool_def={"name": "decide_memory_recall"},
+    )
+
+    assert result == {"needs_recall": False}
+    assert llm.tool_choices == [
+        {"type": "function", "function": {"name": "decide_memory_recall"}},
+        None,
+    ]
 
 
 def test_parse_recall_query_tool_arguments_honors_tightened_schema_fields():

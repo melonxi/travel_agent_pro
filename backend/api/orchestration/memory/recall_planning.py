@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from agent.types import Message
+from llm.errors import LLMError, LLMErrorCode
 from llm.types import ChunkType
 from memory.recall_query import (
     ALLOWED_PROFILE_BUCKETS,
@@ -251,11 +252,45 @@ async def _collect_forced_tool_call_arguments(
     tool_def: dict[str, Any],
 ) -> dict[str, Any] | None:
     tool_name = tool_def["name"]
+    forced_choice = {"type": "function", "function": {"name": tool_name}}
+    try:
+        return await _collect_tool_call_arguments(
+            llm,
+            messages=messages,
+            tool_def=tool_def,
+            tool_choice=forced_choice,
+        )
+    except LLMError as exc:
+        if not _is_unsupported_tool_choice_error(exc):
+            raise
+    return await _collect_tool_call_arguments(
+        llm,
+        messages=messages,
+        tool_def=tool_def,
+        tool_choice=None,
+    )
+
+
+def _is_unsupported_tool_choice_error(exc: LLMError) -> bool:
+    if exc.code != LLMErrorCode.BAD_REQUEST:
+        return False
+    text = f"{exc} {exc.raw_error}".lower()
+    return "tool_choice" in text and "not support" in text
+
+
+async def _collect_tool_call_arguments(
+    llm,
+    *,
+    messages: list[Message],
+    tool_def: dict[str, Any],
+    tool_choice: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    tool_name = tool_def["name"]
     async for chunk in llm.chat(
         messages,
         tools=[tool_def],
         stream=True,
-        tool_choice={"type": "function", "function": {"name": tool_name}},
+        tool_choice=tool_choice,
     ):
         if chunk.type == ChunkType.TOOL_CALL_START and chunk.tool_call:
             if chunk.tool_call.name == tool_name:
