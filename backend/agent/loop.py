@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
@@ -53,6 +55,8 @@ from telemetry.attributes import AGENT_PHASE, AGENT_ITERATION
 from tools.engine import ToolEngine
 from config import Phase5ParallelConfig
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class PhaseTransitionOutcome:
@@ -87,6 +91,7 @@ class AgentLoop:
         cancel_event: asyncio.Event | None = None,
         phase5_parallel_config: Phase5ParallelConfig | None = None,
         internal_task_events: list[InternalTask] | None = None,
+        on_before_message_rebuild: Callable[..., Awaitable[None]] | None = None,
     ):
         if deps is not None:
             llm = deps.llm
@@ -146,6 +151,7 @@ class AgentLoop:
         self.internal_task_events = (
             internal_task_events if internal_task_events is not None else []
         )
+        self.on_before_message_rebuild = on_before_message_rebuild
         self._progress: IterationProgress = IterationProgress.NO_OUTPUT
         self._search_history = SearchHistoryTracker()
 
@@ -508,6 +514,11 @@ class AgentLoop:
                     )
                     if phase3_step_after_batch != phase3_step_before_batch:
                         phase_changed_in_prev_iteration = True
+                        await self._flush_before_message_rebuild(
+                            messages=messages,
+                            from_phase=current_phase,
+                            from_phase3_step=phase3_step_before_batch,
+                        )
                         messages[
                             :
                         ] = await self._rebuild_messages_for_phase3_step_change(
@@ -584,6 +595,11 @@ class AgentLoop:
                 "reason": request.reason,
             },
         )
+        await self._flush_before_message_rebuild(
+            messages=messages,
+            from_phase=request.from_phase,
+            from_phase3_step=request.from_step,
+        )
         rebuilt_messages = await self._rebuild_messages_for_phase_change(
             messages=messages,
             from_phase=request.from_phase,
@@ -596,6 +612,29 @@ class AgentLoop:
             current_phase=request.to_phase,
             tools=self.tool_engine.get_tools_for_phase(request.to_phase, self.plan),
         )
+
+    async def _flush_before_message_rebuild(
+        self,
+        *,
+        messages: list[Message],
+        from_phase: int,
+        from_phase3_step: str | None,
+    ) -> None:
+        if self.on_before_message_rebuild is None:
+            return
+        try:
+            await self.on_before_message_rebuild(
+                messages=messages,
+                from_phase=from_phase,
+                from_phase3_step=from_phase3_step,
+            )
+        except Exception:
+            logger.warning(
+                "pre-rebuild message history flush failed phase=%s phase3_step=%s",
+                from_phase,
+                from_phase3_step,
+                exc_info=True,
+            )
 
     def _extract_original_user_message(self, messages: list[Message]) -> Message:
         return extract_original_user_message(messages)
