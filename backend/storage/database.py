@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS messages (
     phase3_step  TEXT,
     history_seq  INTEGER,
     run_id       TEXT,
-    trip_id      TEXT
+    trip_id      TEXT,
+    context_epoch INTEGER,
+    rebuild_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS plan_snapshots (
@@ -106,6 +108,8 @@ class Database:
             ("history_seq", "INTEGER"),
             ("run_id", "TEXT"),
             ("trip_id", "TEXT"),
+            ("context_epoch", "INTEGER"),
+            ("rebuild_reason", "TEXT"),
         )
         for column_name, column_type in missing_columns:
             if column_name in existing_columns:
@@ -125,6 +129,14 @@ class Database:
         await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_phase "
             "ON messages(session_id, phase, phase3_step, history_seq)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_epoch "
+            "ON messages(session_id, context_epoch, history_seq)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_trip_epoch "
+            "ON messages(session_id, trip_id, context_epoch)"
         )
 
     async def close(self) -> None:

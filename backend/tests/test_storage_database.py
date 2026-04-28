@@ -1,5 +1,6 @@
 import sqlite3
 
+import aiosqlite
 import pytest
 import pytest_asyncio
 
@@ -183,3 +184,68 @@ async def test_initialize_migrates_legacy_messages_history_schema(tmp_path):
     assert "idx_messages_history" in index_names
     assert "idx_messages_phase" in index_names
     assert "idx_messages_session_history_unique" in index_names
+
+
+@pytest.mark.asyncio
+async def test_messages_schema_has_context_epoch_columns():
+    db = Database(":memory:")
+    await db.initialize()
+    try:
+        columns = {row["name"] for row in await db.fetch_all("PRAGMA table_info(messages)")}
+        indexes = {row["name"] for row in await db.fetch_all("PRAGMA index_list(messages)")}
+    finally:
+        await db.close()
+
+    assert "context_epoch" in columns
+    assert "rebuild_reason" in columns
+    assert "idx_messages_epoch" in indexes
+    assert "idx_messages_trip_epoch" in indexes
+
+
+@pytest.mark.asyncio
+async def test_migrate_legacy_messages_table_adds_context_epoch_columns(tmp_path):
+    db_path = tmp_path / "legacy-context-epoch.db"
+    async with aiosqlite.connect(db_path) as raw:
+        await raw.executescript(
+            """
+            CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT 'default_user',
+                title TEXT,
+                phase INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_run_id TEXT,
+                last_run_status TEXT,
+                last_run_error TEXT
+            );
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT,
+                tool_calls TEXT,
+                tool_call_id TEXT,
+                provider_state TEXT,
+                phase INTEGER,
+                phase3_step TEXT,
+                history_seq INTEGER,
+                run_id TEXT,
+                trip_id TEXT,
+                created_at TEXT NOT NULL,
+                seq INTEGER NOT NULL
+            );
+            """
+        )
+        await raw.commit()
+
+    db = Database(str(db_path))
+    await db.initialize()
+    try:
+        columns = {row["name"] for row in await db.fetch_all("PRAGMA table_info(messages)")}
+    finally:
+        await db.close()
+
+    assert "context_epoch" in columns
+    assert "rebuild_reason" in columns
