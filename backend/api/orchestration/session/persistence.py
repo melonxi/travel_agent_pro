@@ -218,6 +218,13 @@ class SessionPersistence:
         compression_events: list[dict] = []
         history_view = restored_messages
         runtime_view = derive_runtime_view(history_view, plan)
+        # persisted_count is the cursor into runtime_view (which is the
+        # fact source for DB persistence — see finalize_agent_run). After
+        # restore, runtime_view contains exactly the tail of history_view
+        # belonging to the current phase segment, and DB already holds all
+        # of that, so the cursor starts aligned with len(runtime_view):
+        # the next persist_messages call sees an empty incremental slice
+        # until new messages are appended to runtime_view.
         session: dict = {
             "plan": plan,
             "messages": runtime_view,
@@ -228,7 +235,7 @@ class SessionPersistence:
             "compression_events": compression_events,
             "stats": SessionStats(),
             "_pending_system_notes": [],
-            "persisted_count": len(history_view),
+            "persisted_count": len(runtime_view),
         }
         session["agent"] = self.build_agent(
             plan,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from agent.types import Message
@@ -11,6 +12,27 @@ def _phase_tag(message: Message) -> int | None:
 
 def _phase3_step_tag(message: Message) -> str | None:
     return getattr(message, "_phase3_step_tag", None)
+
+
+def append_dual_track(session: dict, plan: Any, message: Message) -> None:
+    """Append message to both runtime_view (session['messages']) and
+    history_view (session['history_messages']), tagging the history copy
+    with phase sidecar fields.
+
+    - Runtime copy: appended as-is (no sidecar mutation).
+    - History copy: a shallow copy carrying _phase_tag / _phase3_step_tag
+      from plan.phase / plan.phase3_step.
+    - Legacy sessions without 'history_messages' key are NOT auto-upgraded:
+      only runtime track is appended (preserves single-track semantics).
+    """
+    session["messages"].append(message)
+    if "history_messages" not in session:
+        return
+    history_copy = copy.copy(message)
+    history_copy.__dict__["_phase_tag"] = getattr(plan, "phase", None)
+    history_copy.__dict__["_phase3_step_tag"] = getattr(plan, "phase3_step", None)
+    session["history_messages"].append(history_copy)
+
 
 
 def derive_runtime_view(history: list[Message], plan: Any) -> list[Message]:

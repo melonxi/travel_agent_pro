@@ -22,6 +22,12 @@ async def finalize_agent_run(
         run.finished_at = time.time()
 
     await deps.state_mgr.save(plan)
+    # Source of truth for DB persistence is runtime_view (the `messages` arg /
+    # session["messages"]). All main-path appends mutate runtime_view; the
+    # on_phase_rebuild callback also flushes runtime_view tagged with from_phase
+    # before resetting it. session["history_messages"] is an informational
+    # observation track only — using it here would silently drop any append
+    # site that didn't go through append_dual_track. See Task 6.5 fix.
     new_count = await deps.persist_messages(
         plan.session_id,
         messages,
@@ -72,6 +78,8 @@ async def persist_run_safely(*, deps, session, plan, messages, run) -> None:
             run.status = "cancelled"
             run.finished_at = time.time()
         await deps.state_mgr.save(plan)
+        # Same rationale as finalize_agent_run: persist runtime_view, not
+        # history_view (see Task 6.5 fix).
         new_count = await deps.persist_messages(
             plan.session_id,
             messages,
