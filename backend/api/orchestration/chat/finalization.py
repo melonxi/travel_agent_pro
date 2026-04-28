@@ -18,8 +18,20 @@ async def persist_unflushed_messages(
     phase3_step: str | None,
     run_id: str | None,
     trip_id: str | None,
+    context_epoch: int | None = None,
+    rebuild_reason: str | None = None,
 ) -> None:
     next_history_seq = int(session.get("next_history_seq", 0))
+    active_context_epoch = (
+        int(session.get("current_context_epoch", 0))
+        if context_epoch is None
+        else context_epoch
+    )
+    active_rebuild_reason = (
+        session.pop("_next_rebuild_reason", None)
+        if rebuild_reason is None
+        else rebuild_reason
+    )
     next_history_seq = await deps.persist_messages(
         plan.session_id,
         messages,
@@ -28,6 +40,8 @@ async def persist_unflushed_messages(
         run_id=run_id,
         trip_id=trip_id,
         next_history_seq=next_history_seq,
+        context_epoch=active_context_epoch,
+        rebuild_reason=active_rebuild_reason,
     )
     session["next_history_seq"] = next_history_seq
 

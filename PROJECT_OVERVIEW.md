@@ -231,7 +231,7 @@ Context segment 检查目前只开放在 service/helper 层：`SessionPersistenc
 
 恢复 session 时后端会加载完整 append-only `history_view` 作为内部 `history_messages`，用于保留历史事实和初始化后续写入游标；传给 `AgentLoop` 的 `session["messages"]` 则是由当前 plan、phase prompt、memory context、可用工具和最新安全 user anchor 重建的短 `runtime_view`。恢复不会 replay 旧阶段 tool 结果、Phase 3 旧子步骤流水账或 backtrack 前的旧目标阶段 segment。
 
-`AgentLoop` 在 phase 转换和 Phase 3 子步骤导致 runtime messages 被重建前，支持调用 `on_before_message_rebuild` 异步回调；回调异常会被记录为 warning 并继续重建，保证编排层可以先 flush 当前完整消息尾部，再让 runtime view 收缩。
+`AgentLoop` 在 phase 转换和 Phase 3 子步骤导致 runtime messages 被重建前，支持调用 `on_before_message_rebuild` 异步回调；回调异常会被记录为 warning 并继续重建，保证编排层可以先 flush 当前完整消息尾部，再让 runtime view 收缩。生产聊天编排使用 `on_context_rebuild` 作为统一 runtime-context boundary：phase forward、Phase 3 step change 和 backtrack 都先把旧 runtime messages 写入旧 `current_context_epoch`，再将 epoch 加 1，并把新 epoch 第一条落盘消息标记 `rebuild_reason`。
 
 Chat/continue 路由会为每个 run 安装该 pre-rebuild flush 回调，并用 session 内 `next_history_seq` 在中途 flush、正常收尾和取消保底持久化之间共享同一个单调 cursor；fallback backtrack 在 `trip_id` 轮转前也会先 flush 当前 runtime 消息。`/api/messages/{session_id}` 在一期仍返回前端聊天窗口可消费视图，不作为完整内部 history/debug API：在线会话返回当前 runtime view（过滤 system message），离线恢复路径通过 `MessageStore.load_frontend_view()` 返回持久化历史中的前端可见视图。
 

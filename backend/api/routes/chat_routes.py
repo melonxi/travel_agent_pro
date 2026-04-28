@@ -176,7 +176,16 @@ def register_chat_routes(
             session["_cancel_event"] = cancel_event
             agent.cancel_event = cancel_event
 
-            async def _flush_before_rebuild(*, messages, from_phase, from_phase3_step):
+            async def _advance_context_epoch(
+                *,
+                messages,
+                from_phase,
+                from_phase3_step,
+                to_phase,
+                to_phase3_step,
+                rebuild_reason,
+            ):
+                old_epoch = int(session.get("current_context_epoch", 0))
                 await persist_unflushed_messages(
                     deps=chat_stream_deps,
                     session=session,
@@ -186,9 +195,12 @@ def register_chat_routes(
                     phase3_step=from_phase3_step,
                     run_id=run.run_id,
                     trip_id=getattr(plan, "trip_id", None),
+                    context_epoch=old_epoch,
                 )
+                session["current_context_epoch"] = old_epoch + 1
+                session["_next_rebuild_reason"] = rebuild_reason
 
-            agent.on_before_message_rebuild = _flush_before_rebuild
+            agent.on_context_rebuild = _advance_context_epoch
 
             async for event in run_agent_stream(
                 chat_stream_deps,
@@ -268,7 +280,16 @@ def register_chat_routes(
         session["_cancel_event"] = cancel_event
         agent.cancel_event = cancel_event
 
-        async def _flush_before_rebuild(*, messages, from_phase, from_phase3_step):
+        async def _advance_context_epoch(
+            *,
+            messages,
+            from_phase,
+            from_phase3_step,
+            to_phase,
+            to_phase3_step,
+            rebuild_reason,
+        ):
+            old_epoch = int(session.get("current_context_epoch", 0))
             await persist_unflushed_messages(
                 deps=chat_stream_deps,
                 session=session,
@@ -278,9 +299,12 @@ def register_chat_routes(
                 phase3_step=from_phase3_step,
                 run_id=run.run_id,
                 trip_id=getattr(plan, "trip_id", None),
+                context_epoch=old_epoch,
             )
+            session["current_context_epoch"] = old_epoch + 1
+            session["_next_rebuild_reason"] = rebuild_reason
 
-        agent.on_before_message_rebuild = _flush_before_rebuild
+        agent.on_context_rebuild = _advance_context_epoch
 
         phase_before_run = plan.phase
 
