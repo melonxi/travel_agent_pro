@@ -367,5 +367,6 @@ async def test_restore_session_returns_runtime_view_not_history(persistence_fact
     assert len(history) == 5
     # runtime view 只对应当前 phase 段
     assert [m.content for m in runtime] == ["p3-sys", "handoff", "p3-用户"]
-    # persisted_count 应等于 history 长度（事实源是 history）
-    assert restored["persisted_count"] == 5
+    # persisted_count 对齐 runtime_view 长度（事实源 = runtime_view，由
+    # finalize_agent_run / persist_run_safely 增量落盘；history_view 仅作观测）
+    assert restored["persisted_count"] == len(runtime)

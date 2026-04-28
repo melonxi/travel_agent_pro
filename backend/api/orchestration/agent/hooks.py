@@ -24,6 +24,7 @@ from harness.validator import (
 from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
 
 from api.orchestration.session.pending_notes import flush_pending_system_notes, push_pending_system_note
+from api.orchestration.session.runtime_view import append_dual_track
 from api.orchestration.common.telemetry_helpers import (
     _days_count_from_dates,
     _plan_writer_state_changes,
@@ -320,11 +321,13 @@ def build_agent_hooks(
                 latest.judge_scores = judge_scores
         if score.suggestions:
             suggestion_text = "\n".join(f"- {s}" for s in score.suggestions)
-            session["messages"].append(
+            append_dual_track(
+                session,
+                plan,
                 Message(
                     role=Role.SYSTEM,
                     content=f"💡 行程质量评估（{score.overall:.1f}/5）：\n{suggestion_text}",
-                )
+                ),
             )
         final_status = "warning" if score.suggestions else "success"
         final_message = (
@@ -389,8 +392,10 @@ def build_agent_hooks(
                     + "\n请调整后再继续。"
                 )
                 if session:
-                    session["messages"].append(
-                        Message(role=Role.SYSTEM, content=feedback)
+                    append_dual_track(
+                        session,
+                        target_plan,
+                        Message(role=Role.SYSTEM, content=feedback),
                     )
                 internal_task_events.append(
                     InternalTask(
@@ -414,8 +419,10 @@ def build_agent_hooks(
                 f"- {error}" for error in errors
             )
             if session:
-                session["messages"].append(
-                    Message(role=Role.SYSTEM, content=feedback)
+                append_dual_track(
+                    session,
+                    target_plan,
+                    Message(role=Role.SYSTEM, content=feedback),
                 )
             internal_task_events.append(
                 InternalTask(
@@ -532,7 +539,11 @@ def build_agent_hooks(
             f"请修正后再进入 Phase {to_phase}：\n{suggestion_text}"
         )
         if session:
-            session["messages"].append(Message(role=Role.SYSTEM, content=feedback))
+            append_dual_track(
+                session,
+                target_plan,
+                Message(role=Role.SYSTEM, content=feedback),
+            )
         internal_task_events.append(
             InternalTask(
                 id=task_id,

@@ -164,6 +164,98 @@ async def test_persist_run_safely_passes_persisted_count_and_writes_back():
 
 
 @pytest.mark.asyncio
+async def test_finalize_persists_runtime_view_not_history():
+    """Fact source for DB persistence is runtime_view (session['messages']).
+
+    Even when session also carries a history_messages observation track,
+    finalize must persist the runtime_view passed in via `messages`
+    argument. history_messages is informational only — using it for
+    persistence breaks the persisted_count cursor invariant maintained
+    by the on_phase_rebuild callback (which always flushes runtime_view).
+    """
+    spy = _PersistMessagesSpy()
+    deps = _make_deps(spy)
+    plan = _StubPlan(phase=3, phase3_step="skeleton")
+    runtime_msgs = [Message(role=Role.USER, content=f"r{i}") for i in range(3)]
+    history_msgs = [Message(role=Role.USER, content=f"h{i}") for i in range(8)]
+    session = {
+        "user_id": "u",
+        "persisted_count": 3,
+        "messages": runtime_msgs,
+        "history_messages": history_msgs,
+    }
+    run = _StubRun()
+
+    async for _ in finalize_agent_run(
+        deps=deps,
+        session=session,
+        plan=plan,
+        messages=runtime_msgs,
+        run=run,
+        phase_before_run=3,
+    ):
+        pass
+
+    assert len(spy.calls) == 1
+    # runtime_view (3) used for persistence, NOT history_view (8)
+    assert spy.calls[0]["n_messages"] == 3
+    assert session["persisted_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_persist_run_safely_persists_runtime_view_not_history():
+    spy = _PersistMessagesSpy()
+    deps = _make_deps(spy)
+    plan = _StubPlan(phase=3, phase3_step="skeleton")
+    runtime_msgs = [Message(role=Role.USER, content=f"r{i}") for i in range(2)]
+    history_msgs = [Message(role=Role.USER, content=f"h{i}") for i in range(6)]
+    session = {
+        "persisted_count": 2,
+        "messages": runtime_msgs,
+        "history_messages": history_msgs,
+    }
+    run = _StubRun()
+
+    await persist_run_safely(
+        deps=deps,
+        session=session,
+        plan=plan,
+        messages=runtime_msgs,
+        run=run,
+    )
+
+    assert len(spy.calls) == 1
+    assert spy.calls[0]["n_messages"] == 2
+    assert session["persisted_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_finalize_persists_messages_arg_for_legacy_session():
+    """Legacy session without history_messages → finalize persists the
+    messages arg (single-track behavior preserved)."""
+    spy = _PersistMessagesSpy()
+    deps = _make_deps(spy)
+    plan = _StubPlan(phase=3, phase3_step="skeleton")
+    messages = [Message(role=Role.USER, content=f"m{i}") for i in range(4)]
+    session = {"user_id": "u", "persisted_count": 1}  # no history_messages
+    run = _StubRun()
+
+    async for _ in finalize_agent_run(
+        deps=deps,
+        session=session,
+        plan=plan,
+        messages=messages,
+        run=run,
+        phase_before_run=3,
+    ):
+        pass
+
+    assert len(spy.calls) == 1
+    assert spy.calls[0]["n_messages"] == 4
+    assert session["persisted_count"] == 4
+
+
+@pytest.mark.asyncio
 async def test_finalize_uses_zero_if_session_lacks_persisted_count():
     """Backward-compat: legacy session dict without persisted_count → treat as 0."""
     spy = _PersistMessagesSpy()
