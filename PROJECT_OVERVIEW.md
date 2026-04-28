@@ -220,6 +220,9 @@ travel_agent_pro/
 ### Pending system notes
 工具执行阶段产生的 SYSTEM 消息（如实时约束检查）不会立刻 append 到消息历史，而是缓存到 session 级缓冲区，在下一次 LLM 调用前统一 flush。目的是保证 `assistant.tool_calls → 全部 tool 答复` 的协议序列原子性；并行 tool_calls 期间任何 SYSTEM 都落在整组 tool 之后、下一次 assistant 之前。缓冲区不落盘。
 
+### Session message history metadata
+`messages` 表已具备 append-only history 所需的元数据列：`phase`、`phase3_step`、`history_seq`、`run_id`、`trip_id`。`history_seq` 通过 `(session_id, history_seq)` 唯一索引约束单 session 内历史顺序，旧数据允许这些列为空；`MessageStore` 支持写入这些元数据，并提供 `max_history_seq()` 与过滤 system row 的 `load_frontend_view()` helper。
+
 ### Internal task stream
 后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务。当前有两条通道：
 - chat SSE `/api/chat/{id}`：承载与当前回答强绑定的任务，例如 `memory_recall`、`soft_judge`、`quality_gate`
