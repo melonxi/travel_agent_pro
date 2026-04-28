@@ -63,6 +63,27 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _make_on_phase_rebuild(session_persistence, session, session_id):
+    """Build an on_phase_rebuild callback bound to the given persistence/session.
+
+    Extracted as a module-level pure function so it can be unit-tested
+    without instantiating the FastAPI app, and to make session_persistence
+    an explicit parameter (no closure-over-late-binding).
+    """
+
+    async def on_phase_rebuild(*, messages, from_phase, from_step):
+        new_count = await session_persistence.persist_messages(
+            session_id,
+            messages,
+            phase=from_phase,
+            phase3_step=from_step,
+            persisted_count=session.get("persisted_count", 0),
+        )
+        session["persisted_count"] = new_count
+
+    return on_phase_rebuild
+
+
 def create_app(config_path: str = "config.yaml") -> FastAPI:
     config = load_config(config_path)
     state_mgr = StateManager(data_dir=config.data_dir)
@@ -150,7 +171,19 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         allow_headers=["*"],
     )
 
-    def _build_agent(plan, user_id: str, compression_events: list[dict] | None = None):
+    def _build_agent(
+        plan,
+        user_id: str,
+        *,
+        session: dict | None = None,
+        compression_events: list[dict] | None = None,
+    ):
+        on_phase_rebuild = None
+        if session is not None:
+            on_phase_rebuild = _make_on_phase_rebuild(
+                session_persistence, session, plan.session_id
+            )
+
         return build_agent(
             plan=plan,
             user_id=user_id,
@@ -169,6 +202,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 )
             ),
             compression_events=compression_events,
+            on_phase_rebuild=on_phase_rebuild,
         )
 
     session_persistence = SessionPersistence(
