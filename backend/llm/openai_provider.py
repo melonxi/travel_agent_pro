@@ -113,33 +113,50 @@ class OpenAIProvider:
                     }
                 )
             elif msg.role == Role.ASSISTANT and msg.tool_calls:
-                result.append(
-                    {
-                        "role": "assistant",
-                        "content": msg.content or "",
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.name,
-                                    "arguments": json.dumps(
-                                        tc.arguments, ensure_ascii=False
-                                    ),
-                                },
-                            }
-                            for tc in msg.tool_calls
-                        ],
-                    }
-                )
+                converted_msg = {
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(
+                                    tc.arguments, ensure_ascii=False
+                                ),
+                            },
+                        }
+                        for tc in msg.tool_calls
+                    ],
+                }
+                self._attach_reasoning_state(msg, converted_msg)
+                result.append(converted_msg)
             else:
-                result.append(
-                    {
-                        "role": msg.role.value,
-                        "content": msg.content or "",
-                    }
-                )
+                converted_msg = {
+                    "role": msg.role.value,
+                    "content": msg.content or "",
+                }
+                self._attach_reasoning_state(msg, converted_msg)
+                result.append(converted_msg)
         return result
+
+    def _uses_deepseek_reasoning_content(self) -> bool:
+        return "deepseek" in self.model.lower()
+
+    def _attach_reasoning_state(
+        self, message: Message, converted: dict[str, Any]
+    ) -> None:
+        if message.role != Role.ASSISTANT:
+            return
+        if not self._uses_deepseek_reasoning_content():
+            return
+        provider_state = message.provider_state or {}
+        reasoning_content = provider_state.get("reasoning_content", "")
+        if isinstance(reasoning_content, str):
+            converted["reasoning_content"] = reasoning_content
+        if "reasoning_details" in provider_state:
+            converted["reasoning_details"] = provider_state["reasoning_details"]
 
     def _convert_tools(self, tool_defs: list[dict]) -> list[dict[str, Any]]:
         return [
@@ -199,6 +216,26 @@ class OpenAIProvider:
                     if not stream:
                         response = await self.client.chat.completions.create(**kwargs)
                         choice = response.choices[0]
+                        reasoning_content = getattr(
+                            choice.message, "reasoning_content", None
+                        )
+                        if reasoning_content is not None:
+                            yield LLMChunk(
+                                type=ChunkType.PROVIDER_STATE_DELTA,
+                                provider_state={
+                                    "reasoning_content": reasoning_content
+                                },
+                            )
+                        reasoning_details = getattr(
+                            choice.message, "reasoning_details", None
+                        )
+                        if reasoning_details is not None:
+                            yield LLMChunk(
+                                type=ChunkType.PROVIDER_STATE_DELTA,
+                                provider_state={
+                                    "reasoning_details": reasoning_details
+                                },
+                            )
                         if choice.message.content:
                             yield LLMChunk(
                                 type=ChunkType.TEXT_DELTA,
@@ -261,6 +298,27 @@ class OpenAIProvider:
 
                         delta = choice.delta
                         if delta:
+                            reasoning_content = getattr(
+                                delta, "reasoning_content", None
+                            )
+                            if reasoning_content is not None:
+                                yield LLMChunk(
+                                    type=ChunkType.PROVIDER_STATE_DELTA,
+                                    provider_state={
+                                        "reasoning_content": reasoning_content
+                                    },
+                                )
+                            reasoning_details = getattr(
+                                delta, "reasoning_details", None
+                            )
+                            if reasoning_details is not None:
+                                yield LLMChunk(
+                                    type=ChunkType.PROVIDER_STATE_DELTA,
+                                    provider_state={
+                                        "reasoning_details": reasoning_details
+                                    },
+                                )
+
                             if delta.content:
                                 collected_text += delta.content
                                 _has_yielded = True

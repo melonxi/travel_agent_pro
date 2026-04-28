@@ -102,6 +102,71 @@ def test_convert_tools(provider):
     assert converted[0]["function"]["name"] == "search_flights"
 
 
+def test_convert_deepseek_assistant_tool_call_passes_back_reasoning_content():
+    provider = OpenAIProvider(
+        model="deepseek/deepseek-v4-flash-free",
+        temperature=0.7,
+        max_tokens=4096,
+    )
+    msg = Message(
+        role=Role.ASSISTANT,
+        content="先查一下",
+        tool_calls=[ToolCall(id="tc_1", name="web_search", arguments={"query": "承德"})],
+        provider_state={"reasoning_content": "需要先验证真实攻略。"},
+    )
+
+    converted = provider._convert_messages([msg])
+
+    assert converted[0]["reasoning_content"] == "需要先验证真实攻略。"
+
+
+def test_convert_deepseek_assistant_tool_call_keeps_empty_reasoning_content():
+    provider = OpenAIProvider(
+        model="deepseek/deepseek-v4-flash-free",
+        temperature=0.7,
+        max_tokens=4096,
+    )
+    msg = Message(
+        role=Role.ASSISTANT,
+        tool_calls=[ToolCall(id="tc_1", name="web_search", arguments={"query": "承德"})],
+        provider_state={"reasoning_content": ""},
+    )
+
+    converted = provider._convert_messages([msg])
+
+    assert converted[0]["reasoning_content"] == ""
+
+
+def test_convert_deepseek_assistant_tool_call_passes_back_reasoning_details():
+    provider = OpenAIProvider(
+        model="deepseek/deepseek-v4-pro",
+        temperature=0.7,
+        max_tokens=4096,
+    )
+    reasoning_details = [{"type": "reasoning.text", "text": "thinking"}]
+    msg = Message(
+        role=Role.ASSISTANT,
+        tool_calls=[ToolCall(id="tc_1", name="web_search", arguments={"query": "承德"})],
+        provider_state={"reasoning_details": reasoning_details},
+    )
+
+    converted = provider._convert_messages([msg])
+
+    assert converted[0]["reasoning_details"] == reasoning_details
+
+
+def test_convert_non_deepseek_does_not_emit_reasoning_content(provider):
+    msg = Message(
+        role=Role.ASSISTANT,
+        tool_calls=[ToolCall(id="tc_1", name="web_search", arguments={"query": "承德"})],
+        provider_state={"reasoning_content": "provider-private"},
+    )
+
+    converted = provider._convert_messages([msg])
+
+    assert "reasoning_content" not in converted[0]
+
+
 class _AsyncChunkStream:
     def __init__(self, chunks):
         self._chunks = iter(chunks)
@@ -122,8 +187,19 @@ def _stream_chunk(*, delta=None, finish_reason=None):
     )
 
 
-def _delta(*, content=None, tool_calls=None):
-    return SimpleNamespace(content=content, tool_calls=tool_calls)
+def _delta(
+    *,
+    content=None,
+    tool_calls=None,
+    reasoning_content=None,
+    reasoning_details=None,
+):
+    return SimpleNamespace(
+        content=content,
+        tool_calls=tool_calls,
+        reasoning_content=reasoning_content,
+        reasoning_details=reasoning_details,
+    )
 
 
 async def test_streaming_chat_emits_done_when_finish_reason_arrives_without_delta(
@@ -189,6 +265,36 @@ async def test_streaming_chat_flushes_tool_calls_when_finish_reason_chunk_has_no
         name="search_poi",
         arguments={"query": "东京塔"},
     )
+
+
+async def test_streaming_chat_emits_provider_state_delta_for_reasoning_content(
+    provider,
+):
+    stream = _AsyncChunkStream(
+        [
+            _stream_chunk(delta=_delta(reasoning_content="先分析")),
+            _stream_chunk(delta=_delta(reasoning_content="用户约束")),
+            _stream_chunk(delta=None, finish_reason="stop"),
+        ]
+    )
+
+    with patch("llm.openai_provider.AsyncOpenAI") as MockClient:
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(return_value=stream)
+        provider.client = instance
+
+        chunks = [
+            chunk
+            async for chunk in provider.chat([Message(role=Role.USER, content="hi")])
+        ]
+
+    assert [chunk.type for chunk in chunks] == [
+        ChunkType.PROVIDER_STATE_DELTA,
+        ChunkType.PROVIDER_STATE_DELTA,
+        ChunkType.DONE,
+    ]
+    assert chunks[0].provider_state == {"reasoning_content": "先分析"}
+    assert chunks[1].provider_state == {"reasoning_content": "用户约束"}
 
 
 async def test_chat_passes_tool_choice_when_tools_are_present(provider):
