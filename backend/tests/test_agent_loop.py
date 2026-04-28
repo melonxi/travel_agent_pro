@@ -226,6 +226,43 @@ async def test_tool_call_then_response(agent, mock_llm):
 
 
 @pytest.mark.asyncio
+async def test_tool_call_assistant_message_keeps_provider_state(agent, mock_llm):
+    call_count = 0
+
+    async def mock_chat(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.PROVIDER_STATE_DELTA,
+                provider_state={"reasoning_content": "需要调用工具确认。"},
+            )
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_1", name="greet", arguments={"name": "World"}
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+        else:
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="已打招呼")
+            yield LLMChunk(type=ChunkType.DONE)
+
+    mock_llm.chat = mock_chat
+
+    messages = [Message(role=Role.USER, content="say hi")]
+    async for _ in agent.run(messages, phase=1):
+        pass
+
+    assistant_with_tool = next(
+        m for m in messages if m.role == Role.ASSISTANT and m.tool_calls
+    )
+    assert assistant_with_tool.provider_state == {
+        "reasoning_content": "需要调用工具确认。"
+    }
+
+
+@pytest.mark.asyncio
 async def test_hooks_called(agent, mock_llm, hooks):
     """Hooks fire after tool calls."""
     hook_called = []
