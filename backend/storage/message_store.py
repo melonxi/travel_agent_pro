@@ -18,27 +18,38 @@ class MessageStore:
         *,
         tool_calls: str | None = None,
         tool_call_id: str | None = None,
+        provider_state: str | None = None,
         seq: int,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute(
-            "INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, created_at, seq) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (session_id, role, content, tool_calls, tool_call_id, now, seq),
+            "INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                role,
+                content,
+                tool_calls,
+                tool_call_id,
+                provider_state,
+                now,
+                seq,
+            ),
         )
 
     async def append_batch(self, session_id: str, rows: list[dict[str, Any]]) -> None:
         now = datetime.now(timezone.utc).isoformat()
         for row in rows:
             await self._db.execute(
-                "INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, created_at, seq) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session_id,
                     row["role"],
                     row.get("content"),
                     row.get("tool_calls"),
                     row.get("tool_call_id"),
+                    row.get("provider_state"),
                     now,
                     row["seq"],
                 ),
