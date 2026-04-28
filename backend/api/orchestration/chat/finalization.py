@@ -46,6 +46,34 @@ async def persist_unflushed_messages(
     session["next_history_seq"] = next_history_seq
 
 
+def make_context_rebuild_callback(*, deps, session, plan, run):
+    async def _advance_context_epoch(
+        *,
+        messages,
+        from_phase,
+        from_phase3_step,
+        to_phase,
+        to_phase3_step,
+        rebuild_reason,
+    ):
+        old_epoch = int(session.get("current_context_epoch", 0))
+        await persist_unflushed_messages(
+            deps=deps,
+            session=session,
+            plan=plan,
+            messages=messages,
+            phase=from_phase,
+            phase3_step=from_phase3_step,
+            run_id=run.run_id,
+            trip_id=getattr(plan, "trip_id", None),
+            context_epoch=old_epoch,
+        )
+        session["current_context_epoch"] = old_epoch + 1
+        session["_next_rebuild_reason"] = rebuild_reason
+
+    return _advance_context_epoch
+
+
 async def finalize_agent_run(
     *,
     deps,

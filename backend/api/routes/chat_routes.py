@@ -8,7 +8,10 @@ from fastapi import FastAPI, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from agent.types import Message, Role
-from api.orchestration.chat.finalization import persist_unflushed_messages
+from api.orchestration.chat.finalization import (
+    make_context_rebuild_callback,
+    persist_unflushed_messages,
+)
 from api.orchestration.chat.stream import ChatStreamDeps, run_agent_stream
 from api.orchestration.memory.turn import build_memory_context_for_turn
 from api.schemas import BacktrackRequest, ChatRequest
@@ -176,31 +179,12 @@ def register_chat_routes(
             session["_cancel_event"] = cancel_event
             agent.cancel_event = cancel_event
 
-            async def _advance_context_epoch(
-                *,
-                messages,
-                from_phase,
-                from_phase3_step,
-                to_phase,
-                to_phase3_step,
-                rebuild_reason,
-            ):
-                old_epoch = int(session.get("current_context_epoch", 0))
-                await persist_unflushed_messages(
-                    deps=chat_stream_deps,
-                    session=session,
-                    plan=plan,
-                    messages=messages,
-                    phase=from_phase,
-                    phase3_step=from_phase3_step,
-                    run_id=run.run_id,
-                    trip_id=getattr(plan, "trip_id", None),
-                    context_epoch=old_epoch,
-                )
-                session["current_context_epoch"] = old_epoch + 1
-                session["_next_rebuild_reason"] = rebuild_reason
-
-            agent.on_context_rebuild = _advance_context_epoch
+            agent.on_context_rebuild = make_context_rebuild_callback(
+                deps=chat_stream_deps,
+                session=session,
+                plan=plan,
+                run=run,
+            )
 
             async for event in run_agent_stream(
                 chat_stream_deps,
@@ -280,31 +264,12 @@ def register_chat_routes(
         session["_cancel_event"] = cancel_event
         agent.cancel_event = cancel_event
 
-        async def _advance_context_epoch(
-            *,
-            messages,
-            from_phase,
-            from_phase3_step,
-            to_phase,
-            to_phase3_step,
-            rebuild_reason,
-        ):
-            old_epoch = int(session.get("current_context_epoch", 0))
-            await persist_unflushed_messages(
-                deps=chat_stream_deps,
-                session=session,
-                plan=plan,
-                messages=messages,
-                phase=from_phase,
-                phase3_step=from_phase3_step,
-                run_id=run.run_id,
-                trip_id=getattr(plan, "trip_id", None),
-                context_epoch=old_epoch,
-            )
-            session["current_context_epoch"] = old_epoch + 1
-            session["_next_rebuild_reason"] = rebuild_reason
-
-        agent.on_context_rebuild = _advance_context_epoch
+        agent.on_context_rebuild = make_context_rebuild_callback(
+            deps=chat_stream_deps,
+            session=session,
+            plan=plan,
+            run=run,
+        )
 
         phase_before_run = plan.phase
 

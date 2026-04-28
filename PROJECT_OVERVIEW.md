@@ -223,7 +223,7 @@ travel_agent_pro/
 ### Session message history persistence
 会话消息持久化采用 append-only history：SQLite `messages` 是完整历史事实源，`session["messages"]` 仍是可被 phase rebuild 替换的短 runtime prompt 工作集。`messages` 表具备完整历史所需的元数据列：`phase`、`phase3_step`、`history_seq`、`run_id`、`trip_id`、`context_epoch`、`rebuild_reason`；其中 `context_epoch` / `rebuild_reason` 用于从消息行派生 context segment 诊断视图。`history_seq` 通过 `(session_id, history_seq)` 唯一索引约束单 session 内历史顺序，旧数据允许这些列为空；`MessageStore` 支持写入这些元数据，并提供 `max_history_seq()`、`load_by_context_epoch()` 与过滤 system row 的 `load_frontend_view()` helper。
 
-Context segment 不单独建表；`api.orchestration.session.context_segments` 会按 `(session_id, context_epoch)` 从 `messages` rows 纯计算出分段、run_ids、history_seq 范围和 rebuild reason，legacy 空 epoch rows 不参与精确分段。
+Context segment 不单独建表；`api.orchestration.session.context_segments` 会按 `(session_id, context_epoch)` 从 `messages` rows 纯计算出分段、run_ids、history_seq 范围和 rebuild reason，legacy 空 epoch rows 不参与精确分段。重复进入同一 phase/Phase 3 子步骤时依靠不同 `context_epoch` 区分历史 segment，例如 backtrack 后再次进入 Phase 3 skeleton 不会覆盖第一次 skeleton segment。
 
 Context segment 检查目前只开放在 service/helper 层：`SessionPersistence.list_context_segments()` 返回派生摘要，`load_context_segment_messages()` 返回指定 epoch 的内部 raw rows；没有 HTTP debug route，`/api/messages/{session_id}` 仍保持前端聊天视图职责。
 
