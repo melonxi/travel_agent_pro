@@ -33,24 +33,19 @@ def register_session_routes(
         await ensure_storage_ready()
         plan = await state_mgr.create_session()
         compression_events: list[dict] = []
-        session: dict = {
+        agent = build_agent(
+            plan, "default_user", compression_events=compression_events
+        )
+        sessions[plan.session_id] = {
             "plan": plan,
             "messages": [],
-            "agent": None,
+            "agent": agent,
             "needs_rebuild": False,
             "user_id": "default_user",
             "compression_events": compression_events,
             "stats": SessionStats(),
             "_pending_system_notes": [],
-            "persisted_count": 0,
         }
-        session["agent"] = build_agent(
-            plan,
-            "default_user",
-            session=session,
-            compression_events=compression_events,
-        )
-        sessions[plan.session_id] = session
         await session_store.create(plan.session_id, "default_user")
         return {"session_id": plan.session_id, "phase": plan.phase}
 

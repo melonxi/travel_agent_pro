@@ -19,7 +19,6 @@ from api.orchestration.chat.events import (
     passthrough_chunk_event,
 )
 from api.orchestration.chat.finalization import finalize_agent_run, persist_run_safely
-from api.orchestration.session.runtime_view import append_dual_track
 from api.orchestration.common.telemetry_helpers import (
     _plan_writer_updated_fields as plan_writer_updated_fields,
     _record_llm_usage_stats as record_llm_usage_stats,
@@ -231,14 +230,12 @@ async def run_agent_stream(
 
                 if can_continue and accum_text.strip():
                     # 把不完整的 assistant 消息追加到历史
-                    append_dual_track(
-                        session,
-                        plan,
+                    messages.append(
                         Message(
                             role=Role.ASSISTANT,
                             content=accum_text,
                             incomplete=True,
-                        ),
+                        )
                     )
                     run.continuation_context = {
                         "type": progress.value,

@@ -68,7 +68,6 @@ def register_chat_routes(
         session["agent"] = build_agent(
             plan,
             session.get("user_id", "default_user"),
-            session=session,
             compression_events=session.get("compression_events"),
         )
         session["needs_rebuild"] = False
@@ -103,7 +102,6 @@ def register_chat_routes(
             session["agent"] = build_agent(
                 plan,
                 session["user_id"],
-                session=session,
                 compression_events=session.get("compression_events"),
             )
             session["needs_rebuild"] = False
