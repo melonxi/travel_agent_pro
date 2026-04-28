@@ -344,11 +344,25 @@ async def run_day_worker(
                     # LLM call
                     tool_calls: list[ToolCall] = []
                     text_chunks: list[str] = []
+                    provider_state: dict[str, object] = {}
 
                     async for chunk in llm.chat(
                         messages, tools=worker_tools, stream=True
                     ):
-                        if chunk.type == ChunkType.TEXT_DELTA:
+                        if (
+                            chunk.type == ChunkType.PROVIDER_STATE_DELTA
+                            and chunk.provider_state
+                        ):
+                            for key, value in chunk.provider_state.items():
+                                if isinstance(value, str) and isinstance(
+                                    provider_state.get(key), str
+                                ):
+                                    provider_state[key] = (
+                                        provider_state[key] + value
+                                    )
+                                else:
+                                    provider_state[key] = value
+                        elif chunk.type == ChunkType.TEXT_DELTA:
                             text_chunks.append(chunk.content or "")
                         elif (
                             chunk.type == ChunkType.TOOL_CALL_START and chunk.tool_call
@@ -360,7 +374,11 @@ async def run_day_worker(
                     # No tool calls → final response, extract JSON
                     if not tool_calls:
                         messages.append(
-                            Message(role=Role.ASSISTANT, content=assistant_text)
+                            Message(
+                                role=Role.ASSISTANT,
+                                content=assistant_text,
+                                provider_state=provider_state or None,
+                            )
                         )
                         if submitted_dayplan is not None:
                             return DayWorkerResult(
@@ -405,6 +423,7 @@ async def run_day_worker(
                             role=Role.ASSISTANT,
                             content=assistant_text or None,
                             tool_calls=tool_calls,
+                            provider_state=provider_state or None,
                         )
                     )
 

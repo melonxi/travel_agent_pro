@@ -413,7 +413,11 @@ class AgentLoop:
                         )
                         if full_text:
                             messages.append(
-                                Message(role=Role.ASSISTANT, content=full_text)
+                                Message(
+                                    role=Role.ASSISTANT,
+                                    content=full_text,
+                                    provider_state=turn_outcome.provider_state,
+                                )
                             )
                         if repair_outcome:
                             messages.append(
@@ -433,6 +437,7 @@ class AgentLoop:
                             role=Role.ASSISTANT,
                             content="".join(text_chunks) or None,
                             tool_calls=tool_calls,
+                            provider_state=turn_outcome.provider_state,
                         )
                     )
 

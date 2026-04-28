@@ -16,9 +16,20 @@ from run import IterationProgress
 class LlmTurnOutcome:
     text_chunks: list[str]
     tool_calls: list[ToolCall]
+    provider_state: dict[str, Any] | None
     progress: IterationProgress
     next_iteration_idx: int
     previous_phase3_step: str | None
+
+
+def _merge_provider_state_delta(
+    provider_state: dict[str, Any], delta: dict[str, Any]
+) -> None:
+    for key, value in delta.items():
+        if isinstance(value, str) and isinstance(provider_state.get(key), str):
+            provider_state[key] += value
+        else:
+            provider_state[key] = value
 
 
 async def run_llm_turn(
@@ -152,11 +163,15 @@ async def run_llm_turn(
 
     tool_calls: list[ToolCall] = []
     text_chunks: list[str] = []
+    provider_state: dict[str, Any] = {}
     progress = IterationProgress.NO_OUTPUT
 
     async for chunk in llm.chat(messages, **chat_kwargs):
         check_cancelled()
-        if chunk.type == ChunkType.TEXT_DELTA:
+        if chunk.type == ChunkType.PROVIDER_STATE_DELTA:
+            if chunk.provider_state:
+                _merge_provider_state_delta(provider_state, chunk.provider_state)
+        elif chunk.type == ChunkType.TEXT_DELTA:
             if progress == IterationProgress.NO_OUTPUT:
                 progress = IterationProgress.PARTIAL_TEXT
                 update_progress(progress)
@@ -179,6 +194,7 @@ async def run_llm_turn(
     yield LlmTurnOutcome(
         text_chunks=text_chunks,
         tool_calls=tool_calls,
+        provider_state=provider_state or None,
         progress=progress,
         next_iteration_idx=next_iteration_idx,
         previous_phase3_step=next_previous_phase3_step,

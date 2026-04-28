@@ -39,6 +39,7 @@ class Message:
     tool_calls: list[ToolCall] | None = None
     tool_result: ToolResult | None = None
     name: str | None = None
+    provider_state: dict[str, Any] | None = None
     incomplete: bool = False
 
     def to_dict(self) -> dict[str, Any]:

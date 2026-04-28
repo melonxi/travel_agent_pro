@@ -46,6 +46,10 @@ class _LLM:
 
     async def chat(self, messages, **kwargs):
         self.kwargs = kwargs
+        yield LLMChunk(
+            type=ChunkType.PROVIDER_STATE_DELTA,
+            provider_state={"reasoning_content": "thinking"},
+        )
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="hello")
         yield LLMChunk(
             type=ChunkType.TOOL_CALL_START,
@@ -95,6 +99,7 @@ async def test_run_llm_turn_emits_status_reflection_and_collects_outcome():
 
     assert isinstance(outcome, LlmTurnOutcome)
     assert outcome.text_chunks == ["hello"]
+    assert outcome.provider_state == {"reasoning_content": "thinking"}
     assert len(outcome.tool_calls) == 1
     assert outcome.tool_calls[0].human_label == "搜索"
     assert outcome.progress == IterationProgress.PARTIAL_TOOL_CALL
