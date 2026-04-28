@@ -745,3 +745,90 @@ async def test_persistence_loads_context_segment_messages_without_http_route():
 
     assert calls == [("sess-1", 4)]
     assert rows[0]["content"] == "raw tool body"
+
+
+@pytest.mark.asyncio
+async def test_restore_session_initializes_current_context_epoch_from_history(monkeypatch):
+    class _SessionStore:
+        async def load(self, session_id):
+            return {"session_id": session_id, "status": "active", "user_id": "user-1"}
+
+    class _StateMgr:
+        async def load(self, session_id):
+            return TravelPlanState(session_id=session_id, phase=3, destination="杭州")
+
+    class _MessageStore:
+        async def load_all(self, session_id):
+            return [
+                {"role": "user", "content": "旧消息", "context_epoch": 2, "history_seq": 10}
+            ]
+
+    class _ArchiveStore:
+        async def load_latest_snapshot(self, session_id):
+            return None
+
+    class _PhaseRouter:
+        def sync_phase_state(self, plan):
+            return None
+
+    async def _fake_runtime_view(**kwargs):
+        return [Message(role=Role.SYSTEM, content="new system")]
+
+    monkeypatch.setattr(
+        "api.orchestration.session.persistence.build_runtime_view_for_restore",
+        _fake_runtime_view,
+    )
+
+    persistence = SessionPersistence(
+        ensure_storage_ready=lambda: _noop(),
+        db=SimpleNamespace(execute=_noop),
+        session_store=_SessionStore(),
+        message_store=_MessageStore(),
+        archive_store=_ArchiveStore(),
+        state_mgr=_StateMgr(),
+        phase_router=_PhaseRouter(),
+        build_agent=lambda *args, **kwargs: SimpleNamespace(tool_engine=object()),
+    )
+
+    restored = await persistence.restore_session("sess-1")
+
+    assert restored["current_context_epoch"] == 2
+    assert restored["history_messages"][0].message.content == "旧消息"
+    assert len(restored["messages"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_persist_messages_writes_context_epoch_and_rebuild_reason():
+    rows: list[dict[str, object]] = []
+
+    class _MessageStore:
+        async def append_batch(self, session_id, payload):
+            rows.extend(payload)
+
+    persistence = SessionPersistence(
+        ensure_storage_ready=lambda: _noop(),
+        db=SimpleNamespace(execute=_noop),
+        session_store=None,
+        message_store=_MessageStore(),
+        archive_store=None,
+        state_mgr=None,
+        phase_router=None,
+        build_agent=lambda *args, **kwargs: None,
+    )
+
+    next_seq = await persistence.persist_messages(
+        "sess-1",
+        [Message(role=Role.SYSTEM, content="handoff")],
+        phase=3,
+        phase3_step="brief",
+        run_id="run-1",
+        trip_id="trip-a",
+        next_history_seq=7,
+        context_epoch=4,
+        rebuild_reason="phase_forward",
+    )
+
+    assert next_seq == 8
+    assert rows[0]["history_seq"] == 7
+    assert rows[0]["context_epoch"] == 4
+    assert rows[0]["rebuild_reason"] == "phase_forward"

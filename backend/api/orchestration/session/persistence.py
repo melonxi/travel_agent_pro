@@ -137,6 +137,15 @@ def next_history_seq_from_history(history_view: list[HistoryMessage]) -> int:
     return len(history_view)
 
 
+def current_context_epoch_from_rows(rows: list[dict]) -> int:
+    epochs = [
+        int(row["context_epoch"])
+        for row in rows
+        if row.get("context_epoch") is not None
+    ]
+    return max(epochs) if epochs else 0
+
+
 @dataclass
 class SessionPersistence:
     ensure_storage_ready: Callable[[], Awaitable[None]]
@@ -174,6 +183,8 @@ class SessionPersistence:
         run_id: str | None,
         trip_id: str | None,
         next_history_seq: int,
+        context_epoch: int = 0,
+        rebuild_reason: str | None = None,
     ) -> int:
         await self.ensure_storage_ready()
         rows: list[dict[str, object]] = []
@@ -225,6 +236,8 @@ class SessionPersistence:
                     "history_seq": assigned_history_seq,
                     "run_id": run_id,
                     "trip_id": trip_id,
+                    "context_epoch": context_epoch,
+                    "rebuild_reason": rebuild_reason if not rows else None,
                 }
             )
             messages_to_mark.append((message, assigned_history_seq))
@@ -249,10 +262,9 @@ class SessionPersistence:
                 return None
             plan = TravelPlanState.from_dict(json.loads(snapshot["plan_json"]))
 
-        history_view = [
-            deserialize_history_message(row)
-            for row in await self.message_store.load_all(session_id)
-        ]
+        history_rows = await self.message_store.load_all(session_id)
+        current_context_epoch = current_context_epoch_from_rows(history_rows)
+        history_view = [deserialize_history_message(row) for row in history_rows]
         next_history_seq = next_history_seq_from_history(history_view)
         self.phase_router.sync_phase_state(plan)
         compression_events: list[dict] = []
@@ -276,6 +288,7 @@ class SessionPersistence:
             "messages": runtime_view,
             "history_messages": history_view,
             "next_history_seq": next_history_seq,
+            "current_context_epoch": current_context_epoch,
             "agent": agent,
             "needs_rebuild": False,
             "user_id": meta["user_id"],
