@@ -9,6 +9,7 @@ from api.orchestration.session.persistence import (
     deserialize_tool_result,
     serialize_tool_result,
 )
+from state.models import TravelPlanState
 
 
 def test_tool_error_result_serialization_roundtrips_repair_fields():
@@ -205,7 +206,7 @@ async def test_restore_session_initializes_next_history_seq_from_database():
 
     class _StateManager:
         async def load(self, session_id):
-            return SimpleNamespace(session_id=session_id)
+            return TravelPlanState(session_id=session_id, phase=5, destination="东京")
 
     class _MessageStore:
         async def load_all(self, session_id):
@@ -221,6 +222,9 @@ async def test_restore_session_initializes_next_history_seq_from_database():
         def sync_phase_state(self, plan):
             return None
 
+        def get_prompt_for_plan(self, plan):
+            return f"restore prompt phase={plan.phase}"
+
     persistence = SessionPersistence(
         ensure_storage_ready=lambda: _noop(),
         db=SimpleNamespace(execute=_noop),
@@ -229,15 +233,228 @@ async def test_restore_session_initializes_next_history_seq_from_database():
         archive_store=_ArchiveStore(),
         state_mgr=_StateManager(),
         phase_router=_PhaseRouter(),
-        build_agent=lambda *args, **kwargs: "agent",
+        build_agent=lambda *args, **kwargs: _RestoreAgent(),
+        context_manager=_RestoreContextManager(),
+        memory_mgr=_RestoreMemoryManager(),
+        memory_enabled=False,
     )
 
     restored = await persistence.restore_session("sess_1")
 
     assert restored["next_history_seq"] == 13
-    assert all(message.history_persisted for message in restored["messages"])
-    assert restored["messages"][1].history_seq == 12
+    assert all(item.message.history_persisted for item in restored["history_messages"])
+    assert restored["history_messages"][1].message.history_seq == 12
 
 
 async def _noop(*args, **kwargs):
     return None
+
+
+class _RestoreSessionStore:
+    async def load(self, session_id):
+        return {
+            "session_id": session_id,
+            "user_id": "user_restore",
+            "status": "active",
+        }
+
+
+class _RestoreStateManager:
+    async def load(self, session_id):
+        return TravelPlanState(session_id=session_id, phase=5, destination="东京")
+
+
+class _RestorePhaseRouter:
+    def sync_phase_state(self, plan):
+        plan.phase = 5
+
+    def get_prompt_for_plan(self, plan):
+        return f"restore prompt phase={plan.phase}"
+
+
+class _RestoreContextManager:
+    def build_system_message(self, plan, phase_prompt, memory_context, *, available_tools):
+        return Message(
+            role=Role.SYSTEM,
+            content=(
+                f"rebuilt system {phase_prompt} {memory_context} "
+                f"{','.join(available_tools)}"
+            ),
+        )
+
+
+class _RestoreMemoryManager:
+    async def generate_context(self, user_id, plan):
+        return ("restore memory", [], 0, 0, 0)
+
+
+class _RestoreToolEngine:
+    def get_tools_for_phase(self, phase, plan):
+        return [{"name": "save_day_plan"}, {"name": "request_backtrack"}]
+
+
+class _RestoreAgent:
+    def __init__(self):
+        self.tool_engine = _RestoreToolEngine()
+
+
+class _RestoreMessageStore:
+    async def load_all(self, session_id):
+        return [
+            {
+                "role": "system",
+                "content": "old persisted system",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 0,
+                "history_seq": 0,
+                "phase": 1,
+                "phase3_step": None,
+                "run_id": "run_old",
+                "trip_id": "trip_1",
+            },
+            {
+                "role": "user",
+                "content": "我想去东京",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 1,
+                "history_seq": 1,
+                "phase": 1,
+                "phase3_step": None,
+                "run_id": "run_old",
+                "trip_id": "trip_1",
+            },
+            {
+                "role": "tool",
+                "content": serialize_tool_result(
+                    ToolResult(
+                        tool_call_id="tc_old",
+                        status="success",
+                        data={"destination": "东京"},
+                    )
+                ),
+                "tool_calls": None,
+                "tool_call_id": "tc_old",
+                "provider_state": None,
+                "seq": 2,
+                "history_seq": 2,
+                "phase": 1,
+                "phase3_step": None,
+                "run_id": "run_old",
+                "trip_id": "trip_1",
+            },
+            {
+                "role": "user",
+                "content": "继续细化每天路线",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 3,
+                "history_seq": 9,
+                "phase": 5,
+                "phase3_step": None,
+                "run_id": "run_new",
+                "trip_id": "trip_1",
+            },
+        ]
+
+
+@pytest.mark.asyncio
+async def test_restore_session_returns_short_runtime_and_internal_history():
+    built_agents = []
+
+    def build_agent(plan, user_id, *, compression_events=None):
+        agent = _RestoreAgent()
+        built_agents.append((agent, plan, user_id, compression_events))
+        return agent
+
+    persistence = SessionPersistence(
+        ensure_storage_ready=lambda: _noop(),
+        db=SimpleNamespace(execute=_noop),
+        session_store=_RestoreSessionStore(),
+        message_store=_RestoreMessageStore(),
+        archive_store=None,
+        state_mgr=_RestoreStateManager(),
+        phase_router=_RestorePhaseRouter(),
+        build_agent=build_agent,
+        context_manager=_RestoreContextManager(),
+        memory_mgr=_RestoreMemoryManager(),
+        memory_enabled=True,
+    )
+
+    restored = await persistence.restore_session("sess_restore")
+
+    assert restored is not None
+    assert len(restored["history_messages"]) == 4
+    assert len(restored["messages"]) == 2
+    assert len(restored["messages"]) < len(restored["history_messages"])
+    assert restored["next_history_seq"] == 10
+    assert restored["messages"][0].role == Role.SYSTEM
+    assert restored["messages"][0].content.startswith("rebuilt system restore prompt phase=5")
+    assert "save_day_plan" in restored["messages"][0].content
+    assert restored["messages"][1].role == Role.USER
+    assert restored["messages"][1].content == "继续细化每天路线"
+    assert all(message.role != Role.TOOL for message in restored["messages"])
+    assert all(message.tool_result is None for message in restored["messages"])
+    assert restored["history_messages"][2].message.tool_result.data == {"destination": "东京"}
+    assert built_agents[0][2] == "user_restore"
+    assert restored["agent"] is built_agents[0][0]
+
+
+class _LegacyRestoreMessageStore:
+    async def load_all(self, session_id):
+        return [
+            {
+                "role": "user",
+                "content": "legacy one",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 0,
+                "history_seq": None,
+                "phase": None,
+                "phase3_step": None,
+                "run_id": None,
+                "trip_id": None,
+            },
+            {
+                "role": "user",
+                "content": "legacy two",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 1,
+                "history_seq": None,
+                "phase": None,
+                "phase3_step": None,
+                "run_id": None,
+                "trip_id": None,
+            },
+        ]
+
+
+@pytest.mark.asyncio
+async def test_restore_session_legacy_history_seq_falls_back_to_history_length():
+    persistence = SessionPersistence(
+        ensure_storage_ready=lambda: _noop(),
+        db=SimpleNamespace(execute=_noop),
+        session_store=_RestoreSessionStore(),
+        message_store=_LegacyRestoreMessageStore(),
+        archive_store=None,
+        state_mgr=_RestoreStateManager(),
+        phase_router=_RestorePhaseRouter(),
+        build_agent=lambda *args, **kwargs: _RestoreAgent(),
+        context_manager=_RestoreContextManager(),
+        memory_mgr=_RestoreMemoryManager(),
+        memory_enabled=False,
+    )
+
+    restored = await persistence.restore_session("sess_legacy")
+
+    assert restored is not None
+    assert restored["next_history_seq"] == 2
+    assert [message.role for message in restored["messages"]] == [Role.SYSTEM, Role.USER]
+    assert restored["messages"][1].content == "legacy two"
