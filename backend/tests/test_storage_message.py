@@ -216,3 +216,47 @@ async def test_append_batch_rolls_back_partial_rows_on_history_seq_conflict(stor
     messages = await message_store.load_all("sess_msg_test_001")
 
     assert [message["content"] for message in messages] == ["later"]
+
+
+@pytest.mark.asyncio
+async def test_append_batch_persists_context_epoch_and_rebuild_reason(stores):
+    _, message_store = stores
+    await message_store.append_batch(
+        "sess_msg_test_001",
+        [
+            {
+                "role": "system",
+                "content": "phase handoff",
+                "seq": 0,
+                "history_seq": 0,
+                "phase": 3,
+                "phase3_step": "brief",
+                "run_id": "run-1",
+                "trip_id": "trip-1",
+                "context_epoch": 1,
+                "rebuild_reason": "phase_forward",
+            }
+        ],
+    )
+
+    rows = await message_store.load_all("sess_msg_test_001")
+
+    assert rows[0]["context_epoch"] == 1
+    assert rows[0]["rebuild_reason"] == "phase_forward"
+
+
+@pytest.mark.asyncio
+async def test_load_by_context_epoch_orders_by_history_seq(stores):
+    _, message_store = stores
+    await message_store.append_batch(
+        "sess_msg_test_001",
+        [
+            {"role": "assistant", "content": "later", "seq": 2, "history_seq": 2, "context_epoch": 4},
+            {"role": "user", "content": "earlier", "seq": 1, "history_seq": 1, "context_epoch": 4},
+            {"role": "tool", "content": "old epoch body", "seq": 0, "history_seq": 0, "context_epoch": 3},
+        ],
+    )
+
+    rows = await message_store.load_by_context_epoch("sess_msg_test_001", 4)
+
+    assert [row["content"] for row in rows] == ["earlier", "later"]

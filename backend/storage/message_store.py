@@ -25,12 +25,14 @@ class MessageStore:
         history_seq: int | None = None,
         run_id: str | None = None,
         trip_id: str | None = None,
+        context_epoch: int | None = None,
+        rebuild_reason: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute(
             "INSERT INTO messages "
-            "(session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq, phase, phase3_step, history_seq, run_id, trip_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq, phase, phase3_step, history_seq, run_id, trip_id, context_epoch, rebuild_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
                 role,
@@ -45,6 +47,8 @@ class MessageStore:
                 history_seq,
                 run_id,
                 trip_id,
+                context_epoch,
+                rebuild_reason,
             ),
         )
 
@@ -55,8 +59,8 @@ class MessageStore:
         try:
             await self._db.conn.executemany(
                 "INSERT INTO messages "
-                "(session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq, phase, phase3_step, history_seq, run_id, trip_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq, phase, phase3_step, history_seq, run_id, trip_id, context_epoch, rebuild_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         session_id,
@@ -72,6 +76,8 @@ class MessageStore:
                         row.get("history_seq"),
                         row.get("run_id"),
                         row.get("trip_id"),
+                        row.get("context_epoch"),
+                        row.get("rebuild_reason"),
                     )
                     for row in rows
                 ],
@@ -87,6 +93,17 @@ class MessageStore:
             "ORDER BY CASE WHEN history_seq IS NULL THEN 0 ELSE 1 END ASC, "
             "history_seq ASC, seq ASC, id ASC",
             (session_id,),
+        )
+
+    async def load_by_context_epoch(
+        self,
+        session_id: str,
+        context_epoch: int,
+    ) -> list[dict[str, Any]]:
+        return await self._db.fetch_all(
+            "SELECT * FROM messages WHERE session_id = ? AND context_epoch = ? "
+            "ORDER BY history_seq ASC, id ASC",
+            (session_id, context_epoch),
         )
 
     async def load_frontend_view(self, session_id: str) -> list[dict[str, Any]]:

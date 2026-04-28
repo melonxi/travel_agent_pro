@@ -221,7 +221,7 @@ travel_agent_pro/
 工具执行阶段产生的 SYSTEM 消息（如实时约束检查）不会立刻 append 到消息历史，而是缓存到 session 级缓冲区，在下一次 LLM 调用前统一 flush。目的是保证 `assistant.tool_calls → 全部 tool 答复` 的协议序列原子性；并行 tool_calls 期间任何 SYSTEM 都落在整组 tool 之后、下一次 assistant 之前。缓冲区不落盘。
 
 ### Session message history persistence
-会话消息持久化采用 append-only history：SQLite `messages` 是完整历史事实源，`session["messages"]` 仍是可被 phase rebuild 替换的短 runtime prompt 工作集。`messages` 表具备完整历史所需的元数据列：`phase`、`phase3_step`、`history_seq`、`run_id`、`trip_id`。`history_seq` 通过 `(session_id, history_seq)` 唯一索引约束单 session 内历史顺序，旧数据允许这些列为空；`MessageStore` 支持写入这些元数据，并提供 `max_history_seq()` 与过滤 system row 的 `load_frontend_view()` helper。
+会话消息持久化采用 append-only history：SQLite `messages` 是完整历史事实源，`session["messages"]` 仍是可被 phase rebuild 替换的短 runtime prompt 工作集。`messages` 表具备完整历史所需的元数据列：`phase`、`phase3_step`、`history_seq`、`run_id`、`trip_id`、`context_epoch`、`rebuild_reason`；其中 `context_epoch` / `rebuild_reason` 用于从消息行派生 context segment 诊断视图。`history_seq` 通过 `(session_id, history_seq)` 唯一索引约束单 session 内历史顺序，旧数据允许这些列为空；`MessageStore` 支持写入这些元数据，并提供 `max_history_seq()`、`load_by_context_epoch()` 与过滤 system row 的 `load_frontend_view()` helper。
 
 `SessionPersistence.persist_messages()` 现在只 append 尚未落盘的 runtime `Message`，用 session 级 `next_history_seq` 分配 durable `history_seq`，并在写入成功后把内存消息标记为 `history_persisted`。恢复 session 时会把 DB 历史消息标记为已持久化、保留已有 `history_seq`，并通过 `MessageStore.max_history_seq()` 初始化下一次 append 的 `next_history_seq`。
 
@@ -388,7 +388,7 @@ LLM API 异常
 ### SQLite Schema
 ```sql
 sessions       → session_id, user_id, title, phase, status, last_run_*
-messages       → id, session_id, role, content, tool_calls, tool_call_id, seq
+messages       → id, session_id, role, content, tool_calls, tool_call_id, seq, history_seq, phase, phase3_step, run_id, trip_id, context_epoch, rebuild_reason
 plan_snapshots → id, session_id, phase, plan_json, created_at
 archives       → id, session_id, plan_json, summary, created_at
 ```
