@@ -87,6 +87,27 @@ async def _noop(*args, **kwargs):
     return None
 
 
+class _AsyncReturning:
+    def __init__(self, value):
+        self._value = value
+
+    async def load(self, *args, **kwargs):
+        return self._value
+
+
+class _NoopPhaseRouter:
+    def sync_phase_state(self, plan):
+        return None
+
+
+class _StubSessionStore:
+    def __init__(self, meta):
+        self._meta = meta
+
+    async def load(self, session_id):
+        return self._meta
+
+
 @pytest_asyncio.fixture
 async def persistence_factory():
     created: list[Database] = []
@@ -303,3 +324,48 @@ async def test_persist_messages_rejects_negative_persisted_count(persistence_fac
             phase3_step=None,
             persisted_count=-1,
         )
+
+
+@pytest.mark.asyncio
+async def test_restore_session_returns_runtime_view_not_history(persistence_factory):
+    persistence, db, _ = await persistence_factory("sess-R", phase=3)
+
+    # 先写入跨 phase 的历史：phase=1 段 + phase=3 段
+    msgs_p1 = [
+        Message(role=Role.SYSTEM, content="p1-sys"),
+        Message(role=Role.USER, content="p1-用户"),
+    ]
+    msgs_p3 = [
+        Message(role=Role.SYSTEM, content="p3-sys"),
+        Message(role=Role.ASSISTANT, content="handoff"),
+        Message(role=Role.USER, content="p3-用户"),
+    ]
+    await persistence.persist_messages(
+        "sess-R", msgs_p1, phase=1, phase3_step=None, persisted_count=0
+    )
+    await persistence.persist_messages(
+        "sess-R", msgs_p1 + msgs_p3, phase=3, phase3_step="brief", persisted_count=2
+    )
+
+    class _Plan:
+        session_id = "sess-R"
+        phase = 3
+        phase3_step = "brief"
+
+        def to_dict(self):
+            return {}
+
+    persistence.session_store = _StubSessionStore({"user_id": "u", "status": "active"})
+    persistence.state_mgr = _AsyncReturning(_Plan())
+    persistence.phase_router = _NoopPhaseRouter()
+    persistence.build_agent = lambda *a, **kw: object()
+
+    restored = await persistence.restore_session("sess-R")
+    assert restored is not None
+    runtime = restored["messages"]
+    history = restored["history_messages"]
+    assert len(history) == 5
+    # runtime view 只对应当前 phase 段
+    assert [m.content for m in runtime] == ["p3-sys", "handoff", "p3-用户"]
+    # persisted_count 应等于 history 长度（事实源是 history）
+    assert restored["persisted_count"] == 5

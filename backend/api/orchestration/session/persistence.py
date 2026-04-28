@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from agent.types import Message, Role, ToolCall, ToolResult
+from api.orchestration.session.runtime_view import derive_runtime_view
 from state.models import TravelPlanState
 from telemetry.stats import SessionStats
 
@@ -209,19 +210,25 @@ class SessionPersistence:
                     provider_state=provider_state,
                 )
             )
+            # 把 phase 标签作为 sidecar 字段挂到对象上（不改 dataclass）
+            restored_messages[-1].__dict__["_phase_tag"] = row.get("phase")
+            restored_messages[-1].__dict__["_phase3_step_tag"] = row.get("phase3_step")
 
         self.phase_router.sync_phase_state(plan)
         compression_events: list[dict] = []
+        history_view = restored_messages
+        runtime_view = derive_runtime_view(history_view, plan)
         session: dict = {
             "plan": plan,
-            "messages": restored_messages,
+            "messages": runtime_view,
+            "history_messages": history_view,
             "agent": None,
             "needs_rebuild": False,
             "user_id": meta["user_id"],
             "compression_events": compression_events,
             "stats": SessionStats(),
             "_pending_system_notes": [],
-            "persisted_count": len(restored_messages),
+            "persisted_count": len(history_view),
         }
         session["agent"] = self.build_agent(
             plan,

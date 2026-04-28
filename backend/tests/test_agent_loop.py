@@ -699,6 +699,7 @@ async def test_phase_rebuild_skips_memory_when_disabled(mock_llm, engine, hooks)
         [Message(role=Role.USER, content="继续")],
         from_phase=1,
         to_phase=3,
+        from_step=None,
         original_user_message=Message(role=Role.USER, content="继续"),
         result=ToolResult(tool_call_id="tc1", status="success", data={}),
     )
@@ -732,6 +733,7 @@ async def test_rebuild_messages_for_forward_phase_change_uses_handoff_note_not_s
         messages=messages,
         from_phase=3,
         to_phase=5,
+        from_step=None,
         original_user_message=original,
         result=ToolResult(tool_call_id="", status="success"),
     )
@@ -774,6 +776,7 @@ async def test_forward_transition_does_not_call_compress_for_transition(
         messages=[Message(role=Role.USER, content="x")],
         from_phase=3,
         to_phase=5,
+        from_step=None,
         original_user_message=Message(role=Role.USER, content="x"),
         result=ToolResult(tool_call_id="", status="success"),
     )
