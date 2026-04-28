@@ -4,6 +4,10 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from api.orchestration.session.runtime_view import (
+    HistoryMessage,
+    build_runtime_view_for_restore,
+)
 from agent.types import Message, Role, ToolCall, ToolResult
 from state.models import TravelPlanState
 from telemetry.stats import SessionStats
@@ -67,6 +71,68 @@ def deserialize_tool_result(tool_call_id: str, content: str | None) -> ToolResul
     )
 
 
+def deserialize_history_message(row: dict[str, object]) -> HistoryMessage:
+    role = Role(row["role"])
+    tool_calls = None
+    if row.get("tool_calls"):
+        tool_calls = [
+            ToolCall(
+                id=payload["id"],
+                name=payload["name"],
+                arguments=payload["arguments"],
+                human_label=payload.get("human_label"),
+            )
+            for payload in json.loads(row["tool_calls"])
+        ]
+
+    tool_result = None
+    if row.get("tool_call_id"):
+        tool_result = deserialize_tool_result(
+            str(row["tool_call_id"]),
+            row.get("content"),
+        )
+    provider_state = None
+    if row.get("provider_state"):
+        provider_state = json.loads(row["provider_state"])
+
+    raw_history_seq = row.get("history_seq")
+    history_seq = int(raw_history_seq) if raw_history_seq is not None else None
+    raw_phase = row.get("phase")
+    phase = int(raw_phase) if raw_phase is not None else None
+
+    return HistoryMessage(
+        message=Message(
+            role=role,
+            content=row.get("content") if tool_result is None else None,
+            tool_calls=tool_calls,
+            tool_result=tool_result,
+            provider_state=provider_state,
+            history_persisted=True,
+            history_seq=history_seq,
+        ),
+        phase=phase,
+        phase3_step=(
+            str(row["phase3_step"])
+            if row.get("phase3_step") is not None
+            else None
+        ),
+        history_seq=history_seq,
+        run_id=str(row["run_id"]) if row.get("run_id") is not None else None,
+        trip_id=str(row["trip_id"]) if row.get("trip_id") is not None else None,
+    )
+
+
+def next_history_seq_from_history(history_view: list[HistoryMessage]) -> int:
+    seq_values = [
+        item.history_seq
+        for item in history_view
+        if item.history_seq is not None
+    ]
+    if seq_values:
+        return max(seq_values) + 1
+    return len(history_view)
+
+
 @dataclass
 class SessionPersistence:
     ensure_storage_ready: Callable[[], Awaitable[None]]
@@ -77,6 +143,9 @@ class SessionPersistence:
     state_mgr: object
     phase_router: object
     build_agent: Callable[..., object]
+    context_manager: object | None = None
+    memory_mgr: object | None = None
+    memory_enabled: bool = False
 
     async def persist_messages(
         self,
@@ -163,66 +232,37 @@ class SessionPersistence:
                 return None
             plan = TravelPlanState.from_dict(json.loads(snapshot["plan_json"]))
 
-        restored_messages: list[Message] = []
-        for row in await self.message_store.load_all(session_id):
-            role = Role(row["role"])
-            tool_calls = None
-            if row.get("tool_calls"):
-                tool_calls = [
-                    ToolCall(
-                        id=payload["id"],
-                        name=payload["name"],
-                        arguments=payload["arguments"],
-                        human_label=payload.get("human_label"),
-                    )
-                    for payload in json.loads(row["tool_calls"])
-                ]
-
-            tool_result = None
-            if row.get("tool_call_id"):
-                tool_result = deserialize_tool_result(
-                    row["tool_call_id"],
-                    row.get("content"),
-                )
-            provider_state = None
-            if row.get("provider_state"):
-                provider_state = json.loads(row["provider_state"])
-
-            restored_messages.append(
-                Message(
-                    role=role,
-                    content=row.get("content") if tool_result is None else None,
-                    tool_calls=tool_calls,
-                    tool_result=tool_result,
-                    provider_state=provider_state,
-                    history_persisted=True,
-                    history_seq=(
-                        int(row["history_seq"])
-                        if row.get("history_seq") is not None
-                        else None
-                    ),
-                )
-            )
-
-        max_history_seq = await self.message_store.max_history_seq(session_id)
-        next_history_seq = 0 if max_history_seq is None else max_history_seq + 1
+        history_view = [
+            deserialize_history_message(row)
+            for row in await self.message_store.load_all(session_id)
+        ]
+        next_history_seq = next_history_seq_from_history(history_view)
         self.phase_router.sync_phase_state(plan)
         compression_events: list[dict] = []
-        session: dict = {
+        agent = self.build_agent(
+            plan,
+            meta["user_id"],
+            compression_events=compression_events,
+        )
+        runtime_view = await build_runtime_view_for_restore(
+            history_view=history_view,
+            plan=plan,
+            user_id=meta["user_id"],
+            phase_router=self.phase_router,
+            context_manager=self.context_manager,
+            memory_mgr=self.memory_mgr,
+            memory_enabled=self.memory_enabled,
+            tool_engine=agent.tool_engine,
+        )
+        return {
             "plan": plan,
-            "messages": restored_messages,
-            "agent": None,
+            "messages": runtime_view,
+            "history_messages": history_view,
+            "next_history_seq": next_history_seq,
+            "agent": agent,
             "needs_rebuild": False,
             "user_id": meta["user_id"],
             "compression_events": compression_events,
             "stats": SessionStats(),
             "_pending_system_notes": [],
-            "next_history_seq": next_history_seq,
         }
-        session["agent"] = self.build_agent(
-            plan,
-            meta["user_id"],
-            session=session,
-            compression_events=compression_events,
-        )
-        return session

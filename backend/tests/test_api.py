@@ -1274,6 +1274,100 @@ async def test_api_messages_uses_active_runtime_view_not_full_internal_history(a
 
 
 @pytest.mark.asyncio
+async def test_get_messages_does_not_expose_internal_restore_history(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        assert session_resp.status_code == 200
+        session_id = session_resp.json()["session_id"]
+
+        session = _get_sessions(app)[session_id]
+        session["history_messages"] = [
+            {
+                "history_seq": 0,
+                "phase": 1,
+                "phase3_step": None,
+                "run_id": "run_internal",
+                "trip_id": "trip_internal",
+            }
+        ]
+        response = await client.get(f"/api/messages/{session_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+    assert all("history_messages" not in item for item in payload)
+    assert all("history_seq" not in item for item in payload)
+    assert all("phase" not in item for item in payload)
+    assert all("phase3_step" not in item for item in payload)
+    assert all("run_id" not in item for item in payload)
+    assert all("trip_id" not in item for item in payload)
+
+
+@pytest.mark.asyncio
+async def test_get_messages_keeps_public_shape_for_append_only_rows(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        assert session_resp.status_code == 200
+        session_id = session_resp.json()["session_id"]
+
+    sessions = _get_sessions(app)
+    session = sessions[session_id]
+    message_store = _get_message_store(app)
+    await message_store.append_batch(
+        session_id,
+        [
+            {
+                "role": "system",
+                "content": "internal system",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 0,
+                "history_seq": 0,
+                "phase": session["plan"].phase,
+                "phase3_step": session["plan"].phase3_step,
+                "run_id": "run_public_shape",
+                "trip_id": session["plan"].trip_id,
+            },
+            {
+                "role": "user",
+                "content": "你好",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 1,
+                "history_seq": 1,
+                "phase": session["plan"].phase,
+                "phase3_step": session["plan"].phase3_step,
+                "run_id": "run_public_shape",
+                "trip_id": session["plan"].trip_id,
+            },
+        ],
+    )
+    sessions.pop(session_id)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get(f"/api/messages/{session_id}")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "role": "user",
+            "content": "你好",
+            "tool_calls": None,
+            "tool_call_id": None,
+            "seq": 1,
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_cancelled_stream_persists_unflushed_messages_once(app):
     async def fake_run(self, messages, phase, tools_override=None):
         messages.append(Message(role=Role.ASSISTANT, content="开始查"))
