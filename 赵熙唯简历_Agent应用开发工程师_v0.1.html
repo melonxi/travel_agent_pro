@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>赵熙唯 — AI Agent 应用开发工程师</title>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap"
+            rel="stylesheet"
+        />
+        <style>
+            :root {
+                --ink: #1a1a1a;
+                --ink-secondary: #555;
+                --ink-tertiary: #888;
+                --accent: #2563eb;
+                --accent-soft: #dbeafe;
+                --surface: #ffffff;
+                --surface-alt: #f8f9fb;
+                --border: #e5e7eb;
+                --border-light: #f0f1f3;
+                --tag-bg: #f1f5f9;
+                --tag-text: #475569;
+                --font-sans: "Noto Sans SC", -apple-system, sans-serif;
+                --font-mono: "JetBrains Mono", monospace;
+            }
+
+            *,
+            *::before,
+            *::after {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            @page {
+                size: A4;
+                margin: 0;
+            }
+
+            body {
+                font-family: var(--font-sans);
+                color: var(--ink);
+                background: #eef0f4;
+                line-height: 1.65;
+                font-size: 13.5px;
+                -webkit-font-smoothing: antialiased;
+            }
+
+            .page {
+                width: 210mm;
+                min-height: 297mm;
+                margin: 32px auto;
+                background: var(--surface);
+                box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+                padding: 44px 48px 40px;
+            }
+
+            @media print {
+                body {
+                    background: white;
+                }
+                .page {
+                    margin: 0;
+                    box-shadow: none;
+                    padding: 36px 42px 32px;
+                }
+                .no-print {
+                    display: none;
+                }
+            }
+
+            /* ── Header ── */
+            .header {
+                margin-bottom: 28px;
+            }
+
+            .header-name {
+                font-size: 28px;
+                font-weight: 700;
+                letter-spacing: 4px;
+                margin-bottom: 10px;
+                color: var(--ink);
+            }
+
+            .header-meta {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px 20px;
+                font-size: 12.5px;
+                color: var(--ink-secondary);
+                line-height: 1.8;
+            }
+
+            .header-meta .divider {
+                color: var(--border);
+            }
+
+            .header-target {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                font-weight: 500;
+                color: var(--accent);
+            }
+
+            .header-target::before {
+                content: "";
+                display: inline-block;
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                background: var(--accent);
+            }
+
+            /* ── Sections ── */
+            .section {
+                margin-bottom: 22px;
+            }
+
+            .section-title {
+                font-size: 14px;
+                font-weight: 700;
+                letter-spacing: 2px;
+                text-transform: uppercase;
+                color: var(--ink);
+                padding-bottom: 7px;
+                border-bottom: 2px solid var(--ink);
+                margin-bottom: 14px;
+            }
+
+            /* ── Skills ── */
+            .skill-grid {
+                display: grid;
+                grid-template-columns: max-content 1fr;
+                gap: 6px 8px;
+                font-size: 12.5px;
+                line-height: 1.7;
+            }
+
+            .skill-label {
+                font-weight: 500;
+                color: var(--ink);
+                text-align: left;
+                padding-top: 1px;
+            }
+
+            .skill-content {
+                color: var(--ink-secondary);
+            }
+
+            /* ── Experience ── */
+            .exp-block {
+                margin-bottom: 16px;
+            }
+            .exp-block:last-child {
+                margin-bottom: 0;
+            }
+
+            .exp-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                margin-bottom: 4px;
+            }
+
+            .exp-title {
+                font-size: 14px;
+                font-weight: 700;
+                color: var(--ink);
+            }
+
+            .exp-date {
+                font-size: 12px;
+                font-family: var(--font-mono);
+                color: var(--ink-tertiary);
+                white-space: nowrap;
+            }
+
+            .exp-subtitle {
+                font-size: 12.5px;
+                color: var(--ink-secondary);
+                margin-bottom: 6px;
+            }
+
+            .exp-desc {
+                font-size: 12.5px;
+                color: var(--ink-secondary);
+                line-height: 1.7;
+            }
+
+            /* ── Project output list ── */
+            .output-list {
+                list-style: none;
+                margin-top: 8px;
+            }
+
+            .output-list li {
+                font-size: 12px;
+                color: var(--ink-secondary);
+                line-height: 1.7;
+                padding: 3px 0;
+                padding-left: 14px;
+                position: relative;
+            }
+
+            .output-list li::before {
+                content: "";
+                position: absolute;
+                left: 0;
+                top: 10px;
+                width: 5px;
+                height: 5px;
+                border-radius: 50%;
+                background: var(--accent);
+                opacity: 0.6;
+            }
+
+            .output-list .proj-name {
+                font-weight: 500;
+                color: var(--ink);
+            }
+
+            .output-list .proj-platform {
+                font-family: var(--font-mono);
+                font-size: 11px;
+                color: var(--ink-tertiary);
+            }
+
+            /* ── Project detail ── */
+            .proj-block {
+                margin-bottom: 18px;
+                padding-bottom: 18px;
+                border-bottom: 1px solid var(--border-light);
+            }
+            .proj-block:last-child {
+                border-bottom: none;
+                margin-bottom: 0;
+                padding-bottom: 0;
+            }
+
+            .proj-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                margin-bottom: 2px;
+            }
+
+            .proj-title {
+                font-size: 13.5px;
+                font-weight: 700;
+                color: var(--ink);
+            }
+
+            .proj-tags {
+                display: inline-flex;
+                gap: 5px;
+                margin-left: 8px;
+            }
+
+            .proj-tag {
+                font-size: 10px;
+                font-weight: 500;
+                padding: 1px 7px;
+                border-radius: 3px;
+                background: var(--accent-soft);
+                color: var(--accent);
+                letter-spacing: 0.3px;
+            }
+
+            .proj-tag.profit {
+                background: #dcfce7;
+                color: #16a34a;
+            }
+
+            .proj-role {
+                font-size: 11.5px;
+                color: var(--ink-tertiary);
+                font-family: var(--font-mono);
+                margin-bottom: 6px;
+            }
+
+            .proj-summary {
+                font-size: 12.5px;
+                color: var(--ink-secondary);
+                margin-bottom: 6px;
+                line-height: 1.7;
+            }
+
+            .proj-detail-label {
+                font-size: 11.5px;
+                font-weight: 500;
+                color: var(--ink);
+                margin-top: 6px;
+                margin-bottom: 3px;
+            }
+
+            .proj-detail-list {
+                list-style: none;
+                font-size: 12px;
+                color: var(--ink-secondary);
+                line-height: 1.75;
+            }
+
+            .proj-detail-list li {
+                padding-left: 12px;
+                position: relative;
+            }
+
+            .proj-detail-list li::before {
+                content: "-";
+                position: absolute;
+                left: 0;
+                color: var(--ink-tertiary);
+            }
+
+            .proj-result {
+                font-size: 12px;
+                color: var(--ink-secondary);
+                margin-top: 6px;
+                padding: 6px 10px;
+                background: var(--surface-alt);
+                border-left: 3px solid var(--accent);
+                border-radius: 0 4px 4px 0;
+                line-height: 1.7;
+            }
+
+            /* ── Other projects ── */
+            .other-group {
+                margin-bottom: 10px;
+            }
+            .other-group:last-child {
+                margin-bottom: 0;
+            }
+
+            .other-label {
+                font-size: 11.5px;
+                font-weight: 500;
+                color: var(--ink);
+                margin-bottom: 2px;
+            }
+
+            .other-items {
+                font-size: 12px;
+                color: var(--ink-secondary);
+                line-height: 1.75;
+            }
+
+            /* ── Education ── */
+            .edu-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                font-size: 12.5px;
+                margin-bottom: 4px;
+            }
+
+            .edu-school {
+                font-weight: 500;
+                color: var(--ink);
+            }
+            .edu-detail {
+                color: var(--ink-secondary);
+            }
+            .edu-date {
+                font-family: var(--font-mono);
+                font-size: 12px;
+                color: var(--ink-tertiary);
+            }
+            .edu-extra {
+                font-size: 11.5px;
+                color: var(--ink-tertiary);
+                margin-top: 1px;
+                margin-bottom: 8px;
+            }
+
+            /* ── Page break helper ── */
+            .page-break {
+                page-break-before: always;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="page">
+            <!-- HEADER -->
+            <div class="header">
+                <div class="header-name">赵熙唯</div>
+                <div class="header-meta">
+                    <span>13951001663（微信同号）</span>
+                    <span class="divider">|</span>
+                    <span>zhaoxw1993@163.com</span>
+                    <span class="divider">|</span>
+                    <span class="header-target"
+                        >AI Agent 应用开发工程师 · 上海</span
+                    >
+                    <span class="divider">|</span>
+                    <span>南京理工大学 · 全日制硕士 · 通信与信息系统</span>
+                    <span class="divider">|</span>
+                    <span>安徽大学 · 全日制本科 · 电子信息系统</span>
+                </div>
+            </div>
+
+            <!-- HIGHLIGHTS -->
+            <div class="section">
+                <div class="section-title">核心亮点</div>
+                <ul class="proj-detail-list">
+                    <li>
+                        4 年
+                        LLM/Agent 工程实践，自研 agent harness（loop / 工具协议 / 记忆 / 子 Agent 编排 / Eval）
+                    </li>
+                    <li>
+                        京东 2 年内容审核 NLP 工业级生产经验，覆盖情感分析、谩骂检测、音频查重，日常与大促零积压
+                    </li>
+                    <li>
+                        toC AI 产品已盈利：织词 AI 上线 App Store，2000+ 付费用户，独立完成产品/开发/运营全流程
+                    </li>
+                </ul>
+            </div>
+
+            <!-- EXPERIENCE -->
+            <div class="section">
+                <div class="section-title">工作经历</div>
+
+                <div class="exp-block">
+                    <div class="exp-header">
+                        <div class="exp-title">独立开发者 / AI产品工程师</div>
+                        <div class="exp-date">2022.07 — 至今</div>
+                    </div>
+                    <div class="exp-desc">
+                        全职独立开发，专注 AI
+                        产品全栈实践与 agent
+                        工程，覆盖 iOS、桌面端、Web 全栈与微信小程序。代表作 <span style="color: var(--ink); font-weight: 500;">织词 AI</span>（iOS 多模态英语学习应用，App Store 已盈利、2000+ 付费用户）与 <span style="color: var(--ink); font-weight: 500;">Travel Agent Pro</span>（自研 agent harness 的全栈旅行规划系统）；详见下方项目经历。
+                    </div>
+                </div>
+
+                <div class="exp-block">
+                    <div class="exp-header">
+                        <div class="exp-title">
+                            京东零售（上海 · 平台业务中心 · 平台业务研发部）
+                        </div>
+                        <div class="exp-date">2020.07 — 2022.07</div>
+                    </div>
+                    <div class="exp-subtitle">算法工程师</div>
+                    <div class="exp-desc">
+                        负责京东内容审核平台的文本机审能力建设及部分工程系统开发。独立开发并上线情感分析、谩骂检测、音频查重等算法服务；参与视频/音频异步机审平台的架构设计与开发（Kafka异步架构、任务调度）；保障日常运营和大促期间系统稳定运行。
+                    </div>
+                </div>
+            </div>
+
+            <!-- PROJECTS -->
+            <div class="section">
+                <div class="section-title">项目经历</div>
+
+                <!-- Travel Agent Pro -->
+                <div class="proj-block">
+                    <div class="proj-header">
+                        <div>
+                            <span class="proj-title"
+                                >Travel Agent Pro — AI旅行规划Agent</span
+                            ><span class="proj-tags"
+                                ><span class="proj-tag">开源</span
+                                ><span class="proj-tag">独立开发</span></span
+                            >
+                        </div>
+                        <div class="exp-date">2025.10 — 至今</div>
+                    </div>
+                    <div class="proj-role">
+                        项目负责人 · Agent Harness 设计 / 上下文工程 / 全栈实现
+                    </div>
+                    <div class="proj-summary">
+                        全栈agentic旅行规划系统，后端自研agent
+                        harness承载长程多阶段规划任务，前端通过SSE流式渲染推理过程、工具调用轨迹、子Agent进度与记忆召回；通过任务状态机、token高效工具协议、上下文工程（上下文压缩
+                        +
+                        笔记外置
+                        +
+                        按需召回）与LLM-as-judge评测，把开放式规划任务收敛到可观察、可回滚、可评估的工程边界内。
+                    </div>
+                    <div class="proj-detail-label">系统架构与关键实现</div>
+                    <ul class="proj-detail-list">
+                        <li>
+                            Agent
+                            Loop：think-act-observe主循环，流式响应、多轮工具调用、多模型function
+                            calling、断点续跑、轨迹回滚与中断恢复
+                        </li>
+                        <li>
+                            工具协议：基于schema声明入参与返回，按阶段裁剪工具集压缩token；区分read/write权限，写操作自动校验
+                        </li>
+                        <li>
+                            上下文工程：分层管理长期、短期与经验记忆，针对编排设计的上下文压缩机制，通过规则门控
+                            + 向量检索 +
+                            rerank按需召回；
+                        </li>
+                        <li>
+                            子Agent并行编排：将复杂规划拆为独立子任务并发执行，仅回传摘要避免上下文污染；汇总后做一致性校验与统一写入
+                        </li>
+                        <li>
+                            可观测与Agent
+                            Eval：用OpenTelemetry记录LLM调用、工具轨迹、状态迁移、记忆命中、token成本与延迟；结合guardrails、硬约束、LLM-as-judge、Golden
+                            Eval、E2E与pytest回归评测质量
+                        </li>
+                    </ul>
+                    <div class="proj-result">
+                        Python 3.12 + FastAPI + Pydantic v2 + aiosqlite + React
+                        19 + TypeScript + Vite +
+                        OpenTelemetry；后端pytest当前可收集1692个用例，代码开源。
+                    </div>
+                </div>
+
+                <!-- ContentGuard -->
+                <div class="proj-block">
+                    <div class="proj-header">
+                        <div>
+                            <span class="proj-title"
+                                >ContentGuard — 企业级智能内容审核Agent</span
+                            ><span class="proj-tags"
+                                ><span class="proj-tag">开源</span
+                                ><span class="proj-tag">独立开发</span></span
+                            >
+                        </div>
+                        <div class="exp-date">2026.04 — 至今</div>
+                    </div>
+                    <div class="proj-role">
+                        项目负责人 · 京东内容审核经验的Agent化升级
+                    </div>
+                    <div class="proj-summary">
+                        面向toB场景的AI内容审核Agent，将传统规则+模型审核升级为Agent驱动平台。支持文本/图文多模态审核，策略自适应，人机协同复审，完整审计链路。
+                    </div>
+                    <div class="proj-detail-label">系统架构</div>
+                    <ul class="proj-detail-list">
+                        <li>
+                            Orchestrator
+                            Agent：分析风险等级，动态编排审核流程（高风险多工具交叉验证，低风险快速规则通道）
+                        </li>
+                        <li>
+                            5个审核工具：敏感词/正则 · LLM语义审核 ·
+                            情感/立场分析 · 图文一致性校验 · RAG合规知识库
+                        </li>
+                        <li>策略引擎：业务规则配置，策略版本管理和热更新</li>
+                        <li>
+                            Human-in-the-Loop：低置信度内容转人工复审，完整决策链路审计
+                        </li>
+                    </ul>
+                    <div class="proj-detail-label">设计亮点</div>
+                    <ul class="proj-detail-list">
+                        <li>
+                            三级审核成本控制：规则快筛→轻量模型→LLM深度审核，仅对需语义理解的内容调用LLM
+                        </li>
+                        <li>
+                            全链路trace：每条内容的审核路径、工具调用、耗时、LLM推理过程完整记录
+                        </li>
+                    </ul>
+                    <div class="proj-result">
+                        Python 3.12 + FastAPI + LangGraph + RAG + Docker +
+                        OpenTelemetry。asyncio异步架构，支持批量/实时双模式。
+                    </div>
+                </div>
+
+                <!-- 织词AI -->
+                <div class="proj-block">
+                    <div class="proj-header">
+                        <div>
+                            <span class="proj-title"
+                                >织词AI — 多模态英语学习iOS应用</span
+                            ><span class="proj-tags"
+                                ><span class="proj-tag profit">已盈利</span
+                                ><span class="proj-tag">独立开发</span></span
+                            >
+                        </div>
+                        <div class="exp-date">2024.06 — 至今</div>
+                    </div>
+                    <div class="proj-role">
+                        项目负责人 · 产品 / 开发 / 运营全流程
+                    </div>
+                    <div class="proj-summary">
+                        基于多模态LLM的AI英语学习应用，已上线App
+                        Store，2000+付费用户并实现盈利；独立完成产品设计、UI/UX、开发、上架到用户增长全流程。
+                    </div>
+                    <ul class="proj-detail-list">
+                        <li>
+                            AI图像识别学习：拍照/选图→LLM识别图中物体→生成英语词汇与例句
+                        </li>
+                        <li>
+                            AI文章生成：基于用户词汇库与学习水平自动生成个性化阅读材料
+                        </li>
+                        <li>
+                            iOS原生：Swift + SwiftUI、MVVM架构、EnvironmentObject状态管理
+                        </li>
+                        <li>
+                            后端：Appwrite（认证/持久化）、StoreKit 2（订阅管理）、系统TTS（美音/英音）
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- 京东内容审核 NLP（合并） -->
+                <div class="proj-block">
+                    <div class="proj-header">
+                        <div>
+                            <span class="proj-title"
+                                >京东内容审核 — 文本机审 NLP 算法体系</span
+                            >
+                        </div>
+                        <div class="exp-date">2020.07 — 2022.07</div>
+                    </div>
+                    <div class="proj-role">
+                        项目负责人 · 多个核心算法服务从 0 到 1 上线，日常与大促零积压
+                    </div>
+                    <ul class="proj-detail-list">
+                        <li>
+                            <strong>负面情感检测</strong>（2020.12—2021.02）：UGC/PGC长文本分类（TF-IDF+SVM
+                            → Word2Vec+TextCNN / RoBERTa继续预训练+微调）+
+                            伪标签迭代/回译增强/Focal Loss；精确率 0.95 / 召回率 0.9，周均客诉 < 5 条
+                        </li>
+                        <li>
+                            <strong>评论谩骂检测</strong>（2021.10—2021.11）：三层检测（模糊词典→FastText→RoBERTa仲裁），规则+模型结合降低大模型调用率；精确率 0.9 / 召回率 0.97 / 漏审 < 0.1%
+                        </li>
+                        <li>
+                            <strong>音频查重</strong>（2021.12—2022.01）：Landmark音频指纹 + ElasticSearch指纹库 + 自研匹配算法 + Kafka异步架构；日均30万条，未修改抄袭片段识别率接近100%
+                        </li>
+                        <li>
+                            <strong>其他</strong>：竞品/静音/空格检测、文本纠错、品牌实体识别、句子通顺检测；视频/音频异步机审平台（Kafka 任务调度）
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Other -->
+                <div
+                    class="proj-block"
+                    style="padding-bottom: 0; border-bottom: none"
+                >
+                    <div
+                        class="proj-title"
+                        style="font-size: 13px; margin-bottom: 8px"
+                    >
+                        其他独立开发项目
+                    </div>
+                    <div class="other-items">
+                        类Notion桌面笔记应用（Electron + Tab预测 + LLM对话 + 文档RAG） · 习惯打卡微信小程序（长期稳定运行）
+                    </div>
+                </div>
+            </div>
+
+            <!-- SKILLS -->
+            <div class="section">
+                <div class="section-title">技术能力</div>
+                <div class="skill-grid">
+                    <div class="skill-label">Agent</div>
+                    <div class="skill-content">
+                        agent harness 设计、上下文工程（三层记忆 / 多级召回 / compaction）、Agent Eval（LLM-as-judge / Golden Eval）、子 Agent 编排、多模型 function calling（OpenAI / Anthropic）
+                    </div>
+
+                    <div class="skill-label">后端</div>
+                    <div class="skill-content">
+                        Python / FastAPI / asyncio / Pydantic v2 / aiosqlite / OpenTelemetry；Kafka / ElasticSearch
+                    </div>
+
+                    <div class="skill-label">前端</div>
+                    <div class="skill-content">
+                        React 19 / TypeScript / Vite；Swift / SwiftUI（iOS）、Electron
+                    </div>
+
+                    <div class="skill-label">模型</div>
+                    <div class="skill-content">
+                        BERT / RoBERTa 微调、PyTorch；文本分类 / 实体识别 / 情感分析
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>
