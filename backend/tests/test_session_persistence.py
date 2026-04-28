@@ -458,3 +458,208 @@ async def test_restore_session_legacy_history_seq_falls_back_to_history_length()
     assert restored["next_history_seq"] == 2
     assert [message.role for message in restored["messages"]] == [Role.SYSTEM, Role.USER]
     assert restored["messages"][1].content == "legacy two"
+
+
+class _NoopSyncPhaseRouter(_RestorePhaseRouter):
+    def sync_phase_state(self, plan):
+        return None
+
+
+class _Phase3SkeletonStateManager:
+    async def load(self, session_id):
+        return TravelPlanState(
+            session_id=session_id,
+            phase=3,
+            phase3_step="skeleton",
+            destination="大阪",
+        )
+
+
+class _Phase3SkeletonMessageStore:
+    async def load_all(self, session_id):
+        return [
+            {
+                "role": "user",
+                "content": "画像输入",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 0,
+                "history_seq": 0,
+                "phase": 3,
+                "phase3_step": "brief",
+                "run_id": "run_brief",
+                "trip_id": "trip_1",
+            },
+            {
+                "role": "tool",
+                "content": serialize_tool_result(
+                    ToolResult(
+                        tool_call_id="tc_brief",
+                        status="success",
+                        data={"trip_brief": "old brief"},
+                    )
+                ),
+                "tool_calls": None,
+                "tool_call_id": "tc_brief",
+                "provider_state": None,
+                "seq": 1,
+                "history_seq": 1,
+                "phase": 3,
+                "phase3_step": "brief",
+                "run_id": "run_brief",
+                "trip_id": "trip_1",
+            },
+            {
+                "role": "user",
+                "content": "生成骨架",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 2,
+                "history_seq": 2,
+                "phase": 3,
+                "phase3_step": "skeleton",
+                "run_id": "run_skeleton",
+                "trip_id": "trip_1",
+            },
+        ]
+
+
+@pytest.mark.asyncio
+async def test_restore_session_phase3_substep_keeps_previous_substeps_out_of_runtime():
+    persistence = SessionPersistence(
+        ensure_storage_ready=lambda: _noop(),
+        db=SimpleNamespace(execute=_noop),
+        session_store=_RestoreSessionStore(),
+        message_store=_Phase3SkeletonMessageStore(),
+        archive_store=None,
+        state_mgr=_Phase3SkeletonStateManager(),
+        phase_router=_NoopSyncPhaseRouter(),
+        build_agent=lambda *args, **kwargs: _RestoreAgent(),
+        context_manager=_RestoreContextManager(),
+        memory_mgr=_RestoreMemoryManager(),
+        memory_enabled=True,
+    )
+
+    restored = await persistence.restore_session("sess_phase3")
+
+    assert restored is not None
+    assert len(restored["history_messages"]) == 3
+    assert len(restored["messages"]) == 2
+    rendered = "\n".join(str(message.content) for message in restored["messages"])
+    assert "生成骨架" in rendered
+    assert "画像输入" not in rendered
+    assert "old brief" not in rendered
+    assert all(message.role != Role.TOOL for message in restored["messages"])
+
+
+class _BacktrackToPhase3StateManager:
+    async def load(self, session_id):
+        return TravelPlanState(
+            session_id=session_id,
+            phase=3,
+            phase3_step="brief",
+            destination="京都",
+        )
+
+
+class _BacktrackToPhase3MessageStore:
+    async def load_all(self, session_id):
+        return [
+            {
+                "role": "user",
+                "content": "老 Phase 3 输入",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 0,
+                "history_seq": 0,
+                "phase": 3,
+                "phase3_step": "brief",
+                "run_id": "run_old_phase3",
+                "trip_id": "trip_1",
+            },
+            {
+                "role": "tool",
+                "content": serialize_tool_result(
+                    ToolResult(
+                        tool_call_id="tc_old_phase3",
+                        status="success",
+                        data={"trip_brief": "old target phase segment"},
+                    )
+                ),
+                "tool_calls": None,
+                "tool_call_id": "tc_old_phase3",
+                "provider_state": None,
+                "seq": 1,
+                "history_seq": 1,
+                "phase": 3,
+                "phase3_step": "brief",
+                "run_id": "run_old_phase3",
+                "trip_id": "trip_1",
+            },
+            {
+                "role": "user",
+                "content": "预算太高，回到框架规划",
+                "tool_calls": None,
+                "tool_call_id": None,
+                "provider_state": None,
+                "seq": 2,
+                "history_seq": 8,
+                "phase": 5,
+                "phase3_step": None,
+                "run_id": "run_backtrack",
+                "trip_id": "trip_1",
+            },
+            {
+                "role": "tool",
+                "content": serialize_tool_result(
+                    ToolResult(
+                        tool_call_id="tc_backtrack",
+                        status="success",
+                        data={
+                            "backtracked": True,
+                            "to_phase": 3,
+                            "reason": "预算太高",
+                        },
+                    )
+                ),
+                "tool_calls": None,
+                "tool_call_id": "tc_backtrack",
+                "provider_state": None,
+                "seq": 3,
+                "history_seq": 9,
+                "phase": 5,
+                "phase3_step": None,
+                "run_id": "run_backtrack",
+                "trip_id": "trip_1",
+            },
+        ]
+
+
+@pytest.mark.asyncio
+async def test_restore_session_after_backtrack_does_not_replay_old_target_phase():
+    persistence = SessionPersistence(
+        ensure_storage_ready=lambda: _noop(),
+        db=SimpleNamespace(execute=_noop),
+        session_store=_RestoreSessionStore(),
+        message_store=_BacktrackToPhase3MessageStore(),
+        archive_store=None,
+        state_mgr=_BacktrackToPhase3StateManager(),
+        phase_router=_NoopSyncPhaseRouter(),
+        build_agent=lambda *args, **kwargs: _RestoreAgent(),
+        context_manager=_RestoreContextManager(),
+        memory_mgr=_RestoreMemoryManager(),
+        memory_enabled=True,
+    )
+
+    restored = await persistence.restore_session("sess_backtrack")
+
+    assert restored is not None
+    assert len(restored["messages"]) == 2
+    rendered = "\n".join(str(message.content) for message in restored["messages"])
+    assert "预算太高，回到框架规划" in rendered
+    assert "老 Phase 3 输入" not in rendered
+    assert "old target phase segment" not in rendered
+    assert all(message.role != Role.TOOL for message in restored["messages"])
