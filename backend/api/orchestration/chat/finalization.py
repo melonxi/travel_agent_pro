@@ -22,7 +22,14 @@ async def finalize_agent_run(
         run.finished_at = time.time()
 
     await deps.state_mgr.save(plan)
-    await deps.persist_messages(plan.session_id, messages)
+    new_count = await deps.persist_messages(
+        plan.session_id,
+        messages,
+        phase=plan.phase,
+        phase3_step=getattr(plan, "phase3_step", None),
+        persisted_count=session.get("persisted_count", 0),
+    )
+    session["persisted_count"] = new_count
     await deps.session_store.update(
         plan.session_id,
         phase=plan.phase,
@@ -65,7 +72,14 @@ async def persist_run_safely(*, deps, session, plan, messages, run) -> None:
             run.status = "cancelled"
             run.finished_at = time.time()
         await deps.state_mgr.save(plan)
-        await deps.persist_messages(plan.session_id, messages)
+        new_count = await deps.persist_messages(
+            plan.session_id,
+            messages,
+            phase=plan.phase,
+            phase3_step=getattr(plan, "phase3_step", None),
+            persisted_count=session.get("persisted_count", 0),
+        )
+        session["persisted_count"] = new_count
         await deps.session_store.update(
             plan.session_id,
             phase=plan.phase,
