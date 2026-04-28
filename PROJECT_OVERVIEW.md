@@ -225,6 +225,8 @@ travel_agent_pro/
 
 `SessionPersistence.persist_messages()` 现在只 append 尚未落盘的 runtime `Message`，用 session 级 `next_history_seq` 分配 durable `history_seq`，并在写入成功后把内存消息标记为 `history_persisted`。恢复 session 时会把 DB 历史消息标记为已持久化、保留已有 `history_seq`，并通过 `MessageStore.max_history_seq()` 初始化下一次 append 的 `next_history_seq`。
 
+`AgentLoop` 在 phase 转换和 Phase 3 子步骤导致 runtime messages 被重建前，支持调用 `on_before_message_rebuild` 异步回调；回调异常会被记录为 warning 并继续重建，保证编排层可以先 flush 当前完整消息尾部，再让 runtime view 收缩。
+
 ### Internal task stream
 后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务。当前有两条通道：
 - chat SSE `/api/chat/{id}`：承载与当前回答强绑定的任务，例如 `memory_recall`、`soft_judge`、`quality_gate`
