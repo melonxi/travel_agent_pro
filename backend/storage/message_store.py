@@ -6,6 +6,16 @@ from typing import Any
 from storage.database import Database
 
 
+_MESSAGE_COLUMNS = (
+    "session_id, role, content, tool_calls, tool_call_id, "
+    "provider_state, phase, phase3_step, created_at, seq"
+)
+_INSERT_MESSAGE_SQL = (
+    f"INSERT INTO messages ({_MESSAGE_COLUMNS}) "
+    f"VALUES ({', '.join(['?'] * 10)})"
+)
+
+
 class MessageStore:
     def __init__(self, db: Database):
         self._db = db
@@ -19,12 +29,13 @@ class MessageStore:
         tool_calls: str | None = None,
         tool_call_id: str | None = None,
         provider_state: str | None = None,
+        phase: int | None = None,
+        phase3_step: str | None = None,
         seq: int,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute(
-            "INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            _INSERT_MESSAGE_SQL,
             (
                 session_id,
                 role,
@@ -32,6 +43,8 @@ class MessageStore:
                 tool_calls,
                 tool_call_id,
                 provider_state,
+                phase,
+                phase3_step,
                 now,
                 seq,
             ),
@@ -41,8 +54,7 @@ class MessageStore:
         now = datetime.now(timezone.utc).isoformat()
         for row in rows:
             await self._db.execute(
-                "INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                _INSERT_MESSAGE_SQL,
                 (
                     session_id,
                     row["role"],
@@ -50,6 +62,8 @@ class MessageStore:
                     row.get("tool_calls"),
                     row.get("tool_call_id"),
                     row.get("provider_state"),
+                    row.get("phase"),
+                    row.get("phase3_step"),
                     now,
                     row["seq"],
                 ),
