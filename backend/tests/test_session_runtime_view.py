@@ -59,6 +59,8 @@ def hm(
     phase=None,
     phase3_step=None,
     history_seq=0,
+    context_epoch=None,
+    rebuild_reason=None,
     tool_calls=None,
     tool_result=None,
 ):
@@ -72,6 +74,8 @@ def hm(
         phase=phase,
         phase3_step=phase3_step,
         history_seq=history_seq,
+        context_epoch=context_epoch,
+        rebuild_reason=rebuild_reason,
         run_id=f"run_{history_seq}",
         trip_id="trip_1",
     )
@@ -278,3 +282,105 @@ async def test_restore_with_legacy_rows_falls_back_to_latest_user_only():
     assert "暂无相关用户记忆" in runtime[0].content
     assert runtime[1].content == "最新用户消息"
     assert all(message.role != Role.TOOL for message in runtime)
+
+
+@pytest.mark.asyncio
+async def test_runtime_view_does_not_include_old_epoch_tool_body_after_backtrack():
+    plan = TravelPlanState(
+        session_id="sess_epoch_backtrack",
+        phase=3,
+        phase3_step="skeleton",
+        destination="成都",
+    )
+    history = [
+        hm(Role.USER, "第一次做框架", phase=3, phase3_step="skeleton", history_seq=9, context_epoch=2),
+        hm(
+            Role.TOOL,
+            None,
+            phase=3,
+            phase3_step="skeleton",
+            history_seq=10,
+            context_epoch=2,
+            tool_result=ToolResult(
+                tool_call_id="tc_old",
+                status="success",
+                data={"secret_body": "OLD_EPOCH_TOOL_BODY"},
+            ),
+        ),
+        hm(
+            Role.SYSTEM,
+            "backtrack notice",
+            phase=3,
+            phase3_step="skeleton",
+            history_seq=20,
+            context_epoch=4,
+            rebuild_reason="backtrack",
+        ),
+        hm(Role.USER, "重做框架，少走路", phase=3, phase3_step="skeleton", history_seq=21, context_epoch=4),
+    ]
+
+    runtime = await build_runtime_view_for_restore(
+        history_view=history,
+        plan=plan,
+        user_id="user_1",
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        memory_mgr=FakeMemoryManager(),
+        memory_enabled=False,
+        tool_engine=FakeToolEngine(),
+    )
+
+    prompt_text = "\n".join(str(message.content) for message in runtime if message.content)
+    assert "OLD_EPOCH_TOOL_BODY" not in prompt_text
+    assert "重做框架，少走路" in prompt_text
+    assert runtime[0].role is Role.SYSTEM
+
+
+@pytest.mark.asyncio
+async def test_runtime_view_does_not_include_earlier_phase3_step_tool_body():
+    plan = TravelPlanState(
+        session_id="sess_epoch_step",
+        phase=3,
+        phase3_step="skeleton",
+        destination="成都",
+    )
+    history = [
+        hm(
+            Role.TOOL,
+            None,
+            phase=3,
+            phase3_step="brief",
+            history_seq=5,
+            context_epoch=1,
+            tool_result=ToolResult(
+                tool_call_id="tc_brief",
+                status="success",
+                data={"brief_tool": "BRIEF_EPOCH_TOOL_BODY"},
+            ),
+        ),
+        hm(
+            Role.SYSTEM,
+            "skeleton step handoff",
+            phase=3,
+            phase3_step="skeleton",
+            history_seq=9,
+            context_epoch=3,
+            rebuild_reason="phase3_step_change",
+        ),
+        hm(Role.USER, "现在定骨架", phase=3, phase3_step="skeleton", history_seq=10, context_epoch=3),
+    ]
+
+    runtime = await build_runtime_view_for_restore(
+        history_view=history,
+        plan=plan,
+        user_id="user_1",
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        memory_mgr=FakeMemoryManager(),
+        memory_enabled=False,
+        tool_engine=FakeToolEngine(),
+    )
+
+    prompt_text = "\n".join(str(message.content) for message in runtime if message.content)
+    assert "BRIEF_EPOCH_TOOL_BODY" not in prompt_text
+    assert "现在定骨架" in prompt_text
