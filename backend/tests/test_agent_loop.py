@@ -2164,3 +2164,207 @@ async def test_phase3_step_change_no_handoff_note():
         if m.role == Role.ASSISTANT and m.content:
             assert "handoff" not in m.content
             assert "已完成 Phase" not in m.content
+
+
+@pytest.mark.asyncio
+async def test_phase_transition_flushes_messages_before_rebuild():
+    plan = TravelPlanState(session_id="s1", phase=1)
+    flushed: list[dict[str, object]] = []
+
+    @tool(
+        name="advance_phase",
+        description="advance",
+        phases=[1],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def advance_phase() -> dict:
+        plan.phase = 3
+        return {"destination": "东京"}
+
+    engine = ToolEngine()
+    engine.register(advance_phase)
+
+    call_index = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_index
+        call_index += 1
+        if call_index == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(id="tc1", name="advance_phase", arguments={}),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 3 ready")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    async def flush_callback(*, messages, from_phase, from_phase3_step):
+        flushed.append(
+            {
+                "from_phase": from_phase,
+                "from_phase3_step": from_phase3_step,
+                "roles": [message.role for message in messages],
+                "tool_names": [
+                    call.name
+                    for message in messages
+                    for call in (message.tool_calls or [])
+                ],
+            }
+        )
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=3,
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u1",
+        on_before_message_rebuild=flush_callback,
+    )
+
+    messages = [Message(role=Role.USER, content="去东京")]
+    async for _ in agent.run(messages, phase=1):
+        pass
+
+    assert flushed == [
+        {
+            "from_phase": 1,
+            "from_phase3_step": "brief",
+            "roles": [Role.USER, Role.ASSISTANT, Role.TOOL],
+            "tool_names": ["advance_phase"],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_phase3_step_change_flushes_messages_before_rebuild():
+    plan = TravelPlanState(session_id="s1", phase=3, destination="东京")
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+    flushed: list[dict[str, object]] = []
+    observed_second_call: dict[str, object] = {}
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc1",
+                    name="update_trip_basics",
+                    arguments={"dates": {"start": "2026-05-01", "end": "2026-05-05"}},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        observed_second_call["messages"] = [message.content for message in messages]
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续规划")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    async def flush_callback(*, messages, from_phase, from_phase3_step):
+        flushed.append(
+            {
+                "from_phase": from_phase,
+                "from_phase3_step": from_phase3_step,
+                "contents": [message.content for message in messages],
+            }
+        )
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=3,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u1",
+        on_before_message_rebuild=flush_callback,
+    )
+
+    messages = [Message(role=Role.USER, content="五一去东京玩5天")]
+    async for _ in agent.run(messages, phase=3):
+        pass
+
+    assert plan.phase3_step == "candidate"
+    assert flushed[0]["from_phase"] == 3
+    assert flushed[0]["from_phase3_step"] == "brief"
+    assert "五一去东京玩5天" in flushed[0]["contents"]
+    assert observed_second_call["messages"][0].startswith("system phase=3")
+
+
+@pytest.mark.asyncio
+async def test_pre_rebuild_flush_failure_logs_warning_and_rebuilds(caplog):
+    plan = TravelPlanState(session_id="s1", phase=1)
+
+    @tool(
+        name="advance_phase",
+        description="advance",
+        phases=[1],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def advance_phase() -> dict:
+        plan.phase = 3
+        return {"destination": "东京"}
+
+    engine = ToolEngine()
+    engine.register(advance_phase)
+    call_index = 0
+    observed_second_call: dict[str, object] = {}
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal call_index
+        call_index += 1
+        if call_index == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(id="tc1", name="advance_phase", arguments={}),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        observed_second_call["messages"] = [message.content for message in messages]
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 3 ready")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    async def failing_flush(*, messages, from_phase, from_phase3_step):
+        raise RuntimeError("disk unavailable")
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        max_retries=3,
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u1",
+        on_before_message_rebuild=failing_flush,
+    )
+
+    with caplog.at_level("WARNING"):
+        async for _ in agent.run([Message(role=Role.USER, content="去东京")], phase=1):
+            pass
+
+    assert observed_second_call["messages"] == [
+        "system phase=3 prompt=phase-3-prompt user=memory:u1",
+        "handoff 1->3 phase=3",
+        "去东京",
+    ]
+    assert "pre-rebuild message history flush failed" in caplog.text

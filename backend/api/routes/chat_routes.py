@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from agent.types import Message, Role
+from api.orchestration.chat.finalization import persist_unflushed_messages
 from api.orchestration.chat.stream import ChatStreamDeps, run_agent_stream
 from api.orchestration.memory.turn import build_memory_context_for_turn
 from api.schemas import BacktrackRequest, ChatRequest
@@ -175,6 +176,20 @@ def register_chat_routes(
             session["_cancel_event"] = cancel_event
             agent.cancel_event = cancel_event
 
+            async def _flush_before_rebuild(*, messages, from_phase, from_phase3_step):
+                await persist_unflushed_messages(
+                    deps=chat_stream_deps,
+                    session=session,
+                    plan=plan,
+                    messages=messages,
+                    phase=from_phase,
+                    phase3_step=from_phase3_step,
+                    run_id=run.run_id,
+                    trip_id=getattr(plan, "trip_id", None),
+                )
+
+            agent.on_before_message_rebuild = _flush_before_rebuild
+
             async for event in run_agent_stream(
                 chat_stream_deps,
                 session,
@@ -252,6 +267,20 @@ def register_chat_routes(
         cancel_event = asyncio.Event()
         session["_cancel_event"] = cancel_event
         agent.cancel_event = cancel_event
+
+        async def _flush_before_rebuild(*, messages, from_phase, from_phase3_step):
+            await persist_unflushed_messages(
+                deps=chat_stream_deps,
+                session=session,
+                plan=plan,
+                messages=messages,
+                phase=from_phase,
+                phase3_step=from_phase3_step,
+                run_id=run.run_id,
+                trip_id=getattr(plan, "trip_id", None),
+            )
+
+        agent.on_before_message_rebuild = _flush_before_rebuild
 
         phase_before_run = plan.phase
 
