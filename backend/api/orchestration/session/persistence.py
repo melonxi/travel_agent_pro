@@ -78,50 +78,88 @@ class SessionPersistence:
     phase_router: object
     build_agent: Callable[..., object]
 
-    async def persist_messages(self, session_id: str, messages: list[Message]) -> None:
+    async def persist_messages(
+        self,
+        session_id: str,
+        messages: list[Message],
+        *,
+        phase: int,
+        phase3_step: str | None,
+        persisted_count: int,
+    ) -> int:
+        """增量追加未落盘的 tail messages，返回新的 persisted_count。
+
+        - 不再 DELETE 旧记录；messages 表是会话完整历史的事实源。
+        - persisted_count 表示已落盘条数（即下一条新消息在 messages 列表中的索引）。
+        - 当 persisted_count >= len(messages) 时直接返回 persisted_count，不写盘
+          （场景：phase rebuild 后 runtime view 比 history 短）。
+        - phase / phase3_step 由调用方按当下语境决定（phase rebuild 之前用切换前的值；
+          普通 finalize 用当下 plan 的值）。
+        """
+        if persisted_count < 0:
+            raise ValueError(
+                f"persisted_count must be >= 0, got {persisted_count}"
+            )
+        if persisted_count >= len(messages):
+            return persisted_count
         await self.ensure_storage_ready()
-        await self.db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+
         rows: list[dict[str, object]] = []
-        for index, message in enumerate(messages):
-            tool_calls_json = None
-            if message.tool_calls:
-                tool_calls_json = json.dumps(
-                    [
-                        {
-                            "id": tool_call.id,
-                            "name": tool_call.name,
-                            "arguments": tool_call.arguments,
-                            "human_label": tool_call.human_label,
-                        }
-                        for tool_call in message.tool_calls
-                    ],
-                    ensure_ascii=False,
-                )
-
-            content = message.content
-            tool_call_id = None
-            if message.tool_result is not None:
-                content = serialize_tool_result(message.tool_result)
-                tool_call_id = message.tool_result.tool_call_id
-            provider_state_json = None
-            if message.provider_state:
-                provider_state_json = json.dumps(
-                    message.provider_state,
-                    ensure_ascii=False,
-                )
-
+        for offset, message in enumerate(messages[persisted_count:]):
             rows.append(
-                {
-                    "role": message.role.value,
-                    "content": content,
-                    "tool_calls": tool_calls_json,
-                    "tool_call_id": tool_call_id,
-                    "provider_state": provider_state_json,
-                    "seq": index,
-                }
+                self._serialize_message(
+                    message,
+                    seq=persisted_count + offset,
+                    phase=phase,
+                    phase3_step=phase3_step,
+                )
+            )
+        await self.message_store.append_batch(session_id, rows)
+        return len(messages)
+
+    def _serialize_message(
+        self,
+        message: Message,
+        *,
+        seq: int,
+        phase: int,
+        phase3_step: str | None,
+    ) -> dict[str, object]:
+        tool_calls_json = None
+        if message.tool_calls:
+            tool_calls_json = json.dumps(
+                [
+                    {
+                        "id": tool_call.id,
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments,
+                        "human_label": tool_call.human_label,
+                    }
+                    for tool_call in message.tool_calls
+                ],
+                ensure_ascii=False,
             )
 
-        await self.message_store.append_batch(session_id, rows)
+        content = message.content
+        tool_call_id = None
+        if message.tool_result is not None:
+            content = serialize_tool_result(message.tool_result)
+            tool_call_id = message.tool_result.tool_call_id
+
+        provider_state_json = None
+        if message.provider_state:
+            provider_state_json = json.dumps(message.provider_state, ensure_ascii=False)
+
+        return {
+            "role": message.role.value,
+            "content": content,
+            "tool_calls": tool_calls_json,
+            "tool_call_id": tool_call_id,
+            "provider_state": provider_state_json,
+            "phase": phase,
+            "phase3_step": phase3_step,
+            "seq": seq,
+        }
 
     async def restore_session(self, session_id: str) -> dict | None:
         await self.ensure_storage_ready()
