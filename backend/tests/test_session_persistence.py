@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.types import Message, Role, ToolCall, ToolResult
+from api.orchestration.session.context_segments import ContextSegment
 from api.orchestration.session.persistence import (
     SessionPersistence,
     deserialize_tool_result,
@@ -663,3 +664,84 @@ async def test_restore_session_after_backtrack_does_not_replay_old_target_phase(
     assert "老 Phase 3 输入" not in rendered
     assert "old target phase segment" not in rendered
     assert all(message.role != Role.TOOL for message in restored["messages"])
+
+
+@pytest.mark.asyncio
+async def test_persistence_lists_context_segments_from_message_store_rows():
+    rows = [
+        {"session_id": "sess-1", "context_epoch": 0, "phase": 1, "phase3_step": None, "trip_id": "trip-a", "run_id": "run-1", "history_seq": 0, "rebuild_reason": None},
+        {"session_id": "sess-1", "context_epoch": 1, "phase": 3, "phase3_step": "brief", "trip_id": "trip-a", "run_id": "run-2", "history_seq": 1, "rebuild_reason": "phase_forward"},
+    ]
+
+    class _MessageStore:
+        async def load_all(self, session_id):
+            assert session_id == "sess-1"
+            return rows
+
+    persistence = SessionPersistence(
+        ensure_storage_ready=lambda: _noop(),
+        db=SimpleNamespace(execute=_noop),
+        session_store=None,
+        message_store=_MessageStore(),
+        archive_store=None,
+        state_mgr=None,
+        phase_router=None,
+        build_agent=lambda *args, **kwargs: None,
+    )
+
+    segments = await persistence.list_context_segments("sess-1")
+
+    assert segments == [
+        ContextSegment(
+            session_id="sess-1",
+            context_epoch=0,
+            phase=1,
+            phase3_step=None,
+            trip_id="trip-a",
+            run_ids=("run-1",),
+            start_history_seq=0,
+            end_history_seq=0,
+            message_count=1,
+            rebuild_reason=None,
+        ),
+        ContextSegment(
+            session_id="sess-1",
+            context_epoch=1,
+            phase=3,
+            phase3_step="brief",
+            trip_id="trip-a",
+            run_ids=("run-2",),
+            start_history_seq=1,
+            end_history_seq=1,
+            message_count=1,
+            rebuild_reason="phase_forward",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_persistence_loads_context_segment_messages_without_http_route():
+    calls = []
+
+    class _MessageStore:
+        async def load_by_context_epoch(self, session_id, context_epoch):
+            calls.append((session_id, context_epoch))
+            return [
+                {"role": "tool", "content": "raw tool body", "history_seq": 12, "context_epoch": 4}
+            ]
+
+    persistence = SessionPersistence(
+        ensure_storage_ready=lambda: _noop(),
+        db=SimpleNamespace(execute=_noop),
+        session_store=None,
+        message_store=_MessageStore(),
+        archive_store=None,
+        state_mgr=None,
+        phase_router=None,
+        build_agent=lambda *args, **kwargs: None,
+    )
+
+    rows = await persistence.load_context_segment_messages("sess-1", 4)
+
+    assert calls == [("sess-1", 4)]
+    assert rows[0]["content"] == "raw tool body"
