@@ -15,9 +15,9 @@ import '../styles/trace-viewer.css'
 
 const PHASE_LABELS: Record<number, string> = {
   1: '目的地收敛',
-  3: '行程框架',
-  5: '逐日落地',
-  7: '出发清单',
+  2: '行程框架',
+  3: '逐日落地',
+  4: '出发清单',
 }
 
 /* ── Formatters (reused from V1) ─── */

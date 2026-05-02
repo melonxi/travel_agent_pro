@@ -78,9 +78,9 @@ async def test_golden_path_tokyo_trip(app, sessions):
         session = sessions[session_id]
         plan: TravelPlanState = session["plan"]
         agent = session["agent"]
-        # Golden path covers the sequential flow; parallel phase-5 orchestrator
+        # Golden path covers the sequential flow; parallel phase-3 orchestrator
         # has its own integration tests.
-        agent.phase5_parallel_config = None
+        agent.phase3_parallel_config = None
         assert plan.phase == 1
 
         class SummaryLLM:
@@ -117,14 +117,14 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 return
 
             if phase1_call_count == 2:
-                assert plan.phase == 3
+                assert plan.phase == 2
                 assert plan.dates is None
-                assert "- 阶段：3" in messages[0].content
+                assert "- 阶段：2" in messages[0].content
                 # The handoff note now rides on an assistant turn and is
                 # derived from plan state rather than a decision log.
                 assert messages[1].role == Role.ASSISTANT
                 assert "[阶段交接]" in messages[1].content
-                assert "Phase 3" in messages[1].content
+                assert "Phase 2" in messages[1].content
                 assert "目的地" in messages[1].content
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
@@ -140,12 +140,12 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 return
 
             if phase1_call_count == 3:
-                assert plan.phase == 3
+                assert plan.phase == 2
                 assert plan.budget is not None
                 assert plan.budget.total == 20000.0
-                assert "- 阶段：3" in messages[0].content
+                assert "- 阶段：2" in messages[0].content
                 # Keep the closing text free of phase-3 repair keywords
-                # (画像/偏好/约束/预算/日期/旅行) so _build_phase3_state_repair_message
+                # (画像/偏好/约束/预算/日期/旅行) so _build_phase2_state_repair_message
                 # does not inject an extra iteration.
                 for chunk in _text_chunks(
                     "好了，东京行程的基础信息已经保存。", "稍后会继续推进下一步。"
@@ -175,8 +175,8 @@ async def test_golden_path_tokyo_trip(app, sessions):
         assert plan.budget.total == 20000.0
         assert plan.trip_brief["destination"] == "东京"
         assert plan.trip_brief["total_days"] == 6
-        assert plan.phase3_step == "candidate"
-        assert plan.phase == 3
+        assert plan.phase2_step == "candidate"
+        assert plan.phase == 2
 
         phase3_accom_call_count = 0
 
@@ -242,7 +242,7 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 yield LLMChunk(type=ChunkType.DONE)
                 return
 
-            assert plan.phase == 5
+            assert plan.phase == 3
             assert "- 阶段：5" in messages[0].content
             for chunk in _text_chunks(
                 "已锁定平衡版骨架和新宿住宿。", "接下来开始逐天安排行程。"
@@ -264,8 +264,8 @@ async def test_golden_path_tokyo_trip(app, sessions):
         assert plan.selected_skeleton_id == "balanced"
         assert plan.accommodation is not None
         assert plan.accommodation.area == "新宿"
-        assert plan.phase3_step == "lock"
-        assert plan.phase == 5
+        assert plan.phase2_step == "lock"
+        assert plan.phase == 3
 
         sample_activity = {
             "name": "浅草寺",
@@ -285,12 +285,12 @@ async def test_golden_path_tokyo_trip(app, sessions):
             for day_num in range(1, 7)
         ]
 
-        phase5_call_count = 0
+        phase3_call_count = 0
 
-        async def phase5_chat(messages, tools=None, stream=True):
-            nonlocal phase5_call_count
-            phase5_call_count += 1
-            if phase5_call_count == 1:
+        async def phase3_chat(messages, tools=None, stream=True):
+            nonlocal phase3_call_count
+            phase3_call_count += 1
+            if phase3_call_count == 1:
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
@@ -302,12 +302,12 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 yield LLMChunk(type=ChunkType.DONE)
                 return
 
-            assert plan.phase == 7
+            assert plan.phase == 4
             assert "- 阶段：7" in messages[0].content
             for chunk in _text_chunks("5天行程已生成。"):
                 yield chunk
 
-        agent.llm.chat = phase5_chat
+        agent.llm.chat = phase3_chat
         # on_soft_judge hook spins up a real LLM provider for replace_all_day_plans;
         # suppress it so the golden path stays hermetic.
         agent.hooks._hooks["after_tool_call"] = [
@@ -321,25 +321,25 @@ async def test_golden_path_tokyo_trip(app, sessions):
         )
         assert resp.status_code == 200
 
-        assert phase5_call_count == 2
-        assert plan.phase == 7
+        assert phase3_call_count == 2
+        assert plan.phase == 4
         assert len(plan.daily_plans) == 6
 
-        async def phase7_chat(messages, tools=None, stream=True):
+        async def phase4_chat(messages, tools=None, stream=True):
             for chunk in _text_chunks(
                 "东京五一期间天气温暖，建议带轻便衣物。",
                 "\n\n您的5天东京之旅已全部规划完成！祝旅途愉快！",
             ):
                 yield chunk
 
-        agent.llm.chat = phase7_chat
+        agent.llm.chat = phase4_chat
         resp = await client.post(
             f"/api/chat/{session_id}",
             json={"message": "帮我生成最终的出行摘要"},
         )
         assert resp.status_code == 200
 
-        assert plan.phase == 7
+        assert plan.phase == 4
         assert plan.destination == "东京"
         assert plan.dates is not None
         assert plan.dates.start == "2026-05-01"
@@ -356,7 +356,7 @@ async def test_golden_path_tokyo_trip(app, sessions):
         resp = await client.get(f"/api/plan/{session_id}")
         assert resp.status_code == 200
         plan_dict = resp.json()
-        assert plan_dict["phase"] == 7
+        assert plan_dict["phase"] == 4
         assert plan_dict["destination"] == "东京"
         assert plan_dict["dates"]["start"] == "2026-05-01"
         assert plan_dict["dates"]["end"] == "2026-05-06"

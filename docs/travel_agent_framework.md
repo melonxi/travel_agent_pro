@@ -165,7 +165,7 @@ async function backtrack(plan: TravelPlanState, toPhase: number, reason: string)
 ## 阶段感知
 当前规划阶段通过 travel-plan.json 的 phase 字段判断。
 阶段 1-2：倾听为主，提供选项但不替用户决定。
-阶段 3-5：主动推理和优化，给出具体建议。
+阶段 2-5：主动推理和优化，给出具体建议。
 阶段 6-7：执行和校验，精确操作。
 ```
 
@@ -447,12 +447,12 @@ interface UserTravelProfile {
 遵循 Anthropic 的三条件框架——上下文隔离、并行执行、专业化。旅行规划中真正需要多 Agent 的场景：
 
 **需要拆分的：**
-- **行程组装**（阶段 5）：多个景点的排列组合搜索，子任务可并行，探索过程不应污染主上下文
+- **行程组装**（阶段 3）：多个景点的排列组合搜索，子任务可并行，探索过程不应污染主上下文
 - **预订执行**（阶段 6）：机票、酒店、餐厅的预订查询可并行，结果汇总后呈现
 
 **不需要拆分的：**
 - 阶段 1-4 是顺序对话，单 Agent 足够
-- 阶段 7 是线性校验，单 Agent 足够
+- 阶段 4 是线性校验，单 Agent 足够
 
 ### 6.2 Orchestrator 与子 Agent 的协作协议
 
@@ -759,9 +759,9 @@ const subAgentToken = {
 - 上下文压缩策略优化（可恢复压缩）
 - Trace 和可观测性基础设施
 
-### Phase 3: 多 Agent 拆分（2-3 周）
+### Phase 2: 多 Agent 拆分（2-3 周）
 
-- 阶段 5 的行程组装拆为并行子 Agent
+- 阶段 3 的行程组装拆为并行子 Agent
 - 阶段 6 的预订查询拆为并行子 Agent
 - JSONL inbox 协议通信
 - 子 Agent 权限隔离
@@ -773,7 +773,7 @@ const subAgentToken = {
 - 预订状态追踪和异常处理
 - 稀缺性反压机制
 
-### Phase 5: 出行中 & 出行后（持续）
+### Phase 3: 出行中 & 出行后（持续）
 
 - 出行中的实时调整（天气变化、临时关闭）
 - 出行后反馈收集和偏好学习
@@ -789,7 +789,7 @@ const subAgentToken = {
 | 控制模式 | 混合（阶段 1-2 Agent, 3 Workflow, 4-5 Orchestrator, 6 Chaining, 7 Evaluator） | 不同阶段的控制权分布不同 |
 | 回溯策略 | 快照 + 下游重算 | 回溯是常态，不是异常 |
 | 工具数量 | ≤ 12 个核心 + bash 扩展 | 工具先做减法 |
-| 多 Agent 时机 | Phase 3 才引入，仅用于可并行任务 | 先验证单 Agent 上限 |
+| 多 Agent 时机 | Phase 2 才引入，仅用于可并行任务 | 先验证单 Agent 上限 |
 | 数据来源 | 事实性信息必须来自工具 | 防止幻觉，支持溯源 |
 | 记忆策略 | MEMORY.md + 结构化 JSON | 先不引入向量存储，Markdown 可调试 |
 | 评测方式 | 硬约束用代码评分器，软约束用 LLM judge + 人工校准 | 分层验证 |

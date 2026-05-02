@@ -11,14 +11,14 @@ class RepairHintOutcome:
     key: str
 
 
-def build_phase3_state_repair_message(
+def build_phase2_state_repair_message(
     *,
     plan: Any | None,
     current_phase: int,
     assistant_text: str,
     repair_hints_used: set[str],
 ) -> RepairHintOutcome | None:
-    if current_phase != 3 or plan is None:
+    if current_phase != 2 or plan is None:
         return None
     if not plan.destination:
         return None
@@ -26,10 +26,10 @@ def build_phase3_state_repair_message(
     if len(text) < 12:
         return None
 
-    step = getattr(plan, "phase3_step", "")
-    repair_key = f"p3_{step}"
+    step = getattr(plan, "phase2_step", "")
+    repair_key = f"p2_{step}"
     if repair_key in repair_hints_used:
-        stronger_key = f"p3_{step}_retry"
+        stronger_key = f"p2_{step}_retry"
         if stronger_key in repair_hints_used:
             return None
         repair_key = stronger_key
@@ -141,18 +141,18 @@ def build_phase3_state_repair_message(
     return None
 
 
-def build_phase5_state_repair_message(
+def build_phase3_daily_state_repair_message(
     *,
     plan: Any | None,
     current_phase: int,
     assistant_text: str,
     repair_hints_used: set[str],
 ) -> RepairHintOutcome | None:
-    if current_phase != 5 or plan is None:
+    if current_phase != 3 or plan is None:
         return None
     if not plan.dates:
         return None
-    repair_key = "p5_daily"
+    repair_key = "p3_daily"
     if repair_key in repair_hints_used:
         return None
     text = assistant_text.strip()

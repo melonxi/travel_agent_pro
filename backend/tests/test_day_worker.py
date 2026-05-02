@@ -2,8 +2,8 @@
 import json
 import pytest
 
-from agent.phase5.candidate_store import Phase5CandidateStore
-from agent.phase5.day_worker import (
+from agent.phase3.candidate_store import Phase3CandidateStore
+from agent.phase3.day_worker import (
     DayWorkerResult,
     _MAX_POI_RECOVERY,
     _MAX_SAME_QUERY,
@@ -14,14 +14,14 @@ from agent.phase5.day_worker import (
     run_day_worker,
 )
 from agent.types import ToolCall, ToolResult
-from agent.phase5.worker_prompt import DayTask
+from agent.phase3.worker_prompt import DayTask
 from llm.types import ChunkType, LLMChunk
 from state.models import DateRange, TravelPlanState
 
 
 def _stub_plan() -> TravelPlanState:
     plan = TravelPlanState(session_id="s-day-worker")
-    plan.phase = 5
+    plan.phase = 3
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.selected_skeleton_id = "skeleton-1"
     plan.skeleton_plans = [{"id": "skeleton-1", "days": [{"area": "A", "theme": "T"}]}]
@@ -138,7 +138,7 @@ async def test_run_day_worker_accepts_submit_day_plan_candidate_tool(tmp_path):
             ],
         ]
     )
-    store = Phase5CandidateStore(tmp_path)
+    store = Phase3CandidateStore(tmp_path)
 
     result = await run_day_worker(
         llm=llm,
@@ -525,7 +525,7 @@ async def test_recovery_chain_triggers_forced_emit():
 
 
 def test_submit_schema_has_inline_properties():
-    from agent.phase5.day_worker import _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA
+    from agent.phase3.day_worker import _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA
     schema = _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA
     assert schema["name"] == "submit_day_plan_candidate"
     dayplan = schema["parameters"]["properties"]["dayplan"]
@@ -542,12 +542,12 @@ def test_submit_schema_has_inline_properties():
 
 
 def test_forced_emit_prompt_no_fake_coordinates():
-    from agent.phase5.day_worker import _FORCED_EMIT_PROMPT
+    from agent.phase3.day_worker import _FORCED_EMIT_PROMPT
     assert "0,0" not in _FORCED_EMIT_PROMPT or "绝不" in _FORCED_EMIT_PROMPT
     assert "绝不在 location 中填入 0,0 假坐标" in _FORCED_EMIT_PROMPT
 
 
 def test_json_repair_prompt_references_submit_tool():
-    from agent.phase5.day_worker import _JSON_REPAIR_PROMPT
+    from agent.phase3.day_worker import _JSON_REPAIR_PROMPT
     assert "submit_day_plan_candidate" in _JSON_REPAIR_PROMPT
     assert "day" in _JSON_REPAIR_PROMPT

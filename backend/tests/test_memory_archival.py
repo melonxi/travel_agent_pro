@@ -15,7 +15,7 @@ def _plan() -> TravelPlanState:
     plan = TravelPlanState(
         session_id="s1",
         trip_id="trip_123",
-        phase=7,
+        phase=4,
         destination="京都",
         dates=DateRange(start="2026-05-01", end="2026-05-05"),
         travelers=Travelers(adults=2, children=0),

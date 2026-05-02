@@ -14,7 +14,7 @@ class FakePhaseRouter:
 
     def get_prompt_for_plan(self, plan):
         self.calls += 1
-        return f"PROMPT phase={plan.phase} step={getattr(plan, 'phase3_step', None)}"
+        return f"PROMPT phase={plan.phase} step={getattr(plan, 'phase2_step', None)}"
 
 
 class FakeContextManager:
@@ -39,7 +39,7 @@ class FakeMemoryManager:
         self.calls = []
 
     async def generate_context(self, user_id, plan):
-        self.calls.append((user_id, plan.phase, getattr(plan, "phase3_step", None)))
+        self.calls.append((user_id, plan.phase, getattr(plan, "phase2_step", None)))
         return ("memory for restore", ["mem_1"], 1, 0, 0)
 
 
@@ -48,7 +48,7 @@ class FakeToolEngine:
         self.calls = []
 
     def get_tools_for_phase(self, phase, plan):
-        self.calls.append((phase, getattr(plan, "phase3_step", None)))
+        self.calls.append((phase, getattr(plan, "phase2_step", None)))
         return [{"name": f"phase_{phase}_tool"}, {"name": "request_backtrack"}]
 
 
@@ -57,7 +57,7 @@ def hm(
     content,
     *,
     phase=None,
-    phase3_step=None,
+    phase2_step=None,
     history_seq=0,
     context_epoch=None,
     rebuild_reason=None,
@@ -72,7 +72,7 @@ def hm(
             tool_result=tool_result,
         ),
         phase=phase,
-        phase3_step=phase3_step,
+        phase2_step=phase2_step,
         history_seq=history_seq,
         context_epoch=context_epoch,
         rebuild_reason=rebuild_reason,
@@ -82,8 +82,8 @@ def hm(
 
 
 @pytest.mark.asyncio
-async def test_restore_phase5_uses_fresh_system_and_excludes_old_tool_results():
-    plan = TravelPlanState(session_id="sess_1", phase=5, destination="东京")
+async def test_restore_phase3_uses_fresh_system_and_excludes_old_tool_results():
+    plan = TravelPlanState(session_id="sess_1", phase=3, destination="东京")
     history = [
         hm(Role.SYSTEM, "old phase 1 system", phase=1, history_seq=0),
         hm(Role.USER, "我想去东京玩", phase=1, history_seq=1),
@@ -105,7 +105,7 @@ async def test_restore_phase5_uses_fresh_system_and_excludes_old_tool_results():
                 data={"destination": "东京"},
             ),
         ),
-        hm(Role.USER, "按这个骨架继续细化每天路线", phase=5, history_seq=9),
+        hm(Role.USER, "按这个骨架继续细化每天路线", phase=3, history_seq=9),
     ]
 
     phase_router = FakePhaseRouter()
@@ -125,32 +125,32 @@ async def test_restore_phase5_uses_fresh_system_and_excludes_old_tool_results():
     )
 
     assert [message.role for message in runtime] == [Role.SYSTEM, Role.USER]
-    assert runtime[0].content.startswith("fresh system | PROMPT phase=5")
+    assert runtime[0].content.startswith("fresh system | PROMPT phase=3")
     assert runtime[1].content == "按这个骨架继续细化每天路线"
     assert len(runtime) < len(history)
     assert all(message.tool_result is None for message in runtime)
     assert all(not message.tool_calls for message in runtime)
     assert "old phase 1 system" not in [message.content for message in runtime]
-    assert memory_mgr.calls == [("user_1", 5, None)]
-    assert tool_engine.calls == [(5, None)]
-    assert context_manager.available_tools == ["phase_5_tool", "request_backtrack"]
+    assert memory_mgr.calls == [("user_1", 3, None)]
+    assert tool_engine.calls == [(3, None)]
+    assert context_manager.available_tools == ["phase_3_tool", "request_backtrack"]
 
 
 @pytest.mark.asyncio
 async def test_restore_phase3_skeleton_does_not_replay_previous_substeps():
     plan = TravelPlanState(
         session_id="sess_2",
-        phase=3,
-        phase3_step="skeleton",
+        phase=2,
+        phase2_step="skeleton",
         destination="大阪",
     )
     history = [
-        hm(Role.USER, "先确定画像", phase=3, phase3_step="brief", history_seq=1),
+        hm(Role.USER, "先确定画像", phase=2, phase2_step="brief", history_seq=1),
         hm(
             Role.TOOL,
             None,
-            phase=3,
-            phase3_step="brief",
+            phase=2,
+            phase2_step="brief",
             history_seq=2,
             tool_result=ToolResult(
                 tool_call_id="tc_brief",
@@ -158,12 +158,12 @@ async def test_restore_phase3_skeleton_does_not_replay_previous_substeps():
                 data={"trip_brief": "brief old result"},
             ),
         ),
-        hm(Role.USER, "给我候选池", phase=3, phase3_step="candidate", history_seq=3),
+        hm(Role.USER, "给我候选池", phase=2, phase2_step="candidate", history_seq=3),
         hm(
             Role.TOOL,
             None,
-            phase=3,
-            phase3_step="candidate",
+            phase=2,
+            phase2_step="candidate",
             history_seq=4,
             tool_result=ToolResult(
                 tool_call_id="tc_candidate",
@@ -171,7 +171,7 @@ async def test_restore_phase3_skeleton_does_not_replay_previous_substeps():
                 data={"candidate_pool": ["old candidate"]},
             ),
         ),
-        hm(Role.USER, "从短名单生成两个骨架", phase=3, phase3_step="skeleton", history_seq=5),
+        hm(Role.USER, "从短名单生成两个骨架", phase=2, phase2_step="skeleton", history_seq=5),
     ]
 
     runtime = await build_runtime_view_for_restore(
@@ -198,17 +198,17 @@ async def test_restore_phase3_skeleton_does_not_replay_previous_substeps():
 async def test_restore_after_backtrack_does_not_replay_old_target_phase_segment():
     plan = TravelPlanState(
         session_id="sess_3",
-        phase=3,
-        phase3_step="brief",
+        phase=2,
+        phase2_step="brief",
         destination="京都",
     )
     history = [
-        hm(Role.USER, "旧的 Phase 3 画像输入", phase=3, phase3_step="brief", history_seq=1),
+        hm(Role.USER, "旧的 Phase 2 画像输入", phase=2, phase2_step="brief", history_seq=1),
         hm(
             Role.TOOL,
             None,
-            phase=3,
-            phase3_step="brief",
+            phase=2,
+            phase2_step="brief",
             history_seq=2,
             tool_result=ToolResult(
                 tool_call_id="tc_old_p3",
@@ -216,16 +216,16 @@ async def test_restore_after_backtrack_does_not_replay_old_target_phase_segment(
                 data={"trip_brief": "old phase3 brief"},
             ),
         ),
-        hm(Role.USER, "Phase 5 发现预算不合适，回到框架规划", phase=5, history_seq=10),
+        hm(Role.USER, "Phase 3 发现预算不合适，回到框架规划", phase=3, history_seq=10),
         hm(
             Role.TOOL,
             None,
-            phase=5,
+            phase=3,
             history_seq=11,
             tool_result=ToolResult(
                 tool_call_id="tc_backtrack",
                 status="success",
-                data={"backtracked": True, "to_phase": 3, "reason": "预算不合适"},
+                data={"backtracked": True, "to_phase": 2, "reason": "预算不合适"},
             ),
         ),
     ]
@@ -242,15 +242,15 @@ async def test_restore_after_backtrack_does_not_replay_old_target_phase_segment(
     )
 
     assert [message.role for message in runtime] == [Role.SYSTEM, Role.USER]
-    assert runtime[1].content == "Phase 5 发现预算不合适，回到框架规划"
+    assert runtime[1].content == "Phase 3 发现预算不合适，回到框架规划"
     rendered = "\n".join(str(message.content) for message in runtime)
-    assert "旧的 Phase 3 画像输入" not in rendered
+    assert "旧的 Phase 2 画像输入" not in rendered
     assert "old phase3 brief" not in rendered
 
 
 @pytest.mark.asyncio
 async def test_restore_with_legacy_rows_falls_back_to_latest_user_only():
-    plan = TravelPlanState(session_id="sess_4", phase=5, destination="首尔")
+    plan = TravelPlanState(session_id="sess_4", phase=3, destination="首尔")
     history = [
         hm(Role.SYSTEM, "legacy system", history_seq=None),
         hm(Role.USER, "第一条旧用户消息", history_seq=None),
@@ -288,17 +288,17 @@ async def test_restore_with_legacy_rows_falls_back_to_latest_user_only():
 async def test_runtime_view_does_not_include_old_epoch_tool_body_after_backtrack():
     plan = TravelPlanState(
         session_id="sess_epoch_backtrack",
-        phase=3,
-        phase3_step="skeleton",
+        phase=2,
+        phase2_step="skeleton",
         destination="成都",
     )
     history = [
-        hm(Role.USER, "第一次做框架", phase=3, phase3_step="skeleton", history_seq=9, context_epoch=2),
+        hm(Role.USER, "第一次做框架", phase=2, phase2_step="skeleton", history_seq=9, context_epoch=2),
         hm(
             Role.TOOL,
             None,
-            phase=3,
-            phase3_step="skeleton",
+            phase=2,
+            phase2_step="skeleton",
             history_seq=10,
             context_epoch=2,
             tool_result=ToolResult(
@@ -310,13 +310,13 @@ async def test_runtime_view_does_not_include_old_epoch_tool_body_after_backtrack
         hm(
             Role.SYSTEM,
             "backtrack notice",
-            phase=3,
-            phase3_step="skeleton",
+            phase=2,
+            phase2_step="skeleton",
             history_seq=20,
             context_epoch=4,
             rebuild_reason="backtrack",
         ),
-        hm(Role.USER, "重做框架，少走路", phase=3, phase3_step="skeleton", history_seq=21, context_epoch=4),
+        hm(Role.USER, "重做框架，少走路", phase=2, phase2_step="skeleton", history_seq=21, context_epoch=4),
     ]
 
     runtime = await build_runtime_view_for_restore(
@@ -337,19 +337,19 @@ async def test_runtime_view_does_not_include_old_epoch_tool_body_after_backtrack
 
 
 @pytest.mark.asyncio
-async def test_runtime_view_does_not_include_earlier_phase3_step_tool_body():
+async def test_runtime_view_does_not_include_earlier_phase2_step_tool_body():
     plan = TravelPlanState(
         session_id="sess_epoch_step",
-        phase=3,
-        phase3_step="skeleton",
+        phase=2,
+        phase2_step="skeleton",
         destination="成都",
     )
     history = [
         hm(
             Role.TOOL,
             None,
-            phase=3,
-            phase3_step="brief",
+            phase=2,
+            phase2_step="brief",
             history_seq=5,
             context_epoch=1,
             tool_result=ToolResult(
@@ -361,13 +361,13 @@ async def test_runtime_view_does_not_include_earlier_phase3_step_tool_body():
         hm(
             Role.SYSTEM,
             "skeleton step handoff",
-            phase=3,
-            phase3_step="skeleton",
+            phase=2,
+            phase2_step="skeleton",
             history_seq=9,
             context_epoch=3,
-            rebuild_reason="phase3_step_change",
+            rebuild_reason="phase2_step_change",
         ),
-        hm(Role.USER, "现在定骨架", phase=3, phase3_step="skeleton", history_seq=10, context_epoch=3),
+        hm(Role.USER, "现在定骨架", phase=2, phase2_step="skeleton", history_seq=10, context_epoch=3),
     ]
 
     runtime = await build_runtime_view_for_restore(

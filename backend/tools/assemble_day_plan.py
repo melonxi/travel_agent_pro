@@ -59,10 +59,10 @@ def make_assemble_day_plan_tool():
     @tool(
         name="assemble_day_plan",
         description="""组装单日行程计划。
-Use when: Phase 3 skeleton/lock 阶段需要快速比较多个景点的内部顺序。
-Don't use when: Phase 5 需要保存逐日行程；Phase 5 使用 optimize_day_route + save_day_plan。
+Use when: Phase 2 skeleton/lock 阶段需要快速比较多个景点的内部顺序。
+Don't use when: Phase 3 需要保存逐日行程；Phase 3 使用 optimize_day_route + save_day_plan。
         使用贪心算法按地理临近度排序，返回排序后的景点和总距离。""",
-        phases=[3],
+        phases=[2],
         parameters=_PARAMETERS,
         side_effect="read",
         human_label="组装日程",

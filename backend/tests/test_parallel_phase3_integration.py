@@ -1,5 +1,5 @@
-# backend/tests/test_parallel_phase5_integration.py
-"""Integration tests for Phase 5 parallel orchestrator mode.
+# backend/tests/test_parallel_phase3_integration.py
+"""Integration tests for Phase 3 parallel orchestrator mode.
 
 Uses mock LLM that returns pre-built DayPlan JSON to verify
 the end-to-end flow: split → spawn → collect → validate → write.
@@ -8,9 +8,9 @@ the end-to-end flow: split → spawn → collect → validate → write.
 import json
 import pytest
 
-from agent.phase5.orchestrator import Phase5Orchestrator
+from agent.phase3.orchestrator import Phase3Orchestrator
 from agent.types import ToolResult
-from config import Phase5ParallelConfig
+from config import Phase3ParallelConfig
 from llm.types import ChunkType, LLMChunk
 from state.models import (
     TravelPlanState,
@@ -23,7 +23,7 @@ from state.models import (
 
 def _make_plan() -> TravelPlanState:
     plan = TravelPlanState(session_id="test-integration")
-    plan.phase = 5
+    plan.phase = 3
     plan.destination = "东京"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.travelers = Travelers(adults=2)
@@ -137,9 +137,9 @@ async def test_parallel_happy_path():
         }
     )
     tool_engine = MockToolEngine()
-    config = Phase5ParallelConfig(enabled=True, max_workers=3)
+    config = Phase3ParallelConfig(enabled=True, max_workers=3)
 
-    orch = Phase5Orchestrator(
+    orch = Phase3Orchestrator(
         plan=plan, llm=llm, tool_engine=tool_engine, config=config
     )
 
@@ -186,9 +186,9 @@ async def test_parallel_detects_poi_duplicate():
         }
     )
     tool_engine = MockToolEngine()
-    config = Phase5ParallelConfig(enabled=True, max_workers=3)
+    config = Phase3ParallelConfig(enabled=True, max_workers=3)
 
-    orch = Phase5Orchestrator(
+    orch = Phase3Orchestrator(
         plan=plan, llm=llm, tool_engine=tool_engine, config=config
     )
 

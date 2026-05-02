@@ -402,11 +402,11 @@ class TestExecuteBacktrack:
     def test_backtrack_from_3_to_1(self, plan):
         from state.plan_writers import execute_backtrack
 
-        plan.phase = 3
+        plan.phase = 2
         plan.destination = "东京"
         result = execute_backtrack(plan, to_phase=1, reason="换目的地")
         assert result["backtracked"] is True
-        assert result["from_phase"] == 3
+        assert result["from_phase"] == 2
         assert result["to_phase"] == 1
         assert plan.phase == 1
         assert plan.destination is None
@@ -414,29 +414,29 @@ class TestExecuteBacktrack:
     def test_backtrack_to_same_phase_raises(self, plan):
         from state.plan_writers import execute_backtrack
 
-        plan.phase = 3
+        plan.phase = 2
         with pytest.raises(ValueError, match="只能回退到更早的阶段"):
-            execute_backtrack(plan, to_phase=3, reason="test")
+            execute_backtrack(plan, to_phase=2, reason="test")
 
-    def test_backtrack_phase2_normalizes_to_1(self, plan):
+    def test_backtrack_phase2_rejects_same_phase(self, plan):
         from state.plan_writers import execute_backtrack
 
-        plan.phase = 3
-        result = execute_backtrack(plan, to_phase=2, reason="test")
-        assert result["to_phase"] == 1
+        plan.phase = 2
+        with pytest.raises(ValueError, match="只能回退到更早的阶段"):
+            execute_backtrack(plan, to_phase=2, reason="test")
 
 
 # --- L4: reader-side defense ---
 
 
 class TestInferPhase3StepRobustness:
-    """infer_phase3_step_from_state must handle non-dict skeleton elements."""
+    """infer_phase2_step_from_state must handle non-dict skeleton elements."""
 
     def test_filters_string_elements(self):
-        from state.models import DateRange, infer_phase3_step_from_state
+        from state.models import DateRange, infer_phase2_step_from_state
 
-        result = infer_phase3_step_from_state(
-            phase=3,
+        result = infer_phase2_step_from_state(
+            phase=2,
             dates=DateRange(start="2026-05-01", end="2026-05-05"),
             trip_brief={"goal": "test"},
             candidate_pool=[{"name": "A"}],
@@ -448,10 +448,10 @@ class TestInferPhase3StepRobustness:
         assert result == "lock"
 
     def test_filters_int_elements(self):
-        from state.models import DateRange, infer_phase3_step_from_state
+        from state.models import DateRange, infer_phase2_step_from_state
 
-        result = infer_phase3_step_from_state(
-            phase=3,
+        result = infer_phase2_step_from_state(
+            phase=2,
             dates=DateRange(start="2026-05-01", end="2026-05-05"),
             trip_brief={"goal": "test"},
             candidate_pool=None,

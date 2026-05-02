@@ -89,7 +89,7 @@ def create_memory_orchestration(
             "accommodation": plan.accommodation.to_dict()
             if plan.accommodation
             else None,
-            "phase3_step": plan.phase3_step,
+            "phase2_step": plan.phase2_step,
         }
     
     async def _append_memory_event_nonfatal(event: MemoryAuditEvent) -> None:

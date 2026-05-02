@@ -147,7 +147,7 @@ function ensureScreenshotsDir(): void {
 
 function buildPlanState(result: FailureResult): JsonRecord {
   return {
-    phase: typeof result.plan_state?.phase === 'number' ? result.plan_state.phase : 7,
+    phase: typeof result.plan_state?.phase === 'number' ? result.plan_state.phase : 4,
     destination: null,
     dates: null,
     budget: null,
@@ -204,7 +204,7 @@ function buildSessionList(result: FailureResult): Array<{
   updated_at: string
 }> {
   const planState = buildPlanState(result)
-  const phase = typeof planState.phase === 'number' ? planState.phase : 7
+  const phase = typeof planState.phase === 'number' ? planState.phase : 4
 
   return [{
     session_id: result.session_id ?? '',

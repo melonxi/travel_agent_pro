@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from agent.phase5.candidate_store import (
-    Phase5CandidateStore,
-    Phase5CandidateValidationError,
+from agent.phase3.candidate_store import (
+    Phase3CandidateStore,
+    Phase3CandidateValidationError,
 )
 
 
@@ -18,7 +18,7 @@ def _dayplan(day: int = 1) -> dict:
 
 
 def test_submit_candidate_writes_json_artifact(tmp_path: Path):
-    store = Phase5CandidateStore(tmp_path)
+    store = Phase3CandidateStore(tmp_path)
 
     result = store.submit_candidate(
         session_id="sess_1",
@@ -38,9 +38,9 @@ def test_submit_candidate_writes_json_artifact(tmp_path: Path):
 
 
 def test_submit_candidate_rejects_wrong_day(tmp_path: Path):
-    store = Phase5CandidateStore(tmp_path)
+    store = Phase3CandidateStore(tmp_path)
 
-    with pytest.raises(Phase5CandidateValidationError, match="expected day 1"):
+    with pytest.raises(Phase3CandidateValidationError, match="expected day 1"):
         store.submit_candidate(
             session_id="sess_1",
             run_id="run_1",
@@ -52,7 +52,7 @@ def test_submit_candidate_rejects_wrong_day(tmp_path: Path):
 
 
 def test_load_latest_candidates_keeps_highest_attempt_per_day(tmp_path: Path):
-    store = Phase5CandidateStore(tmp_path)
+    store = Phase3CandidateStore(tmp_path)
     store.submit_candidate("sess_1", "run_1", "day_1_attempt_1", 1, 1, _dayplan(1))
     latest = _dayplan(1)
     latest["notes"] = "newer"
@@ -81,9 +81,9 @@ def test_submit_candidate_rejects_unsafe_path_segments(
     run_id: str,
     worker_id: str,
 ):
-    store = Phase5CandidateStore(tmp_path)
+    store = Phase3CandidateStore(tmp_path)
 
-    with pytest.raises(Phase5CandidateValidationError, match="unsafe path segment"):
+    with pytest.raises(Phase3CandidateValidationError, match="unsafe path segment"):
         store.submit_candidate(
             session_id=session_id,
             run_id=run_id,

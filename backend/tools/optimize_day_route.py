@@ -157,12 +157,12 @@ def make_optimize_day_route_tool():
     @tool(
         name="optimize_day_route",
         description=(
-            "Optimize the order of POIs for one Phase 5 day. "
+            "Optimize the order of POIs for one Phase 3 day. "
             "Use when arranging 2+ same-day POIs before saving a DayPlan. "
             "Do not use as a state write: this tool does not modify daily_plans. "
             "After choosing the schedule, persist it with save_day_plan or replace_all_day_plans."
         ),
-        phases=[5],
+        phases=[3],
         parameters=_PARAMETERS,
         side_effect="read",
         human_label="优化单日路线",

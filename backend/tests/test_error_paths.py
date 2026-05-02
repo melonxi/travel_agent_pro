@@ -120,7 +120,7 @@ async def test_chat_session_not_found(app):
 
 @pytest.mark.asyncio
 async def test_backtrack_api_success(app, sessions):
-    """Create session, set plan to phase 5, backtrack to phase 1 — verify downstream cleared."""
+    """Create session, set plan to phase 3, backtrack to phase 1 — verify downstream cleared."""
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         # Create session
@@ -128,10 +128,10 @@ async def test_backtrack_api_success(app, sessions):
         assert create_resp.status_code == 200
         session_id = create_resp.json()["session_id"]
 
-    # Directly manipulate plan state to simulate phase 5
+    # Directly manipulate plan state to simulate phase 3
     session = sessions[session_id]
     plan: TravelPlanState = session["plan"]
-    plan.phase = 5
+    plan.phase = 3
     plan.destination = "京都"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-04")
     plan.accommodation = Accommodation(area="祇園", hotel="TEST HOTEL")
@@ -169,13 +169,13 @@ async def test_backtrack_forward_rejected(app, sessions):
         session_id = create_resp.json()["session_id"]
 
     # Plan starts at phase 1; set it to 3
-    sessions[session_id]["plan"].phase = 3
+    sessions[session_id]["plan"].phase = 2
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        # to_phase=5 is forward → reject
+        # to_phase=3 is forward → reject
         resp = await client.post(
             f"/api/backtrack/{session_id}",
-            json={"to_phase": 5, "reason": "nope"},
+            json={"to_phase": 3, "reason": "nope"},
         )
     assert resp.status_code == 400
 
@@ -183,7 +183,7 @@ async def test_backtrack_forward_rejected(app, sessions):
         # to_phase == current phase → also rejected
         resp = await client.post(
             f"/api/backtrack/{session_id}",
-            json={"to_phase": 3, "reason": "nope"},
+            json={"to_phase": 2, "reason": "nope"},
         )
     assert resp.status_code == 400
 
@@ -201,10 +201,10 @@ async def test_implicit_backtrack_in_chat(app, sessions):
         create_resp = await client.post("/api/sessions")
         session_id = create_resp.json()["session_id"]
 
-    # Set plan to phase 5 with some downstream data
+    # Set plan to phase 3 with some downstream data
     session = sessions[session_id]
     plan: TravelPlanState = session["plan"]
-    plan.phase = 5
+    plan.phase = 3
     plan.destination = "东京"
     plan.dates = DateRange(start="2026-06-01", end="2026-06-05")
     plan.accommodation = Accommodation(area="新宿")
@@ -249,7 +249,7 @@ async def test_chat_backtrack_restores_new_destination_from_message(app, session
 
     session = sessions[session_id]
     plan: TravelPlanState = session["plan"]
-    plan.phase = 5
+    plan.phase = 3
     plan.destination = "东京"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-05")
     plan.accommodation = Accommodation(area="新宿", hotel="Hyatt Regency Tokyo")
@@ -285,7 +285,7 @@ async def test_chat_backtrack_restores_new_destination_from_message(app, session
 
     updated_plan: TravelPlanState = sessions[session_id]["plan"]
     assert updated_plan.destination == "大阪"
-    assert updated_plan.phase == 3
+    assert updated_plan.phase == 2
     assert updated_plan.dates is None
     assert updated_plan.accommodation is None
     assert updated_plan.daily_plans == []

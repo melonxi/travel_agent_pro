@@ -91,7 +91,7 @@ def make_add_preferences_tool(plan: TravelPlanState):
     @tool(
         name="add_preferences",
         description="记录用户偏好。追加到现有偏好列表，不会覆盖已有条目。",
-        phases=[1, 3, 5],
+        phases=[1, 2, 3],
         parameters=_PREFERENCES_PARAMS,
         side_effect="write",
         human_label="记录用户偏好",
@@ -116,7 +116,7 @@ def make_add_constraints_tool(plan: TravelPlanState):
     @tool(
         name="add_constraints",
         description="记录用户约束条件。追加到现有约束列表，不会覆盖已有条目。",
-        phases=[1, 3, 5],
+        phases=[1, 2, 3],
         parameters=_CONSTRAINTS_PARAMS,
         side_effect="write",
         human_label="记录用户约束",

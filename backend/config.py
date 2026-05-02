@@ -246,13 +246,13 @@ class GuardrailsConfig:
 
 
 @dataclass(frozen=True)
-class Phase5ParallelConfig:
+class Phase3ParallelConfig:
     enabled: bool = True
     max_workers: int = 5
     worker_max_iterations: int = 60
     worker_timeout_seconds: int = 1200
     fallback_to_serial: bool = True
-    artifact_root: str = "./data/phase5_runs"
+    artifact_root: str = "./data/phase3_runs"
 
 
 @dataclass(frozen=True)
@@ -273,8 +273,7 @@ class AppConfig:
     )
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     guardrails: GuardrailsConfig = field(default_factory=GuardrailsConfig)
-    phase5_parallel: Phase5ParallelConfig = field(default_factory=Phase5ParallelConfig)
-
+    phase3_parallel: Phase3ParallelConfig = field(default_factory=Phase3ParallelConfig)
 
 def _resolve_env(value: object) -> str:
     """Replace ${ENV_VAR} with actual environment variable value.
@@ -589,17 +588,16 @@ def _build_guardrails_config(raw: dict) -> GuardrailsConfig:
     )
 
 
-def _build_phase5_parallel_config(raw: dict) -> Phase5ParallelConfig:
-    p5 = raw.get("phase5", {}).get("parallel", {})
-    return Phase5ParallelConfig(
-        enabled=_as_bool(p5.get("enabled"), True),
-        max_workers=int(p5.get("max_workers", 5)),
-        worker_max_iterations=int(p5.get("worker_max_iterations", 60)),
-        worker_timeout_seconds=int(p5.get("worker_timeout_seconds", 1200)),
-        fallback_to_serial=_as_bool(p5.get("fallback_to_serial"), True),
-        artifact_root=str(p5.get("artifact_root", "./data/phase5_runs")),
+def _build_phase3_parallel_config(raw: dict) -> Phase3ParallelConfig:
+    p3 = raw.get("phase3", {}).get("parallel", {})
+    return Phase3ParallelConfig(
+        enabled=_as_bool(p3.get("enabled"), True),
+        max_workers=int(p3.get("max_workers", 5)),
+        worker_max_iterations=int(p3.get("worker_max_iterations", 60)),
+        worker_timeout_seconds=int(p3.get("worker_timeout_seconds", 1200)),
+        fallback_to_serial=_as_bool(p3.get("fallback_to_serial"), True),
+        artifact_root=str(p3.get("artifact_root", "./data/phase3_runs")),
     )
-
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:
     path = Path(path)
@@ -618,7 +616,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             memory_extraction=_build_memory_extraction_config({}),
             memory=_build_memory_config({}, _build_memory_extraction_config({})),
             guardrails=_build_guardrails_config({}),
-            phase5_parallel=_build_phase5_parallel_config({}),
+            phase3_parallel=_build_phase3_parallel_config({}),
         )
 
     with open(path) as f:
@@ -673,5 +671,5 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         memory_extraction=memory_extraction,
         memory=memory,
         guardrails=guardrails,
-        phase5_parallel=_build_phase5_parallel_config(raw),
+        phase3_parallel=_build_phase3_parallel_config(raw),
     )

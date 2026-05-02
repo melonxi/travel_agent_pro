@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from agent.hooks import HookManager
 from agent.loop import AgentLoop
 from agent.types import Message, Role, ToolCall, ToolResult
-from config import Phase5ParallelConfig
+from config import Phase3ParallelConfig
 from harness.guardrail import GuardrailResult
 from llm.errors import LLMError, LLMErrorCode
 from llm.types import ChunkType, LLMChunk
@@ -29,7 +29,7 @@ class FakePhaseRouter:
     async def check_and_apply_transition(
         self, plan: TravelPlanState, hooks=None
     ) -> bool:
-        if plan.phase == 3:
+        if plan.phase == 2:
             return True
         return False
 
@@ -103,7 +103,7 @@ def engine():
     @tool(
         name="greet",
         description="Greet",
-        phases=[1, 2, 3, 5, 7],
+        phases=[1, 2, 3, 4],
         parameters={
             "type": "object",
             "properties": {"name": {"type": "string"}},
@@ -385,13 +385,13 @@ async def test_tool_result_emitted_before_slow_after_tool_result_internal_task(
 
 @pytest.mark.asyncio
 async def test_tool_choice_decider_result_is_passed_to_llm(engine, hooks):
-    plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
+    plan = TravelPlanState(session_id="s1", phase=2, phase2_step="brief")
     forced_choice = {"type": "function", "function": {"name": "set_trip_brief"}}
 
     class FakeToolChoiceDecider:
         def decide(self, plan_arg, messages_arg, phase_arg):
             assert plan_arg is plan
-            assert phase_arg == 3
+            assert phase_arg == 2
             return forced_choice
 
     observed: dict[str, object] = {}
@@ -411,7 +411,7 @@ async def test_tool_choice_decider_result_is_passed_to_llm(engine, hooks):
         tool_choice_decider=FakeToolChoiceDecider(),
     )
 
-    async for _ in agent.run([Message(role=Role.USER, content="继续")], phase=3):
+    async for _ in agent.run([Message(role=Role.USER, content="继续")], phase=2):
         pass
 
     assert observed["tool_choice"] == forced_choice
@@ -419,7 +419,7 @@ async def test_tool_choice_decider_result_is_passed_to_llm(engine, hooks):
 
 @pytest.mark.asyncio
 async def test_reflection_message_is_injected_before_llm_call(engine, hooks):
-    plan = TravelPlanState(session_id="s1", phase=3, phase3_step="lock")
+    plan = TravelPlanState(session_id="s1", phase=2, phase2_step="lock")
 
     class FakeReflection:
         def check_and_inject(self, messages, plan_arg, prev_step):
@@ -443,7 +443,7 @@ async def test_reflection_message_is_injected_before_llm_call(engine, hooks):
         reflection=FakeReflection(),
     )
 
-    async for _ in agent.run([Message(role=Role.USER, content="继续")], phase=3):
+    async for _ in agent.run([Message(role=Role.USER, content="继续")], phase=2):
         pass
 
     assert "[自检] 请先检查方案" in observed_messages
@@ -594,17 +594,17 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
     )
     async def advance_phase() -> dict:
         executed.append("advance_phase")
-        plan.phase = 3
+        plan.phase = 2
         return {"ok": True}
 
     @tool(
-        name="phase3_only",
-        description="phase3",
-        phases=[3],
+        name="phase2_only",
+        description="phase2",
+        phases=[2],
         parameters={"type": "object", "properties": {}},
     )
-    async def phase3_only() -> dict:
-        executed.append("phase3_only")
+    async def phase2_only() -> dict:
+        executed.append("phase2_only")
         return {"ok": True}
 
     @tool(
@@ -619,7 +619,7 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
 
     engine = ToolEngine()
     engine.register(advance_phase)
-    engine.register(phase3_only)
+    engine.register(phase2_only)
     engine.register(should_not_run)
 
     call_index = 0
@@ -643,7 +643,7 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
         observed_second_call["tool_names"] = [tool["name"] for tool in tools or []]
         observed_second_call["messages"] = [m.content for m in messages]
         observed_second_call["roles"] = [m.role for m in messages]
-        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 3 ready")
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 2 ready")
         yield LLMChunk(type=ChunkType.DONE)
 
     llm = MagicMock()
@@ -666,21 +666,21 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
 
     assert executed == ["advance_phase", "should_not_run"]
     assert context_manager.compress_calls == []
-    assert observed_second_call["tool_names"] == ["phase3_only"]
+    assert observed_second_call["tool_names"] == ["phase2_only"]
     assert observed_second_call["messages"] == [
-        "system phase=3 prompt=phase-3-prompt user=memory:u1 tools=phase3_only",
-        "handoff 1->3 phase=3",
+        "system phase=2 prompt=phase-2-prompt user=memory:u1 tools=phase2_only",
+        "handoff 1->2 phase=2",
         "帮我继续规划",
     ]
     observed_roles = observed_second_call.get("roles")
     if observed_roles is not None:
         assert observed_roles == [Role.SYSTEM, Role.ASSISTANT, Role.USER]
-    assert any(chunk.content == "phase 3 ready" for chunk in chunks)
+    assert any(chunk.content == "phase 2 ready" for chunk in chunks)
 
 
 @pytest.mark.asyncio
 async def test_phase_rebuild_skips_memory_when_disabled(mock_llm, engine, hooks):
-    plan = TravelPlanState(session_id="s1", phase=3)
+    plan = TravelPlanState(session_id="s1", phase=2)
     agent = AgentLoop(
         llm=mock_llm,
         tool_engine=engine,
@@ -698,21 +698,21 @@ async def test_phase_rebuild_skips_memory_when_disabled(mock_llm, engine, hooks)
     rebuilt = await agent._rebuild_messages_for_phase_change(
         [Message(role=Role.USER, content="继续")],
         from_phase=1,
-        to_phase=3,
+        to_phase=2,
         original_user_message=Message(role=Role.USER, content="继续"),
         result=ToolResult(tool_call_id="tc1", status="success", data={}),
     )
 
     assert "memory:u1" not in rebuilt[0].content
     assert "暂无相关用户记忆" in rebuilt[0].content
-    assert rebuilt[1].content == "handoff 1->3 phase=3"
+    assert rebuilt[1].content == "handoff 1->2 phase=2"
 
 
 @pytest.mark.asyncio
 async def test_rebuild_messages_for_forward_phase_change_uses_handoff_note_not_summary(
     mock_llm, engine, hooks
 ):
-    plan = TravelPlanState(session_id="s1", phase=5)
+    plan = TravelPlanState(session_id="s1", phase=3)
     agent = AgentLoop(
         llm=mock_llm,
         tool_engine=engine,
@@ -730,14 +730,14 @@ async def test_rebuild_messages_for_forward_phase_change_uses_handoff_note_not_s
 
     rebuilt = await agent._rebuild_messages_for_phase_change(
         messages=messages,
-        from_phase=3,
-        to_phase=5,
+        from_phase=2,
+        to_phase=3,
         original_user_message=original,
         result=ToolResult(tool_call_id="", status="success"),
     )
 
     assert [m.role for m in rebuilt] == [Role.SYSTEM, Role.ASSISTANT, Role.USER]
-    assert rebuilt[1].content == "handoff 3->5 phase=5"
+    assert rebuilt[1].content == "handoff 2->3 phase=3"
     assert rebuilt[2].content == "航班 ok 的，住宿就朵兰达+维也纳"
 
 
@@ -745,7 +745,7 @@ async def test_rebuild_messages_for_forward_phase_change_uses_handoff_note_not_s
 async def test_forward_transition_does_not_call_compress_for_transition(
     mock_llm, engine, hooks
 ):
-    plan = TravelPlanState(session_id="s1", phase=5)
+    plan = TravelPlanState(session_id="s1", phase=3)
     context_manager = FakeContextManager()
     called = False
 
@@ -772,8 +772,8 @@ async def test_forward_transition_does_not_call_compress_for_transition(
 
     rebuilt = await agent._rebuild_messages_for_phase_change(
         messages=[Message(role=Role.USER, content="x")],
-        from_phase=3,
-        to_phase=5,
+        from_phase=2,
+        to_phase=3,
         original_user_message=Message(role=Role.USER, content="x"),
         result=ToolResult(tool_call_id="", status="success"),
     )
@@ -786,7 +786,7 @@ async def test_forward_transition_does_not_call_compress_for_transition(
 async def test_backtrack_rebuild_uses_hard_boundary_without_compression():
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-05"),
         accommodation=Accommodation(area="新宿"),
@@ -804,7 +804,7 @@ async def test_backtrack_rebuild_uses_hard_boundary_without_compression():
         plan.phase = 1
         plan.backtrack_history.append(
             BacktrackEvent(
-                from_phase=5,
+                from_phase=3,
                 to_phase=1,
                 reason="用户想换目的地",
                 snapshot_path="",
@@ -849,13 +849,13 @@ async def test_backtrack_rebuild_uses_hard_boundary_without_compression():
     )
 
     messages = [Message(role=Role.USER, content="不想去这里了，换个目的地")]
-    async for _ in agent.run(messages, phase=5):
+    async for _ in agent.run(messages, phase=3):
         pass
 
     assert context_manager.compress_calls == []
     assert observed_second_call["messages"] == [
         "system phase=1 prompt=phase-1-prompt user=memory:u2",
-        "[阶段回退]\n用户从 phase 5 回退到 phase 1，原因：用户想换目的地",
+        "[阶段回退]\n用户从 phase 3 回退到 phase 1，原因：用户想换目的地",
         "不想去这里了，换个目的地",
     ]
 
@@ -872,7 +872,7 @@ async def test_forward_phase_rebuild_uses_handoff_note_when_summary_helper_is_em
         parameters={"type": "object", "properties": {}},
     )
     async def advance_phase() -> dict:
-        plan.phase = 3
+        plan.phase = 2
         return {"ok": True}
 
     engine = ToolEngine()
@@ -893,7 +893,7 @@ async def test_forward_phase_rebuild_uses_handoff_note_when_summary_helper_is_em
             return
 
         observed_second_call["messages"] = [m.content for m in messages]
-        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 3 ready")
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 2 ready")
         yield LLMChunk(type=ChunkType.DONE)
 
     llm = MagicMock()
@@ -917,20 +917,20 @@ async def test_forward_phase_rebuild_uses_handoff_note_when_summary_helper_is_em
 
     assert context_manager.compress_calls == []
     assert observed_second_call["messages"] == [
-        "system phase=3 prompt=phase-3-prompt user=memory:u-empty",
-        "handoff 1->3 phase=3",
+        "system phase=2 prompt=phase-2-prompt user=memory:u-empty",
+        "handoff 1->2 phase=2",
         "帮我继续规划",
     ]
 
 
 @pytest.mark.asyncio
 async def test_phase3_substep_change_refreshes_tools():
-    """Test that tool availability changes when phase3_step changes.
+    """Test that tool availability changes when phase2_step changes.
 
     Uses the real plan tools registered through register_all_plan_tools,
-    which respects the engine's phase3_step-based tool filtering.
+    which respects the engine's phase2_step-based tool filtering.
     """
-    plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
+    plan = TravelPlanState(session_id="s1", phase=2, phase2_step="brief")
 
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
@@ -974,7 +974,7 @@ async def test_phase3_substep_change_refreshes_tools():
     )
 
     messages = [Message(role=Role.USER, content="帮我设定trip brief")]
-    async for _ in agent.run(messages, phase=3):
+    async for _ in agent.run(messages, phase=2):
         pass
 
     # On first call (brief step), set_trip_brief is available
@@ -986,14 +986,14 @@ async def test_phase3_substep_change_refreshes_tools():
 
 @pytest.mark.asyncio
 async def test_phase3_inferred_substep_refreshes_tools_after_dates_written():
-    plan = TravelPlanState(session_id="s1", phase=3, destination="东京")
+    plan = TravelPlanState(session_id="s1", phase=2, destination="东京")
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
 
     @tool(
         name="quick_travel_search",
         description="quick",
-        phases=[3],
+        phases=[2],
         parameters={"type": "object", "properties": {}},
     )
     async def quick_travel_search() -> dict:
@@ -1041,12 +1041,12 @@ async def test_phase3_inferred_substep_refreshes_tools_after_dates_written():
     )
 
     messages = [Message(role=Role.USER, content="五一去东京玩5天")]
-    async for _ in agent.run(messages, phase=3):
+    async for _ in agent.run(messages, phase=2):
         pass
 
     assert "update_trip_basics" in observed_tool_names[0]
     assert "quick_travel_search" in observed_tool_names[1]
-    assert plan.phase3_step == "candidate"
+    assert plan.phase2_step == "candidate"
     assert plan.trip_brief["destination"] == "东京"
 
 
@@ -1054,8 +1054,8 @@ async def test_phase3_inferred_substep_refreshes_tools_after_dates_written():
 async def test_phase3_text_only_skeleton_response_triggers_state_repair():
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="skeleton",
+        phase=2,
+        phase2_step="skeleton",
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-06"),
         trip_brief={"goal": "慢旅行"},
@@ -1116,7 +1116,7 @@ async def test_phase3_text_only_skeleton_response_triggers_state_repair():
     )
 
     messages = [Message(role=Role.USER, content="给我三套骨架方案")]
-    async for _ in agent.run(messages, phase=3):
+    async for _ in agent.run(messages, phase=2):
         pass
 
     assert [item["id"] for item in plan.skeleton_plans] == [
@@ -1136,8 +1136,8 @@ async def test_phase3_candidate_partial_split_write_triggers_repair():
     """Test that partial split-write (candidate_pool exists but shortlist missing) triggers repair hint."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="candidate",
+        phase=2,
+        phase2_step="candidate",
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-06"),
         trip_brief={"goal": "文化之旅"},
@@ -1201,7 +1201,7 @@ async def test_phase3_candidate_partial_split_write_triggers_repair():
     )
 
     messages = [Message(role=Role.USER, content="帮我筛选候选方案")]
-    async for _ in agent.run(messages, phase=3):
+    async for _ in agent.run(messages, phase=2):
         pass
 
     # Verify repair hint was injected and only asks for shortlist repair.
@@ -1229,8 +1229,8 @@ async def test_phase3_candidate_skeleton_leakage_triggers_repair():
     skeleton_plans state."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="candidate",
+        phase=2,
+        phase2_step="candidate",
         destination="四礵列岛",
         dates=DateRange(start="2026-05-01", end="2026-05-06"),
         trip_brief={"goal": "海岛探险"},
@@ -1301,7 +1301,7 @@ async def test_phase3_candidate_skeleton_leakage_triggers_repair():
     )
 
     messages = [Message(role=Role.USER, content="帮我设计骨架方案")]
-    async for _ in agent.run(messages, phase=3):
+    async for _ in agent.run(messages, phase=2):
         pass
 
     # Verify repair hint was injected mentioning set_skeleton_plans
@@ -1323,8 +1323,8 @@ async def test_phase3_lock_repair_triggers_per_field():
     not require all 4 fields to be empty simultaneously."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="lock",
+        phase=2,
+        phase2_step="lock",
         destination="京都",
         dates=DateRange(start="2026-05-01", end="2026-05-06"),
         trip_brief={"goal": "文化之旅"},
@@ -1373,7 +1373,7 @@ async def test_phase3_lock_repair_triggers_per_field():
     )
 
     messages = [Message(role=Role.USER, content="帮我锁定住宿")]
-    async for _ in agent.run(messages, phase=3):
+    async for _ in agent.run(messages, phase=2):
         pass
 
     # Verify repair was injected mentioning accommodation
@@ -1398,8 +1398,8 @@ async def test_phase3_repair_retry_fires_twice_then_stops():
     then stop on the third consecutive text-only response."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="skeleton",
+        phase=2,
+        phase2_step="skeleton",
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-06"),
         trip_brief={"goal": "文化之旅"},
@@ -1435,7 +1435,7 @@ async def test_phase3_repair_retry_fires_twice_then_stops():
     )
 
     messages = [Message(role=Role.USER, content="给我骨架方案")]
-    async for _ in agent.run(messages, phase=3):
+    async for _ in agent.run(messages, phase=2):
         pass
 
     # call 1: text → repair fires (p3_skeleton)
@@ -1450,8 +1450,8 @@ async def test_redundant_search_skipped_after_two_identical_queries():
     search call should be skipped with a helpful message."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="candidate",
+        phase=2,
+        phase2_step="candidate",
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-06"),
         trip_brief={"goal": "文化之旅"},
@@ -1498,7 +1498,7 @@ async def test_redundant_search_skipped_after_two_identical_queries():
 
     messages = [Message(role=Role.USER, content="搜索景点")]
     chunks = []
-    async for chunk in agent.run(messages, phase=3):
+    async for chunk in agent.run(messages, phase=2):
         chunks.append(chunk)
 
     # The third search call (call_count==3) should have been skipped
@@ -1524,7 +1524,7 @@ async def test_redundant_search_skipped_after_two_identical_queries():
 async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-05"),
         accommodation=Accommodation(area="新宿"),
@@ -1543,7 +1543,7 @@ async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
         plan.phase = 1
         plan.backtrack_history.append(
             BacktrackEvent(
-                from_phase=5,
+                from_phase=3,
                 to_phase=1,
                 reason="用户想换目的地",
                 snapshot_path="",
@@ -1603,7 +1603,7 @@ async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
     chunks = [
         chunk
         async for chunk in agent.run(
-            [Message(role=Role.USER, content="换个目的地")], phase=5
+            [Message(role=Role.USER, content="换个目的地")], phase=3
         )
     ]
 
@@ -1617,12 +1617,12 @@ async def test_backtrack_skips_remaining_tool_calls_after_hard_boundary():
 
 
 @pytest.mark.asyncio
-async def test_phase5_text_only_daily_plan_triggers_state_repair():
-    """When Phase 5 LLM outputs day-by-day text but forgets to call
+async def test_phase3_text_only_daily_plan_triggers_state_repair():
+    """When Phase 3 LLM outputs day-by-day text but forgets to call
     plan tools, the repair mechanism should inject a reminder."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="大阪",
         dates=DateRange(start="2026-04-15", end="2026-04-17"),
         skeleton_plans=[{"id": "plan_A", "theme": "经典大阪"}],
@@ -1738,7 +1738,7 @@ async def test_phase5_text_only_daily_plan_triggers_state_repair():
     )
 
     messages = [Message(role=Role.USER, content="帮我排出每天的行程")]
-    async for _ in agent.run(messages, phase=5):
+    async for _ in agent.run(messages, phase=3):
         pass
 
     # daily_plans should be written
@@ -1759,12 +1759,12 @@ async def test_phase5_text_only_daily_plan_triggers_state_repair():
 
 
 @pytest.mark.asyncio
-async def test_phase5_repair_hint_not_repeated():
+async def test_phase3_repair_hint_not_repeated():
     """After a repair hint is sent once, it should not be repeated even if LLM
     outputs itinerary text again."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="大阪",
         dates=DateRange(start="2026-04-15", end="2026-04-17"),
         skeleton_plans=[{"id": "plan_A", "theme": "经典大阪"}],
@@ -1806,7 +1806,7 @@ async def test_phase5_repair_hint_not_repeated():
     )
 
     messages = [Message(role=Role.USER, content="帮我排出每天的行程")]
-    async for _ in agent.run(messages, phase=5):
+    async for _ in agent.run(messages, phase=3):
         pass
 
     # Repair fires on call 1 (dedup key added), call 2 skips repair → agent ends.
@@ -1814,11 +1814,11 @@ async def test_phase5_repair_hint_not_repeated():
 
 
 @pytest.mark.asyncio
-async def test_phase5_repair_detects_json_style_output():
+async def test_phase3_repair_detects_json_style_output():
     """Repair should also trigger when LLM outputs JSON-style itinerary."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="京都",
         dates=DateRange(start="2026-05-01", end="2026-05-03"),
         skeleton_plans=[{"id": "planB"}],
@@ -1859,7 +1859,7 @@ async def test_phase5_repair_detects_json_style_output():
     )
 
     messages = [Message(role=Role.USER, content="排行程")]
-    async for _ in agent.run(messages, phase=5):
+    async for _ in agent.run(messages, phase=3):
         pass
 
     # Repair should have fired (call_count > 1)
@@ -1974,9 +1974,9 @@ async def test_progress_tracks_partial_text_when_llm_stream_errors():
 
 
 @pytest.mark.asyncio
-async def test_phase3_step_change_rebuilds_system_message():
+async def test_phase2_step_change_rebuilds_system_message():
     """子阶段从 brief 推进到 candidate 时，system message 必须被重建。"""
-    plan = TravelPlanState(session_id="s1", phase=3, destination="东京")
+    plan = TravelPlanState(session_id="s1", phase=2, destination="东京")
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
 
@@ -2020,24 +2020,24 @@ async def test_phase3_step_change_rebuilds_system_message():
     )
 
     messages = [Message(role=Role.USER, content="五一去东京玩5天")]
-    async for _ in agent.run(messages, phase=3):
+    async for _ in agent.run(messages, phase=2):
         pass
 
-    assert plan.phase3_step == "candidate"
-    # 修复前：phase3_step 变化不重建 → 观察不到任何 SYSTEM
-    # 修复后：phase3_step 变化触发重建 → 第二轮 messages 至少含一条 SYSTEM
-    assert len(observed_system_contents) >= 1, "phase3_step 推进后未重建 system message"
-    assert "phase=3" in observed_system_contents[-1]
+    assert plan.phase2_step == "candidate"
+    # 修复前：phase2_step 变化不重建 → 观察不到任何 SYSTEM
+    # 修复后：phase2_step 变化触发重建 → 第二轮 messages 至少含一条 SYSTEM
+    assert len(observed_system_contents) >= 1, "phase2_step 推进后未重建 system message"
+    assert "phase=2" in observed_system_contents[-1]
     assert "已完成 Phase" not in observed_system_contents[-1]
     assert "handoff" not in observed_system_contents[-1]
 
 
 @pytest.mark.asyncio
-async def test_phase3_to_phase5_transition_rechecks_parallel_routing():
+async def test_phase3_to_phase3_transition_rechecks_parallel_routing():
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="lock",
+        phase=2,
+        phase2_step="lock",
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-03"),
         skeleton_plans=[{"id": "plan_A", "days": [{}, {}, {}]}],
@@ -2045,18 +2045,18 @@ async def test_phase3_to_phase5_transition_rechecks_parallel_routing():
     )
 
     @tool(
-        name="promote_to_phase5",
-        description="Promote plan to phase 5",
+        name="promote_to_phase3",
+        description="Promote plan to phase 3",
         phases=[3],
         parameters={"type": "object", "properties": {}, "required": []},
         side_effect="write",
     )
-    async def promote_to_phase5() -> dict:
-        plan.phase = 5
-        return {"updated_field": "phase", "phase": 5}
+    async def promote_to_phase3() -> dict:
+        plan.phase = 3
+        return {"updated_field": "phase", "phase": 3}
 
     engine = ToolEngine()
-    engine.register(promote_to_phase5)
+    engine.register(promote_to_phase3)
 
     llm_call_count = 0
 
@@ -2066,8 +2066,8 @@ async def test_phase3_to_phase5_transition_rechecks_parallel_routing():
         yield LLMChunk(
             type=ChunkType.TOOL_CALL_START,
             tool_call=ToolCall(
-                id="tc_phase5",
-                name="promote_to_phase5",
+                id="tc_phase3",
+                name="promote_to_phase3",
                 arguments={},
             ),
         )
@@ -2085,8 +2085,8 @@ async def test_phase3_to_phase5_transition_rechecks_parallel_routing():
         plan=plan,
         llm_factory=lambda: MagicMock(),
         memory_mgr=FakeMemoryManager(),
-        user_id="u-phase5-reentry",
-        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+        user_id="u-phase3-reentry",
+        phase3_parallel_config=Phase3ParallelConfig(enabled=True),
     )
 
     parallel_calls = 0
@@ -2094,30 +2094,30 @@ async def test_phase3_to_phase5_transition_rechecks_parallel_routing():
     async def fake_parallel_runner(*, messages=None, original_user_message=None):
         nonlocal parallel_calls
         parallel_calls += 1
-        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="parallel phase5")
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="parallel phase3")
         yield LLMChunk(type=ChunkType.DONE)
 
-    agent._run_parallel_phase5_orchestrator = fake_parallel_runner
+    agent._run_parallel_phase3_orchestrator = fake_parallel_runner
 
-    chunks = [c async for c in agent.run([Message(role=Role.USER, content="继续")], phase=3)]
+    chunks = [c async for c in agent.run([Message(role=Role.USER, content="继续")], phase=2)]
 
-    assert plan.phase == 5
+    assert plan.phase == 3
     assert llm_call_count == 1
     assert parallel_calls == 1
     assert any(
-        c.type == ChunkType.PHASE_TRANSITION and c.phase_info["to_phase"] == 5
+        c.type == ChunkType.PHASE_TRANSITION and c.phase_info["to_phase"] == 3
         for c in chunks
     )
     assert any(
-        c.type == ChunkType.TEXT_DELTA and c.content == "parallel phase5"
+        c.type == ChunkType.TEXT_DELTA and c.content == "parallel phase3"
         for c in chunks
     )
 
 
 @pytest.mark.asyncio
-async def test_phase3_step_change_no_handoff_note():
-    """phase3_step 变化重建时不得注入跨 phase handoff assistant note。"""
-    plan = TravelPlanState(session_id="s1", phase=3, destination="东京")
+async def test_phase2_step_change_no_handoff_note():
+    """phase2_step 变化重建时不得注入跨 phase handoff assistant note。"""
+    plan = TravelPlanState(session_id="s1", phase=2, destination="东京")
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
 
@@ -2156,7 +2156,7 @@ async def test_phase3_step_change_no_handoff_note():
         memory_mgr=FakeMemoryManager(),
         user_id="u-step2",
     )
-    async for _ in agent.run([Message(role=Role.USER, content="定档")], phase=3):
+    async for _ in agent.run([Message(role=Role.USER, content="定档")], phase=2):
         pass
 
     second_round = observed_messages[1]
@@ -2178,7 +2178,7 @@ async def test_phase_transition_flushes_messages_before_rebuild():
         parameters={"type": "object", "properties": {}},
     )
     async def advance_phase() -> dict:
-        plan.phase = 3
+        plan.phase = 2
         return {"destination": "东京"}
 
     engine = ToolEngine()
@@ -2196,14 +2196,14 @@ async def test_phase_transition_flushes_messages_before_rebuild():
             )
             yield LLMChunk(type=ChunkType.DONE)
             return
-        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 3 ready")
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 2 ready")
         yield LLMChunk(type=ChunkType.DONE)
 
-    async def flush_callback(*, messages, from_phase, from_phase3_step):
+    async def flush_callback(*, messages, from_phase, from_phase2_step):
         flushed.append(
             {
                 "from_phase": from_phase,
-                "from_phase3_step": from_phase3_step,
+                "from_phase2_step": from_phase2_step,
                 "roles": [message.role for message in messages],
                 "tool_names": [
                     call.name
@@ -2236,7 +2236,7 @@ async def test_phase_transition_flushes_messages_before_rebuild():
     assert flushed == [
         {
             "from_phase": 1,
-            "from_phase3_step": "brief",
+            "from_phase2_step": "brief",
             "roles": [Role.USER, Role.ASSISTANT, Role.TOOL],
             "tool_names": ["advance_phase"],
         }
@@ -2244,8 +2244,8 @@ async def test_phase_transition_flushes_messages_before_rebuild():
 
 
 @pytest.mark.asyncio
-async def test_phase3_step_change_flushes_messages_before_rebuild():
-    plan = TravelPlanState(session_id="s1", phase=3, destination="东京")
+async def test_phase2_step_change_flushes_messages_before_rebuild():
+    plan = TravelPlanState(session_id="s1", phase=2, destination="东京")
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
     flushed: list[dict[str, object]] = []
@@ -2270,11 +2270,11 @@ async def test_phase3_step_change_flushes_messages_before_rebuild():
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="继续规划")
         yield LLMChunk(type=ChunkType.DONE)
 
-    async def flush_callback(*, messages, from_phase, from_phase3_step):
+    async def flush_callback(*, messages, from_phase, from_phase2_step):
         flushed.append(
             {
                 "from_phase": from_phase,
-                "from_phase3_step": from_phase3_step,
+                "from_phase2_step": from_phase2_step,
                 "contents": [message.content for message in messages],
             }
         )
@@ -2296,14 +2296,14 @@ async def test_phase3_step_change_flushes_messages_before_rebuild():
     )
 
     messages = [Message(role=Role.USER, content="五一去东京玩5天")]
-    async for _ in agent.run(messages, phase=3):
+    async for _ in agent.run(messages, phase=2):
         pass
 
-    assert plan.phase3_step == "candidate"
-    assert flushed[0]["from_phase"] == 3
-    assert flushed[0]["from_phase3_step"] == "brief"
+    assert plan.phase2_step == "candidate"
+    assert flushed[0]["from_phase"] == 2
+    assert flushed[0]["from_phase2_step"] == "brief"
     assert "五一去东京玩5天" in flushed[0]["contents"]
-    assert observed_second_call["messages"][0].startswith("system phase=3")
+    assert observed_second_call["messages"][0].startswith("system phase=2")
 
 
 @pytest.mark.asyncio
@@ -2317,7 +2317,7 @@ async def test_pre_rebuild_flush_failure_logs_warning_and_rebuilds(caplog):
         parameters={"type": "object", "properties": {}},
     )
     async def advance_phase() -> dict:
-        plan.phase = 3
+        plan.phase = 2
         return {"destination": "东京"}
 
     engine = ToolEngine()
@@ -2336,10 +2336,10 @@ async def test_pre_rebuild_flush_failure_logs_warning_and_rebuilds(caplog):
             yield LLMChunk(type=ChunkType.DONE)
             return
         observed_second_call["messages"] = [message.content for message in messages]
-        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 3 ready")
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="phase 2 ready")
         yield LLMChunk(type=ChunkType.DONE)
 
-    async def failing_flush(*, messages, from_phase, from_phase3_step):
+    async def failing_flush(*, messages, from_phase, from_phase2_step):
         raise RuntimeError("disk unavailable")
 
     llm = MagicMock()
@@ -2363,8 +2363,8 @@ async def test_pre_rebuild_flush_failure_logs_warning_and_rebuilds(caplog):
             pass
 
     assert observed_second_call["messages"] == [
-        "system phase=3 prompt=phase-3-prompt user=memory:u1",
-        "handoff 1->3 phase=3",
+        "system phase=2 prompt=phase-2-prompt user=memory:u1",
+        "handoff 1->2 phase=2",
         "去东京",
     ]
     assert "pre-rebuild message history flush failed" in caplog.text

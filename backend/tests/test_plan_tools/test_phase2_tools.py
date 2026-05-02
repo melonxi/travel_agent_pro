@@ -1,12 +1,12 @@
-"""Unit tests for Category A Phase 3 tools."""
+"""Unit tests for Category A Phase 2 tools."""
 
 from __future__ import annotations
 
 import pytest
 
-from state.models import Accommodation, DateRange, TravelPlanState, infer_phase3_step_from_state
+from state.models import Accommodation, DateRange, TravelPlanState, infer_phase2_step_from_state
 from tools.base import ToolError
-from tools.plan_tools.phase3_tools import (
+from tools.plan_tools.phase2_tools import (
     make_select_skeleton_tool,
     make_select_transport_tool,
     make_set_accommodation_options_tool,
@@ -42,7 +42,7 @@ def plan():
             "写入骨架方案",
             ["plans"],
             {"plans"},
-            [3],
+            [2],
         ),
         (
             make_select_skeleton_tool,
@@ -50,7 +50,7 @@ def plan():
             "锁定骨架方案",
             ["id"],
             {"id"},
-            [3],
+            [2],
         ),
         (
             make_set_candidate_pool_tool,
@@ -58,7 +58,7 @@ def plan():
             "写入候选池",
             ["pool"],
             {"pool"},
-            [3],
+            [2],
         ),
         (
             make_set_shortlist_tool,
@@ -66,7 +66,7 @@ def plan():
             "写入候选短名单",
             ["items"],
             {"items"},
-            [3],
+            [2],
         ),
         (
             make_set_transport_options_tool,
@@ -74,7 +74,7 @@ def plan():
             "写入交通候选",
             ["options"],
             {"options"},
-            [3],
+            [2],
         ),
         (
             make_select_transport_tool,
@@ -82,7 +82,7 @@ def plan():
             "锁定交通方案",
             ["choice"],
             {"choice"},
-            [3],
+            [2],
         ),
         (
             make_set_accommodation_options_tool,
@@ -90,7 +90,7 @@ def plan():
             "写入住宿候选",
             ["options"],
             {"options"},
-            [3],
+            [2],
         ),
         (
             make_set_accommodation_tool,
@@ -98,7 +98,7 @@ def plan():
             "锁定住宿",
             ["area"],
             {"area", "hotel"},
-            [3, 5],
+            [2, 3],
         ),
         (
             make_set_risks_tool,
@@ -106,7 +106,7 @@ def plan():
             "写入风险点",
             ["list"],
             {"list"},
-            [3, 5],
+            [2, 3],
         ),
         (
             make_set_alternatives_tool,
@@ -114,7 +114,7 @@ def plan():
             "写入备选方案",
             ["list"],
             {"list"},
-            [3, 5],
+            [2, 3],
         ),
         (
             make_set_trip_brief_tool,
@@ -122,11 +122,11 @@ def plan():
             "更新旅行画像",
             ["fields"],
             {"fields"},
-            [3],
+            [2],
         ),
     ],
 )
-def test_phase3_tool_metadata(
+def test_phase2_tool_metadata(
     plan,
     factory,
     expected_name,
@@ -247,7 +247,7 @@ async def test_set_skeleton_plans_normalizes_trimmed_id_and_name(plan):
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_reconciles_selected_legacy_id(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [{"id": " plan-a ", "name": " Legacy "}]
@@ -257,7 +257,7 @@ async def test_set_skeleton_plans_reconciles_selected_legacy_id(plan):
     await tool_fn(plans=[{"id": " plan-a ", "name": " Legacy "}])
 
     assert plan.selected_skeleton_id == "plan-a"
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -271,7 +271,7 @@ async def test_set_skeleton_plans_reconciles_selected_legacy_id(plan):
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_clears_unproven_selection_without_previous_skeletons(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.selected_skeleton_id = " plan-a "
@@ -280,7 +280,7 @@ async def test_set_skeleton_plans_clears_unproven_selection_without_previous_ske
     await tool_fn(plans=[{"id": " plan-a ", "name": " Legacy "}])
 
     assert plan.selected_skeleton_id is None
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -294,7 +294,7 @@ async def test_set_skeleton_plans_clears_unproven_selection_without_previous_ske
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_reconciles_selected_legacy_name(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [{"id": "legacy-id", "name": " Legacy "}]
@@ -304,7 +304,7 @@ async def test_set_skeleton_plans_reconciles_selected_legacy_name(plan):
     await tool_fn(plans=[{"id": " plan-a ", "name": " Legacy "}])
 
     assert plan.selected_skeleton_id == "plan-a"
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -318,7 +318,7 @@ async def test_set_skeleton_plans_reconciles_selected_legacy_name(plan):
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_clears_ambiguous_previous_id_matches(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [
@@ -331,7 +331,7 @@ async def test_set_skeleton_plans_clears_ambiguous_previous_id_matches(plan):
     await tool_fn(plans=[{"id": "plan-a", "name": "New"}])
 
     assert plan.selected_skeleton_id is None
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -345,7 +345,7 @@ async def test_set_skeleton_plans_clears_ambiguous_previous_id_matches(plan):
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_clears_ambiguous_previous_name_matches(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [
@@ -358,7 +358,7 @@ async def test_set_skeleton_plans_clears_ambiguous_previous_name_matches(plan):
     await tool_fn(plans=[{"id": "plan-a", "name": "Legacy"}])
 
     assert plan.selected_skeleton_id is None
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -372,7 +372,7 @@ async def test_set_skeleton_plans_clears_ambiguous_previous_name_matches(plan):
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_clears_cross_matched_previous_id_and_name(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [
@@ -385,7 +385,7 @@ async def test_set_skeleton_plans_clears_cross_matched_previous_id_and_name(plan
     await tool_fn(plans=[{"id": "plan-a", "name": "New Alpha"}])
 
     assert plan.selected_skeleton_id is None
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -399,7 +399,7 @@ async def test_set_skeleton_plans_clears_cross_matched_previous_id_and_name(plan
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_reconciles_same_entry_matching_old_id_and_name(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [{"id": "A", "name": "A"}]
@@ -409,7 +409,7 @@ async def test_set_skeleton_plans_reconciles_same_entry_matching_old_id_and_name
     await tool_fn(plans=[{"id": "B", "name": "A"}])
 
     assert plan.selected_skeleton_id == "B"
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -423,7 +423,7 @@ async def test_set_skeleton_plans_reconciles_same_entry_matching_old_id_and_name
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_clears_preserved_id_when_rewritten_state_is_ambiguous(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [{"id": "plan-a", "name": "Alpha"}]
@@ -438,7 +438,7 @@ async def test_set_skeleton_plans_clears_preserved_id_when_rewritten_state_is_am
     )
 
     assert plan.selected_skeleton_id is None
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -452,7 +452,7 @@ async def test_set_skeleton_plans_clears_preserved_id_when_rewritten_state_is_am
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_clears_canonicalized_id_when_rewritten_state_is_ambiguous(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [{"id": "old", "name": "Legacy"}]
@@ -467,7 +467,7 @@ async def test_set_skeleton_plans_clears_canonicalized_id_when_rewritten_state_i
     )
 
     assert plan.selected_skeleton_id is None
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -492,7 +492,7 @@ async def test_set_skeleton_plans_does_not_remap_missing_selected_id_by_name(pla
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_does_not_preserve_legacy_name_as_new_id(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [{"id": "old-id", "name": " Legacy "}]
@@ -502,7 +502,7 @@ async def test_set_skeleton_plans_does_not_preserve_legacy_name_as_new_id(plan):
     await tool_fn(plans=[{"id": " Legacy ", "name": "Other"}])
 
     assert plan.selected_skeleton_id is None
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -516,7 +516,7 @@ async def test_set_skeleton_plans_does_not_preserve_legacy_name_as_new_id(plan):
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_clears_trimmed_legacy_name_when_name_disappears(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [{"id": "old-id", "name": "plan-a"}]
@@ -526,7 +526,7 @@ async def test_set_skeleton_plans_clears_trimmed_legacy_name_when_name_disappear
     await tool_fn(plans=[{"id": "plan-a", "name": "Other"}])
 
     assert plan.selected_skeleton_id is None
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -540,7 +540,7 @@ async def test_set_skeleton_plans_clears_trimmed_legacy_name_when_name_disappear
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_clears_stale_unknown_selection(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [{"id": "old-id", "name": "Old"}]
@@ -550,7 +550,7 @@ async def test_set_skeleton_plans_clears_stale_unknown_selection(plan):
     await tool_fn(plans=[{"id": "plan-a", "name": "New"}])
 
     assert plan.selected_skeleton_id is None
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -564,7 +564,7 @@ async def test_set_skeleton_plans_clears_stale_unknown_selection(plan):
 
 @pytest.mark.asyncio
 async def test_set_skeleton_plans_clears_ambiguous_legacy_name_matches(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [{"id": "old-id", "name": " Legacy "}]
@@ -579,7 +579,7 @@ async def test_set_skeleton_plans_clears_ambiguous_legacy_name_matches(plan):
     )
 
     assert plan.selected_skeleton_id is None
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,
@@ -616,7 +616,7 @@ async def test_select_skeleton_normalizes_trimmed_input_id(plan):
 
 @pytest.mark.asyncio
 async def test_select_skeleton_handles_legacy_whitespace_padded_ids(plan):
-    plan.phase = 3
+    plan.phase = 2
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.trip_brief = {"goal": "慢旅行"}
     plan.skeleton_plans = [{"id": " plan-a ", "name": "Legacy"}]
@@ -624,7 +624,7 @@ async def test_select_skeleton_handles_legacy_whitespace_padded_ids(plan):
 
     result = await tool_fn(id=" plan-a ")
 
-    assert infer_phase3_step_from_state(
+    assert infer_phase2_step_from_state(
         phase=plan.phase,
         dates=plan.dates,
         trip_brief=plan.trip_brief,

@@ -119,9 +119,9 @@ def deserialize_history_message(row: dict[str, object]) -> HistoryMessage:
             history_seq=history_seq,
         ),
         phase=phase,
-        phase3_step=(
-            str(row["phase3_step"])
-            if row.get("phase3_step") is not None
+        phase2_step=(
+            str(row["phase2_step"])
+            if row.get("phase2_step") is not None
             else None
         ),
         history_seq=history_seq,
@@ -189,7 +189,7 @@ class SessionPersistence:
         messages: list[Message],
         *,
         phase: int,
-        phase3_step: str | None,
+        phase2_step: str | None,
         run_id: str | None,
         trip_id: str | None,
         next_history_seq: int,
@@ -242,7 +242,7 @@ class SessionPersistence:
                     "provider_state": provider_state_json,
                     "seq": assigned_history_seq,
                     "phase": phase,
-                    "phase3_step": phase3_step,
+                    "phase2_step": phase2_step,
                     "history_seq": assigned_history_seq,
                     "run_id": run_id,
                     "trip_id": trip_id,

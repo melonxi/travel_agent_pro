@@ -21,7 +21,7 @@ cd backend && pytest --collect-only -q
 
 ## 一句话项目定位
 
-Travel Agent Pro 是一个手写 Agent Loop 的全栈旅行规划 Agent。React 前端通过 SSE 与 FastAPI 后端交互，后端用 Phase 1/3/5/7 状态机、工具系统、记忆系统、质量门控、Trace 和 eval harness，把模糊旅行需求逐步推进到可交付的 `travel_plan.md` / `checklist.md`。
+Travel Agent Pro 是一个手写 Agent Loop 的全栈旅行规划 Agent。React 前端通过 SSE 与 FastAPI 后端交互，后端用 Phase 1/2/3/4 状态机、工具系统、记忆系统、质量门控、Trace 和 eval harness，把模糊旅行需求逐步推进到可交付的 `travel_plan.md` / `checklist.md`。
 
 面试表达重点：这不是 LangChain 调包项目，核心价值在于你实现并能解释 Agent 系统里的状态机、工具调用协议、上下文装配、并行 Worker、记忆召回、质量控制和可观测性。
 
@@ -33,7 +33,7 @@ Travel Agent Pro 是一个手写 Agent Loop 的全栈旅行规划 Agent。React 
 4. `backend/agent/loop.py::AgentLoop.run()` 执行 think-act-observe：LLM 输出工具调用，工具执行，结果回灌，再判断阶段转换。
 5. `backend/tools/engine.py::ToolEngine.execute_batch()` 按读写拆分：读工具可并行，写状态工具顺序执行。
 6. `backend/phase/router.py::PhaseRouter.infer_phase()` 根据 `TravelPlanState` 完整度推进 Phase。
-7. 成功后 `backend/api/orchestration/chat/finalization.py::finalize_agent_run()` 保存 plan、messages、session run 状态，Phase 7 时归档。
+7. 成功后 `backend/api/orchestration/chat/finalization.py::finalize_agent_run()` 保存 plan、messages、session run 状态，Phase 4 时归档。
 
 ## 你必须掌控的模块地图
 
@@ -42,13 +42,13 @@ Travel Agent Pro 是一个手写 Agent Loop 的全栈旅行规划 Agent。React 
 | 应用装配 | `create_app()` 创建 config、state、memory、routes、lifespan | `backend/main.py::create_app` |
 | 状态模型 | `TravelPlanState` 是当前旅行唯一权威事实源 | `backend/state/models.py::TravelPlanState` |
 | 状态持久化 | JSON plan/snapshot/deliverables，session id 正则校验 | `backend/state/manager.py::StateManager` |
-| Agent Loop | 自研循环、修复 hint、取消、Phase 5 分流 | `backend/agent/loop.py::AgentLoop` |
+| Agent Loop | 自研循环、修复 hint、取消、Phase 3 分流 | `backend/agent/loop.py::AgentLoop` |
 | LLM 抽象 | OpenAI/Anthropic provider，错误归一化 | `backend/llm/factory.py::create_llm_provider` |
 | 上下文 | `soul.md`、时间、phase prompt、runtime state、memory | `backend/context/manager.py::ContextManager` |
 | 工具系统 | `@tool` + schema + phase gate + read/write side effect | `backend/tools/base.py`, `backend/tools/engine.py` |
 | 写状态工具 | 17 个 plan writer，经 `PLAN_WRITER_TOOL_NAMES` 识别 | `backend/tools/plan_tools/__init__.py` |
 | 记忆系统 | v3 profile / working memory / episodes / slices | `backend/memory/manager.py::MemoryManager` |
-| Phase 5 并行 | Python Orchestrator + Day Worker + artifact handoff | `backend/agent/phase5/orchestrator.py::Phase5Orchestrator` |
+| Phase 3 并行 | Python Orchestrator + Day Worker + artifact handoff | `backend/agent/phase3/orchestrator.py::Phase3Orchestrator` |
 | Harness | guardrail、validator、judge、feasibility gate | `backend/harness/guardrail.py`, `backend/harness/validator.py`, `backend/harness/judge.py` |
 | Trace/Stats | in-memory `SessionStats` 转 Trace 视图 | `backend/api/trace.py::build_trace` |
 | 前端交互 | SSE 消费、工具卡、记忆卡、并行进度、继续/重试 | `frontend/src/components/ChatPanel.tsx` |
@@ -71,9 +71,9 @@ Travel Agent Pro 是一个手写 Agent Loop 的全栈旅行规划 Agent。React 
 
 当前旅行事实来自 `TravelPlanState`；长期偏好来自 profile；当前 trip 短期提醒来自 working memory；历史经验来自 episode slices。召回入口是 `backend/api/orchestration/memory/turn.py::build_memory_context_for_turn()`。
 
-### 5. Phase 5 用并行 Worker 加速日程生成
+### 5. Phase 3 用并行 Worker 加速日程生成
 
-满足 phase=5、无 daily_plans、已选 skeleton 等条件后，走 `backend/agent/phase5/parallel.py::should_use_parallel_phase5()`。Orchestrator 不直接写状态，而是把 `final_dayplans` handoff 给 AgentLoop，再通过内部 `replace_all_day_plans` 标准工具提交。
+满足 phase=3、无 daily_plans、已选 skeleton 等条件后，走 `backend/agent/phase3/parallel.py::should_use_parallel_phase3()`。Orchestrator 不直接写状态，而是把 `final_dayplans` handoff 给 AgentLoop，再通过内部 `replace_all_day_plans` 标准工具提交。
 
 ## 测试与评估资产
 
@@ -93,17 +93,17 @@ Travel Agent Pro 是一个手写 Agent Loop 的全栈旅行规划 Agent。React 
 
 ## 面试可主动承认的风险点
 
-### 1. Phase 5 fallback 语义不完全闭环
+### 1. Phase 3 fallback 语义不完全闭环
 
-`backend/agent/phase5/orchestrator.py::Phase5Orchestrator.run()` 在失败率大于 50% 且 `fallback_to_serial` 开启时直接 `return`。上层会发 warning，但当前代码没有在同一轮真正进入串行生成。
+`backend/agent/phase3/orchestrator.py::Phase3Orchestrator.run()` 在失败率大于 50% 且 `fallback_to_serial` 开启时直接 `return`。上层会发 warning，但当前代码没有在同一轮真正进入串行生成。
 
-### 2. Phase 5 unresolved error 仍可能提交
+### 2. Phase 3 unresolved error 仍可能提交
 
-re-dispatch 后如果仍有 error，代码只 log warning，仍设置 `final_dayplans`。相关逻辑在 `backend/agent/phase5/orchestrator.py` 的 re-dispatch 后 revalidate 分支。这是质量门控可进一步收紧的点。
+re-dispatch 后如果仍有 error，代码只 log warning，仍设置 `final_dayplans`。相关逻辑在 `backend/agent/phase3/orchestrator.py` 的 re-dispatch 后 revalidate 分支。这是质量门控可进一步收紧的点。
 
 ### 3. Worker 错误码与文档不完全一致
 
-`backend/agent/phase5/day_worker.py::run_day_worker()` 在 timeout 和 generic exception 返回 `DayWorkerResult` 时没有设置 `error_code`。`PROJECT_OVERVIEW.md` 里提到 `TIMEOUT/LLM_ERROR`，代码未完全落地。
+`backend/agent/phase3/day_worker.py::run_day_worker()` 在 timeout 和 generic exception 返回 `DayWorkerResult` 时没有设置 `error_code`。`PROJECT_OVERVIEW.md` 里提到 `TIMEOUT/LLM_ERROR`，代码未完全落地。
 
 ### 4. 前端并行状态类型漏了 `redispatch`
 
@@ -147,7 +147,7 @@ LLM 不能直接写状态，只能调用写工具；写工具校验 schema 和�
 
 当前事实只读 `TravelPlanState`；profile 不常驻 prompt，只在 recall gate 命中时进入；working memory 仅当前 session/trip 有效；episode slices 只在历史经验相关问题中召回。
 
-### Phase 5 并行为什么复杂？
+### Phase 3 并行为什么复杂？
 
 单日规划天然可拆，但跨天有 POI 重复、预算、交通衔接、节奏冲突，所以 Orchestrator 负责拆分、约束注入、全局验证和标准工具提交。Worker 只负责单日，且只能使用只读工具和候选提交工具。
 
@@ -156,7 +156,7 @@ LLM 不能直接写状态，只能调用写工具；写工具校验 schema 和�
 优先补：
 
 - 真正串行 fallback。
-- Phase 5 unresolved error 阻断策略。
+- Phase 3 unresolved error 阻断策略。
 - 前端 `redispatch` status 类型修复。
 - stats/trace 持久化。
 - 外部工具 timeout/circuit breaker。

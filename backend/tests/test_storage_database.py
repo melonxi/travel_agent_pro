@@ -132,7 +132,7 @@ async def test_messages_schema_contains_history_columns_and_indexes(db: Database
     columns = await db.fetch_all("PRAGMA table_info(messages)")
     column_names = {column["name"] for column in columns}
 
-    assert {"phase", "phase3_step", "history_seq", "run_id", "trip_id"} <= column_names
+    assert {"phase", "phase2_step", "history_seq", "run_id", "trip_id"} <= column_names
 
     indexes = await db.fetch_all("PRAGMA index_list(messages)")
     index_names = {index["name"] for index in indexes}
@@ -180,7 +180,7 @@ async def test_initialize_migrates_legacy_messages_history_schema(tmp_path):
 
     column_names = {column["name"] for column in columns}
     index_names = {index["name"] for index in indexes}
-    assert {"phase", "phase3_step", "history_seq", "run_id", "trip_id"} <= column_names
+    assert {"phase", "phase2_step", "history_seq", "run_id", "trip_id"} <= column_names
     assert "idx_messages_history" in index_names
     assert "idx_messages_phase" in index_names
     assert "idx_messages_session_history_unique" in index_names
@@ -229,7 +229,7 @@ async def test_migrate_legacy_messages_table_adds_context_epoch_columns(tmp_path
                 tool_call_id TEXT,
                 provider_state TEXT,
                 phase INTEGER,
-                phase3_step TEXT,
+                phase2_step TEXT,
                 history_seq INTEGER,
                 run_id TEXT,
                 trip_id TEXT,

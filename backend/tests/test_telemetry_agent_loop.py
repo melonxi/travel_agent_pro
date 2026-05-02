@@ -114,13 +114,13 @@ async def test_agent_loop_run_span_has_phase_attribute(otel_exporter):
     loop = _make_loop(llm, engine, hooks)
     messages = [Message(role=Role.USER, content="test")]
 
-    async for _ in loop.run(messages, phase=3):
+    async for _ in loop.run(messages, phase=2):
         pass
 
     spans = otel_exporter.get_finished_spans()
     run_spans = [s for s in spans if s.name == "agent_loop.run"]
     assert len(run_spans) == 1
-    assert run_spans[0].attributes.get("agent.phase") == 3
+    assert run_spans[0].attributes.get("agent.phase") == 2
 
 
 async def test_agent_loop_creates_iteration_span(otel_exporter):

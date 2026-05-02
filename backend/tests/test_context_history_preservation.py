@@ -27,7 +27,7 @@ def _get_route_closure(app, dependency_name: str):
 
 
 @pytest.mark.asyncio
-async def test_phase1_to_phase3_to_phase5_preserves_phase1_tool_history_in_db(app):
+async def test_phase1_to_phase2_to_phase3_preserves_phase1_tool_history_in_db(app):
     async def fake_run(self, messages, phase, tools_override=None):
         original_user = next(message for message in messages if message.role == Role.USER)
 
@@ -54,39 +54,48 @@ async def test_phase1_to_phase3_to_phase5_preserves_phase1_tool_history_in_db(ap
             )
         )
         messages.append(Message(role=Role.ASSISTANT, content="东京比较适合"))
-        self.plan.phase = 3
-        self.plan.phase3_step = "brief"
-        await self.on_before_message_rebuild(
+        self.plan.phase = 2
+        self.plan.phase2_step = "brief"
+        await self.on_context_rebuild(
             messages=messages,
             from_phase=1,
-            from_phase3_step=None,
+            from_phase2_step=None,
+            to_phase=2,
+            to_phase2_step="brief",
+            rebuild_reason="phase_forward",
         )
 
         messages[:] = [
-            Message(role=Role.SYSTEM, content="phase 3 brief system"),
+            Message(role=Role.SYSTEM, content="phase 2 brief system"),
             original_user,
         ]
         messages.append(Message(role=Role.ASSISTANT, content="我来建立画像"))
-        self.plan.phase3_step = "candidate"
-        await self.on_before_message_rebuild(
+        self.plan.phase2_step = "candidate"
+        await self.on_context_rebuild(
             messages=messages,
-            from_phase=3,
-            from_phase3_step="brief",
+            from_phase=2,
+            from_phase2_step="brief",
+            to_phase=2,
+            to_phase2_step="candidate",
+            rebuild_reason="phase2_step_change",
         )
 
         messages[:] = [
-            Message(role=Role.SYSTEM, content="phase 3 candidate system"),
+            Message(role=Role.SYSTEM, content="phase 2 candidate system"),
             original_user,
         ]
         messages.append(Message(role=Role.ASSISTANT, content="候选池已收敛"))
-        self.plan.phase = 5
-        await self.on_before_message_rebuild(
+        self.plan.phase = 3
+        await self.on_context_rebuild(
             messages=messages,
-            from_phase=3,
-            from_phase3_step="candidate",
+            from_phase=2,
+            from_phase2_step="candidate",
+            to_phase=3,
+            to_phase2_step=getattr(self.plan, "phase2_step", None),
+            rebuild_reason="phase_forward",
         )
         messages[:] = [
-            Message(role=Role.SYSTEM, content="phase 5 system"),
+            Message(role=Role.SYSTEM, content="phase 3 system"),
             original_user,
         ]
         messages.append(Message(role=Role.ASSISTANT, content="进入日程组装"))
@@ -112,9 +121,9 @@ async def test_phase1_to_phase3_to_phase5_preserves_phase1_tool_history_in_db(ap
         for row in phase1_rows
     )
     assert any("东京比较适合" in (row["content"] or "") for row in phase1_rows)
-    assert any(row["phase"] == 3 and row["phase3_step"] == "brief" for row in rows)
-    assert any(row["phase"] == 3 and row["phase3_step"] == "candidate" for row in rows)
-    assert rows[-1]["phase"] == 5
+    assert any(row["phase"] == 2 and row["phase2_step"] == "brief" for row in rows)
+    assert any(row["phase"] == 2 and row["phase2_step"] == "candidate" for row in rows)
+    assert rows[-1]["phase"] == 3
 
     frontend_payload = frontend_resp.json()
     assert frontend_resp.status_code == 200
@@ -129,10 +138,13 @@ async def test_phase1_to_phase3_to_phase5_preserves_phase1_tool_history_in_db(ap
 async def test_phase_history_rows_carry_run_id_and_trip_id(app):
     async def fake_run(self, messages, phase, tools_override=None):
         messages.append(Message(role=Role.ASSISTANT, content="第一轮回复"))
-        await self.on_before_message_rebuild(
+        await self.on_context_rebuild(
             messages=messages,
             from_phase=1,
-            from_phase3_step=None,
+            from_phase2_step=None,
+            to_phase=1,
+            to_phase2_step=None,
+            rebuild_reason="manual_flush",
         )
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="第一轮回复")
         yield LLMChunk(type=ChunkType.DONE)

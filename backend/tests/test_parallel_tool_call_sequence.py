@@ -83,7 +83,7 @@ async def test_parallel_plan_tools_with_constraints_flushes_after_group(
 
         session = sessions[session_id]
         plan: TravelPlanState = session["plan"]
-        plan.phase = 3
+        plan.phase = 2
         plan.destination = "东京"
 
         agent = session["agent"]
@@ -221,7 +221,7 @@ async def test_pending_buffer_cleared_between_rounds(app, sessions):
         session_id = create_resp.json()["session_id"]
         session = sessions[session_id]
         plan: TravelPlanState = session["plan"]
-        plan.phase = 3
+        plan.phase = 2
         plan.destination = "香港"
 
         agent = session["agent"]

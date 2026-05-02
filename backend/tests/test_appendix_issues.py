@@ -79,7 +79,7 @@ class TestA1PhaseToolNamesInconsistency:
         engine = ToolEngine()
         engine.register(only_phase3)
 
-        # Runtime filtering: tool should appear in phase 3, not phase 5
+        # Runtime filtering: tool should appear in phase 2, not phase 3
         assert len(engine.get_tools_for_phase(3)) == 1
         assert len(engine.get_tools_for_phase(5)) == 0
 
@@ -100,7 +100,7 @@ class TestA1PhaseToolNamesInconsistency:
 
 
 # ---------------------------------------------------------------------------
-# A.2  daily_plans writing via split tools — validates Phase 5→7 transition
+# A.2  daily_plans writing via split tools — validates Phase 3→7 transition
 # ---------------------------------------------------------------------------
 
 
@@ -108,11 +108,11 @@ class TestA2DailyPlansWriting:
     """A.2: Tests daily_plans writing via save_day_plan and replace_all_day_plans."""
 
     @pytest.fixture
-    def plan_at_phase5(self):
-        """A plan that is in phase 5 (has destination, dates, accommodation)."""
+    def plan_at_phase3(self):
+        """A plan that is in phase 3 (has destination, dates, accommodation)."""
         return TravelPlanState(
             session_id="test-p5",
-            phase=5,
+            phase=3,
             destination="Tokyo",
             dates=DateRange(start="2026-05-01", end="2026-05-04"),
             selected_skeleton_id="balanced",
@@ -121,9 +121,9 @@ class TestA2DailyPlansWriting:
         )
 
     @pytest.mark.asyncio
-    async def test_daily_plans_append_succeeds(self, plan_at_phase5):
+    async def test_daily_plans_append_succeeds(self, plan_at_phase3):
         """save_day_plan should save a single day plan."""
-        tool_fn = make_save_day_plan_tool(plan_at_phase5)
+        tool_fn = make_save_day_plan_tool(plan_at_phase3)
         result = await tool_fn(
             mode="create",
             day=1,
@@ -144,23 +144,23 @@ class TestA2DailyPlansWriting:
             ],
         )
         assert result["updated_field"] == "daily_plans"
-        assert len(plan_at_phase5.daily_plans) == 1
-        assert plan_at_phase5.daily_plans[0].day == 1
+        assert len(plan_at_phase3.daily_plans) == 1
+        assert plan_at_phase3.daily_plans[0].day == 1
 
     @pytest.mark.asyncio
-    async def test_daily_plans_append_multiple(self, plan_at_phase5):
+    async def test_daily_plans_append_multiple(self, plan_at_phase3):
         """Saving multiple day plans one by one should work."""
-        tool_fn = make_save_day_plan_tool(plan_at_phase5)
+        tool_fn = make_save_day_plan_tool(plan_at_phase3)
 
         for i in range(1, 4):
             await tool_fn(mode="create", day=i, date=f"2026-05-0{i}", activities=[])
 
-        assert len(plan_at_phase5.daily_plans) == 3
+        assert len(plan_at_phase3.daily_plans) == 3
 
     @pytest.mark.asyncio
-    async def test_phase5_to_7_transition_after_daily_plans(self, plan_at_phase5):
-        """With daily_plans writable, phase 5→7 transition should work."""
-        tool_fn = make_save_day_plan_tool(plan_at_phase5)
+    async def test_phase3_to_4_transition_after_daily_plans(self, plan_at_phase3):
+        """With daily_plans writable, phase 3→4 transition should work."""
+        tool_fn = make_save_day_plan_tool(plan_at_phase3)
         router = PhaseRouter()
 
         # The plan has 4 total days (May 1-4, total_days = 4)
@@ -168,15 +168,15 @@ class TestA2DailyPlansWriting:
             await tool_fn(mode="create", day=i, date=f"2026-05-0{i}", activities=[])
 
         # Now daily_plans count (4) >= dates.total_days (4)
-        assert len(plan_at_phase5.daily_plans) >= plan_at_phase5.dates.total_days
-        changed = await router.check_and_apply_transition(plan_at_phase5)
+        assert len(plan_at_phase3.daily_plans) >= plan_at_phase3.dates.total_days
+        changed = await router.check_and_apply_transition(plan_at_phase3)
         assert changed is True
-        assert plan_at_phase5.phase == 7
+        assert plan_at_phase3.phase == 4
 
     @pytest.mark.asyncio
-    async def test_daily_plans_list_replaces_all(self, plan_at_phase5):
+    async def test_daily_plans_list_replaces_all(self, plan_at_phase3):
         """Passing a list replaces all daily_plans at once."""
-        tool_fn = make_replace_all_day_plans_tool(plan_at_phase5)
+        tool_fn = make_replace_all_day_plans_tool(plan_at_phase3)
         plans_list = [
             {"day": 1, "date": "2026-05-01", "activities": []},
             {"day": 2, "date": "2026-05-02", "activities": []},
@@ -184,7 +184,7 @@ class TestA2DailyPlansWriting:
             {"day": 4, "date": "2026-05-04", "activities": []},
         ]
         result = await tool_fn(days=plans_list)
-        assert len(plan_at_phase5.daily_plans) == 4
+        assert len(plan_at_phase3.daily_plans) == 4
 
 
 # ---------------------------------------------------------------------------

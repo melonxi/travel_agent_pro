@@ -7,6 +7,16 @@ from datetime import datetime
 from typing import Any
 
 
+CURRENT_STATE_VERSION = 2
+LEGACY_PHASE_MAP = {
+    2: 1,
+    3: 2,
+    4: 2,
+    5: 3,
+    7: 4,
+}
+
+
 @dataclass
 class Location:
     lat: float
@@ -281,7 +291,7 @@ _PHASE_DOWNSTREAM: dict[int, list[str]] = {
     1: [
         "destination",
         "dates",
-        "phase3_step",
+        "phase2_step",
         "trip_brief",
         "candidate_pool",
         "shortlist",
@@ -296,9 +306,9 @@ _PHASE_DOWNSTREAM: dict[int, list[str]] = {
         "daily_plans",
         "deliverables",
     ],
-    3: [
+    2: [
         "dates",
-        "phase3_step",
+        "phase2_step",
         "trip_brief",
         "candidate_pool",
         "shortlist",
@@ -313,13 +323,13 @@ _PHASE_DOWNSTREAM: dict[int, list[str]] = {
         "daily_plans",
         "deliverables",
     ],
-    5: ["daily_plans", "deliverables"],
+    3: ["daily_plans", "deliverables"],
 }
 
 _FIELD_DEFAULTS: dict[str, Any] = {
     "destination": None,
     "dates": None,
-    "phase3_step": "brief",
+    "phase2_step": "brief",
     "trip_brief": {},
     "candidate_pool": [],
     "shortlist": [],
@@ -336,7 +346,7 @@ _FIELD_DEFAULTS: dict[str, Any] = {
 }
 
 
-def infer_phase3_step_from_state(
+def infer_phase2_step_from_state(
     *,
     phase: int,
     dates: DateRange | None,
@@ -347,9 +357,9 @@ def infer_phase3_step_from_state(
     selected_skeleton_id: str | None,
     accommodation: Accommodation | None,
 ) -> str:
-    if phase < 3:
+    if phase < 2:
         return "brief"
-    if phase > 3:
+    if phase > 2:
         return "lock"
     if not dates or not trip_brief:
         return "brief"
@@ -376,12 +386,14 @@ def infer_phase3_step_from_state(
 
 @dataclass
 class TravelPlanState:
+    """Authoritative travel-plan state."""
+
     session_id: str
     trip_id: str | None = None
     phase: int = 1
     destination: str | None = None
     dates: DateRange | None = None
-    phase3_step: str = "brief"
+    phase2_step: str = "brief"
     trip_brief: dict[str, Any] = field(default_factory=dict)
     candidate_pool: list[dict[str, Any]] = field(default_factory=list)
     shortlist: list[dict[str, Any]] = field(default_factory=list)
@@ -404,7 +416,7 @@ class TravelPlanState:
     backtrack_history: list[BacktrackEvent] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     last_updated: str = field(default_factory=lambda: datetime.now().isoformat())
-    version: int = 1
+    version: int = CURRENT_STATE_VERSION
 
     def clear_downstream(self, from_phase: int) -> None:
         """Clear all output produced after from_phase. Keep constraints and preferences."""
@@ -420,7 +432,7 @@ class TravelPlanState:
             "phase": self.phase,
             "destination": self.destination,
             "dates": self.dates.to_dict() if self.dates else None,
-            "phase3_step": self.phase3_step,
+            "phase2_step": self.phase2_step,
             "trip_brief": self.trip_brief,
             "candidate_pool": self.candidate_pool,
             "shortlist": self.shortlist,
@@ -445,13 +457,17 @@ class TravelPlanState:
             "backtrack_history": [b.to_dict() for b in self.backtrack_history],
             "created_at": self.created_at,
             "last_updated": self.last_updated,
-            "version": self.version,
+            "version": CURRENT_STATE_VERSION,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TravelPlanState:
         raw_phase = d.get("phase", 1)
-        phase = 1 if raw_phase == 2 else (3 if raw_phase == 4 else raw_phase)
+        raw_version = int(d.get("version", 1) or 1)
+        if raw_version < CURRENT_STATE_VERSION:
+            phase = LEGACY_PHASE_MAP.get(raw_phase, raw_phase)
+        else:
+            phase = raw_phase
         dates = DateRange.from_dict(d["dates"]) if d.get("dates") else None
         accommodation = (
             Accommodation.from_dict(d["accommodation"])
@@ -469,18 +485,16 @@ class TravelPlanState:
             phase=phase,
             destination=d.get("destination"),
             dates=dates,
-            phase3_step=d.get(
-                "phase3_step",
-                infer_phase3_step_from_state(
-                    phase=phase,
-                    dates=dates,
-                    trip_brief=trip_brief,
-                    candidate_pool=candidate_pool,
-                    shortlist=shortlist,
-                    skeleton_plans=skeleton_plans,
-                    selected_skeleton_id=selected_skeleton_id,
-                    accommodation=accommodation,
-                ),
+            phase2_step=d.get("phase2_step")
+            or infer_phase2_step_from_state(
+                phase=phase,
+                dates=dates,
+                trip_brief=trip_brief,
+                candidate_pool=candidate_pool,
+                shortlist=shortlist,
+                skeleton_plans=skeleton_plans,
+                selected_skeleton_id=selected_skeleton_id,
+                accommodation=accommodation,
             ),
             trip_brief=trip_brief,
             candidate_pool=candidate_pool,
@@ -508,5 +522,5 @@ class TravelPlanState:
             ],
             created_at=d.get("created_at", ""),
             last_updated=d.get("last_updated", ""),
-            version=d.get("version", 1),
+            version=max(raw_version, CURRENT_STATE_VERSION),
         )

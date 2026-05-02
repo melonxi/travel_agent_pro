@@ -61,7 +61,7 @@ def test_rejection_id_includes_value():
 def test_working_memory_round_trip():
     item = WorkingMemoryItem(
         id="wm_001",
-        phase=3,
+        phase=2,
         kind="temporary_rejection",
         domains=["attraction"],
         content="用户说先别考虑迪士尼。",
@@ -144,7 +144,7 @@ def test_memory_audit_event_round_trip():
         session_id="s1",
         event_type="reject",
         object_type="phase_output",
-        object_payload={"to_phase": 3},
+        object_payload={"to_phase": 2},
         reason_text="用户要求回退",
         created_at="2026-05-05T00:00:00+00:00",
     )
@@ -176,7 +176,7 @@ def test_null_collection_fields_deserialize_safely():
     working = WorkingMemoryItem.from_dict(
         {
             "id": "wm_001",
-            "phase": 3,
+            "phase": 2,
             "kind": "temporary_rejection",
             "domains": None,
             "content": "用户说先别考虑迪士尼。",

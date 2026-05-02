@@ -20,10 +20,10 @@ def module_defines(relative_path: str, name: str) -> bool:
     )
 
 
-def test_agent_execution_and_phase5_packages_exist():
+def test_agent_execution_and_phase3_packages_exist():
     agent_dir = BACKEND_DIR / "agent"
     execution_dir = agent_dir / "execution"
-    phase5_dir = agent_dir / "phase5"
+    phase3_dir = agent_dir / "phase3"
 
     expected_execution_modules = {
         "__init__.py",
@@ -36,7 +36,7 @@ def test_agent_execution_and_phase5_packages_exist():
         "tool_invocation.py",
         "tool_batches.py",
     }
-    expected_phase5_modules = {
+    expected_phase3_modules = {
         "__init__.py",
         "parallel.py",
         "orchestrator.py",
@@ -47,8 +47,8 @@ def test_agent_execution_and_phase5_packages_exist():
     assert expected_execution_modules.issubset(
         {path.name for path in execution_dir.glob("*.py")}
     )
-    assert expected_phase5_modules.issubset(
-        {path.name for path in phase5_dir.glob("*.py")}
+    assert expected_phase3_modules.issubset(
+        {path.name for path in phase3_dir.glob("*.py")}
     )
 
 
@@ -75,11 +75,11 @@ def test_agent_execution_modules_expose_expected_names():
     )
     assert module_defines(
         "agent/execution/repair_hints.py",
-        "build_phase3_state_repair_message",
+        "build_phase2_state_repair_message",
     )
     assert module_defines(
         "agent/execution/repair_hints.py",
-        "build_phase5_state_repair_message",
+        "build_phase3_daily_state_repair_message",
     )
     assert module_defines(
         "agent/execution/message_rebuild.py",
@@ -110,18 +110,18 @@ def test_agent_loop_public_surface_and_size_guard():
     assert "async def run(" in loop_text
     # Coarse regression guard: keep AgentLoop from drifting back into a god file
     # while compatibility wrappers are still present.
-    # Threshold raised to 750 after feat(phase5): parallel handoff commit method
-    # added ~65 lines of legitimate orchestration logic to loop.py.
-    assert line_count("agent/loop.py") < 750
+    # Threshold raised to 850 while the Phase 3 parallel handoff bridge
+    # coexists with compatibility handling for stored legacy records.
+    assert line_count("agent/loop.py") < 850
 
 
 def test_agent_loop_compatibility_methods_remain():
     from agent.loop import AgentLoop
 
     for method_name in (
-        "should_use_parallel_phase5",
+        "should_use_parallel_phase3",
         "_rebuild_messages_for_phase_change",
-        "_rebuild_messages_for_phase3_step_change",
+        "_rebuild_messages_for_phase2_step_change",
         "_pre_execution_skip_result",
         "_validate_tool_output",
         "_is_parallel_read_call",
@@ -130,7 +130,7 @@ def test_agent_loop_compatibility_methods_remain():
         assert hasattr(AgentLoop, method_name)
 
 
-def test_phase5_has_no_root_level_duplicate_modules():
+def test_phase3_has_no_root_level_duplicate_modules():
     agent_dir = BACKEND_DIR / "agent"
 
     assert not (agent_dir / "orchestrator.py").exists()
@@ -138,11 +138,11 @@ def test_phase5_has_no_root_level_duplicate_modules():
     assert not (agent_dir / "worker_prompt.py").exists()
 
 
-def test_phase5_imports_use_phase5_package():
-    from agent.phase5.day_worker import run_day_worker
-    from agent.phase5.orchestrator import Phase5Orchestrator
-    from agent.phase5.worker_prompt import DayTask
+def test_phase3_imports_use_phase3_package():
+    from agent.phase3.day_worker import run_day_worker
+    from agent.phase3.orchestrator import Phase3Orchestrator
+    from agent.phase3.worker_prompt import DayTask
 
-    assert Phase5Orchestrator is not None
+    assert Phase3Orchestrator is not None
     assert run_day_worker is not None
     assert DayTask is not None

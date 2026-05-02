@@ -28,6 +28,70 @@ def test_load_soul(ctx_manager):
     assert "旅行规划 Agent" in soul
 
 
+def test_build_system_message_uses_only_phase1_soul(ctx_manager):
+    plan = TravelPlanState(session_id="s1", phase=1)
+
+    msg = ctx_manager.build_system_message(
+        plan,
+        phase_prompt="你是目的地收敛顾问",
+        available_tools=["update_trip_basics", "xiaohongshu_search_notes"],
+    )
+
+    assert "## 全局身份" in msg.content
+    assert "## Phase 1 交互基调" in msg.content
+    assert "## Phase 2 交互基调" not in msg.content
+    assert "## Phase 3 落地基调" not in msg.content
+    assert "## Phase 4 交付基调" not in msg.content
+
+
+def test_build_system_message_uses_only_current_phase2_step_soul(ctx_manager):
+    plan = TravelPlanState(session_id="s1", phase=2, phase2_step="candidate")
+
+    msg = ctx_manager.build_system_message(
+        plan,
+        phase_prompt="当前子阶段：candidate",
+        available_tools=["set_candidate_pool", "set_shortlist"],
+    )
+
+    assert "## 全局身份" in msg.content
+    assert "## Phase 2 交互基调" in msg.content
+    assert "## Phase 2 Candidate 基调" in msg.content
+    assert "## Phase 2 Brief 基调" not in msg.content
+    assert "## Phase 2 Skeleton 基调" not in msg.content
+    assert "## Phase 2 Lock 基调" not in msg.content
+    assert "## Phase 3 落地基调" not in msg.content
+
+
+def test_build_system_message_uses_only_phase3_soul(ctx_manager):
+    plan = TravelPlanState(session_id="s1", phase=3)
+
+    msg = ctx_manager.build_system_message(
+        plan,
+        phase_prompt="你是逐日行程落地规划师",
+        available_tools=["save_day_plan", "optimize_day_route"],
+    )
+
+    assert "## 全局身份" in msg.content
+    assert "## Phase 3 落地基调" in msg.content
+    assert "## Phase 1 交互基调" not in msg.content
+    assert "## Phase 2 交互基调" not in msg.content
+    assert "## Phase 4 交付基调" not in msg.content
+
+
+def test_legacy_unmarked_soul_file_still_loads(tmp_path):
+    soul_file = tmp_path / "legacy_soul.md"
+    soul_file.write_text("你是一个旅行规划 Agent。\n保持专业。", encoding="utf-8")
+    manager = ContextManager(soul_path=str(soul_file))
+
+    msg = manager.build_system_message(
+        TravelPlanState(session_id="s1", phase=3),
+        phase_prompt="阶段提示词",
+    )
+
+    assert "你是一个旅行规划 Agent。" in msg.content
+    assert "阶段提示词" in msg.content
+
+
 def test_build_system_message(ctx_manager):
     plan = TravelPlanState(session_id="s1", phase=1)
     msg = ctx_manager.build_system_message(
@@ -65,7 +129,7 @@ def test_build_system_message_marks_memory_as_untrusted_data(ctx_manager):
 def test_build_runtime_context(ctx_manager):
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
+        phase=2,
         destination="Kyoto",
         dates=DateRange(start="2026-04-10", end="2026-04-15"),
         budget=Budget(total=15000),
@@ -76,14 +140,14 @@ def test_build_runtime_context(ctx_manager):
     )
     assert "Kyoto" in ctx
     assert "15000" in ctx
-    assert "阶段：3" in ctx or "阶段: 3" in ctx
+    assert "阶段：2" in ctx or "阶段: 2" in ctx
     assert "当前可用工具：update_trip_basics, web_search" in ctx
 
 
-def test_build_phase_handoff_note_for_phase5(ctx_manager):
+def test_build_phase_handoff_note_for_phase3(ctx_manager):
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="若尔盖",
         dates=DateRange(start="2026-06-06", end="2026-06-10"),
         trip_brief={"goal": "第一次去草原", "pace": "intensive"},
@@ -95,12 +159,12 @@ def test_build_phase_handoff_note_for_phase5(ctx_manager):
 
     note = ctx_manager.build_phase_handoff_note(
         plan=plan,
-        from_phase=3,
-        to_phase=5,
+        from_phase=2,
+        to_phase=3,
     )
 
     assert "[阶段交接]" in note
-    assert "当前阶段：Phase 5" in note
+    assert "当前阶段：Phase 3" in note
     assert "已完成事项：" in note
     assert "目的地" in note
     assert "日期" in note
@@ -112,19 +176,19 @@ def test_build_phase_handoff_note_for_phase5(ctx_manager):
         "当前唯一目标：基于已选骨架与住宿，生成覆盖全部出行日期的 daily_plans。" in note
     )
     assert "不要重新锁交通" in note
-    assert "request_backtrack(to_phase=3" in note
+    assert "request_backtrack(to_phase=2" in note
 
 
 def test_build_phase_handoff_note_falls_back_when_no_completion_items(ctx_manager):
-    plan = TravelPlanState(session_id="s1", phase=3)
+    plan = TravelPlanState(session_id="s1", phase=2)
 
     note = ctx_manager.build_phase_handoff_note(
         plan=plan,
         from_phase=1,
-        to_phase=3,
+        to_phase=2,
     )
 
-    assert "当前阶段：Phase 3" in note
+    assert "当前阶段：Phase 2" in note
     assert "系统已按当前规划状态切换到新阶段" in note
 
 
@@ -211,7 +275,7 @@ async def test_compress_for_transition_is_rule_based(ctx_manager):
     summary = await ctx_manager.compress_for_transition(
         messages=messages,
         from_phase=1,
-        to_phase=3,
+        to_phase=2,
         llm_factory=factory,
     )
 
@@ -250,7 +314,7 @@ async def test_compress_for_transition_never_calls_llm_even_for_long_context(
     summary = await ctx_manager.compress_for_transition(
         messages=messages,
         from_phase=1,
-        to_phase=3,
+        to_phase=2,
         llm_factory=factory,
     )
 
@@ -271,7 +335,7 @@ async def test_compress_for_transition_truncates_long_assistant_text(ctx_manager
     summary = await ctx_manager.compress_for_transition(
         messages=messages,
         from_phase=1,
-        to_phase=3,
+        to_phase=2,
         llm_factory=None,
     )
     assistant_line = next(
@@ -314,7 +378,7 @@ async def test_compress_for_transition_renders_tool_success_and_failure(ctx_mana
     summary = await ctx_manager.compress_for_transition(
         messages=messages,
         from_phase=1,
-        to_phase=3,
+        to_phase=2,
         llm_factory=None,
     )
 
@@ -325,14 +389,14 @@ async def test_compress_for_transition_renders_tool_success_and_failure(ctx_mana
     assert "City not found" in summary
 
 
-# ---------- Phase 5 skeleton injection tests ----------
+# ---------- Phase 3 skeleton injection tests ----------
 
 
-def test_phase5_runtime_context_injects_selected_skeleton(ctx_manager):
-    """Phase 5 runtime context must include the full selected skeleton content."""
+def test_phase3_runtime_context_injects_selected_skeleton(ctx_manager):
+    """Phase 3 runtime context must include the full selected skeleton content."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="大阪",
         dates=DateRange(start="2026-04-15", end="2026-04-18"),
         skeleton_plans=[
@@ -357,11 +421,11 @@ def test_phase5_runtime_context_injects_selected_skeleton(ctx_manager):
     assert "骨架方案：2 套" not in ctx
 
 
-def test_phase5_runtime_context_injects_trip_brief_content(ctx_manager):
-    """Phase 5 runtime context must include trip_brief fields, not just count."""
+def test_phase3_runtime_context_injects_trip_brief_content(ctx_manager):
+    """Phase 3 runtime context must include trip_brief fields, not just count."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-05"),
         trip_brief={"goal": "文化深度游", "pace": "relaxed", "focus": "寺庙和庭园"},
@@ -378,11 +442,11 @@ def test_phase5_runtime_context_injects_trip_brief_content(ctx_manager):
     assert "已生成旅行画像：3 项" not in ctx
 
 
-def test_phase5_runtime_context_injects_preferences_and_constraints(ctx_manager):
-    """Phase 5 must show user preferences and constraints content."""
+def test_phase3_runtime_context_injects_preferences_and_constraints(ctx_manager):
+    """Phase 3 must show user preferences and constraints content."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="京都",
         dates=DateRange(start="2026-04-10", end="2026-04-13"),
         skeleton_plans=[{"id": "A"}],
@@ -398,11 +462,11 @@ def test_phase5_runtime_context_injects_preferences_and_constraints(ctx_manager)
     assert "不坐红眼航班" in ctx
 
 
-def test_phase5_runtime_context_shows_daily_plans_progress(ctx_manager):
-    """Phase 5 must show which days are done and which are pending."""
+def test_phase3_runtime_context_shows_daily_plans_progress(ctx_manager):
+    """Phase 3 must show which days are done and which are pending."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-04"),
         skeleton_plans=[{"id": "A"}],
@@ -434,11 +498,11 @@ def test_phase5_runtime_context_shows_daily_plans_progress(ctx_manager):
 
 
 def test_phase3_runtime_context_shows_count_only(ctx_manager):
-    """Phase 3 brief sub-stage should still show count-only format (no regression)."""
+    """Phase 2 brief sub-stage should still show count-only format (no regression)."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="brief",
+        phase=2,
+        phase2_step="brief",
         destination="东京",
         dates=DateRange(start="2026-05-01", end="2026-05-05"),
         trip_brief={"goal": "文化深度游", "pace": "relaxed"},
@@ -457,7 +521,7 @@ def test_phase3_runtime_context_shows_count_only(ctx_manager):
 def test_find_selected_skeleton_by_id(ctx_manager):
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         skeleton_plans=[
             {"id": "plan_A", "theme": "经典"},
             {"id": "plan_B", "theme": "美食"},
@@ -473,7 +537,7 @@ def test_find_selected_skeleton_fallback_single_skeleton(ctx_manager):
     """When only one skeleton exists and exact match fails, return it (no ambiguity)."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         skeleton_plans=[
             {"id": "planA_relaxed", "theme": "轻松"},
         ],
@@ -488,7 +552,7 @@ def test_find_selected_skeleton_no_partial_match_with_multiple(ctx_manager):
     """When multiple skeletons exist and no exact match, return None (avoid ambiguity)."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         skeleton_plans=[
             {"id": "plan_A_plus", "theme": "升级"},
             {"id": "plan_A_basic", "theme": "基础"},
@@ -503,7 +567,7 @@ def test_find_selected_skeleton_returns_none_when_no_match(ctx_manager):
     """With multiple skeletons and no exact match, return None."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         skeleton_plans=[{"id": "X"}, {"id": "Z"}],
         selected_skeleton_id="Y",
     )
@@ -511,15 +575,15 @@ def test_find_selected_skeleton_returns_none_when_no_match(ctx_manager):
     assert result is None
 
 
-# ── Phase 3 sub-stage context injection tests ──
+# ── Phase 2 sub-stage context injection tests ──
 
 
 def test_phase3_candidate_stage_shows_trip_brief_content(ctx_manager):
-    """Phase 3 candidate sub-stage should show trip_brief content, not just count."""
+    """Phase 2 candidate sub-stage should show trip_brief content, not just count."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="candidate",
+        phase=2,
+        phase2_step="candidate",
         trip_brief={"goal": "亲子度假", "pace": "relaxed"},
     )
     ctx = ctx_manager.build_runtime_context(plan)
@@ -528,11 +592,11 @@ def test_phase3_candidate_stage_shows_trip_brief_content(ctx_manager):
 
 
 def test_phase3_brief_stage_shows_count_only(ctx_manager):
-    """Phase 3 brief sub-stage should still only show count for trip_brief."""
+    """Phase 2 brief sub-stage should still only show count for trip_brief."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="brief",
+        phase=2,
+        phase2_step="brief",
         trip_brief={"goal": "亲子度假"},
     )
     ctx = ctx_manager.build_runtime_context(plan)
@@ -541,11 +605,11 @@ def test_phase3_brief_stage_shows_count_only(ctx_manager):
 
 
 def test_phase3_skeleton_stage_shows_shortlist_summary(ctx_manager):
-    """Phase 3 skeleton sub-stage should show shortlist item summaries."""
+    """Phase 2 skeleton sub-stage should show shortlist item summaries."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="skeleton",
+        phase=2,
+        phase2_step="skeleton",
         trip_brief={"goal": "test"},
         candidate_pool=[{"name": "A"}, {"name": "B"}],
         shortlist=[{"name": "清迈古城"}, {"name": "素贴山"}],
@@ -556,11 +620,11 @@ def test_phase3_skeleton_stage_shows_shortlist_summary(ctx_manager):
 
 
 def test_phase3_lock_stage_shows_selected_skeleton(ctx_manager):
-    """Phase 3 lock sub-stage should show selected skeleton full content."""
+    """Phase 2 lock sub-stage should show selected skeleton full content."""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="lock",
+        phase=2,
+        phase2_step="lock",
         trip_brief={"goal": "test"},
         skeleton_plans=[
             {"id": "plan_A", "name": "轻松版", "days": [{"day": 1}]},
@@ -574,13 +638,13 @@ def test_phase3_lock_stage_shows_selected_skeleton(ctx_manager):
 
 
 def test_phase3_skeleton_stage_shows_preferences(ctx_manager):
-    """Phase 3 skeleton+ stages should inject preferences content."""
+    """Phase 2 skeleton+ stages should inject preferences content."""
     from state.models import Preference
 
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="skeleton",
+        phase=2,
+        phase2_step="skeleton",
         trip_brief={"goal": "test"},
         preferences=[Preference(key="pace", value="relaxed")],
     )
@@ -588,15 +652,15 @@ def test_phase3_skeleton_stage_shows_preferences(ctx_manager):
     assert "pace: relaxed" in ctx
 
 
-# ── infer_phase3_step_from_state dangling skeleton tests ──
+# ── infer_phase2_step_from_state dangling skeleton tests ──
 
-from state.models import infer_phase3_step_from_state
+from state.models import infer_phase2_step_from_state
 
 
-def test_infer_phase3_step_dangling_skeleton_id():
+def test_infer_phase2_step_dangling_skeleton_id():
     """selected_skeleton_id that doesn't match any skeleton should stay in skeleton stage."""
-    step = infer_phase3_step_from_state(
-        phase=3,
+    step = infer_phase2_step_from_state(
+        phase=2,
         dates=DateRange(start="2025-08-01", end="2025-08-05"),
         trip_brief={"goal": "test"},
         candidate_pool=None,
@@ -608,10 +672,10 @@ def test_infer_phase3_step_dangling_skeleton_id():
     assert step == "skeleton"
 
 
-def test_infer_phase3_step_valid_skeleton_id_by_name():
+def test_infer_phase2_step_valid_skeleton_id_by_name():
     """selected_skeleton_id matching by name should advance to lock."""
-    step = infer_phase3_step_from_state(
-        phase=3,
+    step = infer_phase2_step_from_state(
+        phase=2,
         dates=DateRange(start="2025-08-01", end="2025-08-05"),
         trip_brief={"goal": "test"},
         candidate_pool=None,
@@ -623,10 +687,10 @@ def test_infer_phase3_step_valid_skeleton_id_by_name():
     assert step == "lock"
 
 
-def test_infer_phase3_step_valid_skeleton_id_by_id():
+def test_infer_phase2_step_valid_skeleton_id_by_id():
     """selected_skeleton_id matching by id should advance to lock."""
-    step = infer_phase3_step_from_state(
-        phase=3,
+    step = infer_phase2_step_from_state(
+        phase=2,
         dates=DateRange(start="2025-08-01", end="2025-08-05"),
         trip_brief={"goal": "test"},
         candidate_pool=None,
@@ -638,10 +702,10 @@ def test_infer_phase3_step_valid_skeleton_id_by_id():
     assert step == "lock"
 
 
-def test_runtime_context_phase7_expands_daily_plans(ctx_manager):
+def test_runtime_context_phase4_expands_daily_plans(ctx_manager):
     plan = TravelPlanState(
         session_id="s1",
-        phase=7,
+        phase=4,
         dates=DateRange(start="2026-05-01", end="2026-05-02"),
         daily_plans=[
             DayPlan(
@@ -706,8 +770,8 @@ def test_runtime_context_constraints_injected_phase1(ctx_manager):
 def test_runtime_context_skeleton_step_shows_summary(ctx_manager):
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="skeleton",
+        phase=2,
+        phase2_step="skeleton",
         skeleton_plans=[
             {
                 "id": "skeleton_01",
@@ -741,8 +805,8 @@ def test_runtime_context_skeleton_step_shows_summary(ctx_manager):
 def test_runtime_context_skeleton_lock_still_shows_selected_full(ctx_manager):
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="lock",
+        phase=2,
+        phase2_step="lock",
         selected_skeleton_id="skeleton_01",
         skeleton_plans=[
             {
@@ -766,11 +830,11 @@ def test_runtime_context_skeleton_lock_still_shows_selected_full(ctx_manager):
     assert "detail_value" in text
 
 
-def test_phase5_context_excludes_trip_brief_dates_and_total_days(ctx_manager):
-    """Phase 5 上下文注入 trip_brief 时应排除 dates 和 total_days（已由 plan.dates 提供）。"""
+def test_phase3_context_excludes_trip_brief_dates_and_total_days(ctx_manager):
+    """Phase 3 上下文注入 trip_brief 时应排除 dates 和 total_days（已由 plan.dates 提供）。"""
     plan = TravelPlanState(
         session_id="s1",
-        phase=5,
+        phase=3,
         destination="成都",
         dates=DateRange(start="2026-05-24", end="2026-05-30"),
         selected_skeleton_id="plan_a",
@@ -802,11 +866,11 @@ def test_phase5_context_excludes_trip_brief_dates_and_total_days(ctx_manager):
 
 
 def test_phase3_candidate_context_keeps_trip_brief_dates(ctx_manager):
-    """Phase 3 candidate 阶段的 trip_brief 应保留 dates（仅 Phase 5+ 过滤）。"""
+    """Phase 2 candidate 阶段的 trip_brief 应保留 dates（仅 Phase 3+ 过滤）。"""
     plan = TravelPlanState(
         session_id="s1",
-        phase=3,
-        phase3_step="candidate",
+        phase=2,
+        phase2_step="candidate",
         trip_brief={
             "dates": {"start": "2026-05-24", "end": "2026-05-30"},
             "total_days": 7,

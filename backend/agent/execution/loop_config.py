@@ -6,7 +6,7 @@ from typing import Any
 
 from agent.hooks import HookManager
 from agent.internal_tasks import InternalTask
-from config import Phase5ParallelConfig
+from config import Phase3ParallelConfig
 from tools.engine import ToolEngine
 
 
@@ -34,5 +34,5 @@ class AgentLoopConfig:
     compression_events: list[dict] | None = None
     parallel_tool_execution: bool = True
     cancel_event: asyncio.Event | None = None
-    phase5_parallel_config: Phase5ParallelConfig | None = None
+    phase3_parallel_config: Phase3ParallelConfig | None = None
     internal_task_events: list[InternalTask] | None = None

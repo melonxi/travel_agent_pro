@@ -9,7 +9,7 @@ class ContextSegment:
     session_id: str
     context_epoch: int
     phase: int | None
-    phase3_step: str | None
+    phase2_step: str | None
     trip_id: str | None
     run_ids: tuple[str, ...]
     start_history_seq: int
@@ -65,7 +65,7 @@ def derive_context_segments(rows: list[dict[str, Any]]) -> list[ContextSegment]:
                 session_id=str(first["session_id"]),
                 context_epoch=int(first["context_epoch"]),
                 phase=tagged.get("phase"),
-                phase3_step=tagged.get("phase3_step"),
+                phase2_step=tagged.get("phase2_step"),
                 trip_id=tagged.get("trip_id"),
                 run_ids=run_ids,
                 start_history_seq=min(history_seqs),

@@ -484,7 +484,7 @@ async def test_chat_stream_does_not_emit_legacy_memory_pending_events(monkeypatc
         "trip-1",
         WorkingMemoryItem(
             id="wm-1",
-            phase=3,
+            phase=2,
             kind="temporary_rejection",
             domains=["attraction"],
             content="先别考虑迪士尼。",
@@ -1872,7 +1872,7 @@ async def test_append_archived_trip_episode_once_is_idempotent(app):
         session_resp = await client.post("/api/sessions")
         session_id = session_resp.json()["session_id"]
         plan = sessions[session_id]["plan"]
-        plan.phase = 7
+        plan.phase = 4
         plan.destination = "Tokyo"
         plan.trip_id = "trip_tokyo"
         plan.decision_events = [
@@ -1916,7 +1916,7 @@ async def test_memory_audit_events_write_to_v3_store(app):
             session_id="sess-1",
             event_type="reject",
             object_type="phase_output",
-            object_payload={"to_phase": 3},
+            object_payload={"to_phase": 2},
             reason_text="用户要求回退",
             created_at="2026-04-22T10:00:00Z",
         )
@@ -1931,7 +1931,7 @@ async def test_memory_audit_events_write_to_v3_store(app):
             session_id="sess-1",
             event_type="reject",
             object_type="phase_output",
-            object_payload={"to_phase": 3},
+            object_payload={"to_phase": 2},
             reason_text="用户要求回退",
             created_at="2026-04-22T10:00:00Z",
         ).to_dict()
@@ -1939,7 +1939,7 @@ async def test_memory_audit_events_write_to_v3_store(app):
 
 
 @pytest.mark.asyncio
-async def test_phase7_archive_generates_episode_slices_once(app):
+async def test_phase4_archive_generates_episode_slices_once(app):
     memory_mgr = _get_closure_value(app, "memory_mgr")
     sessions = _get_closure_value(app, "sessions")
 
@@ -1952,7 +1952,7 @@ async def test_phase7_archive_generates_episode_slices_once(app):
         session_resp = await client.post("/api/sessions")
         session_id = session_resp.json()["session_id"]
         plan = sessions[session_id]["plan"]
-        plan.phase = 7
+        plan.phase = 4
         plan.trip_id = "trip_tokyo"
         plan.destination = "Tokyo"
         plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
@@ -2056,12 +2056,12 @@ async def test_reset_backtrack_rotates_trip_id(app):
 @pytest.mark.asyncio
 async def test_non_reset_backtrack_reuses_trip_memory(app):
     rotate_trip = _get_closure_value(app, "_rotate_trip_on_reset_backtrack")
-    plan = TravelPlanState(session_id="s1", trip_id="trip-old", phase=3)
+    plan = TravelPlanState(session_id="s1", trip_id="trip-old", phase=2)
 
     changed = await rotate_trip(
         user_id="u1",
         plan=plan,
-        to_phase=3,
+        to_phase=2,
         reason_text="改日期",
     )
 
@@ -2093,7 +2093,7 @@ async def test_tool_backtrack_reset_rotates_trip_memory(monkeypatch, app):
                 status="success",
                 data={
                     "backtracked": True,
-                    "from_phase": 3,
+                    "from_phase": 2,
                     "to_phase": 1,
                     "reason": "用户想换目的地",
                 },
@@ -2109,7 +2109,7 @@ async def test_tool_backtrack_reset_rotates_trip_memory(monkeypatch, app):
         session_resp = await client.post("/api/sessions")
         session_id = session_resp.json()["session_id"]
         plan = sessions[session_id]["plan"]
-        plan.phase = 3
+        plan.phase = 2
         plan.trip_id = "trip-old"
         resp = await client.post(
             f"/api/chat/{session_id}",
@@ -2549,7 +2549,7 @@ async def test_memory_extraction_working_route_writes_working_only(app):
                     arguments={
                         "working_memory": [
                             {
-                                "phase": 3,
+                                "phase": 2,
                                 "kind": "temporary_rejection",
                                 "domains": ["attraction"],
                                 "content": "这轮先别考虑迪士尼",
@@ -3015,7 +3015,7 @@ async def test_memory_extraction_uses_routed_forced_tool_calls(app):
                     arguments={
                         "working_memory": [
                             {
-                                "phase": 3,
+                                "phase": 2,
                                 "kind": "temporary_rejection",
                                 "domains": ["attraction"],
                                 "content": "这轮先别考虑迪士尼",

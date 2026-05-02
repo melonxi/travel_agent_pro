@@ -79,7 +79,7 @@ async def test_session_persistence_roundtrips_message_provider_state():
         "sess_1",
         messages,
         phase=1,
-        phase3_step=None,
+        phase2_step=None,
         run_id=None,
         trip_id=None,
         next_history_seq=0,
@@ -131,7 +131,7 @@ async def test_persist_messages_appends_without_delete_and_returns_next_history_
         "sess_1",
         messages,
         phase=1,
-        phase3_step=None,
+        phase2_step=None,
         run_id="run_1",
         trip_id="trip_1",
         next_history_seq=7,
@@ -180,8 +180,8 @@ async def test_persist_messages_skips_already_persisted_messages_without_len_cur
     next_seq = await persistence.persist_messages(
         "sess_1",
         [already_flushed, new_reply],
-        phase=3,
-        phase3_step="candidate",
+        phase=2,
+        phase2_step="candidate",
         run_id="run_2",
         trip_id="trip_1",
         next_history_seq=4,
@@ -207,7 +207,7 @@ async def test_restore_session_initializes_next_history_seq_from_database():
 
     class _StateManager:
         async def load(self, session_id):
-            return TravelPlanState(session_id=session_id, phase=5, destination="东京")
+            return TravelPlanState(session_id=session_id, phase=3, destination="东京")
 
     class _MessageStore:
         async def load_all(self, session_id):
@@ -262,12 +262,12 @@ class _RestoreSessionStore:
 
 class _RestoreStateManager:
     async def load(self, session_id):
-        return TravelPlanState(session_id=session_id, phase=5, destination="东京")
+        return TravelPlanState(session_id=session_id, phase=3, destination="东京")
 
 
 class _RestorePhaseRouter:
     def sync_phase_state(self, plan):
-        plan.phase = 5
+        plan.phase = 3
 
     def get_prompt_for_plan(self, plan):
         return f"restore prompt phase={plan.phase}"
@@ -311,7 +311,7 @@ class _RestoreMessageStore:
                 "seq": 0,
                 "history_seq": 0,
                 "phase": 1,
-                "phase3_step": None,
+                "phase2_step": None,
                 "run_id": "run_old",
                 "trip_id": "trip_1",
             },
@@ -324,7 +324,7 @@ class _RestoreMessageStore:
                 "seq": 1,
                 "history_seq": 1,
                 "phase": 1,
-                "phase3_step": None,
+                "phase2_step": None,
                 "run_id": "run_old",
                 "trip_id": "trip_1",
             },
@@ -343,7 +343,7 @@ class _RestoreMessageStore:
                 "seq": 2,
                 "history_seq": 2,
                 "phase": 1,
-                "phase3_step": None,
+                "phase2_step": None,
                 "run_id": "run_old",
                 "trip_id": "trip_1",
             },
@@ -355,8 +355,8 @@ class _RestoreMessageStore:
                 "provider_state": None,
                 "seq": 3,
                 "history_seq": 9,
-                "phase": 5,
-                "phase3_step": None,
+                "phase": 3,
+                "phase2_step": None,
                 "run_id": "run_new",
                 "trip_id": "trip_1",
             },
@@ -394,7 +394,7 @@ async def test_restore_session_returns_short_runtime_and_internal_history():
     assert len(restored["messages"]) < len(restored["history_messages"])
     assert restored["next_history_seq"] == 10
     assert restored["messages"][0].role == Role.SYSTEM
-    assert restored["messages"][0].content.startswith("rebuilt system restore prompt phase=5")
+    assert restored["messages"][0].content.startswith("rebuilt system restore prompt phase=3")
     assert "save_day_plan" in restored["messages"][0].content
     assert restored["messages"][1].role == Role.USER
     assert restored["messages"][1].content == "继续细化每天路线"
@@ -417,7 +417,7 @@ class _LegacyRestoreMessageStore:
                 "seq": 0,
                 "history_seq": None,
                 "phase": None,
-                "phase3_step": None,
+                "phase2_step": None,
                 "run_id": None,
                 "trip_id": None,
             },
@@ -430,7 +430,7 @@ class _LegacyRestoreMessageStore:
                 "seq": 1,
                 "history_seq": None,
                 "phase": None,
-                "phase3_step": None,
+                "phase2_step": None,
                 "run_id": None,
                 "trip_id": None,
             },
@@ -470,8 +470,8 @@ class _Phase3SkeletonStateManager:
     async def load(self, session_id):
         return TravelPlanState(
             session_id=session_id,
-            phase=3,
-            phase3_step="skeleton",
+            phase=2,
+            phase2_step="skeleton",
             destination="大阪",
         )
 
@@ -487,8 +487,8 @@ class _Phase3SkeletonMessageStore:
                 "provider_state": None,
                 "seq": 0,
                 "history_seq": 0,
-                "phase": 3,
-                "phase3_step": "brief",
+                "phase": 2,
+                "phase2_step": "brief",
                 "run_id": "run_brief",
                 "trip_id": "trip_1",
             },
@@ -506,8 +506,8 @@ class _Phase3SkeletonMessageStore:
                 "provider_state": None,
                 "seq": 1,
                 "history_seq": 1,
-                "phase": 3,
-                "phase3_step": "brief",
+                "phase": 2,
+                "phase2_step": "brief",
                 "run_id": "run_brief",
                 "trip_id": "trip_1",
             },
@@ -519,8 +519,8 @@ class _Phase3SkeletonMessageStore:
                 "provider_state": None,
                 "seq": 2,
                 "history_seq": 2,
-                "phase": 3,
-                "phase3_step": "skeleton",
+                "phase": 2,
+                "phase2_step": "skeleton",
                 "run_id": "run_skeleton",
                 "trip_id": "trip_1",
             },
@@ -559,8 +559,8 @@ class _BacktrackToPhase3StateManager:
     async def load(self, session_id):
         return TravelPlanState(
             session_id=session_id,
-            phase=3,
-            phase3_step="brief",
+            phase=2,
+            phase2_step="brief",
             destination="京都",
         )
 
@@ -570,14 +570,14 @@ class _BacktrackToPhase3MessageStore:
         return [
             {
                 "role": "user",
-                "content": "老 Phase 3 输入",
+                "content": "老 Phase 2 输入",
                 "tool_calls": None,
                 "tool_call_id": None,
                 "provider_state": None,
                 "seq": 0,
                 "history_seq": 0,
-                "phase": 3,
-                "phase3_step": "brief",
+                "phase": 2,
+                "phase2_step": "brief",
                 "run_id": "run_old_phase3",
                 "trip_id": "trip_1",
             },
@@ -595,8 +595,8 @@ class _BacktrackToPhase3MessageStore:
                 "provider_state": None,
                 "seq": 1,
                 "history_seq": 1,
-                "phase": 3,
-                "phase3_step": "brief",
+                "phase": 2,
+                "phase2_step": "brief",
                 "run_id": "run_old_phase3",
                 "trip_id": "trip_1",
             },
@@ -608,8 +608,8 @@ class _BacktrackToPhase3MessageStore:
                 "provider_state": None,
                 "seq": 2,
                 "history_seq": 8,
-                "phase": 5,
-                "phase3_step": None,
+                "phase": 3,
+                "phase2_step": None,
                 "run_id": "run_backtrack",
                 "trip_id": "trip_1",
             },
@@ -621,7 +621,7 @@ class _BacktrackToPhase3MessageStore:
                         status="success",
                         data={
                             "backtracked": True,
-                            "to_phase": 3,
+                            "to_phase": 2,
                             "reason": "预算太高",
                         },
                     )
@@ -631,8 +631,8 @@ class _BacktrackToPhase3MessageStore:
                 "provider_state": None,
                 "seq": 3,
                 "history_seq": 9,
-                "phase": 5,
-                "phase3_step": None,
+                "phase": 3,
+                "phase2_step": None,
                 "run_id": "run_backtrack",
                 "trip_id": "trip_1",
             },
@@ -661,7 +661,7 @@ async def test_restore_session_after_backtrack_does_not_replay_old_target_phase(
     assert len(restored["messages"]) == 2
     rendered = "\n".join(str(message.content) for message in restored["messages"])
     assert "预算太高，回到框架规划" in rendered
-    assert "老 Phase 3 输入" not in rendered
+    assert "老 Phase 2 输入" not in rendered
     assert "old target phase segment" not in rendered
     assert all(message.role != Role.TOOL for message in restored["messages"])
 
@@ -669,8 +669,8 @@ async def test_restore_session_after_backtrack_does_not_replay_old_target_phase(
 @pytest.mark.asyncio
 async def test_persistence_lists_context_segments_from_message_store_rows():
     rows = [
-        {"session_id": "sess-1", "context_epoch": 0, "phase": 1, "phase3_step": None, "trip_id": "trip-a", "run_id": "run-1", "history_seq": 0, "rebuild_reason": None},
-        {"session_id": "sess-1", "context_epoch": 1, "phase": 3, "phase3_step": "brief", "trip_id": "trip-a", "run_id": "run-2", "history_seq": 1, "rebuild_reason": "phase_forward"},
+        {"session_id": "sess-1", "context_epoch": 0, "phase": 1, "phase2_step": None, "trip_id": "trip-a", "run_id": "run-1", "history_seq": 0, "rebuild_reason": None},
+        {"session_id": "sess-1", "context_epoch": 1, "phase": 2, "phase2_step": "brief", "trip_id": "trip-a", "run_id": "run-2", "history_seq": 1, "rebuild_reason": "phase_forward"},
     ]
 
     class _MessageStore:
@@ -696,7 +696,7 @@ async def test_persistence_lists_context_segments_from_message_store_rows():
             session_id="sess-1",
             context_epoch=0,
             phase=1,
-            phase3_step=None,
+            phase2_step=None,
             trip_id="trip-a",
             run_ids=("run-1",),
             start_history_seq=0,
@@ -707,8 +707,8 @@ async def test_persistence_lists_context_segments_from_message_store_rows():
         ContextSegment(
             session_id="sess-1",
             context_epoch=1,
-            phase=3,
-            phase3_step="brief",
+            phase=2,
+            phase2_step="brief",
             trip_id="trip-a",
             run_ids=("run-2",),
             start_history_seq=1,
@@ -755,7 +755,7 @@ async def test_restore_session_initializes_current_context_epoch_from_history(mo
 
     class _StateMgr:
         async def load(self, session_id):
-            return TravelPlanState(session_id=session_id, phase=3, destination="杭州")
+            return TravelPlanState(session_id=session_id, phase=2, destination="杭州")
 
     class _MessageStore:
         async def load_all(self, session_id):
@@ -819,8 +819,8 @@ async def test_persist_messages_writes_context_epoch_and_rebuild_reason():
     next_seq = await persistence.persist_messages(
         "sess-1",
         [Message(role=Role.SYSTEM, content="handoff")],
-        phase=3,
-        phase3_step="brief",
+        phase=2,
+        phase2_step="brief",
         run_id="run-1",
         trip_id="trip-a",
         next_history_seq=7,

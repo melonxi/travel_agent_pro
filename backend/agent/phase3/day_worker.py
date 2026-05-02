@@ -19,11 +19,11 @@ from typing import Any, Callable
 from opentelemetry import trace
 
 from agent.types import Message, Role, ToolCall, ToolResult
-from agent.phase5.candidate_store import (
-    Phase5CandidateStore,
-    Phase5CandidateValidationError,
+from agent.phase3.candidate_store import (
+    Phase3CandidateStore,
+    Phase3CandidateValidationError,
 )
-from agent.phase5.worker_prompt import DayTask, build_day_suffix, build_shared_prefix
+from agent.phase3.worker_prompt import DayTask, build_day_suffix, build_shared_prefix
 from llm.base import LLMProvider
 from llm.types import ChunkType
 from state.models import TravelPlanState
@@ -272,7 +272,7 @@ async def run_day_worker(
     max_iterations: int = 10,
     timeout_seconds: int = 120,
     on_progress: OnProgress = None,
-    candidate_store: Phase5CandidateStore | None = None,
+    candidate_store: Phase3CandidateStore | None = None,
     run_id: str | None = None,
     attempt: int = 1,
 ) -> DayWorkerResult:
@@ -301,7 +301,7 @@ async def run_day_worker(
         Message(role=Role.USER, content=day_suffix + iteration_note),
     ]
 
-    # Build tool list: only read tools for Phase 5
+    # Build tool list: only read tools for Phase 3
     worker_tools = _get_worker_tools(tool_engine)
     if candidate_store is not None and run_id:
         worker_tools.append(_SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA)
@@ -477,7 +477,7 @@ async def run_day_worker(
                         )
 
                     # Execute tools. The worker-only submit tool is handled here
-                    # because it writes to the Phase 5 staging area, not the
+                    # because it writes to the Phase 3 staging area, not the
                     # shared TravelPlanState tool registry.
                     results: list[ToolResult] = []
                     external_tool_calls: list[ToolCall] = []
@@ -590,7 +590,7 @@ def _submit_day_plan_candidate(
     call: ToolCall,
     plan: TravelPlanState,
     task: DayTask,
-    candidate_store: Phase5CandidateStore | None,
+    candidate_store: Phase3CandidateStore | None,
     run_id: str | None,
     attempt: int,
 ) -> ToolResult:
@@ -622,7 +622,7 @@ def _submit_day_plan_candidate(
             attempt=attempt,
             dayplan=dayplan,
         )
-    except Phase5CandidateValidationError as exc:
+    except Phase3CandidateValidationError as exc:
         return ToolResult(
             tool_call_id=call.id,
             status="error",

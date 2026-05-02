@@ -1,5 +1,5 @@
 # backend/agent/worker_prompt.py
-"""Worker system prompt templates for Phase 5 parallel mode.
+"""Worker system prompt templates for Phase 3 parallel mode.
 
 Design goal: maximize shared prefix across all Day Workers to achieve
 high KV-Cache hit rates (Manus / Claude Code fork sub-agent pattern).

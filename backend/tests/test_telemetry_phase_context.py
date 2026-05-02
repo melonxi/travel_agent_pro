@@ -39,7 +39,7 @@ async def test_phase_transition_creates_span(otel_exporter):
     changed = await router.check_and_apply_transition(plan)
 
     assert changed
-    assert plan.phase == 3
+    assert plan.phase == 2
 
     spans = otel_exporter.get_finished_spans()
     span_names = [s.name for s in spans]
@@ -47,7 +47,7 @@ async def test_phase_transition_creates_span(otel_exporter):
 
     span = next(s for s in spans if s.name == "phase.transition")
     assert span.attributes["phase.from"] == 1
-    assert span.attributes["phase.to"] == 3
+    assert span.attributes["phase.to"] == 2
 
 
 @pytest.mark.asyncio

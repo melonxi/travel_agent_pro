@@ -8,9 +8,9 @@ const FIXTURE_PATH = path.join(__dirname, 'demo-scripted-session.json')
 const LONG_TIMEOUT = 180_000
 const PHASE_LABELS: Record<number, string> = {
   1: '灵感与目的地',
-  3: '日期与住宿',
-  5: '行程组装',
-  7: '出发前查漏',
+  2: '日期与住宿',
+  3: '行程组装',
+  4: '出发前查漏',
 }
 
 type JsonValue = string | number | boolean | null | JsonObject | JsonValue[]
@@ -278,10 +278,10 @@ test('demo full flow covers recommendation, planning, and backtrack', async ({ p
   await expect(page.locator('.input-bar input')).toBeVisible({ timeout: LONG_TIMEOUT })
 
   const phase1Message = fixture.steps[0]
-  const phase3Message = fixture.steps[1]
+  const phase2Message = fixture.steps[1]
   const lockSkeletonMessage = fixture.steps[2]
   const lockHotelMessage = fixture.steps[3]
-  const phase5Message = fixture.steps[4]
+  const phase3Message = fixture.steps[4]
   const backtrackMessage = fixture.steps[5]
 
   let previousAssistantCount = await page.locator('.message.assistant').count()
@@ -294,31 +294,31 @@ test('demo full flow covers recommendation, planning, and backtrack', async ({ p
   await assertPhase(page, 1)
   await takeDemoScreenshot(page, 'phase1-recommendations.png')
 
-  await sendMessage(page, phase3Message.user_message)
+  await sendMessage(page, phase2Message.user_message)
   await waitForAssistantResponse(page, previousAssistantCount)
   previousAssistantCount += 1
   await expect(page.locator('.destination-banner')).toContainText('京都')
-  await assertPhase(page, 3)
-  await expect(page.locator('.phase3-workbench')).toBeVisible()
-  await expect(page.locator('.p3-skeleton')).toHaveCount(2)
-  await takeDemoScreenshot(page, 'phase3-planning.png')
+  await assertPhase(page, 2)
+  await expect(page.locator('.phase2-workbench')).toBeVisible()
+  await expect(page.locator('.p2-skeleton')).toHaveCount(2)
+  await takeDemoScreenshot(page, 'phase2-planning.png')
 
   await sendMessage(page, lockSkeletonMessage.user_message)
   await waitForAssistantResponse(page, previousAssistantCount)
   previousAssistantCount += 1
-  await expect(page.locator('.phase3-workbench')).toBeVisible()
-  await expect(page.locator('.p3-lockitem')).toHaveCount(3)
+  await expect(page.locator('.phase2-workbench')).toBeVisible()
+  await expect(page.locator('.p2-lockitem')).toHaveCount(3)
 
   await sendMessage(page, lockHotelMessage.user_message)
   await waitForAssistantResponse(page, previousAssistantCount)
   previousAssistantCount += 1
-  await assertPhase(page, 5)
+  await assertPhase(page, 3)
   await expect(page.locator('.destination-banner .dest-chip').filter({ hasText: '住宿' })).toContainText('Nohga Hotel Kiyomizu Kyoto')
 
-  await sendMessage(page, phase5Message.user_message)
+  await sendMessage(page, phase3Message.user_message)
   await waitForAssistantResponse(page, previousAssistantCount)
   previousAssistantCount += 1
-  await assertPhase(page, 5)
+  await assertPhase(page, 3)
   await expect(page.locator('.day-card')).toHaveCount(2)
 
   await sendMessage(page, backtrackMessage.user_message)
@@ -326,6 +326,6 @@ test('demo full flow covers recommendation, planning, and backtrack', async ({ p
   await assertPhase(page, 1)
   await expect(page.locator('.destination-banner')).toHaveCount(0)
   await expect(page.locator('.message.assistant').last()).toContainText('函馆')
-  await takeDemoScreenshot(page, 'phase5-backtrack-change-preference.png')
+  await takeDemoScreenshot(page, 'phase3-backtrack-change-preference.png')
   await saveDemoVideo(page, 'demo-full-flow.webm')
 })

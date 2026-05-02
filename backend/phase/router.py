@@ -9,10 +9,10 @@ from phase.backtrack import BacktrackService
 from phase.prompts import (
     PHASE_CONTROL_MODE,
     PHASE_PROMPTS,
-    build_phase3_prompt,
+    build_phase2_prompt,
 )
 from phase.red_flags import render_red_flags
-from state.models import TravelPlanState, infer_phase3_step_from_state
+from state.models import TravelPlanState, infer_phase2_step_from_state
 from telemetry.attributes import EVENT_PHASE_PLAN_SNAPSHOT, PHASE_FROM, PHASE_TO
 
 
@@ -21,7 +21,7 @@ class PhaseRouter:
         self._backtrack_service = BacktrackService()
 
     def _hydrate_phase3_brief(self, plan: TravelPlanState) -> None:
-        if plan.phase < 3 or not plan.destination:
+        if plan.phase < 2 or not plan.destination:
             return
 
         brief = dict(plan.trip_brief)
@@ -50,7 +50,7 @@ class PhaseRouter:
 
     def sync_phase_state(self, plan: TravelPlanState) -> None:
         self._hydrate_phase3_brief(plan)
-        plan.phase3_step = infer_phase3_step_from_state(
+        plan.phase2_step = infer_phase2_step_from_state(
             phase=plan.phase,
             dates=plan.dates,
             trip_brief=plan.trip_brief,
@@ -83,23 +83,23 @@ class PhaseRouter:
         if not plan.destination:
             return 1
         if not plan.dates or not plan.selected_skeleton_id or not plan.accommodation:
-            return 3
-        # 门控：骨架天数必须与权威 total_days 一致才能进入 Phase 5
+            return 2
+        # 门控：骨架天数必须与权威 total_days 一致才能进入 Phase 3
         if not self._skeleton_days_match(plan):
-            return 3
+            return 2
         if len(plan.daily_plans) < plan.dates.total_days:
-            return 5
-        return 7
+            return 3
+        return 4
 
     def get_prompt(self, phase: int) -> str:
         return PHASE_PROMPTS.get(phase, PHASE_PROMPTS[1])
 
     def get_prompt_for_plan(self, plan: TravelPlanState) -> str:
         """Return phase prompt with active Red Flags appended."""
-        if plan.phase == 3:
-            step = getattr(plan, "phase3_step", "brief") or "brief"
-            base = build_phase3_prompt(step)
-            return base + "\n\n" + render_red_flags(phase=3, phase3_step=step)
+        if plan.phase == 2:
+            step = getattr(plan, "phase2_step", "brief") or "brief"
+            base = build_phase2_prompt(step)
+            return base + "\n\n" + render_red_flags(phase=2, phase2_step=step)
         base = PHASE_PROMPTS.get(plan.phase, PHASE_PROMPTS[1])
         return base + "\n\n" + render_red_flags(phase=plan.phase)
 

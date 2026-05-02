@@ -19,7 +19,7 @@ class LlmTurnOutcome:
     provider_state: dict[str, Any] | None
     progress: IterationProgress
     next_iteration_idx: int
-    previous_phase3_step: str | None
+    previous_phase2_step: str | None
 
 
 def _merge_provider_state_delta(
@@ -47,7 +47,7 @@ async def run_llm_turn(
     iteration_idx: int,
     previous_iteration_had_tools: bool,
     phase_changed_in_previous_iteration: bool,
-    previous_phase3_step: str | None,
+    previous_phase2_step: str | None,
     check_cancelled: Callable[[], None],
     update_progress: Callable[[IterationProgress], None],
 ) -> AsyncIterator[LLMChunk | LlmTurnOutcome]:
@@ -119,12 +119,12 @@ async def run_llm_turn(
     )
     next_iteration_idx = iteration_idx + 1
 
-    next_previous_phase3_step = previous_phase3_step
+    next_previous_phase2_step = previous_phase2_step
     if reflection is not None and plan is not None:
         reflection_msg = reflection.check_and_inject(
             messages,
             plan,
-            previous_phase3_step,
+            previous_phase2_step,
         )
         if reflection_msg:
             messages.append(Message(role=Role.SYSTEM, content=reflection_msg))
@@ -144,7 +144,7 @@ async def run_llm_turn(
                     ended_at=now,
                 ),
             )
-        next_previous_phase3_step = getattr(plan, "phase3_step", None)
+        next_previous_phase2_step = getattr(plan, "phase2_step", None)
 
     tool_choice = "auto"
     if tool_choice_decider is not None and plan is not None:
@@ -197,5 +197,5 @@ async def run_llm_turn(
         provider_state=provider_state or None,
         progress=progress,
         next_iteration_idx=next_iteration_idx,
-        previous_phase3_step=next_previous_phase3_step,
+        previous_phase2_step=next_previous_phase2_step,
     )

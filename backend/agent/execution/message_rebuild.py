@@ -127,7 +127,7 @@ async def rebuild_messages_for_phase_change(
     return rebuilt
 
 
-async def rebuild_messages_for_phase3_step_change(
+async def rebuild_messages_for_phase2_step_change(
     *,
     phase_router: Any | None,
     context_manager: Any | None,
@@ -144,7 +144,7 @@ async def rebuild_messages_for_phase3_step_change(
         or plan is None
         or memory_mgr is None
     ):
-        raise RuntimeError("Phase3 step rebuild requires router/context/plan/memory")
+        raise RuntimeError("Phase 2 step rebuild requires router/context/plan/memory")
 
     phase_prompt = phase_router.get_prompt_for_plan(plan)
     memory_context, _recalled_ids, *_ = (

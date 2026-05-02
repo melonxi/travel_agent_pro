@@ -8,7 +8,7 @@ from tools.generate_summary import make_generate_summary_tool
 
 @pytest.fixture
 def plan():
-    return TravelPlanState(session_id="sess_123456789abc", phase=7)
+    return TravelPlanState(session_id="sess_123456789abc", phase=4)
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 from state.models import TravelPlanState
 from state.plan_writers import (
-    record_phase7_lesson,
+    record_phase4_lesson,
     replace_all_daily_plans,
     write_accommodation,
     write_selected_skeleton_id,
@@ -43,10 +43,10 @@ def test_replace_all_daily_plans_appends_decision_event():
     assert any(ev["category"] == "daily_plan" for ev in plan.decision_events)
 
 
-def test_record_phase7_lesson_appends_lesson_event():
+def test_record_phase4_lesson_appends_lesson_event():
     plan = TravelPlanState(session_id="s1")
 
-    record_phase7_lesson(
+    record_phase4_lesson(
         plan,
         kind="pitfall",
         note="上午排太满下午会累",

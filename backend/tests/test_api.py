@@ -107,8 +107,8 @@ async def test_create_session_wires_agent_intelligence_components(app):
     assert agent.tool_choice_decider is not None
     assert agent.guardrail is not None
     assert agent.parallel_tool_execution is True
-    assert agent.phase5_parallel_config is not None
-    assert agent.phase5_parallel_config.enabled is True
+    assert agent.phase3_parallel_config is not None
+    assert agent.phase3_parallel_config.enabled is True
 
 
 @pytest.mark.asyncio
@@ -221,13 +221,13 @@ telemetry:
 
     session = _get_sessions(app)[session_id]
     plan = session["plan"]
-    plan.phase = 5
+    plan.phase = 3
     plan.destination = "京都"
-    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.dates = DateRange(start="2026-06-01", end="2026-06-01")
     plan.selected_skeleton_id = "s1"
     plan.skeleton_plans = [{"id": "s1", "days": [{"day": 1}]}]
     plan.accommodation = Accommodation(area="河原町", hotel="A")
-    plan.daily_plans = [DayPlan(day=1, date="2026-05-01")]
+    plan.daily_plans = [DayPlan(day=1, date="2026-06-01")]
 
     agent = session["agent"]
     call_count = 0
@@ -244,7 +244,7 @@ telemetry:
                     arguments={
                         "mode": "replace_existing",
                         "day": 1,
-                        "date": "2026-05-01",
+                            "date": "2026-06-01",
                         "activities": [
                             {
                                 "name": "清水寺",
@@ -374,7 +374,7 @@ telemetry:
         return FakeProvider()
 
     async def fake_run(self, messages, phase, tools_override=None):
-        self.plan.phase = 3
+        self.plan.phase = 2
         yield LLMChunk(type=ChunkType.DONE)
 
     monkeypatch.setattr("main.create_llm_provider", fake_provider)
@@ -466,7 +466,7 @@ telemetry:
     session_id = session_resp.json()["session_id"]
     session = _get_sessions(app)[session_id]
     plan = session["plan"]
-    plan.phase = 3
+    plan.phase = 2
     plan.destination = "京都"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.selected_skeleton_id = "balanced"
@@ -479,7 +479,7 @@ telemetry:
     )
 
     assert changed is False
-    assert plan.phase == 3
+    assert plan.phase == 2
     assert any(
         message.content and "质量门控" in message.content and "补充交通住宿取舍" in message.content
         for message in session["messages"]
@@ -549,7 +549,7 @@ telemetry:
     session_id = session_resp.json()["session_id"]
     session = _get_sessions(app)[session_id]
     plan = session["plan"]
-    plan.phase = 3
+    plan.phase = 2
     plan.destination = "京都"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.selected_skeleton_id = "balanced"
@@ -629,7 +629,7 @@ telemetry:
 
     session = _get_sessions(app)[session_id]
     plan = session["plan"]
-    plan.phase = 5
+    plan.phase = 3
     plan.destination = "京都"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
     plan.selected_skeleton_id = "s1"
@@ -745,7 +745,7 @@ telemetry:
     session_id = session_resp.json()["session_id"]
     session = _get_sessions(app)[session_id]
     plan = session["plan"]
-    plan.phase = 3
+    plan.phase = 2
     plan.destination = "京都"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.selected_skeleton_id = "balanced"
@@ -758,7 +758,7 @@ telemetry:
     )
 
     assert changed is True
-    assert plan.phase == 5
+    assert plan.phase == 3
 
 
 @pytest.mark.asyncio
@@ -970,7 +970,7 @@ async def test_backtrack_endpoint_clears_deliverables_and_files(app):
     sessions = _get_sessions(app)
     state_mgr = _get_state_manager(app)
     plan = sessions[session_id]["plan"]
-    plan.phase = 7
+    plan.phase = 4
     plan.deliverables = {
         "travel_plan_md": "travel_plan.md",
         "checklist_md": "checklist.md",
@@ -985,7 +985,7 @@ async def test_backtrack_endpoint_clears_deliverables_and_files(app):
     ) as client:
         backtrack = await client.post(
             f"/api/backtrack/{session_id}",
-            json={"to_phase": 5, "reason": "重新生成交付物"},
+            json={"to_phase": 3, "reason": "重新生成交付物"},
         )
         missing = await client.get(
             f"/api/sessions/{session_id}/deliverables/travel_plan.md"
@@ -1157,14 +1157,14 @@ async def test_apply_message_fallbacks_restores_destination_after_backtrack():
     )
 
     assert plan.destination == "大阪"
-    assert plan.phase == 3
+    assert plan.phase == 2
 
 
 @pytest.mark.asyncio
 async def test_apply_message_fallbacks_replaces_stale_dates_from_message():
     plan = TravelPlanState(
         session_id="sess_dates",
-        phase=3,
+        phase=2,
         destination="东京",
         dates=DateRange(start="2025-05-01", end="2025-05-05"),
     )
@@ -1179,7 +1179,7 @@ async def test_apply_message_fallbacks_replaces_stale_dates_from_message():
     assert plan.dates is not None
     assert plan.dates.start == "2026-05-01"
     assert plan.dates.end == "2026-05-06"
-    assert plan.phase == 3
+    assert plan.phase == 2
 
 
 @pytest.mark.asyncio
@@ -1202,13 +1202,16 @@ async def test_apply_message_fallbacks_restores_travelers_from_message():
 async def test_chat_finalization_does_not_duplicate_preflushed_messages(app):
     async def fake_run(self, messages, phase, tools_override=None):
         messages.append(Message(role=Role.ASSISTANT, content="查了小红书，东京适合"))
-        await self.on_before_message_rebuild(
+        await self.on_context_rebuild(
             messages=messages,
             from_phase=1,
-            from_phase3_step=None,
+            from_phase2_step=None,
+            to_phase=2,
+            to_phase2_step="brief",
+            rebuild_reason="phase_forward",
         )
         messages[:] = [
-            Message(role=Role.SYSTEM, content="phase 3 system"),
+            Message(role=Role.SYSTEM, content="phase 2 system"),
             Message(role=Role.ASSISTANT, content="进入方案设计"),
             messages[-2],
         ]
@@ -1236,13 +1239,16 @@ async def test_chat_finalization_does_not_duplicate_preflushed_messages(app):
 async def test_api_messages_uses_active_runtime_view_not_full_internal_history(app):
     async def fake_run(self, messages, phase, tools_override=None):
         messages.append(Message(role=Role.ASSISTANT, content="旧阶段工具结论"))
-        await self.on_before_message_rebuild(
+        await self.on_context_rebuild(
             messages=messages,
             from_phase=1,
-            from_phase3_step=None,
+            from_phase2_step=None,
+            to_phase=2,
+            to_phase2_step="brief",
+            rebuild_reason="phase_forward",
         )
         messages[:] = [
-            Message(role=Role.SYSTEM, content="phase 3 system"),
+            Message(role=Role.SYSTEM, content="phase 2 system"),
             Message(role=Role.ASSISTANT, content="进入方案设计"),
             messages[-2],
         ]
@@ -1287,7 +1293,7 @@ async def test_get_messages_does_not_expose_internal_restore_history(app):
             {
                 "history_seq": 0,
                 "phase": 1,
-                "phase3_step": None,
+                "phase2_step": None,
                 "run_id": "run_internal",
                 "trip_id": "trip_internal",
             }
@@ -1300,7 +1306,7 @@ async def test_get_messages_does_not_expose_internal_restore_history(app):
     assert all("history_messages" not in item for item in payload)
     assert all("history_seq" not in item for item in payload)
     assert all("phase" not in item for item in payload)
-    assert all("phase3_step" not in item for item in payload)
+    assert all("phase2_step" not in item for item in payload)
     assert all("run_id" not in item for item in payload)
     assert all("trip_id" not in item for item in payload)
 
@@ -1329,7 +1335,7 @@ async def test_get_messages_keeps_public_shape_for_append_only_rows(app):
                 "seq": 0,
                 "history_seq": 0,
                 "phase": session["plan"].phase,
-                "phase3_step": session["plan"].phase3_step,
+                "phase2_step": session["plan"].phase2_step,
                 "run_id": "run_public_shape",
                 "trip_id": session["plan"].trip_id,
             },
@@ -1342,7 +1348,7 @@ async def test_get_messages_keeps_public_shape_for_append_only_rows(app):
                 "seq": 1,
                 "history_seq": 1,
                 "phase": session["plan"].phase,
-                "phase3_step": session["plan"].phase3_step,
+                "phase2_step": session["plan"].phase2_step,
                 "run_id": "run_public_shape",
                 "trip_id": session["plan"].trip_id,
             },
@@ -1371,10 +1377,13 @@ async def test_get_messages_keeps_public_shape_for_append_only_rows(app):
 async def test_cancelled_stream_persists_unflushed_messages_once(app):
     async def fake_run(self, messages, phase, tools_override=None):
         messages.append(Message(role=Role.ASSISTANT, content="开始查"))
-        await self.on_before_message_rebuild(
+        await self.on_context_rebuild(
             messages=messages,
             from_phase=1,
-            from_phase3_step=None,
+            from_phase2_step=None,
+            to_phase=2,
+            to_phase2_step="brief",
+            rebuild_reason="phase_forward",
         )
         messages.append(Message(role=Role.ASSISTANT, content="取消前新增"))
         self.cancel_event.set()

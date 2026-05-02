@@ -15,7 +15,7 @@ async def persist_unflushed_messages(
     plan,
     messages,
     phase: int,
-    phase3_step: str | None,
+    phase2_step: str | None,
     run_id: str | None,
     trip_id: str | None,
     context_epoch: int | None = None,
@@ -36,7 +36,7 @@ async def persist_unflushed_messages(
         plan.session_id,
         messages,
         phase=phase,
-        phase3_step=phase3_step,
+        phase2_step=phase2_step,
         run_id=run_id,
         trip_id=trip_id,
         next_history_seq=next_history_seq,
@@ -51,9 +51,9 @@ def make_context_rebuild_callback(*, deps, session, plan, run):
         *,
         messages,
         from_phase,
-        from_phase3_step,
+        from_phase2_step,
         to_phase,
-        to_phase3_step,
+        to_phase2_step,
         rebuild_reason,
     ):
         old_epoch = int(session.get("current_context_epoch", 0))
@@ -63,7 +63,7 @@ def make_context_rebuild_callback(*, deps, session, plan, run):
             plan=plan,
             messages=messages,
             phase=from_phase,
-            phase3_step=from_phase3_step,
+            phase2_step=from_phase2_step,
             run_id=run.run_id,
             trip_id=getattr(plan, "trip_id", None),
             context_epoch=old_epoch,
@@ -94,7 +94,7 @@ async def finalize_agent_run(
         plan=plan,
         messages=messages,
         phase=plan.phase,
-        phase3_step=getattr(plan, "phase3_step", None),
+        phase2_step=getattr(plan, "phase2_step", None),
         run_id=run.run_id,
         trip_id=getattr(plan, "trip_id", None),
     )
@@ -112,7 +112,7 @@ async def finalize_agent_run(
             plan.phase,
             event_json(plan.to_dict()),
         )
-    if plan.phase == 7:
+    if plan.phase == 4:
         await deps.archive_store.save(
             plan.session_id,
             event_json(plan.to_dict()),
@@ -146,7 +146,7 @@ async def persist_run_safely(*, deps, session, plan, messages, run) -> None:
             plan=plan,
             messages=messages,
             phase=plan.phase,
-            phase3_step=getattr(plan, "phase3_step", None),
+            phase2_step=getattr(plan, "phase2_step", None),
             run_id=run.run_id,
             trip_id=getattr(plan, "trip_id", None),
         )

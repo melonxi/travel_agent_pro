@@ -10,12 +10,12 @@ from typing import Any
 _SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-class Phase5CandidateValidationError(ValueError):
+class Phase3CandidateValidationError(ValueError):
     pass
 
 
 @dataclass(frozen=True)
-class Phase5CandidateStore:
+class Phase3CandidateStore:
     root: Path | str
 
     def __post_init__(self) -> None:
@@ -82,25 +82,25 @@ class Phase5CandidateStore:
 
     def _validate_dayplan(self, expected_day: int, dayplan: dict[str, Any]) -> None:
         if not isinstance(dayplan, dict):
-            raise Phase5CandidateValidationError("dayplan must be an object")
+            raise Phase3CandidateValidationError("dayplan must be an object")
 
         actual_day = dayplan.get("day")
         if actual_day != expected_day:
-            raise Phase5CandidateValidationError(
+            raise Phase3CandidateValidationError(
                 f"dayplan day {actual_day!r} does not match expected day {expected_day}"
             )
 
         if not isinstance(dayplan.get("date"), str) or not dayplan["date"]:
-            raise Phase5CandidateValidationError(
+            raise Phase3CandidateValidationError(
                 "dayplan.date must be a non-empty string"
             )
 
         if not isinstance(dayplan.get("activities"), list):
-            raise Phase5CandidateValidationError("dayplan.activities must be a list")
+            raise Phase3CandidateValidationError("dayplan.activities must be a list")
 
 
 def _validate_safe_segment(value: str, field_name: str) -> None:
     if not isinstance(value, str) or not _SAFE_SEGMENT_RE.fullmatch(value):
-        raise Phase5CandidateValidationError(
+        raise Phase3CandidateValidationError(
             f"unsafe path segment for {field_name}: {value!r}"
         )

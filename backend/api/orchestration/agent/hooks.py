@@ -371,8 +371,8 @@ def build_agent_hooks(
             )
         )
 
-        # Feasibility gate: catch impossible plans early (Phase 1→3)
-        if from_phase == 1 and to_phase == 3:
+        # Feasibility gate: catch impossible plans early (Phase 1→2)
+        if from_phase == 1 and to_phase == 2:
             from harness.feasibility import check_feasibility
 
             days_count = _days_count_from_dates(target_plan.dates)
@@ -433,7 +433,7 @@ def build_agent_hooks(
             )
             return GateResult(allowed=False, feedback=feedback)
 
-        if (from_phase, to_phase) not in {(3, 5), (5, 7)}:
+        if (from_phase, to_phase) not in {(2, 3), (3, 4)}:
             internal_task_events.append(
                 InternalTask(
                     id=task_id,

@@ -57,7 +57,7 @@ async def test_working_memory_is_session_scoped(tmp_path):
     store = FileMemoryV3Store(tmp_path)
     item = WorkingMemoryItem(
         id="wm_1",
-        phase=3,
+        phase=2,
         kind="temporary_rejection",
         domains=["attraction"],
         content="先别考虑迪士尼。",
@@ -80,7 +80,7 @@ async def test_working_memory_upsert_isolated_across_trip_ids(tmp_path):
     store = FileMemoryV3Store(tmp_path)
     original = WorkingMemoryItem(
         id="wm_1",
-        phase=3,
+        phase=2,
         kind="temporary_rejection",
         domains=["attraction"],
         content="先别考虑迪士尼。",
@@ -91,7 +91,7 @@ async def test_working_memory_upsert_isolated_across_trip_ids(tmp_path):
     )
     replacement = WorkingMemoryItem(
         id="wm_2",
-        phase=3,
+        phase=2,
         kind="temporary_rejection",
         domains=["attraction"],
         content="先别去环球影城。",
@@ -221,7 +221,7 @@ async def test_working_memory_path_is_session_and_trip_scoped(tmp_path):
     store = FileMemoryV3Store(tmp_path)
     item = WorkingMemoryItem(
         id="wm_1",
-        phase=3,
+        phase=2,
         kind="temporary_rejection",
         domains=["attraction"],
         content="先别考虑迪士尼。",
@@ -238,7 +238,7 @@ async def test_working_memory_path_is_session_and_trip_scoped(tmp_path):
         "trip_2",
         WorkingMemoryItem(
             id="wm_2",
-            phase=3,
+            phase=2,
             kind="temporary_rejection",
             domains=["attraction"],
             content="先别考虑环球影城。",
@@ -265,7 +265,7 @@ async def test_append_memory_audit_event_writes_v3_events_jsonl(tmp_path):
         session_id="s1",
         event_type="reject",
         object_type="phase_output",
-        object_payload={"to_phase": 3},
+        object_payload={"to_phase": 2},
         reason_text="用户要求回退",
         created_at="2026-05-05T00:00:00+00:00",
     )

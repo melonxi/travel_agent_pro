@@ -106,7 +106,7 @@ async function installDeterministicPhaseTransitionMock(page: Page) {
                     type: 'phase_transition',
                     from_phase: 1,
                     to_phase: Number(transitionStep.plan.phase ?? 3),
-                    to_step: transitionStep.plan.phase3_step ?? null,
+                    to_step: transitionStep.plan.phase2_step ?? null,
                     reason: 'mocked deterministic transition',
                   }),
                 );
@@ -214,6 +214,6 @@ test.describe('Travel Agent Pro Phase 1 Flow', () => {
     await expect(destinationBanner).toHaveCount(0);
 
     await expect(destinationBanner).toContainText('京都', { timeout: 5000 });
-    await expect(page.locator('.phase3-workbench')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.phase2-workbench')).toBeVisible({ timeout: 5000 });
   });
 });

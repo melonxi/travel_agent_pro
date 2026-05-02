@@ -47,10 +47,10 @@ async def test_list_sessions(store: SessionStore):
 @pytest.mark.asyncio
 async def test_update_phase_and_title(store: SessionStore):
     await store.create("sess_update123456", "user1", "初始标题")
-    await store.update("sess_update123456", phase=3, title="东京 · 5天4晚")
+    await store.update("sess_update123456", phase=2, title="东京 · 5天4晚")
     meta = await store.load("sess_update123456")
     assert meta is not None
-    assert meta["phase"] == 3
+    assert meta["phase"] == 2
     assert meta["title"] == "东京 · 5天4晚"
 
 

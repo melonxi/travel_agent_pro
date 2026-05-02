@@ -192,8 +192,8 @@ function lockSummary(plan: TravelPlanState): BriefItem[] {
   return items
 }
 
-export default function Phase3Workbench({ plan, overrideStep }: Props) {
-  const activeStep = overrideStep ?? plan.phase3_step ?? 'brief'
+export default function Phase2Workbench({ plan, overrideStep }: Props) {
+  const activeStep = overrideStep ?? plan.phase2_step ?? 'brief'
   const shortlist = plan.shortlist ?? []
   const candidatePool = plan.candidate_pool ?? []
   const skeletons = plan.skeleton_plans ?? []
@@ -204,7 +204,7 @@ export default function Phase3Workbench({ plan, overrideStep }: Props) {
   const lockItems = lockSummary(plan)
 
   if (
-    plan.phase !== 3 &&
+    plan.phase !== 2 &&
     !briefItems.length &&
     !shortlist.length &&
     !candidatePool.length &&
@@ -217,10 +217,10 @@ export default function Phase3Workbench({ plan, overrideStep }: Props) {
   }
 
   return (
-    <div className="phase3-workbench">
+    <div className="phase2-workbench">
       <div className="section-title">规划工作台</div>
 
-      <div className="p3-steprail">
+      <div className="p2-steprail">
         {Object.entries(STEP_LABELS).map(([key, label]) => {
           const index = Object.keys(STEP_LABELS).indexOf(key)
           const activeIndex = Object.keys(STEP_LABELS).indexOf(activeStep)
@@ -229,49 +229,49 @@ export default function Phase3Workbench({ plan, overrideStep }: Props) {
           return (
             <div
               key={key}
-              className={`p3-stepchip ${isActive ? 'active' : ''} ${isDone ? 'done' : ''}`}
+              className={`p2-stepchip ${isActive ? 'active' : ''} ${isDone ? 'done' : ''}`}
             >
-              <span className="p3-stepdot">{isDone ? '✓' : index + 1}</span>
+              <span className="p2-stepdot">{isDone ? '✓' : index + 1}</span>
               <span>{label}</span>
             </div>
           )
         })}
       </div>
 
-      <div className="p3-grid">
-        <section className="p3-card p3-brief">
-          <div className="p3-cardhead">
+      <div className="p2-grid">
+        <section className="p2-card p2-brief">
+          <div className="p2-cardhead">
             <span>旅行画像</span>
             <strong>{briefItems.length} 项</strong>
           </div>
           {briefItems.length ? (
-            <div className="p3-briefgrid">
+            <div className="p2-briefgrid">
               {briefItems.map((item) => (
-                <div key={`${item.label}-${item.value}`} className="p3-kv">
-                  <div className="p3-k">{item.label}</div>
-                  <div className="p3-v">{item.value}</div>
+                <div key={`${item.label}-${item.value}`} className="p2-kv">
+                  <div className="p2-k">{item.label}</div>
+                  <div className="p2-v">{item.value}</div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="p3-empty">用户明确表达的边界条件会在这里沉淀成易读的旅行画像。</div>
+            <div className="p2-empty">用户明确表达的边界条件会在这里沉淀成易读的旅行画像。</div>
           )}
-          <div className="p3-footnote">偏好状态：{summarizePreference(plan.preferences)}</div>
+          <div className="p2-footnote">偏好状态：{summarizePreference(plan.preferences)}</div>
         </section>
 
-        <section className="p3-card">
-          <div className="p3-cardhead">
+        <section className="p2-card">
+          <div className="p2-cardhead">
             <span>{shortlist.length ? '候选筛选' : '候选池'}</span>
             <strong>{displayCandidates.length} 项</strong>
           </div>
           {displayCandidates.length ? (
-            <div className="p3-list">
+            <div className="p2-list">
               {displayCandidates.slice(0, 5).map((item, index) => (
-                <article key={`${getCandidateTitle(item, `候选 ${index + 1}`)}-${index}`} className="p3-item">
-                  <div className="p3-itemtop">
+                <article key={`${getCandidateTitle(item, `候选 ${index + 1}`)}-${index}`} className="p2-item">
+                  <div className="p2-itemtop">
                     <h4>{getCandidateTitle(item, `候选 ${index + 1}`)}</h4>
                     {typeof item !== 'string' && getCandidateBucket(item) && (
-                      <span className="p3-tag">{getCandidateBucket(item)}</span>
+                      <span className="p2-tag">{getCandidateBucket(item)}</span>
                     )}
                   </div>
                   {typeof item === 'string' ? (
@@ -279,49 +279,49 @@ export default function Phase3Workbench({ plan, overrideStep }: Props) {
                   ) : (
                     <>
                       {(item.why || item.summary) && <p>{String(item.why ?? item.summary)}</p>}
-                      <div className="p3-meta">
+                      <div className="p2-meta">
                         {item.area && <span>{item.area}</span>}
                         {item.theme && <span>{item.theme}</span>}
                         {item.time_cost && <span>{formatValue(item.time_cost)}</span>}
                       </div>
-                      {item.why_not && <div className="p3-warning">取舍提醒：{item.why_not}</div>}
+                      {item.why_not && <div className="p2-warning">取舍提醒：{item.why_not}</div>}
                     </>
                   )}
                 </article>
               ))}
             </div>
           ) : (
-            <div className="p3-empty">还没有形成结构化候选。完成筛选后，这里会显示必选、高潜力、可替代和不建议项。</div>
+            <div className="p2-empty">还没有形成结构化候选。完成筛选后，这里会显示必选、高潜力、可替代和不建议项。</div>
           )}
         </section>
 
-        <section className="p3-card p3-skeletons">
-          <div className="p3-cardhead">
+        <section className="p2-card p2-skeletons">
+          <div className="p2-cardhead">
             <span>骨架方案</span>
             <strong>{skeletons.length} 套</strong>
           </div>
           {skeletons.length ? (
-            <div className="p3-skeletonlist">
+            <div className="p2-skeletonlist">
               {skeletons.map((item, index) => {
                 const planId = item.id ?? item.name ?? item.title ?? `plan-${index + 1}`
                 const isSelected = plan.selected_skeleton_id === item.id || plan.selected_skeleton_id === planId
                 const tradeoffs = normalizeTradeoffs(item.tradeoffs)
                 return (
-                  <article key={planId} className={`p3-skeleton ${isSelected ? 'selected' : ''}`}>
-                    <div className="p3-itemtop">
+                  <article key={planId} className={`p2-skeleton ${isSelected ? 'selected' : ''}`}>
+                    <div className="p2-itemtop">
                       <h4>{item.title ?? item.name ?? item.style ?? `方案 ${index + 1}`}</h4>
-                      <span className="p3-tag">{isSelected ? '当前选中' : item.style ?? '待比较'}</span>
+                      <span className="p2-tag">{isSelected ? '当前选中' : item.style ?? '待比较'}</span>
                     </div>
                     {(item.summary || item.fatigue || item.budget_level) && (
                       <p>{item.summary ?? [item.fatigue, item.budget_level].filter(Boolean).join(' · ')}</p>
                     )}
-                    <div className="p3-meta">
+                    <div className="p2-meta">
                       {item.fatigue && <span>疲劳度 {item.fatigue}</span>}
                       {item.budget_level && <span>预算 {item.budget_level}</span>}
                       {Array.isArray(item.days) && <span>{item.days.length} 天结构</span>}
                     </div>
                     {!!tradeoffs.length && (
-                      <div className="p3-tradeoffs">
+                      <div className="p2-tradeoffs">
                         {tradeoffs.slice(0, 3).map((tradeoff, tradeoffIndex) => (
                           <span key={`${tradeoff}-${tradeoffIndex}`}>{tradeoff}</span>
                         ))}
@@ -332,58 +332,58 @@ export default function Phase3Workbench({ plan, overrideStep }: Props) {
               })}
             </div>
           ) : (
-            <div className="p3-empty">还没有沉淀成结构化骨架。生成 2-3 套方案后，这里会显示轻松版 / 平衡版 / 高密度版的核心差异。</div>
+            <div className="p2-empty">还没有沉淀成结构化骨架。生成 2-3 套方案后，这里会显示轻松版 / 平衡版 / 高密度版的核心差异。</div>
           )}
         </section>
 
-        <section className="p3-card">
-          <div className="p3-cardhead">
+        <section className="p2-card">
+          <div className="p2-cardhead">
             <span>锁定区</span>
             <strong>{lockItems.length || 0} 项</strong>
           </div>
           {lockItems.length ? (
-            <div className="p3-lockgrid">
+            <div className="p2-lockgrid">
               {lockItems.map((item) => (
-                <div key={`${item.label}-${item.value}`} className="p3-lockitem">
-                  <div className="p3-k">{item.label}</div>
-                  <div className="p3-v">{item.value}</div>
+                <div key={`${item.label}-${item.value}`} className="p2-lockitem">
+                  <div className="p2-k">{item.label}</div>
+                  <div className="p2-v">{item.value}</div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="p3-empty">选定骨架后，这里会显示交通候选、住宿候选和最终锁定项。</div>
+            <div className="p2-empty">选定骨架后，这里会显示交通候选、住宿候选和最终锁定项。</div>
           )}
         </section>
 
-        <section className="p3-card">
-          <div className="p3-cardhead">
+        <section className="p2-card">
+          <div className="p2-cardhead">
             <span>风险与备选</span>
             <strong>{risks.length + alternatives.length}</strong>
           </div>
           {risks.length || alternatives.length ? (
-            <div className="p3-list">
+            <div className="p2-list">
               {risks.slice(0, 3).map((item, index) => (
-                <article key={`${getRiskTitle(item, `风险 ${index + 1}`)}-${index}`} className="p3-item risk">
-                  <div className="p3-itemtop">
+                <article key={`${getRiskTitle(item, `风险 ${index + 1}`)}-${index}`} className="p2-item risk">
+                  <div className="p2-itemtop">
                     <h4>{getRiskTitle(item, `风险 ${index + 1}`)}</h4>
-                    {item.level && <span className="p3-tag">{item.level}</span>}
+                    {item.level && <span className="p2-tag">{item.level}</span>}
                   </div>
                   <p>{item.description ?? item.summary ?? '需要留意的执行风险'}</p>
-                  {item.mitigation && <div className="p3-warning">缓解方式：{item.mitigation}</div>}
+                  {item.mitigation && <div className="p2-warning">缓解方式：{item.mitigation}</div>}
                 </article>
               ))}
               {alternatives.slice(0, 2).map((item, index) => (
-                <article key={`alternative-${index}`} className="p3-item alt">
-                  <div className="p3-itemtop">
+                <article key={`alternative-${index}`} className="p2-item alt">
+                  <div className="p2-itemtop">
                     <h4>{formatValue((item as Record<string, unknown>).title ?? (item as Record<string, unknown>).name ?? `备选 ${index + 1}`)}</h4>
-                    <span className="p3-tag">备选</span>
+                    <span className="p2-tag">备选</span>
                   </div>
                   <p>{formatValue(item)}</p>
                 </article>
               ))}
             </div>
           ) : (
-            <div className="p3-empty">锁定交通与住宿时发现的风险、雨天替代和关键备选，会集中显示在这里。</div>
+            <div className="p2-empty">锁定交通与住宿时发现的风险、雨天替代和关键备选，会集中显示在这里。</div>
           )}
         </section>
       </div>

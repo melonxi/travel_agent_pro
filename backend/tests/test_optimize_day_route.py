@@ -46,7 +46,7 @@ async def test_optimize_day_route_orders_pois(tool_fn):
 async def test_optimize_day_route_is_read_side_effect(tool_fn):
     assert tool_fn.name == "optimize_day_route"
     assert tool_fn.side_effect == "read"
-    assert tool_fn.phases == [5]
+    assert tool_fn.phases == [3]
     assert tool_fn.human_label == "优化单日路线"
     assert tool_fn.parameters["required"] == ["pois"]
     assert tool_fn.parameters["properties"]["transport_mode"]["enum"] == [

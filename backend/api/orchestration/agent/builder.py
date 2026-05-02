@@ -74,7 +74,7 @@ def build_agent(
         tool_choice_decider=tool_choice_decider,
         guardrail=guardrail,
         parallel_tool_execution=config.parallel_tool_execution,
-        phase5_parallel_config=config.phase5_parallel,
+        phase3_parallel_config=config.phase3_parallel,
         internal_task_events=internal_task_events,
         on_before_message_rebuild=on_before_message_rebuild,
         on_context_rebuild=on_context_rebuild,

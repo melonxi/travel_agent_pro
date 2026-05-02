@@ -17,8 +17,8 @@ class _Hooks:
 
 
 class _Plan:
-    phase = 3
-    phase3_step = "candidate"
+    phase = 2
+    phase2_step = "candidate"
 
 
 def _loop(on_context_rebuild):
@@ -53,7 +53,7 @@ async def test_phase_forward_rebuild_advances_context_epoch_before_rebuild(monke
     await loop._rebuild_messages_for_phase_change(
         messages=[Message(role=Role.USER, content="go")],
         from_phase=1,
-        to_phase=3,
+        to_phase=2,
         original_user_message=Message(role=Role.USER, content="go"),
         result=ToolResult(tool_call_id="tc", status="success", data={}),
     )
@@ -62,9 +62,9 @@ async def test_phase_forward_rebuild_advances_context_epoch_before_rebuild(monke
         {
             "messages": [Message(role=Role.USER, content="go")],
             "from_phase": 1,
-            "from_phase3_step": None,
-            "to_phase": 3,
-            "to_phase3_step": "candidate",
+            "from_phase2_step": None,
+            "to_phase": 2,
+            "to_phase2_step": "candidate",
             "rebuild_reason": "phase_forward",
         }
     ]
@@ -86,23 +86,23 @@ async def test_backtrack_rebuild_advances_context_epoch_with_backtrack_reason(mo
 
     await loop._rebuild_messages_for_phase_change(
         messages=[Message(role=Role.TOOL, content=None)],
-        from_phase=5,
-        to_phase=3,
+        from_phase=3,
+        to_phase=2,
         original_user_message=Message(role=Role.USER, content="重做框架"),
         result=ToolResult(
             tool_call_id="tc",
             status="success",
-            data={"backtrack": {"from_phase": 5, "to_phase": 3}},
+            data={"backtrack": {"from_phase": 3, "to_phase": 2}},
         ),
     )
 
     assert calls[0]["rebuild_reason"] == "backtrack"
-    assert calls[0]["from_phase"] == 5
-    assert calls[0]["to_phase"] == 3
+    assert calls[0]["from_phase"] == 3
+    assert calls[0]["to_phase"] == 2
 
 
 @pytest.mark.asyncio
-async def test_phase3_step_change_rebuild_advances_context_epoch(monkeypatch):
+async def test_phase2_step_change_rebuild_advances_context_epoch(monkeypatch):
     calls = []
 
     async def on_context_rebuild(**kwargs):
@@ -113,22 +113,22 @@ async def test_phase3_step_change_rebuild_advances_context_epoch(monkeypatch):
     async def fake_rebuild(**kwargs):
         return [Message(role=Role.SYSTEM, content="new step")]
 
-    monkeypatch.setattr("agent.loop.rebuild_messages_for_phase3_step_change", fake_rebuild)
+    monkeypatch.setattr("agent.loop.rebuild_messages_for_phase2_step_change", fake_rebuild)
 
-    await loop._rebuild_messages_for_phase3_step_change(
+    await loop._rebuild_messages_for_phase2_step_change(
         messages=[Message(role=Role.USER, content="候选池好了")],
         original_user_message=Message(role=Role.USER, content="候选池好了"),
-        from_phase3_step="brief",
-        to_phase3_step="candidate",
+        from_phase2_step="brief",
+        to_phase2_step="candidate",
     )
 
     assert calls == [
         {
             "messages": [Message(role=Role.USER, content="候选池好了")],
-            "from_phase": 3,
-            "from_phase3_step": "brief",
-            "to_phase": 3,
-            "to_phase3_step": "candidate",
-            "rebuild_reason": "phase3_step_change",
+            "from_phase": 2,
+            "from_phase2_step": "brief",
+            "to_phase": 2,
+            "to_phase2_step": "candidate",
+            "rebuild_reason": "phase2_step_change",
         }
     ]

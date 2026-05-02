@@ -5,7 +5,7 @@ import MapView from './components/MapView'
 import Timeline from './components/Timeline'
 import BudgetChart from './components/BudgetChart'
 import DeliverablesCard from './components/DeliverablesCard'
-import Phase3Workbench from './components/Phase3Workbench'
+import Phase2Workbench from './components/Phase2Workbench'
 import SessionSidebar from './components/SessionSidebar'
 import TraceViewer from './components/TraceViewer'
 import MemoryTracePanel from './components/MemoryTracePanel'
@@ -72,9 +72,9 @@ export default function App() {
   const [memoryRefreshTrigger, setMemoryRefreshTrigger] = useState(0)
   const { dark, toggle: toggleTheme } = useTheme()
   const initializedRef = useRef(false)
-  const showPhase3Workbench = Boolean(
+  const showPhase2Workbench = Boolean(
     plan && (
-      plan.phase === 3 ||
+      plan.phase === 2 ||
       plan.trip_brief ||
       plan.candidate_pool?.length ||
       plan.shortlist?.length ||
@@ -219,7 +219,7 @@ export default function App() {
     if (!plan || !phaseOverride) return
     if (plan.phase !== phaseOverride.phase) return
 
-    const currentStep = plan.phase === 3 ? plan.phase3_step ?? null : null
+    const currentStep = plan.phase === 2 ? plan.phase2_step ?? null : null
     const overrideStep = phaseOverride.step ?? null
     if (overrideStep === null || currentStep === overrideStep) {
       setPhaseOverride(null)
@@ -349,9 +349,9 @@ export default function App() {
               )}
               {plan && (
                 <>
-                  {showPhase3Workbench && (
+                  {showPhase2Workbench && (
                     <div className="sidebar-section">
-                      <Phase3Workbench plan={plan} overrideStep={phaseOverride?.step} />
+                      <Phase2Workbench plan={plan} overrideStep={phaseOverride?.step} />
                     </div>
                   )}
                   <div className="sidebar-section">

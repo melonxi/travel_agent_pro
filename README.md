@@ -1,6 +1,6 @@
 # Travel Agent Pro
 
-A full-stack AI travel planning system powered by a hand-crafted Agent Loop with a production Phase 1/3/5/7 planning path and a **5-layer harness architecture** ensuring safety, correctness, and quality at every step. Built from scratch without LangChain or other agent frameworks.
+A full-stack AI travel planning system powered by a hand-crafted Agent Loop with a production Phase 1/2/3/4 planning path and a **5-layer harness architecture** ensuring safety, correctness, and quality at every step. Built from scratch without LangChain or other agent frameworks.
 
 **Quality at Scale:** 590+ tests, 15 executable golden eval cases, JSON eval reports, cost/latency tracking per session.
 
@@ -21,12 +21,12 @@ User <-> React Frontend <-> FastAPI Gateway <-> Agent Loop <-> LLM (OpenAI / Ant
 
 | Phase | Name | Purpose | Tools |
 |-------|------|---------|-------|
-| 1 | Inspiration & Destination Lock | Narrow vague intent into a destination | `xiaohongshu_search`, `web_search`, `quick_travel_search` |
-| 3 | Framework Planning | Build trip brief, candidate pool, skeletons, transport and lodging locks | `search_flights`, `search_trains`, `search_accommodations`, `get_poi_info`, `calculate_route` |
-| 5 | Daily Itinerary Assembly | Expand the selected skeleton into day-by-day plans and validate constraints | `assemble_day_plan`, `check_availability`, `check_weather`, `generate_summary` |
-| 7 | Pre-Departure Checklist | Final checklist and handoff | `generate_summary` |
+| 1 | Inspiration & Destination Lock | Narrow vague intent into a destination | `xiaohongshu_search_notes`, `web_search`, `quick_travel_search` |
+| 2 | Framework Planning | Build trip brief, candidate pool, skeletons, transport and lodging locks | `set_trip_brief`, `set_skeleton_plans`, `search_flights`, `search_accommodations` |
+| 3 | Daily Itinerary Assembly | Expand the selected skeleton into day-by-day plans and validate constraints | `optimize_day_route`, `save_day_plan`, `replace_all_day_plans` |
+| 4 | Pre-Departure Checklist | Final checklist and markdown handoff | `check_weather`, `search_travel_services`, `web_search`, `generate_summary` |
 
-The `PhaseRouter` manages transitions automatically based on plan state completeness. Phase 3 has four substeps (`brief`, `candidate`, `skeleton`, `lock`) with progressively opened tools.
+The `PhaseRouter` manages transitions automatically based on plan state completeness. Phase 2 has four substeps (`brief`, `candidate`, `skeleton`, `lock`) with progressively opened tools.
 
 ### Core Components
 
@@ -47,7 +47,7 @@ Input → Guardrail → Agent Loop → Validator → Judge → Output
   │    limits, struct             checks        (LLM-based)
   │    validation
   │
-  ├── Feasibility Gate (Phase 1→3)
+  ├── Feasibility Gate (Phase 1→2)
   │     Rule-based budget/duration checks
   │     30+ destination lookup tables
   │
@@ -149,7 +149,7 @@ Committed analysis lives in `docs/learning/2026-04-13-失败案例分析.md`. Lo
 
 ## Demo Recording
 
-The demo workflow is **deterministic scripted playback**, not a live LLM-dependent run. It needs the frontend dev server, then replays the visible Phase 1 → Phase 3 → Phase 5 → backtrack story from a fixed fixture so recording output stays stable.
+The demo workflow is **deterministic scripted playback**, not a live LLM-dependent run. It needs the frontend dev server, then replays the visible Phase 1 → Phase 2 → Phase 3 → backtrack story from a fixed fixture so recording output stays stable.
 
 ```bash
 scripts/demo/run-all-demos.sh
@@ -158,8 +158,8 @@ scripts/demo/run-all-demos.sh
 Artifacts land in `screenshots/demos/`:
 
 - `phase1-recommendations.png`
-- `phase3-planning.png`
-- `phase5-backtrack-change-preference.png`
+- `phase2-planning.png`
+- `phase3-backtrack-change-preference.png`
 - `demo-full-flow.webm`
 
 ## Observability

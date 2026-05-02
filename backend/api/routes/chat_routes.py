@@ -53,8 +53,6 @@ def register_chat_routes(
             sessions[session_id] = restored
             session = restored
         plan = session["plan"]
-        if req.to_phase == 2:
-            req.to_phase = 1
         if req.to_phase >= plan.phase:
             raise HTTPException(status_code=400, detail="只能回退到更早的阶段")
         snapshot_path = await state_mgr.save_snapshot(plan)

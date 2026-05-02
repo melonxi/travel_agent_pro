@@ -12,7 +12,7 @@ def test_derive_context_segments_groups_by_context_epoch():
             "session_id": "sess-1",
             "context_epoch": 0,
             "phase": 1,
-            "phase3_step": None,
+            "phase2_step": None,
             "trip_id": "trip-a",
             "run_id": "run-1",
             "history_seq": 0,
@@ -21,8 +21,8 @@ def test_derive_context_segments_groups_by_context_epoch():
         {
             "session_id": "sess-1",
             "context_epoch": 1,
-            "phase": 3,
-            "phase3_step": "brief",
+            "phase": 2,
+            "phase2_step": "brief",
             "trip_id": "trip-a",
             "run_id": "run-1",
             "history_seq": 1,
@@ -31,8 +31,8 @@ def test_derive_context_segments_groups_by_context_epoch():
         {
             "session_id": "sess-1",
             "context_epoch": 1,
-            "phase": 3,
-            "phase3_step": "brief",
+            "phase": 2,
+            "phase2_step": "brief",
             "trip_id": "trip-a",
             "run_id": "run-2",
             "history_seq": 2,
@@ -47,7 +47,7 @@ def test_derive_context_segments_groups_by_context_epoch():
             session_id="sess-1",
             context_epoch=0,
             phase=1,
-            phase3_step=None,
+            phase2_step=None,
             trip_id="trip-a",
             run_ids=("run-1",),
             start_history_seq=0,
@@ -58,8 +58,8 @@ def test_derive_context_segments_groups_by_context_epoch():
         ContextSegment(
             session_id="sess-1",
             context_epoch=1,
-            phase=3,
-            phase3_step="brief",
+            phase=2,
+            phase2_step="brief",
             trip_id="trip-a",
             run_ids=("run-1", "run-2"),
             start_history_seq=1,
@@ -72,25 +72,25 @@ def test_derive_context_segments_groups_by_context_epoch():
 
 def test_repeated_phase3_visits_after_backtrack_produce_distinct_segments():
     rows = [
-        {"session_id": "sess-1", "context_epoch": 2, "phase": 3, "phase3_step": "skeleton", "trip_id": "trip-a", "run_id": "run-3", "history_seq": 20, "rebuild_reason": "phase3_step_change"},
-        {"session_id": "sess-1", "context_epoch": 3, "phase": 5, "phase3_step": None, "trip_id": "trip-a", "run_id": "run-4", "history_seq": 30, "rebuild_reason": "phase_forward"},
-        {"session_id": "sess-1", "context_epoch": 4, "phase": 3, "phase3_step": "skeleton", "trip_id": "trip-a", "run_id": "run-5", "history_seq": 40, "rebuild_reason": "backtrack"},
+        {"session_id": "sess-1", "context_epoch": 2, "phase": 2, "phase2_step": "skeleton", "trip_id": "trip-a", "run_id": "run-3", "history_seq": 20, "rebuild_reason": "phase2_step_change"},
+        {"session_id": "sess-1", "context_epoch": 3, "phase": 3, "phase2_step": None, "trip_id": "trip-a", "run_id": "run-4", "history_seq": 30, "rebuild_reason": "phase_forward"},
+        {"session_id": "sess-1", "context_epoch": 4, "phase": 2, "phase2_step": "skeleton", "trip_id": "trip-a", "run_id": "run-5", "history_seq": 40, "rebuild_reason": "backtrack"},
     ]
 
     segments = derive_context_segments(rows)
 
-    phase3_segments = [segment for segment in segments if segment.phase == 3]
+    phase3_segments = [segment for segment in segments if segment.phase == 2]
     assert [segment.context_epoch for segment in phase3_segments] == [2, 4]
     assert [segment.rebuild_reason for segment in phase3_segments] == [
-        "phase3_step_change",
+        "phase2_step_change",
         "backtrack",
     ]
 
 
 def test_legacy_rows_without_context_epoch_do_not_break_new_segments():
     rows = [
-        {"session_id": "sess-1", "context_epoch": None, "phase": None, "phase3_step": None, "trip_id": None, "run_id": None, "history_seq": None, "rebuild_reason": None},
-        {"session_id": "sess-1", "context_epoch": 0, "phase": 1, "phase3_step": None, "trip_id": "trip-a", "run_id": "run-1", "history_seq": 0, "rebuild_reason": None},
+        {"session_id": "sess-1", "context_epoch": None, "phase": None, "phase2_step": None, "trip_id": None, "run_id": None, "history_seq": None, "rebuild_reason": None},
+        {"session_id": "sess-1", "context_epoch": 0, "phase": 1, "phase2_step": None, "trip_id": "trip-a", "run_id": "run-1", "history_seq": 0, "rebuild_reason": None},
     ]
 
     segments = derive_context_segments(rows)

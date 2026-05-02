@@ -32,12 +32,15 @@ class ToolEngine:
         phase: int,
         plan: Any | None = None,
     ) -> list[dict[str, Any]]:
+        if phase not in {1, 2, 3, 4}:
+            return []
+
         allowed_names = None
-        if phase == 3 and plan is not None:
-            allowed_names = self._phase3_tool_names(
-                getattr(plan, "phase3_step", "brief")
+        if phase == 2 and plan is not None:
+            allowed_names = self._phase2_tool_names(
+                getattr(plan, "phase2_step", "brief")
             )
-            known_phase3_names = self._phase3_builtin_tool_names()
+            known_phase2_names = self._phase2_builtin_tool_names()
         return [
             t.to_schema()
             for t in self._tools.values()
@@ -45,11 +48,11 @@ class ToolEngine:
             and (
                 allowed_names is None
                 or t.name in allowed_names
-                or t.name not in known_phase3_names
+                or t.name not in known_phase2_names
             )
         ]
 
-    def _phase3_tool_names(self, step: str) -> set[str]:
+    def _phase2_tool_names(self, step: str) -> set[str]:
         xiaohongshu_tools = {
             "xiaohongshu_search_notes",
             "xiaohongshu_read_note",
@@ -130,7 +133,7 @@ class ToolEngine:
         }
         return step_order.get(step, step_order["brief"])
 
-    def _phase3_builtin_tool_names(self) -> set[str]:
+    def _phase2_builtin_tool_names(self) -> set[str]:
         return {
             "update_trip_basics",
             "request_backtrack",

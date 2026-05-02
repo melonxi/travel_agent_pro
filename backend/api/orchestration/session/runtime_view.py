@@ -12,7 +12,7 @@ from agent.types import Message, Role
 class HistoryMessage:
     message: Message
     phase: int | None = None
-    phase3_step: str | None = None
+    phase2_step: str | None = None
     history_seq: int | None = None
     context_epoch: int | None = None
     rebuild_reason: str | None = None
@@ -31,7 +31,7 @@ def _is_backtrack_result(history_message: HistoryMessage) -> bool:
 
 def _has_reliable_phase_metadata(history_view: list[HistoryMessage]) -> bool:
     return any(
-        item.phase is not None or item.phase3_step is not None
+        item.phase is not None or item.phase2_step is not None
         for item in history_view
     )
 
@@ -70,7 +70,7 @@ def _latest_current_phase_user(
     history_view: list[HistoryMessage],
     *,
     phase: int,
-    phase3_step: str | None,
+    phase2_step: str | None,
     context_epoch: int | None = None,
 ) -> Message | None:
     for item in reversed(history_view):
@@ -80,7 +80,7 @@ def _latest_current_phase_user(
             continue
         if item.phase != phase:
             continue
-        if phase == 3 and item.phase3_step != phase3_step:
+        if phase == 2 and item.phase2_step != phase2_step:
             continue
         return copy_message(item.message)
     return None
@@ -131,7 +131,7 @@ def select_restore_anchor(
             _latest_current_phase_user(
                 history_view,
                 phase=plan.phase,
-                phase3_step=getattr(plan, "phase3_step", None),
+                phase2_step=getattr(plan, "phase2_step", None),
                 context_epoch=latest_epoch,
             )
             if latest_epoch is not None
@@ -142,7 +142,7 @@ def select_restore_anchor(
         anchor = _latest_current_phase_user(
             history_view,
             phase=plan.phase,
-            phase3_step=getattr(plan, "phase3_step", None),
+            phase2_step=getattr(plan, "phase2_step", None),
         )
         if anchor is not None:
             return anchor
@@ -160,12 +160,12 @@ def select_restore_anchor(
 
 
 def _restore_runtime_plan(plan: Any) -> Any:
-    if getattr(plan, "phase", None) == 3:
+    if getattr(plan, "phase", None) == 2:
         return plan
 
     runtime_plan = copy(plan)
-    if hasattr(runtime_plan, "phase3_step"):
-        runtime_plan.phase3_step = None
+    if hasattr(runtime_plan, "phase2_step"):
+        runtime_plan.phase2_step = None
     return runtime_plan
 
 

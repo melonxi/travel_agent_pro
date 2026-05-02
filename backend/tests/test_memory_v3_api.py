@@ -278,7 +278,7 @@ async def test_legacy_memory_routes_are_removed(v3_app):
             json={
                 "event_type": "reject",
                 "object_type": "phase_output",
-                "object_payload": {"to_phase": 3},
+                "object_payload": {"to_phase": 2},
                 "reason_text": "用户要求回退",
             },
         )

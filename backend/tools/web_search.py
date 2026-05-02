@@ -46,7 +46,7 @@ Important:
   - max_results 会自动限制在 1 到 10。
   - 当 check_availability 或 get_poi_info 返回的信息不足以支撑行程规划时，应主动用 web_search 补充查证。
         返回 Tavily 的简答和结果列表，包含标题、链接、摘要和分数。对于推荐型 query，它经常能直接给出可用的候选结论。""",
-        phases=[1, 3, 5],
+        phases=[1, 2, 3, 4],
         parameters=_PARAMETERS,
         human_label="上网查资料",
     )

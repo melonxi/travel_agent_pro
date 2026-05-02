@@ -20,25 +20,25 @@ class ReflectionInjector:
     def _compute_trigger_key(
         self, plan: TravelPlanState, prev_step: str | None
     ) -> str | None:
-        if plan.phase == 3 and prev_step == "skeleton" and plan.phase3_step == "lock":
-            return "phase3_lock"
+        if plan.phase == 2 and prev_step == "skeleton" and plan.phase2_step == "lock":
+            return "phase2_lock"
         if (
-            plan.phase == 5
+            plan.phase == 3
             and plan.dates is not None
             and plan.dates.total_days > 0
             and len(plan.daily_plans) >= plan.dates.total_days
         ):
-            return "phase5_complete"
+            return "phase3_complete"
         return None
 
     def _build_prompt(self, key: str, plan: TravelPlanState) -> str:
-        if key == "phase3_lock":
-            return self._build_phase3_lock_prompt(plan)
-        if key == "phase5_complete":
-            return self._build_phase5_complete_prompt(plan)
+        if key == "phase2_lock":
+            return self._build_phase2_lock_prompt(plan)
+        if key == "phase3_complete":
+            return self._build_phase3_complete_prompt(plan)
         return ""
 
-    def _build_phase3_lock_prompt(self, plan: TravelPlanState) -> str:
+    def _build_phase2_lock_prompt(self, plan: TravelPlanState) -> str:
         return (
             "[自检]\n"
             "你即将进入交通住宿锁定阶段，请先快速回顾：\n"
@@ -48,7 +48,7 @@ class ReflectionInjector:
             "如果发现问题，先修正骨架再继续。如果没有问题，直接进入锁定。"
         )
 
-    def _build_phase5_complete_prompt(self, plan: TravelPlanState) -> str:
+    def _build_phase3_complete_prompt(self, plan: TravelPlanState) -> str:
         pace_preference = self._extract_pace_preference(plan.preferences)
         return (
             "[自检]\n"

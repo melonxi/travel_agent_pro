@@ -1,5 +1,5 @@
 # backend/agent/orchestrator.py
-"""Phase 5 Orchestrator: parallel Day Worker dispatch and result collection.
+"""Phase 3 Orchestrator: parallel Day Worker dispatch and result collection.
 
 The orchestrator is pure Python (not an LLM agent). It:
 1. Splits the selected skeleton into per-day tasks
@@ -21,14 +21,14 @@ from typing import Any, AsyncIterator
 
 from opentelemetry import trace
 
-from agent.phase5.candidate_store import Phase5CandidateStore
-from agent.phase5.day_worker import DayWorkerResult, run_day_worker
-from agent.phase5.worker_prompt import (
+from agent.phase3.candidate_store import Phase3CandidateStore
+from agent.phase3.day_worker import DayWorkerResult, run_day_worker
+from agent.phase3.worker_prompt import (
     DayTask,
     build_shared_prefix,
     split_skeleton_to_day_tasks,
 )
-from config import Phase5ParallelConfig
+from config import Phase3ParallelConfig
 from llm.base import LLMProvider
 from llm.types import ChunkType, LLMChunk
 from state.models import TravelPlanState
@@ -134,19 +134,19 @@ def _extract_transport_time(transport: dict[str, Any], direction: str) -> int | 
     return _time_to_minutes(transport.get("departure_time", ""))
 
 
-class Phase5Orchestrator:
+class Phase3Orchestrator:
     def __init__(
         self,
         *,
         plan: TravelPlanState,
         llm: LLMProvider | None,
         tool_engine: ToolEngine | None,
-        config: Phase5ParallelConfig | None,
+        config: Phase3ParallelConfig | None,
     ):
         self.plan = plan
         self.llm = llm
         self.tool_engine = tool_engine
-        self.config = config or Phase5ParallelConfig()
+        self.config = config or Phase3ParallelConfig()
         self.final_dayplans: list[dict[str, Any]] = []
         self.final_issues: list[GlobalValidationIssue] = []
 
@@ -490,12 +490,12 @@ class Phase5Orchestrator:
         )
 
     async def run(self) -> AsyncIterator[LLMChunk]:
-        """Execute parallel Phase 5 generation.
+        """Execute parallel Phase 3 generation.
 
         Yields LLMChunk events for frontend progress display, including
         real-time per-worker status updates via ``parallel_progress`` events.
         """
-        tracer = trace.get_tracer("phase5-orchestrator")
+        tracer = trace.get_tracer("phase3-orchestrator")
 
         with tracer.start_as_current_span("orchestrator.run") as span:
             # 1. Split tasks
@@ -510,8 +510,8 @@ class Phase5Orchestrator:
 
             # 2. Build shared prefix
             shared_prefix = build_shared_prefix(self.plan)
-            run_id = f"phase5_{uuid.uuid4().hex[:12]}"
-            candidate_store = Phase5CandidateStore(self.config.artifact_root)
+            run_id = f"phase3_{uuid.uuid4().hex[:12]}"
+            candidate_store = Phase3CandidateStore(self.config.artifact_root)
 
             # 3. Initialize per-worker status tracking
             worker_statuses: list[dict[str, Any]] = [
@@ -761,10 +761,10 @@ class Phase5Orchestrator:
                 )
                 yield LLMChunk(
                     type=ChunkType.TEXT_DELTA,
-                    content=f"\n\n⚠️ {reason}\n需要回退到 Phase 3 重新调整骨架方案。\n",
+                    content=f"\n\n⚠️ {reason}\n需要回退到 Phase 2 重新调整骨架方案。\n",
                 )
                 # final_dayplans stays [] on this error path.
-                # AgentLoop owns the terminal DONE for all parallel Phase 5 paths.
+                # AgentLoop owns the terminal DONE for all parallel Phase 3 paths.
                 return
 
             # 8. Sort and validate

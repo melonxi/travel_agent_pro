@@ -1,7 +1,7 @@
 # backend/tests/test_worker_prompt.py
 import pytest
 
-from agent.phase5.worker_prompt import (
+from agent.phase3.worker_prompt import (
     build_shared_prefix,
     build_day_suffix,
     DayTask,
@@ -265,8 +265,8 @@ def test_build_shared_prefix_no_main_agent_red_flags():
     prefix = build_shared_prefix(plan)
     assert "## Active Red Flags" not in prefix
     assert "G-EVIDENCE" not in prefix
-    assert "P5-1" not in prefix
-    assert "P7-1" not in prefix
+    assert "P3-1" not in prefix
+    assert "P4-1" not in prefix
 
 
 def test_build_shared_prefix_stable_ordering():

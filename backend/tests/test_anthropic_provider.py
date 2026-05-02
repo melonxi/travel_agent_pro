@@ -152,14 +152,14 @@ def test_split_system_and_convert_keeps_forward_handoff_and_user_request(provide
     system, converted = provider._split_system_and_convert(
         [
             Message(role=Role.SYSTEM, content="system prompt"),
-            Message(role=Role.ASSISTANT, content="handoff to phase 5"),
+            Message(role=Role.ASSISTANT, content="handoff to phase 3"),
             Message(role=Role.USER, content="请继续生成最终逐日行程"),
         ]
     )
 
     assert system == "system prompt"
     assert converted == [
-        {"role": "assistant", "content": "handoff to phase 5"},
+        {"role": "assistant", "content": "handoff to phase 3"},
         {"role": "user", "content": "请继续生成最终逐日行程"},
     ]
 

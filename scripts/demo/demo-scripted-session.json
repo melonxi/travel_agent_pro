@@ -11,7 +11,6 @@
     "phase": 1,
     "destination": null,
     "dates": null,
-    "phase3_step": "brief",
     "trip_brief": {},
     "candidate_pool": [],
     "shortlist": [],
@@ -28,7 +27,8 @@
     "risks": [],
     "alternatives": [],
     "daily_plans": [],
-    "backtrack_history": []
+    "backtrack_history": [],
+    "phase2_step": "brief"
   },
   "initial_messages": [],
   "steps": [
@@ -72,7 +72,6 @@
         "phase": 1,
         "destination": null,
         "dates": null,
-        "phase3_step": "brief",
         "trip_brief": {},
         "candidate_pool": [],
         "shortlist": [],
@@ -89,7 +88,8 @@
         "risks": [],
         "alternatives": [],
         "daily_plans": [],
-        "backtrack_history": []
+        "backtrack_history": [],
+        "phase2_step": "brief"
       }
     },
     {
@@ -97,7 +97,7 @@
       "assistant_text": "好，我就按京都 4 天 3 晚、两位成人、预算 12000 元来推。下面给你两套骨架：方案 A 是经典文化深度版，主打东山—岚山—伏见；方案 B 是美食漫游版，节奏更松、把更多时间给河原町和咖啡馆。你如果想先看“第一次去京都也不累”的路线，我建议先选方案 A。",
       "tool_calls": [
         {
-          "id": "tc_phase3_destination",
+          "id": "tc_phase2_destination",
           "name": "update_plan_state",
           "arguments": {
             "field": "destination",
@@ -105,7 +105,7 @@
           }
         },
         {
-          "id": "tc_phase3_dates",
+          "id": "tc_phase2_dates",
           "name": "update_plan_state",
           "arguments": {
             "field": "dates",
@@ -116,7 +116,7 @@
           }
         },
         {
-          "id": "tc_phase3_travelers",
+          "id": "tc_phase2_travelers",
           "name": "update_plan_state",
           "arguments": {
             "field": "travelers",
@@ -127,7 +127,7 @@
           }
         },
         {
-          "id": "tc_phase3_budget",
+          "id": "tc_phase2_budget",
           "name": "update_plan_state",
           "arguments": {
             "field": "budget",
@@ -138,7 +138,7 @@
           }
         },
         {
-          "id": "tc_phase3_skeletons",
+          "id": "tc_phase2_skeletons",
           "name": "update_plan_state",
           "arguments": {
             "field": "skeleton_plans",
@@ -148,35 +148,35 @@
       ],
       "tool_results": [
         {
-          "tool_call_id": "tc_phase3_destination",
+          "tool_call_id": "tc_phase2_destination",
           "status": "success",
           "data": {
             "ok": true
           }
         },
         {
-          "tool_call_id": "tc_phase3_dates",
+          "tool_call_id": "tc_phase2_dates",
           "status": "success",
           "data": {
             "ok": true
           }
         },
         {
-          "tool_call_id": "tc_phase3_travelers",
+          "tool_call_id": "tc_phase2_travelers",
           "status": "success",
           "data": {
             "ok": true
           }
         },
         {
-          "tool_call_id": "tc_phase3_budget",
+          "tool_call_id": "tc_phase2_budget",
           "status": "success",
           "data": {
             "ok": true
           }
         },
         {
-          "tool_call_id": "tc_phase3_skeletons",
+          "tool_call_id": "tc_phase2_skeletons",
           "status": "success",
           "data": {
             "count": 2
@@ -185,13 +185,12 @@
       ],
       "plan": {
         "session_id": "demo-scripted-session",
-        "phase": 3,
+        "phase": 2,
         "destination": "京都",
         "dates": {
           "start": "2026-04-15",
           "end": "2026-04-18"
         },
-        "phase3_step": "skeleton",
         "trip_brief": {
           "destination": "京都",
           "dates": {
@@ -318,7 +317,8 @@
         ],
         "alternatives": [],
         "daily_plans": [],
-        "backtrack_history": []
+        "backtrack_history": [],
+        "phase2_step": "skeleton"
       }
     },
     {
@@ -360,13 +360,12 @@
       ],
       "plan": {
         "session_id": "demo-scripted-session",
-        "phase": 3,
+        "phase": 2,
         "destination": "京都",
         "dates": {
           "start": "2026-04-15",
           "end": "2026-04-18"
         },
-        "phase3_step": "lock",
         "trip_brief": {
           "destination": "京都",
           "dates": {
@@ -499,7 +498,8 @@
         ],
         "alternatives": [],
         "daily_plans": [],
-        "backtrack_history": []
+        "backtrack_history": [],
+        "phase2_step": "lock"
       }
     },
     {
@@ -546,13 +546,12 @@
       ],
       "plan": {
         "session_id": "demo-scripted-session",
-        "phase": 5,
+        "phase": 3,
         "destination": "京都",
         "dates": {
           "start": "2026-04-15",
           "end": "2026-04-18"
         },
-        "phase3_step": "lock",
         "trip_brief": {
           "destination": "京都",
           "dates": {
@@ -655,7 +654,8 @@
         ],
         "alternatives": [],
         "daily_plans": [],
-        "backtrack_history": []
+        "backtrack_history": [],
+        "phase2_step": "lock"
       }
     },
     {
@@ -681,13 +681,12 @@
       ],
       "plan": {
         "session_id": "demo-scripted-session",
-        "phase": 5,
+        "phase": 3,
         "destination": "京都",
         "dates": {
           "start": "2026-04-15",
           "end": "2026-04-18"
         },
-        "phase3_step": "lock",
         "trip_brief": {
           "destination": "京都",
           "dates": {
@@ -823,7 +822,8 @@
             "notes": "第二天先远后近，晚上回河原町自由晚餐。"
           }
         ],
-        "backtrack_history": []
+        "backtrack_history": [],
+        "phase2_step": "lock"
       }
     },
     {
@@ -870,7 +870,6 @@
         "phase": 1,
         "destination": null,
         "dates": null,
-        "phase3_step": "brief",
         "trip_brief": {},
         "candidate_pool": [],
         "shortlist": [],
@@ -889,12 +888,13 @@
         "daily_plans": [],
         "backtrack_history": [
           {
-            "from_phase": 5,
+            "from_phase": 3,
             "to_phase": 1,
             "reason": "用户改主意，切回海边候选",
             "timestamp": "2026-04-13T02:31:00Z"
           }
-        ]
+        ],
+        "phase2_step": "brief"
       }
     }
   ]

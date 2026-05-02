@@ -22,7 +22,7 @@ class PhaseTransitionRequest:
 class PhaseTransitionDetection:
     request: PhaseTransitionRequest | None
     internal_tasks: list[InternalTask]
-    phase3_step_after_batch: Any
+    phase2_step_after_batch: Any
 
 
 async def detect_phase_transition(
@@ -32,7 +32,7 @@ async def detect_phase_transition(
     hooks: Any | None,
     batch_outcome: ToolBatchOutcome,
     phase_before_batch: int,
-    phase3_step_before_batch: Any,
+    phase2_step_before_batch: Any,
     current_phase: int,
     drain_internal_task_events: Callable[[], list[InternalTask]],
 ) -> PhaseTransitionDetection:
@@ -44,13 +44,13 @@ async def detect_phase_transition(
             request=PhaseTransitionRequest(
                 from_phase=phase_before_batch,
                 to_phase=phase_after_batch,
-                from_step=phase3_step_before_batch,
+                from_step=phase2_step_before_batch,
                 reason="backtrack",
                 result=batch_outcome.rebuild_result
                 or ToolResult(tool_call_id="", status="success"),
             ),
             internal_tasks=[],
-            phase3_step_after_batch=getattr(plan, "phase3_step", None)
+            phase2_step_after_batch=getattr(plan, "phase2_step", None)
             if plan is not None
             else None,
         )
@@ -61,12 +61,12 @@ async def detect_phase_transition(
             request=PhaseTransitionRequest(
                 from_phase=phase_before_batch,
                 to_phase=phase_after_batch,
-                from_step=phase3_step_before_batch,
+                from_step=phase2_step_before_batch,
                 reason="plan_tool_direct",
                 result=ToolResult(tool_call_id="", status="success"),
             ),
             internal_tasks=[],
-            phase3_step_after_batch=getattr(plan, "phase3_step", None)
+            phase2_step_after_batch=getattr(plan, "phase2_step", None)
             if plan is not None
             else None,
         )
@@ -84,18 +84,18 @@ async def detect_phase_transition(
                 request=PhaseTransitionRequest(
                     from_phase=phase_before_batch,
                     to_phase=phase_after_batch,
-                    from_step=phase3_step_before_batch,
+                    from_step=phase2_step_before_batch,
                     reason="check_and_apply_transition",
                     result=ToolResult(tool_call_id="", status="success"),
                 ),
                 internal_tasks=internal_tasks,
-                phase3_step_after_batch=getattr(plan, "phase3_step", None),
+                phase2_step_after_batch=getattr(plan, "phase2_step", None),
             )
 
     return PhaseTransitionDetection(
         request=None,
         internal_tasks=internal_tasks,
-        phase3_step_after_batch=getattr(plan, "phase3_step", None)
+        phase2_step_after_batch=getattr(plan, "phase2_step", None)
         if plan is not None
         else None,
     )

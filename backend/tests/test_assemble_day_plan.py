@@ -34,7 +34,7 @@ async def test_empty_pois(tool_fn):
     assert result["estimated_hours"] == 0.0
 
 
-def test_assemble_day_plan_is_phase3_only_read_helper(tool_fn):
+def test_assemble_day_plan_is_phase2_only_read_helper(tool_fn):
     assert tool_fn.name == "assemble_day_plan"
-    assert tool_fn.phases == [3]
+    assert tool_fn.phases == [2]
     assert tool_fn.side_effect == "read"

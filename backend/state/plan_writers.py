@@ -46,7 +46,7 @@ def _append_decision_event(
     )
 
 
-def record_phase7_lesson(
+def record_phase4_lesson(
     plan: TravelPlanState,
     *,
     kind: str,
@@ -309,8 +309,6 @@ def execute_backtrack(
     """Execute a phase backtrack. Returns result dict for tool response."""
     from phase.backtrack import BacktrackService
 
-    if to_phase == 2:
-        to_phase = 1
     if to_phase >= plan.phase:
         raise ValueError(
             f"只能回退到更早的阶段，当前阶段: {plan.phase}，目标: {to_phase}"

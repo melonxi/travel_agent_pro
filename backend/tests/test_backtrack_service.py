@@ -19,7 +19,7 @@ def _make_plan(phase: int = 5) -> TravelPlanState:
         phase=phase,
         destination="Tokyo",
         dates=DateRange(start="2025-08-01", end="2025-08-05"),
-        phase3_step="lock",
+        phase2_step="lock",
         trip_brief={"goal": "城市漫游"},
         candidate_pool=[{"name": "浅草寺"}],
         skeleton_plans=[{"id": "balanced"}],
@@ -41,24 +41,24 @@ class TestBacktrackService:
     def setup_method(self) -> None:
         self.service = BacktrackService()
 
-    def test_normal_backtrack_phase_5_to_3(self) -> None:
-        """正常回退 phase 5 → 3：phase 改变、history 记录、下游清除。"""
-        plan = _make_plan(phase=5)
+    def test_normal_backtrack_phase_3_to_2(self) -> None:
+        """正常回退 phase 3 → 2：phase 改变、history 记录、下游清除。"""
+        plan = _make_plan(phase=3)
         self.service.execute(
-            plan, to_phase=3, reason="日期变更", snapshot_path="/snap/1"
+            plan, to_phase=2, reason="日期变更", snapshot_path="/snap/1"
         )
 
-        assert plan.phase == 3
+        assert plan.phase == 2
         assert len(plan.backtrack_history) == 1
         event = plan.backtrack_history[0]
-        assert event.from_phase == 5
-        assert event.to_phase == 3
+        assert event.from_phase == 3
+        assert event.to_phase == 2
         assert event.reason == "日期变更"
         assert event.snapshot_path == "/snap/1"
 
-        # phase 3 清除: dates + phase3 产物 + accommodation + daily_plans
+        # phase 2 清除: dates + phase3 产物 + accommodation + daily_plans
         assert plan.dates is None
-        assert plan.phase3_step == "brief"
+        assert plan.phase2_step == "brief"
         assert plan.trip_brief == {}
         assert plan.candidate_pool == []
         assert plan.skeleton_plans == []
@@ -72,23 +72,23 @@ class TestBacktrackService:
 
     def test_illegal_backtrack_same_phase(self) -> None:
         """非法回退：to_phase == plan.phase 抛出 ValueError。"""
-        plan = _make_plan(phase=3)
+        plan = _make_plan(phase=2)
         with pytest.raises(ValueError, match="只能回退到更早的阶段"):
             self.service.execute(
-                plan, to_phase=3, reason="no-op", snapshot_path="/snap/x"
+                plan, to_phase=2, reason="no-op", snapshot_path="/snap/x"
             )
 
     def test_illegal_backtrack_forward(self) -> None:
         """非法回退：to_phase > plan.phase 抛出 ValueError。"""
-        plan = _make_plan(phase=3)
+        plan = _make_plan(phase=2)
         with pytest.raises(ValueError, match="只能回退到更早的阶段"):
             self.service.execute(
-                plan, to_phase=5, reason="forward", snapshot_path="/snap/x"
+                plan, to_phase=3, reason="forward", snapshot_path="/snap/x"
             )
 
     def test_backtrack_to_phase_1_clears_destination_for_reselection(self) -> None:
         """回退到 phase 1 重新选目的地时 destination 被清除。"""
-        plan = _make_plan(phase=5)
+        plan = _make_plan(phase=3)
         self.service.execute(
             plan, to_phase=1, reason="重新选目的地", snapshot_path="/snap/2"
         )
@@ -102,7 +102,7 @@ class TestBacktrackService:
 
     def test_backtrack_to_phase_1_clears_all(self) -> None:
         """回退到 phase 1 时所有下游字段被清除。"""
-        plan = _make_plan(phase=5)
+        plan = _make_plan(phase=3)
         self.service.execute(
             plan, to_phase=1, reason="从头开始", snapshot_path="/snap/3"
         )
@@ -115,12 +115,12 @@ class TestBacktrackService:
         assert plan.daily_plans == []
 
     def test_backtrack_to_phase_4_clears_accommodation_and_daily_plans(self) -> None:
-        """Phase 4 no longer exists; backtrack to phase 3 clears dates+accommodation+daily_plans."""
-        plan = _make_plan(phase=5)
-        self.service.execute(plan, to_phase=3, reason="换酒店", snapshot_path="/snap/4")
+        """Phase 4 no longer exists; backtrack to phase 2 clears dates+accommodation+daily_plans."""
+        plan = _make_plan(phase=3)
+        self.service.execute(plan, to_phase=2, reason="换酒店", snapshot_path="/snap/4")
 
-        assert plan.phase == 3
-        # phase 3 downstream: dates + phase3 产物 + accommodation + daily_plans
+        assert plan.phase == 2
+        # phase 2 downstream: dates + phase3 产物 + accommodation + daily_plans
         assert plan.dates is None
         assert plan.selected_skeleton_id is None
         assert plan.accommodation is None

@@ -9,12 +9,10 @@ interface Props {
 }
 
 const PHASE_LABELS: Record<number, string> = {
-  1: '需求收集',
-  2: '信息探索',
-  3: '方案设计',
-  4: '精细规划',
-  5: '最终确认',
-  7: '已完成',
+  1: '灵感与目的地',
+  2: '日期与住宿',
+  3: '行程组装',
+  4: '出发前查漏',
 }
 
 function formatTime(iso: string): string {

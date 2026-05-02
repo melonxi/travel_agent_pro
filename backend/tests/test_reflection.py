@@ -14,14 +14,14 @@ def injector():
 
 
 def _make_plan(**overrides) -> TravelPlanState:
-    defaults = {"session_id": "s1", "phase": 3, "destination": "京都"}
+    defaults = {"session_id": "s1", "phase": 2, "destination": "京都"}
     defaults.update(overrides)
     return TravelPlanState(**defaults)
 
 
 def test_phase3_lock_triggers_reflection(injector):
     plan = _make_plan(
-        phase3_step="lock",
+        phase2_step="lock",
         preferences=[Preference(category="节奏", value="轻松", source="user")],
         constraints=[
             Constraint(type="hard", description="不坐红眼航班", source="user")
@@ -36,7 +36,7 @@ def test_phase3_lock_triggers_reflection(injector):
 
 def test_phase3_lock_does_not_trigger_twice(injector):
     plan = _make_plan(
-        phase3_step="lock",
+        phase2_step="lock",
         preferences=[Preference(category="节奏", value="轻松", source="user")],
     )
     first = injector.check_and_inject(messages=[], plan=plan, prev_step="skeleton")
@@ -46,16 +46,16 @@ def test_phase3_lock_does_not_trigger_twice(injector):
 
 
 def test_no_trigger_when_step_unchanged(injector):
-    plan = _make_plan(phase3_step="skeleton")
+    plan = _make_plan(phase2_step="skeleton")
     result = injector.check_and_inject(messages=[], plan=plan, prev_step="skeleton")
     assert result is None
 
 
-def test_phase5_complete_triggers_reflection(injector):
+def test_phase3_complete_triggers_reflection(injector):
     from state.models import DayPlan, DateRange
 
     plan = _make_plan(
-        phase=5,
+        phase=3,
         dates=DateRange(start="2026-04-10", end="2026-04-12"),
         daily_plans=[
             DayPlan(day=1, date="2026-04-10"),
@@ -70,11 +70,11 @@ def test_phase5_complete_triggers_reflection(injector):
     assert "密集" in result
 
 
-def test_phase5_incomplete_does_not_trigger(injector):
+def test_phase3_incomplete_does_not_trigger(injector):
     from state.models import DayPlan, DateRange
 
     plan = _make_plan(
-        phase=5,
+        phase=3,
         dates=DateRange(start="2026-04-10", end="2026-04-12"),
         daily_plans=[DayPlan(day=1, date="2026-04-10")],  # only 1 of 3
     )
@@ -83,17 +83,17 @@ def test_phase5_incomplete_does_not_trigger(injector):
 
 
 def test_no_preferences_still_triggers_with_placeholder(injector):
-    plan = _make_plan(phase3_step="lock")
+    plan = _make_plan(phase2_step="lock")
     result = injector.check_and_inject(messages=[], plan=plan, prev_step="skeleton")
     assert result is not None
     assert "自检" in result
 
 
-def test_phase5_complete_prompt_uses_new_tools(injector):
+def test_phase3_complete_prompt_uses_new_tools(injector):
     from state.models import DayPlan, DateRange
 
     plan = _make_plan(
-        phase=5,
+        phase=3,
         dates=DateRange(start="2026-04-10", end="2026-04-12"),
         daily_plans=[
             DayPlan(day=1, date="2026-04-10"),

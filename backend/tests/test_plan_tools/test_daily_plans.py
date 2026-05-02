@@ -75,7 +75,7 @@ def test_daily_plan_tool_metadata(
     assert tool_fn.name == expected_name
     assert tool_fn.side_effect == "write"
     assert tool_fn.human_label == expected_label
-    assert tool_fn.phases == [5]
+    assert tool_fn.phases == [3]
     assert tool_fn.parameters["type"] == "object"
     assert tool_fn.parameters["required"] == expected_required
     assert set(tool_fn.parameters["properties"]) == expected_properties

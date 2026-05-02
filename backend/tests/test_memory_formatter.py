@@ -5,7 +5,7 @@ from memory.v3_models import EpisodeSlice, MemoryProfileItem, WorkingMemoryItem
 def make_working_memory_item(**overrides):
     base = dict(
         id="wm-1",
-        phase=3,
+        phase=2,
         kind="temporary_rejection",
         domains=["hotel"],
         content="先别考虑青旅。",

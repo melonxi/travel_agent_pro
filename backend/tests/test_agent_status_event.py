@@ -250,7 +250,7 @@ async def test_context_compaction_emits_internal_task(engine, hooks):
 
 @pytest.mark.asyncio
 async def test_reflection_emits_internal_task_when_message_injected(engine, hooks):
-    plan = TravelPlanState(session_id="s1", phase=3, phase3_step="lock")
+    plan = TravelPlanState(session_id="s1", phase=2, phase2_step="lock")
 
     class FakeReflection:
         def check_and_inject(self, messages, plan_arg, prev_step):
@@ -272,7 +272,7 @@ async def test_reflection_emits_internal_task_when_message_injected(engine, hook
 
     chunks = [
         chunk
-        async for chunk in agent.run([Message(role=Role.USER, content="继续")], phase=3)
+        async for chunk in agent.run([Message(role=Role.USER, content="继续")], phase=2)
     ]
     tasks = [chunk.internal_task for chunk in chunks if chunk.type == ChunkType.INTERNAL_TASK]
 

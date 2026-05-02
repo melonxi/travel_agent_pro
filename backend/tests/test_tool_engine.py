@@ -46,11 +46,11 @@ def test_get_tools_for_phase(engine):
     assert phase2_tools[0]["name"] == "greet"
 
 
-def test_get_tools_for_phase3_respects_substep(engine):
+def test_get_tools_for_phase2_respects_substep(engine):
     @tool(
         name="search_accommodations",
         description="stay",
-        phases=[3],
+        phases=[2],
         parameters={"type": "object", "properties": {}},
     )
     async def search_accommodations() -> dict:
@@ -59,7 +59,7 @@ def test_get_tools_for_phase3_respects_substep(engine):
     @tool(
         name="web_search",
         description="web",
-        phases=[3],
+        phases=[2],
         parameters={"type": "object", "properties": {}},
     )
     async def web_search() -> dict:
@@ -68,7 +68,7 @@ def test_get_tools_for_phase3_respects_substep(engine):
     @tool(
         name="update_trip_basics",
         description="state",
-        phases=[3],
+        phases=[2],
         parameters={"type": "object", "properties": {}},
     )
     async def update_trip_basics() -> dict:
@@ -78,13 +78,13 @@ def test_get_tools_for_phase3_respects_substep(engine):
     engine.register(web_search)
     engine.register(update_trip_basics)
 
-    plan = TravelPlanState(session_id="s1", phase=3, phase3_step="brief")
-    brief_tools = {tool["name"] for tool in engine.get_tools_for_phase(3, plan)}
+    plan = TravelPlanState(session_id="s1", phase=2, phase2_step="brief")
+    brief_tools = {tool["name"] for tool in engine.get_tools_for_phase(2, plan)}
     assert "search_accommodations" not in brief_tools
     assert "web_search" in brief_tools
 
-    plan.phase3_step = "lock"
-    lock_tools = {tool["name"] for tool in engine.get_tools_for_phase(3, plan)}
+    plan.phase2_step = "lock"
+    lock_tools = {tool["name"] for tool in engine.get_tools_for_phase(2, plan)}
     assert "search_accommodations" in lock_tools
 
 
@@ -125,7 +125,7 @@ class TestEnginePhase3NewTools:
     def test_brief_whitelist_includes_split_plan_tools(self):
         engine = ToolEngine()
 
-        assert engine._phase3_tool_names("brief") == {
+        assert engine._phase2_tool_names("brief") == {
             *self._expected_common_tools(),
             "set_trip_brief",
             "add_preferences",
@@ -142,7 +142,7 @@ class TestEnginePhase3NewTools:
     def test_candidate_whitelist_includes_split_plan_tools(self):
         engine = ToolEngine()
 
-        assert engine._phase3_tool_names("candidate") == {
+        assert engine._phase2_tool_names("candidate") == {
             *self._expected_common_tools(),
             "set_trip_brief",
             "set_candidate_pool",
@@ -163,7 +163,7 @@ class TestEnginePhase3NewTools:
     def test_skeleton_whitelist_includes_split_plan_tools(self):
         engine = ToolEngine()
 
-        assert engine._phase3_tool_names("skeleton") == {
+        assert engine._phase2_tool_names("skeleton") == {
             *self._expected_common_tools(),
             "set_skeleton_plans",
             "select_skeleton",
@@ -185,7 +185,7 @@ class TestEnginePhase3NewTools:
     def test_lock_whitelist_includes_split_plan_tools(self):
         engine = ToolEngine()
 
-        assert engine._phase3_tool_names("lock") == {
+        assert engine._phase2_tool_names("lock") == {
             *self._expected_common_tools(),
             "set_skeleton_plans",
             "select_skeleton",
@@ -211,9 +211,9 @@ class TestEnginePhase3NewTools:
             "search_accommodations",
         }
 
-    def test_phase3_builtin_names_include_split_plan_tools(self):
+    def test_phase2_builtin_names_include_split_plan_tools(self):
         engine = ToolEngine()
-        builtin_names = engine._phase3_builtin_tool_names()
+        builtin_names = engine._phase2_builtin_tool_names()
 
         assert {
             "update_trip_basics",
@@ -353,7 +353,7 @@ async def test_execute_no_required_field_skips_prevalidation():
     assert result.status == "success"
 
 
-def test_phase5_tools_expose_clear_plan_tools_only():
+def test_phase2_tools_expose_clear_plan_tools_only():
     from config import ApiKeysConfig, XhsConfig
     from tools.assemble_day_plan import make_assemble_day_plan_tool
     from tools.calculate_route import make_calculate_route_tool
@@ -368,7 +368,7 @@ def test_phase5_tools_expose_clear_plan_tools_only():
         make_xiaohongshu_search_notes_tool,
     )
 
-    plan = TravelPlanState(session_id="phase5-tools", phase=5)
+    plan = TravelPlanState(session_id="phase2-tools", phase=3)
     engine = ToolEngine()
     api_keys = ApiKeysConfig()
     xhs = XhsConfig(enabled=False)
@@ -384,7 +384,7 @@ def test_phase5_tools_expose_clear_plan_tools_only():
     engine.register(make_xiaohongshu_read_note_tool(xhs))
     engine.register(make_xiaohongshu_get_comments_tool(xhs))
 
-    names = {schema["name"] for schema in engine.get_tools_for_phase(5, plan)}
+    names = {schema["name"] for schema in engine.get_tools_for_phase(3, plan)}
 
     assert {"optimize_day_route", "save_day_plan", "replace_all_day_plans"}.issubset(
         names

@@ -42,12 +42,12 @@ def golden_cases_dir() -> Path:
 class TestAssertionEvaluation:
     def test_phase_reached_pass(self):
         a = Assertion(type=AssertionType.PHASE_REACHED, target="", value=3)
-        ok, _ = evaluate_assertion(a, {"phase": 5}, [], [])
+        ok, _ = evaluate_assertion(a, {"phase": 3}, [], [])
         assert ok
 
     def test_phase_reached_fail(self):
-        a = Assertion(type=AssertionType.PHASE_REACHED, target="", value=5)
-        ok, reason = evaluate_assertion(a, {"phase": 3}, [], [])
+        a = Assertion(type=AssertionType.PHASE_REACHED, target="", value=4)
+        ok, reason = evaluate_assertion(a, {"phase": 2}, [], [])
         assert not ok
         assert "phase" in reason
 
@@ -240,7 +240,7 @@ class TestRunSuiteOffline:
             ],
         )
         results_map = {
-            "t1": ({"phase": 5}, ["search"], []),
+            "t1": ({"phase": 3}, ["search"], []),
         }
         suite = run_suite_offline([case], results_map)
         assert suite.total == 1
@@ -293,7 +293,7 @@ class TestExecutableRunner:
         def executor(received: GoldenCase) -> EvalExecution:
             seen.extend(message["content"] for message in received.messages)
             return EvalExecution(
-                state={"phase": 3, "destination": "东京"},
+                state={"phase": 2, "destination": "东京"},
                 tool_calls=["search_flights"],
                 responses=["已为你查询东京航班"],
                 stats={"total_input_tokens": 100, "estimated_cost_usd": 0.001},

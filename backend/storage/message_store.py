@@ -21,7 +21,7 @@ class MessageStore:
         provider_state: str | None = None,
         seq: int,
         phase: int | None = None,
-        phase3_step: str | None = None,
+        phase2_step: str | None = None,
         history_seq: int | None = None,
         run_id: str | None = None,
         trip_id: str | None = None,
@@ -31,7 +31,7 @@ class MessageStore:
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute(
             "INSERT INTO messages "
-            "(session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq, phase, phase3_step, history_seq, run_id, trip_id, context_epoch, rebuild_reason) "
+            "(session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq, phase, phase2_step, history_seq, run_id, trip_id, context_epoch, rebuild_reason) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
@@ -43,7 +43,7 @@ class MessageStore:
                 now,
                 seq,
                 phase,
-                phase3_step,
+                phase2_step,
                 history_seq,
                 run_id,
                 trip_id,
@@ -59,7 +59,7 @@ class MessageStore:
         try:
             await self._db.conn.executemany(
                 "INSERT INTO messages "
-                "(session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq, phase, phase3_step, history_seq, run_id, trip_id, context_epoch, rebuild_reason) "
+                "(session_id, role, content, tool_calls, tool_call_id, provider_state, created_at, seq, phase, phase2_step, history_seq, run_id, trip_id, context_epoch, rebuild_reason) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
@@ -72,7 +72,7 @@ class MessageStore:
                         now,
                         row["seq"],
                         row.get("phase"),
-                        row.get("phase3_step"),
+                        row.get("phase2_step"),
                         row.get("history_seq"),
                         row.get("run_id"),
                         row.get("trip_id"),

@@ -106,7 +106,7 @@ export interface TravelPlanState {
   phase: number
   destination: string | null
   dates: DateRange | null
-  phase3_step?: 'brief' | 'candidate' | 'skeleton' | 'lock'
+  phase2_step?: 'brief' | 'candidate' | 'skeleton' | 'lock'
   trip_brief?: Record<string, unknown>
   candidate_pool?: CandidateItem[]
   shortlist?: CandidateItem[]

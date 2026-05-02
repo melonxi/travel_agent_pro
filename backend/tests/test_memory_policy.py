@@ -28,7 +28,7 @@ def make_profile_item(**overrides):
 def make_working_item(**overrides):
     base = dict(
         id="wm_1",
-        phase=3,
+        phase=2,
         kind="temporary_rejection",
         domains=["attraction"],
         content="先别考虑迪士尼",

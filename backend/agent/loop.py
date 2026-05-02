@@ -21,7 +21,7 @@ from agent.execution.message_rebuild import (
     copy_message,
     current_tool_names,
     extract_original_user_message,
-    rebuild_messages_for_phase3_step_change,
+    rebuild_messages_for_phase2_step_change,
     rebuild_messages_for_phase_change,
 )
 from agent.execution.phase_transition import (
@@ -30,8 +30,8 @@ from agent.execution.phase_transition import (
 )
 from agent.execution.repair_hints import (
     RepairHintOutcome,
-    build_phase3_state_repair_message,
-    build_phase5_state_repair_message,
+    build_phase2_state_repair_message,
+    build_phase3_daily_state_repair_message,
 )
 from agent.execution.tool_batches import ToolBatchOutcome, execute_tool_batch
 from agent.execution.tool_invocation import (
@@ -43,17 +43,17 @@ from agent.execution.tool_invocation import (
     validate_tool_output,
 )
 from agent.internal_tasks import InternalTask
-from agent.phase5.parallel import (
-    run_parallel_phase5_orchestrator,
-    should_enter_parallel_phase5_at_iteration_boundary,
-    should_enter_parallel_phase5_now,
-    should_use_parallel_phase5,
+from agent.phase3.parallel import (
+    run_parallel_phase3_orchestrator,
+    should_enter_parallel_phase3_at_iteration_boundary,
+    should_enter_parallel_phase3_now,
+    should_use_parallel_phase3,
 )
 from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from telemetry.attributes import AGENT_PHASE, AGENT_ITERATION
 from tools.engine import ToolEngine
-from config import Phase5ParallelConfig
+from config import Phase3ParallelConfig
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class AgentLoop:
         guardrail: Any | None = None,
         parallel_tool_execution: bool = True,
         cancel_event: asyncio.Event | None = None,
-        phase5_parallel_config: Phase5ParallelConfig | None = None,
+        phase3_parallel_config: Phase3ParallelConfig | None = None,
         internal_task_events: list[InternalTask] | None = None,
         on_before_message_rebuild: Callable[..., Awaitable[None]] | None = None,
         on_context_rebuild: ContextRebuildCallback | None = None,
@@ -118,7 +118,7 @@ class AgentLoop:
             compression_events = config.compression_events
             parallel_tool_execution = config.parallel_tool_execution
             cancel_event = config.cancel_event
-            phase5_parallel_config = config.phase5_parallel_config
+            phase3_parallel_config = config.phase3_parallel_config
             internal_task_events = config.internal_task_events
 
         if llm is None or tool_engine is None or hooks is None:
@@ -149,9 +149,9 @@ class AgentLoop:
         self.guardrail = guardrail
         self.parallel_tool_execution = parallel_tool_execution
         self._parallel_group_counter: int = 0
-        self._prev_phase3_step: str | None = None
+        self._prev_phase2_step: str | None = None
         self.cancel_event = cancel_event
-        self.phase5_parallel_config = phase5_parallel_config
+        self.phase3_parallel_config = phase3_parallel_config
         self.internal_task_events = (
             internal_task_events if internal_task_events is not None else []
         )
@@ -213,13 +213,13 @@ class AgentLoop:
             )
 
     @staticmethod
-    def should_use_parallel_phase5(
+    def should_use_parallel_phase3(
         plan: Any | None,
-        config: Phase5ParallelConfig | None,
+        config: Phase3ParallelConfig | None,
     ) -> bool:
-        return should_use_parallel_phase5(plan, config)
+        return should_use_parallel_phase3(plan, config)
 
-    async def _run_parallel_phase5_orchestrator(
+    async def _run_parallel_phase3_orchestrator(
         self,
         *,
         messages: list[Message],
@@ -231,11 +231,11 @@ class AgentLoop:
             nonlocal _handoff
             _handoff = handoff
 
-        async for chunk in run_parallel_phase5_orchestrator(
+        async for chunk in run_parallel_phase3_orchestrator(
             plan=self.plan,
             llm=self.llm,
             tool_engine=self.tool_engine,
-            config=self.phase5_parallel_config,
+            config=self.phase3_parallel_config,
             on_handoff=_capture_handoff,
         ):
             yield chunk
@@ -245,7 +245,7 @@ class AgentLoop:
             return
 
         commit_call = ToolCall(
-            id="internal_phase5_parallel_commit",
+            id="internal_phase3_parallel_commit",
             name="replace_all_day_plans",
             arguments={"days": list(_handoff.dayplans)},
             human_label="写入并行逐日行程",
@@ -261,9 +261,9 @@ class AgentLoop:
             )
         )
 
-        phase_before_batch = self.plan.phase if self.plan is not None else 5
-        phase3_step_before_batch = (
-            getattr(self.plan, "phase3_step", None) if self.plan is not None else None
+        phase_before_batch = self.plan.phase if self.plan is not None else 3
+        phase2_step_before_batch = (
+            getattr(self.plan, "phase2_step", None) if self.plan is not None else None
         )
         batch_outcome: ToolBatchOutcome | None = None
         async for batch_item in self._execute_tool_batch(
@@ -276,7 +276,7 @@ class AgentLoop:
                 batch_outcome = batch_item
 
         if batch_outcome is None:
-            raise RuntimeError("Parallel Phase 5 commit finished without an outcome")
+            raise RuntimeError("Parallel Phase 3 commit finished without an outcome")
 
         if not batch_outcome.saw_state_update:
             commit_result = None
@@ -311,7 +311,7 @@ class AgentLoop:
             hooks=self.hooks,
             batch_outcome=batch_outcome,
             phase_before_batch=phase_before_batch,
-            phase3_step_before_batch=phase3_step_before_batch,
+            phase2_step_before_batch=phase2_step_before_batch,
             current_phase=phase_before_batch,
             drain_internal_task_events=self._drain_internal_task_events,
         )
@@ -354,12 +354,12 @@ class AgentLoop:
                 self.max_iterations
             ):  # safety limit on loop iterations
                 # Loop-top guard covers both cold start and hot switch after
-                # a write tool upgrades phase to 5 mid-run.
-                if should_enter_parallel_phase5_now(
+                # a write tool upgrades phase to 3 mid-run.
+                if should_enter_parallel_phase3_now(
                     self.plan,
-                    self.phase5_parallel_config,
+                    self.phase3_parallel_config,
                 ):
-                    async for chunk in self._run_parallel_phase5_orchestrator(
+                    async for chunk in self._run_parallel_phase3_orchestrator(
                         messages=messages,
                         original_user_message=original_user_message,
                     ):
@@ -386,7 +386,7 @@ class AgentLoop:
                         iteration_idx=iteration_idx,
                         previous_iteration_had_tools=prev_iteration_had_tools,
                         phase_changed_in_previous_iteration=phase_changed_in_prev_iteration,
-                        previous_phase3_step=self._prev_phase3_step,
+                        previous_phase2_step=self._prev_phase2_step,
                         check_cancelled=self._check_cancelled,
                         update_progress=lambda progress: setattr(
                             self,
@@ -403,7 +403,7 @@ class AgentLoop:
                         raise RuntimeError("LLM turn finished without an outcome")
 
                     iteration_idx = turn_outcome.next_iteration_idx
-                    self._prev_phase3_step = turn_outcome.previous_phase3_step
+                    self._prev_phase2_step = turn_outcome.previous_phase2_step
                     self._progress = turn_outcome.progress
                     prev_iteration_had_tools = False
                     phase_changed_in_prev_iteration = False
@@ -413,11 +413,11 @@ class AgentLoop:
                     # If no tool calls, we're done — the LLM gave a final text response
                     if not tool_calls:
                         full_text = "".join(text_chunks)
-                        repair_outcome = self._build_phase3_state_repair_message(
+                        repair_outcome = self._build_phase2_state_repair_message(
                             current_phase=current_phase,
                             assistant_text=full_text,
                             repair_hints_used=repair_hints_used,
-                        ) or self._build_phase5_state_repair_message(
+                        ) or self._build_phase3_daily_state_repair_message(
                             current_phase=current_phase,
                             assistant_text=full_text,
                             repair_hints_used=repair_hints_used,
@@ -456,8 +456,8 @@ class AgentLoop:
                     phase_before_batch = (
                         self.plan.phase if self.plan is not None else current_phase
                     )
-                    phase3_step_before_batch = (
-                        getattr(self.plan, "phase3_step", None)
+                    phase2_step_before_batch = (
+                        getattr(self.plan, "phase2_step", None)
                         if self.plan is not None
                         else None
                     )
@@ -482,7 +482,7 @@ class AgentLoop:
                         hooks=self.hooks,
                         batch_outcome=batch_outcome,
                         phase_before_batch=phase_before_batch,
-                        phase3_step_before_batch=phase3_step_before_batch,
+                        phase2_step_before_batch=phase2_step_before_batch,
                         current_phase=current_phase,
                         drain_internal_task_events=self._drain_internal_task_events,
                     )
@@ -514,23 +514,23 @@ class AgentLoop:
                         tools = transition_outcome.tools
                         continue
 
-                    phase3_step_after_batch = (
-                        transition_detection.phase3_step_after_batch
+                    phase2_step_after_batch = (
+                        transition_detection.phase2_step_after_batch
                     )
-                    if phase3_step_after_batch != phase3_step_before_batch:
+                    if phase2_step_after_batch != phase2_step_before_batch:
                         phase_changed_in_prev_iteration = True
                         await self._flush_before_message_rebuild(
                             messages=messages,
                             from_phase=current_phase,
-                            from_phase3_step=phase3_step_before_batch,
+                            from_phase2_step=phase2_step_before_batch,
                         )
                         messages[
                             :
-                        ] = await self._rebuild_messages_for_phase3_step_change(
+                        ] = await self._rebuild_messages_for_phase2_step_change(
                             messages=messages,
                             original_user_message=original_user_message,
-                            from_phase3_step=phase3_step_before_batch,
-                            to_phase3_step=phase3_step_after_batch,
+                            from_phase2_step=phase2_step_before_batch,
+                            to_phase2_step=phase2_step_after_batch,
                         )
                         tools = self.tool_engine.get_tools_for_phase(
                             current_phase,
@@ -542,13 +542,13 @@ class AgentLoop:
                     # Loop continues — LLM will see tool results and decide next step
 
             # Boundary case: a write tool in the final iteration may have just
-            # promoted phase to 5. Give the parallel orchestrator one more shot
+            # promoted phase to 3. Give the parallel orchestrator one more shot
             # before the safety-limit fallback so we don't drop the upgrade.
-            if should_enter_parallel_phase5_at_iteration_boundary(
+            if should_enter_parallel_phase3_at_iteration_boundary(
                 self.plan,
-                self.phase5_parallel_config,
+                self.phase3_parallel_config,
             ):
-                async for chunk in self._run_parallel_phase5_orchestrator(
+                async for chunk in self._run_parallel_phase3_orchestrator(
                     messages=messages,
                     original_user_message=original_user_message,
                 ):
@@ -598,14 +598,14 @@ class AgentLoop:
                 "from_phase": request.from_phase,
                 "to_phase": request.to_phase,
                 "from_step": request.from_step,
-                "to_step": getattr(self.plan, "phase3_step", None),
+                "to_step": getattr(self.plan, "phase2_step", None),
                 "reason": request.reason,
             },
         )
         await self._flush_before_message_rebuild(
             messages=messages,
             from_phase=request.from_phase,
-            from_phase3_step=request.from_step,
+            from_phase2_step=request.from_step,
         )
         rebuilt_messages = await self._rebuild_messages_for_phase_change(
             messages=messages,
@@ -625,7 +625,7 @@ class AgentLoop:
         *,
         messages: list[Message],
         from_phase: int,
-        from_phase3_step: str | None,
+        from_phase2_step: str | None,
     ) -> None:
         if self.on_before_message_rebuild is None:
             return
@@ -633,13 +633,13 @@ class AgentLoop:
             await self.on_before_message_rebuild(
                 messages=messages,
                 from_phase=from_phase,
-                from_phase3_step=from_phase3_step,
+                from_phase2_step=from_phase2_step,
             )
         except Exception:
             logger.warning(
-                "pre-rebuild message history flush failed phase=%s phase3_step=%s",
+                "pre-rebuild message history flush failed phase=%s phase2_step=%s",
                 from_phase,
-                from_phase3_step,
+                from_phase2_step,
                 exc_info=True,
             )
 
@@ -654,9 +654,9 @@ class AgentLoop:
         *,
         messages: list[Message],
         from_phase: int,
-        from_phase3_step: str | None,
+        from_phase2_step: str | None,
         to_phase: int,
-        to_phase3_step: str | None,
+        to_phase2_step: str | None,
         rebuild_reason: str,
     ) -> None:
         if self.on_context_rebuild is None:
@@ -665,16 +665,16 @@ class AgentLoop:
             await self.on_context_rebuild(
                 messages=messages,
                 from_phase=from_phase,
-                from_phase3_step=from_phase3_step,
+                from_phase2_step=from_phase2_step,
                 to_phase=to_phase,
-                to_phase3_step=to_phase3_step,
+                to_phase2_step=to_phase2_step,
                 rebuild_reason=rebuild_reason,
             )
         except Exception:
             logger.warning(
-                "context rebuild callback failed phase=%s phase3_step=%s reason=%s",
+                "context rebuild callback failed phase=%s phase2_step=%s reason=%s",
                 from_phase,
-                from_phase3_step,
+                from_phase2_step,
                 rebuild_reason,
                 exc_info=True,
             )
@@ -696,11 +696,11 @@ class AgentLoop:
         await self._notify_context_rebuild(
             messages=messages,
             from_phase=from_phase,
-            from_phase3_step=(
-                getattr(self.plan, "phase3_step", None) if from_phase == 3 else None
+            from_phase2_step=(
+                getattr(self.plan, "phase2_step", None) if from_phase == 2 else None
             ),
             to_phase=to_phase,
-            to_phase3_step=getattr(self.plan, "phase3_step", None),
+            to_phase2_step=getattr(self.plan, "phase2_step", None),
             rebuild_reason=rebuild_reason,
         )
         return await rebuild_messages_for_phase_change(
@@ -717,23 +717,23 @@ class AgentLoop:
             result=result,
         )
 
-    async def _rebuild_messages_for_phase3_step_change(
+    async def _rebuild_messages_for_phase2_step_change(
         self,
         messages: list[Message],
         original_user_message: Message,
         *,
-        from_phase3_step: str | None,
-        to_phase3_step: str | None,
+        from_phase2_step: str | None,
+        to_phase2_step: str | None,
     ) -> list[Message]:
         await self._notify_context_rebuild(
             messages=messages,
-            from_phase=3,
-            from_phase3_step=from_phase3_step,
-            to_phase=3,
-            to_phase3_step=to_phase3_step,
-            rebuild_reason="phase3_step_change",
+            from_phase=2,
+            from_phase2_step=from_phase2_step,
+            to_phase=2,
+            to_phase2_step=to_phase2_step,
+            rebuild_reason="phase2_step_change",
         )
-        return await rebuild_messages_for_phase3_step_change(
+        return await rebuild_messages_for_phase2_step_change(
             phase_router=self.phase_router,
             context_manager=self.context_manager,
             plan=self.plan,
@@ -804,28 +804,28 @@ class AgentLoop:
             phase=phase,
         )
 
-    def _build_phase3_state_repair_message(
+    def _build_phase2_state_repair_message(
         self,
         *,
         current_phase: int,
         assistant_text: str,
         repair_hints_used: set[str],
     ) -> RepairHintOutcome | None:
-        return build_phase3_state_repair_message(
+        return build_phase2_state_repair_message(
             plan=self.plan,
             current_phase=current_phase,
             assistant_text=assistant_text,
             repair_hints_used=repair_hints_used,
         )
 
-    def _build_phase5_state_repair_message(
+    def _build_phase3_daily_state_repair_message(
         self,
         *,
         current_phase: int,
         assistant_text: str,
         repair_hints_used: set[str],
     ) -> RepairHintOutcome | None:
-        return build_phase5_state_repair_message(
+        return build_phase3_daily_state_repair_message(
             plan=self.plan,
             current_phase=current_phase,
             assistant_text=assistant_text,

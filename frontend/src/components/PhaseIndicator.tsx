@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 
 const PHASE_STEPS = [
   { phase: 1, label: '灵感与目的地', displayNum: '1' },
-  { phase: 3, label: '日期与住宿', displayNum: '2' },
-  { phase: 5, label: '行程组装', displayNum: '3' },
-  { phase: 7, label: '出发前查漏', displayNum: '4' },
+  { phase: 2, label: '日期与住宿', displayNum: '2' },
+  { phase: 3, label: '行程组装', displayNum: '3' },
+  { phase: 4, label: '出发前查漏', displayNum: '4' },
 ] as const
 
 const ADVANCING_DURATION_MS = 300

@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at   TEXT NOT NULL,
     seq          INTEGER NOT NULL,
     phase        INTEGER,
-    phase3_step  TEXT,
+    phase2_step  TEXT,
     history_seq  INTEGER,
     run_id       TEXT,
     trip_id      TEXT,
@@ -104,7 +104,7 @@ class Database:
         missing_columns = (
             ("provider_state", "TEXT"),
             ("phase", "INTEGER"),
-            ("phase3_step", "TEXT"),
+            ("phase2_step", "TEXT"),
             ("history_seq", "INTEGER"),
             ("run_id", "TEXT"),
             ("trip_id", "TEXT"),
@@ -128,7 +128,7 @@ class Database:
         )
         await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_phase "
-            "ON messages(session_id, phase, phase3_step, history_seq)"
+            "ON messages(session_id, phase, phase2_step, history_seq)"
         )
         await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_epoch "

@@ -69,12 +69,12 @@ def test_llm_chunk_accepts_phase_info_and_agent_status():
         type=ChunkType.PHASE_TRANSITION,
         phase_info={
             "from_phase": 1,
-            "to_phase": 3,
+            "to_phase": 2,
             "from_step": None,
             "to_step": "brief",
         },
     )
-    assert chunk.phase_info["to_phase"] == 3
+    assert chunk.phase_info["to_phase"] == 2
 
     chunk2 = LLMChunk(
         type=ChunkType.AGENT_STATUS,
@@ -151,8 +151,8 @@ def agent_with_tool_that_writes_phase(plan_phase1):
         side_effect="write",
     )
     async def jump_phase() -> dict:
-        plan_phase1.phase = 3
-        return {"phase": 3}
+        plan_phase1.phase = 2
+        return {"phase": 2}
 
     engine.register(jump_phase)
 
@@ -198,7 +198,7 @@ def agent_with_tool_that_writes_phase(plan_phase1):
 
 @pytest.fixture
 def agent_with_backtrack_tool():
-    plan = TravelPlanState(session_id="s1", phase=5)
+    plan = TravelPlanState(session_id="s1", phase=3)
     engine = ToolEngine()
 
     @tool(
@@ -263,7 +263,7 @@ def agent_with_split_writer_phase_transition(plan_phase1):
     mock_router = MagicMock()
     mock_router.get_prompt.side_effect = lambda phase: f"phase-{phase}-prompt"
     mock_router.check_and_apply_transition.side_effect = _promote_phase(
-        plan_phase1, to_phase=3
+        plan_phase1, to_phase=2
     )
 
     call_count = 0
@@ -336,7 +336,7 @@ async def test_sse_emits_phase_transition_event(app, sessions, session_id):
             type=ChunkType.PHASE_TRANSITION,
             phase_info={
                 "from_phase": 1,
-                "to_phase": 3,
+                "to_phase": 2,
                 "from_step": None,
                 "to_step": "brief",
                 "reason": "check",
@@ -352,13 +352,13 @@ async def test_sse_emits_phase_transition_event(app, sessions, session_id):
                 f"/api/chat/{session_id}", json={"message": "去成都", "user_id": "u1"}
             )
     assert '"type": "phase_transition"' in resp.text
-    assert '"to_phase": 3' in resp.text
+    assert '"to_phase": 2' in resp.text
 
 
 @pytest.mark.asyncio
 async def test_sse_emits_state_update_for_set_skeleton_plans(app, sessions, session_id):
     session = sessions[session_id]
-    session["plan"].phase = 3
+    session["plan"].phase = 2
     agent = session["agent"]
     call_count = 0
 
@@ -369,7 +369,7 @@ async def test_sse_emits_state_update_for_set_skeleton_plans(app, sessions, sess
             yield LLMChunk(
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
-                    id="tc_phase3_step",
+                    id="tc_phase2_step",
                     name="set_skeleton_plans",
                     arguments={
                         "plans": [
@@ -402,7 +402,7 @@ async def test_sse_emits_state_update_for_set_skeleton_plans(app, sessions, sess
         event for event in events if event.get("type") == "state_update"
     )
 
-    assert state_update["plan"]["phase"] == 3
+    assert state_update["plan"]["phase"] == 2
     assert state_update["plan"]["skeleton_plans"] == [
         {"id": "sk-1", "name": "东京 citywalk", "days": [1, 2, 3]}
     ]
@@ -412,18 +412,18 @@ async def test_sse_emits_state_update_for_set_skeleton_plans(app, sessions, sess
 async def test_loop_yields_phase_transition_on_check_and_apply(
     agent_with_router, plan_phase1
 ):
-    """When check_and_apply_transition promotes phase 1 -> 3, loop yields a
+    """When check_and_apply_transition promotes phase 1 -> 2, loop yields a
     phase_transition chunk before re-entering the loop."""
     agent, mock_router = agent_with_router
     mock_router.check_and_apply_transition.side_effect = _promote_phase(
-        plan_phase1, to_phase=3
+        plan_phase1, to_phase=2
     )
 
     chunks = [c async for c in agent.run([], phase=1)]
     phase_chunks = [c for c in chunks if c.type == ChunkType.PHASE_TRANSITION]
     assert len(phase_chunks) == 1
     assert phase_chunks[0].phase_info["from_phase"] == 1
-    assert phase_chunks[0].phase_info["to_phase"] == 3
+    assert phase_chunks[0].phase_info["to_phase"] == 2
     assert phase_chunks[0].phase_info["from_step"] == "brief"
     assert phase_chunks[0].phase_info["to_step"] == "brief"
     assert phase_chunks[0].phase_info["reason"] == "check_and_apply_transition"
@@ -440,7 +440,7 @@ async def test_split_plan_writer_triggers_check_and_apply_transition(
 
     assert len(phase_chunks) == 1
     assert phase_chunks[0].phase_info["from_phase"] == 1
-    assert phase_chunks[0].phase_info["to_phase"] == 3
+    assert phase_chunks[0].phase_info["to_phase"] == 2
     assert phase_chunks[0].phase_info["reason"] == "check_and_apply_transition"
     assert mock_router.check_and_apply_transition.call_count == 1
 
@@ -459,7 +459,7 @@ async def test_loop_yields_phase_transition_on_explicit_path(
     assert len(phase_chunks) == 1
     assert phase_chunks[0].phase_info == {
         "from_phase": 1,
-        "to_phase": 3,
+        "to_phase": 2,
         "from_step": "brief",
         "to_step": "brief",
         "reason": "plan_tool_direct",
@@ -481,7 +481,7 @@ async def test_loop_yields_phase_transition_on_backtrack(agent_with_backtrack_to
         AsyncMock(side_effect=wrapped_rebuild),
     ):
         chunks = []
-        async for chunk in agent_with_backtrack_tool.run([], phase=5):
+        async for chunk in agent_with_backtrack_tool.run([], phase=3):
             if chunk.type == ChunkType.PHASE_TRANSITION:
                 order.append("transition")
             chunks.append(chunk)
@@ -490,7 +490,7 @@ async def test_loop_yields_phase_transition_on_backtrack(agent_with_backtrack_to
 
     assert len(phase_chunks) == 1
     assert phase_chunks[0].phase_info == {
-        "from_phase": 5,
+        "from_phase": 3,
         "to_phase": 1,
         "from_step": "brief",
         "to_step": "brief",

@@ -2,15 +2,15 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from agent.phase5.orchestrator import (
-    Phase5Orchestrator,
+from agent.phase3.orchestrator import (
+    Phase3Orchestrator,
     GlobalValidationIssue,
     _derive_theme,
     _format_error,
 )
-from agent.phase5.day_worker import DayWorkerResult
-from agent.phase5.worker_prompt import DayTask
-from config import Phase5ParallelConfig
+from agent.phase3.day_worker import DayWorkerResult
+from agent.phase3.worker_prompt import DayTask
+from config import Phase3ParallelConfig
 from llm.types import ChunkType
 from state.models import (
     TravelPlanState,
@@ -23,7 +23,7 @@ from state.models import (
 
 def _make_plan_with_skeleton() -> TravelPlanState:
     plan = TravelPlanState(session_id="test-orch")
-    plan.phase = 5
+    plan.phase = 3
     plan.destination = "东京"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.travelers = Travelers(adults=2)
@@ -97,13 +97,13 @@ class TestFormatError:
 class TestSplitTasks:
     def test_split_produces_correct_day_count(self):
         plan = _make_plan_with_skeleton()
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         tasks = orch._split_tasks()
         assert len(tasks) == 3
 
     def test_split_assigns_correct_dates(self):
         plan = _make_plan_with_skeleton()
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         tasks = orch._split_tasks()
         assert tasks[0].date == "2026-05-01"
         assert tasks[1].date == "2026-05-02"
@@ -111,7 +111,7 @@ class TestSplitTasks:
 
     def test_split_preserves_skeleton_data(self):
         plan = _make_plan_with_skeleton()
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         tasks = orch._split_tasks()
         assert tasks[0].skeleton_slice["area"] == "新宿/原宿"
         assert tasks[1].skeleton_slice["area"] == "浅草/上野"
@@ -119,7 +119,7 @@ class TestSplitTasks:
     def test_split_raises_if_no_skeleton(self):
         plan = _make_plan_with_skeleton()
         plan.selected_skeleton_id = None
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         with pytest.raises(ValueError, match="未找到已选骨架"):
             orch._split_tasks()
 
@@ -145,7 +145,7 @@ class TestGlobalValidation:
             self._make_dayplan_dict(2, "2026-05-02", [self._make_activity("B", 5000, lat=35.6, lng=139.6)]),
             self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C", 5000, lat=35.5, lng=139.5)]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         assert len(issues) == 0
 
@@ -156,7 +156,7 @@ class TestGlobalValidation:
             self._make_dayplan_dict(2, "2026-05-02", [self._make_activity("浅草寺")]),
             self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C")]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         poi_issues = [i for i in issues if i.issue_type == "poi_duplicate"]
         assert len(poi_issues) >= 1
@@ -169,7 +169,7 @@ class TestGlobalValidation:
             self._make_dayplan_dict(2, "2026-05-02", [self._make_activity("B", 50)]),
             self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C", 50)]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         budget_issues = [i for i in issues if i.issue_type == "budget_overrun"]
         assert len(budget_issues) >= 1
@@ -181,7 +181,7 @@ class TestGlobalValidation:
             self._make_dayplan_dict(1, "2026-05-01", [self._make_activity("A", 5000)]),
             self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C", 5000)]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         gap_issues = [i for i in issues if i.issue_type == "coverage_gap"]
         assert len(gap_issues) == 1
@@ -214,7 +214,7 @@ class TestTimeConflictValidation:
                 self._make_timed_activity("B", "10:30", "12:00", transport_min=15),
             ]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         time_issues = [i for i in issues if i.issue_type == "time_conflict"]
         assert len(time_issues) == 0
@@ -227,7 +227,7 @@ class TestTimeConflictValidation:
                 self._make_timed_activity("B", "10:00", "12:00", transport_min=20),
             ]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         time_issues = [i for i in issues if i.issue_type == "time_conflict"]
         assert len(time_issues) == 1
@@ -247,7 +247,7 @@ class TestTimeConflictValidation:
                 self._make_timed_activity("C", "09:00", "10:00"),
             ]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         for issue in issues:
             assert hasattr(issue, "severity")
@@ -281,7 +281,7 @@ class TestSemanticDuplicateValidation:
                 self._make_geo_activity("上野公園", 35.7146, 139.7734),
             ]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         sem_issues = [i for i in issues if i.issue_type == "semantic_duplicate"]
         assert len(sem_issues) == 0
@@ -300,7 +300,7 @@ class TestSemanticDuplicateValidation:
                 self._make_geo_activity("C", 35.0, 139.0),
             ]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         sem_issues = [i for i in issues if i.issue_type == "semantic_duplicate"]
         assert len(sem_issues) == 1
@@ -320,7 +320,7 @@ class TestSemanticDuplicateValidation:
                 self._make_geo_activity("C", 35.0, 139.0),
             ]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         sem_issues = [i for i in issues if i.issue_type == "semantic_duplicate"]
         assert len(sem_issues) == 0
@@ -340,7 +340,7 @@ class TestSemanticDuplicateValidation:
                 self._make_geo_activity("上野公園", 35.7146, 139.7734),
             ]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         sem_issues = [i for i in issues if i.issue_type == "semantic_duplicate"]
         assert len(sem_issues) == 0
@@ -349,11 +349,11 @@ class TestSemanticDuplicateValidation:
 @pytest.mark.asyncio
 async def test_orchestrator_broadcasts_theme_at_init(monkeypatch):
     plan = _make_plan_with_skeleton()
-    orch = Phase5Orchestrator(
+    orch = Phase3Orchestrator(
         plan=plan,
         llm=AsyncMock(),
         tool_engine=AsyncMock(),
-        config=Phase5ParallelConfig(enabled=True, max_workers=3),
+        config=Phase3ParallelConfig(enabled=True, max_workers=3),
     )
 
     async def _fake_worker(**kwargs):
@@ -365,7 +365,7 @@ async def test_orchestrator_broadcasts_theme_at_init(monkeypatch):
             iterations=1,
         )
 
-    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase3.orchestrator.run_day_worker", _fake_worker)
 
     chunks = [c async for c in orch.run()]
     progress_chunks = [
@@ -383,11 +383,11 @@ async def test_orchestrator_broadcasts_theme_at_init(monkeypatch):
 @pytest.mark.asyncio
 async def test_orchestrator_broadcasts_current_tool_mid_run(monkeypatch):
     plan = _make_plan_with_skeleton()
-    orch = Phase5Orchestrator(
+    orch = Phase3Orchestrator(
         plan=plan,
         llm=AsyncMock(),
         tool_engine=AsyncMock(),
-        config=Phase5ParallelConfig(enabled=True, max_workers=3),
+        config=Phase3ParallelConfig(enabled=True, max_workers=3),
     )
 
     async def _fake_worker(**kwargs):
@@ -407,7 +407,7 @@ async def test_orchestrator_broadcasts_current_tool_mid_run(monkeypatch):
             iterations=1,
         )
 
-    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase3.orchestrator.run_day_worker", _fake_worker)
 
     chunks = [c async for c in orch.run()]
     progress_chunks = [
@@ -426,11 +426,11 @@ async def test_orchestrator_broadcasts_current_tool_mid_run(monkeypatch):
 @pytest.mark.asyncio
 async def test_orchestrator_populates_activity_count_on_success(monkeypatch):
     plan = _make_plan_with_skeleton()
-    orch = Phase5Orchestrator(
+    orch = Phase3Orchestrator(
         plan=plan,
         llm=AsyncMock(),
         tool_engine=AsyncMock(),
-        config=Phase5ParallelConfig(enabled=True, max_workers=3),
+        config=Phase3ParallelConfig(enabled=True, max_workers=3),
     )
 
     async def _fake_worker(**kwargs):
@@ -445,7 +445,7 @@ async def test_orchestrator_populates_activity_count_on_success(monkeypatch):
             iterations=1,
         )
 
-    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase3.orchestrator.run_day_worker", _fake_worker)
 
     chunks = [c async for c in orch.run()]
     last_progress = [
@@ -461,11 +461,11 @@ async def test_orchestrator_populates_activity_count_on_success(monkeypatch):
 async def test_orchestrator_populates_error_on_failure(monkeypatch):
     plan = _make_plan_with_skeleton()
     # Disable retry by making fallback kick in
-    orch = Phase5Orchestrator(
+    orch = Phase3Orchestrator(
         plan=plan,
         llm=AsyncMock(),
         tool_engine=AsyncMock(),
-        config=Phase5ParallelConfig(
+        config=Phase3ParallelConfig(
             enabled=True, max_workers=3, fallback_to_serial=True
         ),
     )
@@ -480,7 +480,7 @@ async def test_orchestrator_populates_error_on_failure(monkeypatch):
             iterations=5,
         )
 
-    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase3.orchestrator.run_day_worker", _fake_worker)
 
     chunks = [c async for c in orch.run()]
     progress = [
@@ -499,11 +499,11 @@ async def test_orchestrator_populates_error_on_failure(monkeypatch):
 @pytest.mark.asyncio
 async def test_orchestrator_retry_resets_dynamic_fields(monkeypatch):
     plan = _make_plan_with_skeleton()
-    orch = Phase5Orchestrator(
+    orch = Phase3Orchestrator(
         plan=plan,
         llm=AsyncMock(),
         tool_engine=AsyncMock(),
-        config=Phase5ParallelConfig(
+        config=Phase3ParallelConfig(
             enabled=True, max_workers=3, fallback_to_serial=False
         ),
     )
@@ -533,7 +533,7 @@ async def test_orchestrator_retry_resets_dynamic_fields(monkeypatch):
             dayplan={"day": day, "activities": []}, iterations=1,
         )
 
-    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase3.orchestrator.run_day_worker", _fake_worker)
 
     chunks = [c async for c in orch.run()]
     progress = [
@@ -561,11 +561,11 @@ async def test_orchestrator_retry_resets_dynamic_fields(monkeypatch):
 @pytest.mark.asyncio
 async def test_orchestrator_long_error_truncated_to_80(monkeypatch):
     plan = _make_plan_with_skeleton()
-    orch = Phase5Orchestrator(
+    orch = Phase3Orchestrator(
         plan=plan,
         llm=AsyncMock(),
         tool_engine=AsyncMock(),
-        config=Phase5ParallelConfig(
+        config=Phase3ParallelConfig(
             enabled=True, max_workers=3, fallback_to_serial=True
         ),
     )
@@ -577,7 +577,7 @@ async def test_orchestrator_long_error_truncated_to_80(monkeypatch):
             error="x" * 200, iterations=5,
         )
 
-    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase3.orchestrator.run_day_worker", _fake_worker)
     chunks = [c async for c in orch.run()]
     progress = [
         c for c in chunks
@@ -594,11 +594,11 @@ async def test_orchestrator_long_error_truncated_to_80(monkeypatch):
 @pytest.mark.asyncio
 async def test_orchestrator_error_code_propagated_on_failure(monkeypatch):
     plan = _make_plan_with_skeleton()
-    orch = Phase5Orchestrator(
+    orch = Phase3Orchestrator(
         plan=plan,
         llm=AsyncMock(),
         tool_engine=AsyncMock(),
-        config=Phase5ParallelConfig(
+        config=Phase3ParallelConfig(
             enabled=True, max_workers=3, fallback_to_serial=True
         ),
     )
@@ -614,7 +614,7 @@ async def test_orchestrator_error_code_propagated_on_failure(monkeypatch):
             iterations=5,
         )
 
-    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase3.orchestrator.run_day_worker", _fake_worker)
     chunks = [c async for c in orch.run()]
     progress = [
         c for c in chunks
@@ -666,7 +666,7 @@ class TestTransportConnectionValidation:
                 self._make_timed_activity("C", "09:00", "12:00"),
             ]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         conn_issues = [i for i in issues if i.issue_type == "transport_connection"]
         assert len(conn_issues) >= 1
@@ -691,7 +691,7 @@ class TestTransportConnectionValidation:
                 self._make_timed_activity("C", "09:00", "13:00"),  # ends 13:00, departure 15:00, gap=120 < 180
             ]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         conn_issues = [i for i in issues if i.issue_type == "transport_connection"]
         assert len(conn_issues) >= 1
@@ -705,7 +705,7 @@ class TestTransportConnectionValidation:
             self._make_dayplan_dict(2, "2026-05-02", [self._make_timed_activity("B", "09:00", "12:00")]),
             self._make_dayplan_dict(3, "2026-05-03", [self._make_timed_activity("C", "09:00", "23:00")]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         conn_issues = [i for i in issues if i.issue_type == "transport_connection"]
         assert len(conn_issues) == 0
@@ -735,7 +735,7 @@ class TestPaceValidation:
             self._make_dayplan_dict(2, "2026-05-02", [self._make_activity("B")]),
             self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C")]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         pace_issues = [i for i in issues if i.issue_type == "pace_mismatch"]
         assert len(pace_issues) >= 1
@@ -751,7 +751,7 @@ class TestPaceValidation:
             self._make_dayplan_dict(2, "2026-05-02", [self._make_activity("B")]),
             self._make_dayplan_dict(3, "2026-05-03", [self._make_activity("C")]),
         ]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         issues = orch._global_validate(dayplans)
         pace_issues = [i for i in issues if i.issue_type == "pace_mismatch"]
         assert len(pace_issues) == 0
@@ -768,7 +768,7 @@ class TestCompileDayTasks:
                 {"area_cluster": ["涩谷"], "locked_pois": ["涩谷Sky"], "candidate_pois": ["银座"], "theme": "购物"},
             ],
         }]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         tasks = orch._split_tasks()
         compiled = orch._compile_day_tasks(tasks)
         # Day 1 should have Day 2+3's locked as forbidden
@@ -790,7 +790,7 @@ class TestCompileDayTasks:
                 {"area_cluster": ["C"], "locked_pois": [], "candidate_pois": ["z"]},
             ],
         }]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         tasks = orch._split_tasks()
         compiled = orch._compile_day_tasks(tasks)
         assert compiled[0].date_role == "arrival_day"
@@ -808,7 +808,7 @@ class TestCompileDayTasks:
                 {"area_cluster": ["C"], "locked_pois": [], "candidate_pois": ["z"]},
             ],
         }]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         tasks = orch._split_tasks()
         compiled = orch._compile_day_tasks(tasks)
         assert compiled[0].mobility_envelope["max_cross_area_hops"] == 1
@@ -827,7 +827,7 @@ class TestCompileDayTasks:
                 {"area_cluster": ["C"], "locked_pois": [], "candidate_pois": ["z"]},
             ],
         }]
-        orch = Phase5Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
         tasks = orch._split_tasks()
         compiled = orch._compile_day_tasks(tasks)
         assert compiled[0].mobility_envelope["max_cross_area_hops"] == 5
@@ -864,7 +864,7 @@ class TestBacktrackProtocol:
         mock_llm = AsyncMock()
         mock_tool_engine = AsyncMock()
 
-        with patch("agent.phase5.orchestrator.run_day_worker") as mock_worker:
+        with patch("agent.phase3.orchestrator.run_day_worker") as mock_worker:
             async def side_effect(**kwargs):
                 day = kwargs["task"].day
                 if day == 1:
@@ -875,9 +875,9 @@ class TestBacktrackProtocol:
                     return ok_result_3
             mock_worker.side_effect = side_effect
 
-            orch = Phase5Orchestrator(
+            orch = Phase3Orchestrator(
                 plan=plan, llm=mock_llm, tool_engine=mock_tool_engine,
-                config=Phase5ParallelConfig(max_workers=3, fallback_to_serial=False),
+                config=Phase3ParallelConfig(max_workers=3, fallback_to_serial=False),
             )
             chunks = []
             async for chunk in orch.run():
@@ -919,12 +919,12 @@ class TestWorkerArtifactHandoff:
                 dayplan=None,
             )
 
-        with patch("agent.phase5.orchestrator.run_day_worker", side_effect=fake_worker):
-            orch = Phase5Orchestrator(
+        with patch("agent.phase3.orchestrator.run_day_worker", side_effect=fake_worker):
+            orch = Phase3Orchestrator(
                 plan=plan,
                 llm=AsyncMock(),
                 tool_engine=AsyncMock(),
-                config=Phase5ParallelConfig(
+                config=Phase3ParallelConfig(
                     max_workers=3,
                     fallback_to_serial=False,
                     artifact_root=str(tmp_path),
@@ -1014,12 +1014,12 @@ class TestWorkerArtifactHandoff:
                 dayplan=memory_result,
             )
 
-        with patch("agent.phase5.orchestrator.run_day_worker", side_effect=fake_worker):
-            orch = Phase5Orchestrator(
+        with patch("agent.phase3.orchestrator.run_day_worker", side_effect=fake_worker):
+            orch = Phase3Orchestrator(
                 plan=plan,
                 llm=AsyncMock(),
                 tool_engine=AsyncMock(),
-                config=Phase5ParallelConfig(
+                config=Phase3ParallelConfig(
                     max_workers=3,
                     fallback_to_serial=False,
                     artifact_root=str(tmp_path),
@@ -1035,11 +1035,11 @@ class TestWorkerArtifactHandoff:
 class TestCompileDayTasksInjection:
     def _make_orch(self, plan):
         from state.models import Constraint  # local import to avoid changing file header
-        return Phase5Orchestrator(
+        return Phase3Orchestrator(
             plan=plan,
             llm=None,
             tool_engine=None,
-            config=Phase5ParallelConfig(),
+            config=Phase3ParallelConfig(),
         )
 
     def test_compile_day_tasks_injects_day_constraints(self):
@@ -1108,13 +1108,13 @@ async def test_orchestrator_exposes_final_dayplans_without_writing_plan(monkeypa
             iterations=1,
         )
 
-    monkeypatch.setattr("agent.phase5.orchestrator.run_day_worker", _fake_worker)
+    monkeypatch.setattr("agent.phase3.orchestrator.run_day_worker", _fake_worker)
 
-    orch = Phase5Orchestrator(
+    orch = Phase3Orchestrator(
         plan=plan,
         llm=AsyncMock(),
         tool_engine=AsyncMock(),
-        config=Phase5ParallelConfig(enabled=True, max_workers=3),
+        config=Phase3ParallelConfig(enabled=True, max_workers=3),
     )
 
     chunks = [chunk async for chunk in orch.run()]

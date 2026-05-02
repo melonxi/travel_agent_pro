@@ -44,7 +44,7 @@ class ChatStreamDeps:
     rotate_trip_on_reset_backtrack: Callable[..., object]
     apply_message_fallbacks: Callable[..., object]
     schedule_memory_event: Callable[..., object]
-    persist_phase7_deliverables: Callable[..., object]
+    persist_phase4_deliverables: Callable[..., object]
     persist_messages: Callable[..., object]
     generate_title: Callable[..., str]
     append_archived_trip_episode_once: Callable[..., object]
@@ -157,7 +157,7 @@ async def run_agent_stream(
                     )
                     updated_fields = plan_writer_updated_fields(result_data)
                     if tool_name == "generate_summary":
-                        await deps.persist_phase7_deliverables(plan, result_data)
+                        await deps.persist_phase4_deliverables(plan, result_data)
                     elif result_data.get("backtracked"):
                         await deps.state_mgr.clear_deliverables(plan.session_id)
                         await deps.rotate_trip_on_reset_backtrack(
@@ -310,7 +310,7 @@ async def run_agent_stream(
                     plan=plan,
                     messages=messages,
                     phase=from_phase,
-                    phase3_step=getattr(plan, "phase3_step", None),
+                    phase2_step=getattr(plan, "phase2_step", None),
                     run_id=run.run_id,
                     trip_id=getattr(plan, "trip_id", None),
                 )

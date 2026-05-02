@@ -110,7 +110,7 @@ async def test_append_writes_history_metadata(stores):
         "查到东京适合亲子游",
         seq=9,
         phase=1,
-        phase3_step=None,
+        phase2_step=None,
         history_seq=0,
         run_id="run_1",
         trip_id="trip_1",
@@ -118,7 +118,7 @@ async def test_append_writes_history_metadata(stores):
 
     messages = await message_store.load_all("sess_msg_test_001")
     assert messages[0]["phase"] == 1
-    assert messages[0]["phase3_step"] is None
+    assert messages[0]["phase2_step"] is None
     assert messages[0]["history_seq"] == 0
     assert messages[0]["run_id"] == "run_1"
     assert messages[0]["trip_id"] == "trip_1"
@@ -229,8 +229,8 @@ async def test_append_batch_persists_context_epoch_and_rebuild_reason(stores):
                 "content": "phase handoff",
                 "seq": 0,
                 "history_seq": 0,
-                "phase": 3,
-                "phase3_step": "brief",
+                "phase": 2,
+                "phase2_step": "brief",
                 "run_id": "run-1",
                 "trip_id": "trip-1",
                 "context_epoch": 1,

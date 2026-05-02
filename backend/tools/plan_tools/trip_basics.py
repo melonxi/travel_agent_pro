@@ -168,7 +168,7 @@ def make_update_trip_basics_tool(plan: TravelPlanState):
             "每个字段均可选，只传需要更新的字段。"
             "支持结构化输入和自然语言短语。"
         ),
-        phases=[1, 3],
+        phases=[1, 2],
         parameters=_PARAMETERS,
         side_effect="write",
         human_label="更新行程基础信息",

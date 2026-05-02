@@ -26,7 +26,7 @@ class _ToolEngine:
 
 class _Plan:
     phase = 1
-    phase3_step = None
+    phase2_step = None
     destination = None
 
 
@@ -88,7 +88,7 @@ async def test_run_llm_turn_emits_status_reflection_and_collects_outcome():
         iteration_idx=0,
         previous_iteration_had_tools=False,
         phase_changed_in_previous_iteration=False,
-        previous_phase3_step=None,
+        previous_phase2_step=None,
         check_cancelled=check_cancelled,
         update_progress=observed_progress.append,
     ):
@@ -108,7 +108,7 @@ async def test_run_llm_turn_emits_status_reflection_and_collects_outcome():
         IterationProgress.PARTIAL_TOOL_CALL,
     ]
     assert outcome.next_iteration_idx == 1
-    assert outcome.previous_phase3_step is None
+    assert outcome.previous_phase2_step is None
     assert compression_events == []
     assert messages[-1] == Message(role=Role.SYSTEM, content="reflection message")
     assert llm.kwargs == {
@@ -152,7 +152,7 @@ async def test_run_llm_turn_uses_summarizing_stage_after_tools():
         iteration_idx=3,
         previous_iteration_had_tools=True,
         phase_changed_in_previous_iteration=False,
-        previous_phase3_step=None,
+        previous_phase2_step=None,
         check_cancelled=lambda: None,
         update_progress=lambda progress: None,
     ):
@@ -199,7 +199,7 @@ async def test_run_llm_turn_updates_progress_before_stream_error():
             iteration_idx=0,
             previous_iteration_had_tools=False,
             phase_changed_in_previous_iteration=False,
-            previous_phase3_step=None,
+            previous_phase2_step=None,
             check_cancelled=lambda: None,
             update_progress=observed_progress.append,
         ):

@@ -28,7 +28,7 @@ async def test_transition_allowed_when_no_gate():
     changed = await router.check_and_apply_transition(plan, hooks=hooks)
 
     assert changed is True
-    assert plan.phase == 3
+    assert plan.phase == 2
 
 
 @pytest.mark.asyncio
@@ -72,7 +72,7 @@ async def test_transition_allowed_when_gate_passes():
     changed = await router.check_and_apply_transition(plan, hooks=hooks)
 
     assert changed is True
-    assert plan.phase == 3
+    assert plan.phase == 2
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ def test_record_tool_result_stats_records_duration():
         tool_call_names=tool_call_names,
         tool_call_args={"tc_1": {"query": "test"}},
         result=result,
-        phase=3,
+        phase=2,
     )
 
     assert len(stats.tool_calls) == 1
@@ -142,7 +142,7 @@ def test_record_llm_usage_stats_records_elapsed_duration():
         usage_info={"input_tokens": 100, "output_tokens": 25},
         started_at=10.0,
         now=10.25,
-        phase=3,
+        phase=2,
         iteration=2,
     )
 

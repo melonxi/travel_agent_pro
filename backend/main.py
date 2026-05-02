@@ -34,7 +34,7 @@ from api.orchestration.memory.orchestration import create_memory_orchestration
 from api.orchestration.agent.builder import build_agent
 from api.orchestration.session.backtrack import detect_backtrack, rotate_trip_on_reset_backtrack
 from api.orchestration.chat.stream import ChatStreamDeps
-from api.orchestration.session.deliverables import persist_phase7_deliverables
+from api.orchestration.session.deliverables import persist_phase4_deliverables
 from api.orchestration.common.llm_errors import user_friendly_message
 from api.orchestration.session.persistence import SessionPersistence, generate_title
 from api.routes.session_routes import register_session_routes
@@ -235,8 +235,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         rotate_trip_on_reset_backtrack=rotate_trip_on_reset_backtrack,
         apply_message_fallbacks=_apply_message_fallbacks,
         schedule_memory_event=_schedule_memory_event,
-        persist_phase7_deliverables=partial(
-            persist_phase7_deliverables,
+        persist_phase4_deliverables=partial(
+            persist_phase4_deliverables,
             state_mgr=state_mgr,
             now_iso=_now_iso,
         ),

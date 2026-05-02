@@ -1,4 +1,4 @@
-"""Category A: high-risk strong-schema Phase 3 tools.
+"""Category A: high-risk strong-schema Phase 2 tools.
 
 These tools receive structured list[dict] or nested dict. Their JSON Schemas
 forbid strings; this is where stringification is eradicated.
@@ -254,7 +254,7 @@ def make_set_skeleton_plans_tool(plan: TravelPlanState):
             "禁止行为：不要在回复正文中完整列出骨架方案却不调用此工具——右侧工作台和后续阶段依赖此状态字段。\n"
             "写入后效果：skeleton_plans 整体替换；如果之前已有 selected_skeleton_id，系统会自动检查其是否仍然有效。"
         ),
-        phases=[3],
+        phases=[2],
         parameters=_SET_SKELETON_PLANS_PARAMS,
         side_effect="write",
         human_label="写入骨架方案",
@@ -359,7 +359,7 @@ def make_select_skeleton_tool(plan: TravelPlanState):
             "禁止行为：不要用 set_trip_brief 来记录用户的骨架选择——set_trip_brief 只用于旅行画像，骨架选择必须用本工具。\n"
             "写入后效果：selected_skeleton_id 写入后，系统会自动推进到 lock 子阶段。"
         ),
-        phases=[3],
+        phases=[2],
         parameters=_SELECT_SKELETON_PARAMS,
         side_effect="write",
         human_label="锁定骨架方案",
@@ -428,7 +428,7 @@ def make_set_candidate_pool_tool(plan: TravelPlanState):
             "禁止行为：不要把筛选后的短名单写入 candidate_pool——全集用 set_candidate_pool，筛选结果用 set_shortlist。\n"
             "写入后效果：candidate_pool 整体替换，右侧工作台会展示候选全集。"
         ),
-        phases=[3],
+        phases=[2],
         parameters=_SET_CANDIDATE_POOL_PARAMS,
         side_effect="write",
         human_label="写入候选池",
@@ -485,7 +485,7 @@ def make_set_shortlist_tool(plan: TravelPlanState):
             "禁止行为：不要把未筛选的全集写入 shortlist——全集用 set_candidate_pool。\n"
             "写入后效果：shortlist 写入后，系统会自动推进到 skeleton 子阶段。"
         ),
-        phases=[3],
+        phases=[2],
         parameters=_SET_SHORTLIST_PARAMS,
         side_effect="write",
         human_label="写入候选短名单",
@@ -541,7 +541,7 @@ def make_set_transport_options_tool(plan: TravelPlanState):
             "禁止行为：不要把用户最终选中的交通方案写入此字段——选中结果用 select_transport。\n"
             "写入后效果：transport_options 整体替换，右侧工作台会展示交通候选列表。"
         ),
-        phases=[3],
+        phases=[2],
         parameters=_SET_TRANSPORT_OPTIONS_PARAMS,
         side_effect="write",
         human_label="写入交通候选",
@@ -597,7 +597,7 @@ def make_select_transport_tool(plan: TravelPlanState):
             "禁止行为：不要在用户未明确确认时擅自调用此工具。\n"
             "写入后效果：selected_transport 写入，锁定大交通选择。"
         ),
-        phases=[3],
+        phases=[2],
         parameters=_SELECT_TRANSPORT_PARAMS,
         side_effect="write",
         human_label="锁定交通方案",
@@ -646,7 +646,7 @@ def make_set_accommodation_options_tool(plan: TravelPlanState):
             "禁止行为：不要把用户最终确认的住宿写入此字段——确认结果用 set_accommodation。\n"
             "写入后效果：accommodation_options 整体替换，右侧工作台会展示住宿候选列表。"
         ),
-        phases=[3],
+        phases=[2],
         parameters=_SET_ACCOMMODATION_OPTIONS_PARAMS,
         side_effect="write",
         human_label="写入住宿候选",
@@ -704,9 +704,9 @@ def make_set_accommodation_tool(plan: TravelPlanState):
             "触发条件：用户明确确认住宿区域或酒店后必须立即调用。\n"
             "前置条件：accommodation_options 应已写入，或用户直接指定了住宿。\n"
             "禁止行为：不要在用户未明确确认时擅自调用此工具。\n"
-            "写入后效果：accommodation 写入，是 Phase 3 完成的必要条件之一。"
+            "写入后效果：accommodation 写入，是 Phase 2 完成的必要条件之一。"
         ),
-        phases=[3, 5],
+        phases=[2, 3],
         parameters=_SET_ACCOMMODATION_PARAMS,
         side_effect="write",
         human_label="锁定住宿",
@@ -754,7 +754,7 @@ def make_set_risks_tool(plan: TravelPlanState):
             "触发条件：识别到行程中的风险点（天气、交通、时间冲突、安全等）后应调用。\n"
             "写入后效果：risks 整体替换，前端会在行程旁展示风险提示。"
         ),
-        phases=[3, 5],
+        phases=[2, 3],
         parameters=_SET_RISKS_PARAMS,
         side_effect="write",
         human_label="写入风险点",
@@ -810,7 +810,7 @@ def make_set_alternatives_tool(plan: TravelPlanState):
             "触发条件：为行程中的高风险环节准备了雨天备案或替代方案后应调用。\n"
             "写入后效果：alternatives 整体替换，前端会在行程旁展示备选方案。"
         ),
-        phases=[3, 5],
+        phases=[2, 3],
         parameters=_SET_ALTERNATIVES_PARAMS,
         side_effect="write",
         human_label="写入备选方案",
@@ -867,7 +867,7 @@ def make_set_trip_brief_tool(plan: TravelPlanState):
             "禁止行为：不要用此工具记录骨架选择（应用 select_skeleton）、候选池（应用 set_candidate_pool）或其他非画像信息。\n"
             "写入后效果：trip_brief 增量合并，brief 子阶段完成的必要条件。"
         ),
-        phases=[3],
+        phases=[2],
         parameters=_SET_TRIP_BRIEF_PARAMS,
         side_effect="write",
         human_label="更新旅行画像",

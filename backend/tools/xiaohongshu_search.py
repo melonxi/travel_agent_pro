@@ -106,7 +106,7 @@ def make_xiaohongshu_search_notes_tool(
         name="xiaohongshu_search_notes",
         description="""小红书笔记搜索工具。用于搜索旅行推荐、灵感发现、目的地/景点/餐厅/住宿的真实体验、避坑、氛围、玩法口碑等内容。
 返回笔记列表和可继续读取的 url。标题和热度只适合定位笔记，不足以支撑最终判断；需要正文时继续调用 xiaohongshu_read_note。""",
-        phases=[1, 3, 5, 7],
+        phases=[1, 2, 3, 4],
         parameters=_SEARCH_NOTES_PARAMETERS,
         human_label="翻小红书找灵感",
     )
@@ -158,7 +158,7 @@ def make_xiaohongshu_read_note_tool(
         name="xiaohongshu_read_note",
         description="""小红书笔记正文读取工具。用于读取 search 结果中的具体笔记，提取真实体验、路线安排、实用细节、排队时间、适合人群和避坑信息。
 标题不足以支撑判断时必须读取正文；主观评价仍不充分时再调用 xiaohongshu_get_comments。""",
-        phases=[1, 3, 5, 7],
+        phases=[1, 2, 3, 4],
         parameters=_READ_NOTE_PARAMETERS,
         human_label="读小红书笔记",
     )
@@ -198,7 +198,7 @@ def make_xiaohongshu_get_comments_tool(
         name="xiaohongshu_get_comments",
         description="""小红书评论区读取工具。用于获取评论区多元观点，判断值不值得去、排队强度、真实口碑、避坑、替代玩法和正文没有覆盖的细节。
 应在已有明确 note_ref 后使用；不要把它当搜索工具。""",
-        phases=[1, 3, 5, 7],
+        phases=[1, 2, 3, 4],
         parameters=_GET_COMMENTS_PARAMETERS,
         human_label="看小红书评论",
     )

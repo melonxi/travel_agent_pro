@@ -10,6 +10,7 @@ from opentelemetry import trace
 
 from agent.compaction import estimate_messages_tokens
 from agent.types import Message, Role, ToolCall, ToolResult
+from context.soul import parse_soul_sections, select_soul_sections
 from state.models import TravelPlanState
 from telemetry.attributes import (
     CONTEXT_TOKENS_AFTER,
@@ -45,14 +46,40 @@ class ContextManager:
     def __init__(self, soul_path: str = "backend/context/soul.md"):
         self._soul_path = Path(soul_path)
         self._soul_cache: str | None = None
+        self._soul_sections_cache: dict[str, str] | None = None
 
-    def _load_soul(self) -> str:
+    def _load_soul_raw(self) -> str:
         if self._soul_cache is None:
-            if self._soul_path.exists():
-                self._soul_cache = self._soul_path.read_text(encoding="utf-8")
+            soul_path = self._soul_path
+            if not soul_path.exists() and soul_path.parts[:1] == ("backend",):
+                candidate = Path(__file__).parents[1] / Path(*soul_path.parts[1:])
+                if candidate.exists():
+                    soul_path = candidate
+            if soul_path.exists():
+                self._soul_cache = soul_path.read_text(encoding="utf-8")
             else:
                 self._soul_cache = "你是一个旅行规划 Agent。"
         return self._soul_cache
+
+    def _load_soul_sections(self) -> dict[str, str]:
+        if self._soul_sections_cache is None:
+            self._soul_sections_cache = parse_soul_sections(self._load_soul_raw())
+        return self._soul_sections_cache
+
+    def _load_soul(self, plan: TravelPlanState | None = None) -> str:
+        raw_soul = self._load_soul_raw()
+        sections = self._load_soul_sections()
+        if not sections:
+            return raw_soul
+
+        selected = select_soul_sections(
+            sections,
+            phase=getattr(plan, "phase", None),
+            phase2_step=getattr(plan, "phase2_step", None),
+        )
+        if selected:
+            return "\n\n".join(selected)
+        return sections.get("core", raw_soul)
 
     def build_system_message(
         self,
@@ -67,7 +94,7 @@ class ContextManager:
 
         runtime_clock = self.build_time_context()
         parts = [
-            self._load_soul(),
+            self._load_soul(plan),
             "",
             "---",
             "",
@@ -133,8 +160,9 @@ class ContextManager:
         available_tools: list[str] | None = None,
     ) -> str:
         parts = [f"- 阶段：{plan.phase}"]
-        if plan.phase == 3:
-            parts.append(f"- Phase 3 子阶段：{plan.phase3_step}")
+        phase2_step = getattr(plan, "phase2_step", "brief")
+        if plan.phase == 2:
+            parts.append(f"- Phase 2 子阶段：{phase2_step}")
         if available_tools:
             parts.append(f"- 当前可用工具：{', '.join(available_tools)}")
         if plan.destination:
@@ -153,14 +181,14 @@ class ContextManager:
                 )
             )
 
-        # Phase 3 later sub-stages & Phase 5+: inject trip_brief content
+        # Phase 2 later sub-stages & Phase 3+: inject trip_brief content
         if plan.trip_brief:
-            if plan.phase >= 5 or (
-                plan.phase == 3
-                and plan.phase3_step in ("candidate", "skeleton", "lock")
+            if plan.phase >= 3 or (
+                plan.phase == 2
+                and phase2_step in ("candidate", "skeleton", "lock")
             ):
-                # Phase 5+: 排除 dates/total_days，它们已由 plan.dates 权威提供
-                skip_keys = {"dates", "total_days"} if plan.phase >= 5 else set()
+                # Phase 3+: 排除 dates/total_days，它们已由 plan.dates 权威提供
+                skip_keys = {"dates", "total_days"} if plan.phase >= 3 else set()
                 parts.append("- 旅行画像：")
                 for key, val in plan.trip_brief.items():
                     if key in skip_keys:
@@ -171,10 +199,10 @@ class ContextManager:
 
         if plan.candidate_pool:
             parts.append(f"- 候选池：{len(plan.candidate_pool)} 项")
-            # Phase 3 skeleton+: show shortlist item summaries
+            # Phase 2 skeleton+: show shortlist item summaries
             if (
-                plan.phase == 3
-                and plan.phase3_step in ("skeleton", "lock")
+                plan.phase == 2
+                and phase2_step in ("skeleton", "lock")
                 and plan.shortlist
             ):
                 parts.append(f"- shortlist（{len(plan.shortlist)} 项）：")
@@ -190,16 +218,16 @@ class ContextManager:
             elif plan.shortlist:
                 parts.append(f"- shortlist：{len(plan.shortlist)} 项")
 
-        # Phase 5+: inject selected skeleton full content
-        # Phase 3 lock: inject selected skeleton full content
-        # Phase 3 skeleton: inject compact summary (id / name / tradeoffs / day themes)
+        # Phase 3+: inject selected skeleton full content
+        # Phase 2 lock: inject selected skeleton full content
+        # Phase 2 skeleton: inject compact summary (id / name / tradeoffs / day themes)
         if plan.skeleton_plans:
-            inject_full_selected = (plan.phase >= 5 and plan.selected_skeleton_id) or (
-                plan.phase == 3
-                and plan.phase3_step == "lock"
+            inject_full_selected = (plan.phase >= 3 and plan.selected_skeleton_id) or (
+                plan.phase == 2
+                and phase2_step == "lock"
                 and plan.selected_skeleton_id
             )
-            show_summary_list = plan.phase == 3 and plan.phase3_step == "skeleton"
+            show_summary_list = plan.phase == 2 and phase2_step == "skeleton"
             if inject_full_selected:
                 selected = self._find_selected_skeleton(plan)
                 if selected:
@@ -261,11 +289,11 @@ class ContextManager:
             if cons_strs:
                 parts.append(f"- 用户约束：{'; '.join(cons_strs)}")
 
-        # Phase 5: inject daily_plans progress with summary
+        # Phase 3: inject daily_plans progress with summary
         if plan.daily_plans:
             total_days = plan.dates.total_days if plan.dates else "?"
             parts.append(f"- 已规划 {len(plan.daily_plans)}/{total_days} 天")
-            if plan.phase in (5, 7):
+            if plan.phase in (3, 4):
                 for dp in plan.daily_plans:
                     act_names = [a.name for a in dp.activities[:5]]
                     act_summary = "、".join(act_names) if act_names else "无活动"
@@ -380,9 +408,9 @@ class ContextManager:
     def _phase_display_name(self, phase: int) -> str:
         names = {
             1: "目的地收敛",
-            3: "行程框架规划",
-            5: "逐日行程落地",
-            7: "出发前查漏",
+            2: "行程框架规划",
+            3: "逐日行程落地",
+            4: "出发前查漏",
         }
         return names.get(phase, "阶段切换")
 
@@ -409,17 +437,17 @@ class ContextManager:
     def _handoff_goal_line(self, phase: int) -> str:
         mapping = {
             1: "当前唯一目标：帮助用户确认目的地，不进入交通、住宿或逐日行程。",
-            3: "当前唯一目标：围绕已确认目的地完成旅行画像、候选筛选、骨架方案与锁定项。",
-            5: "当前唯一目标：基于已选骨架与住宿，生成覆盖全部出行日期的 daily_plans。",
-            7: "当前唯一目标：基于已确认行程做出发前查漏与准备清单，不重做规划。",
+            2: "当前唯一目标：围绕已确认目的地完成旅行画像、候选筛选、骨架方案与锁定项。",
+            3: "当前唯一目标：基于已选骨架与住宿，生成覆盖全部出行日期的 daily_plans。",
+            4: "当前唯一目标：基于已确认行程做出发前查漏与准备清单，不重做规划。",
         }
         return mapping.get(phase, "当前唯一目标：按当前阶段职责继续推进。")
 
     def _handoff_guardrail_line(self, phase: int) -> str:
         mapping = {
-            3: "禁止重复：不要回到目的地发散；若用户要求推翻前序决策，使用 `request_backtrack(...)`。",
-            5: '禁止重复：不要重新锁交通、不要重新锁住宿、不要重选骨架；若前置状态不足或骨架不可执行，调用 `request_backtrack(to_phase=3, reason="...")`。',
-            7: "禁止重复：不要修改 `daily_plans`、不要重新选择交通或住宿；若发现严重问题，使用 `request_backtrack(...)`。",
+            2: "禁止重复：不要回到目的地发散；若用户要求推翻前序决策，使用 `request_backtrack(...)`。",
+            3: '禁止重复：不要重新锁交通、不要重新锁住宿、不要重选骨架；若前置状态不足或骨架不可执行，调用 `request_backtrack(to_phase=2, reason="...")`。',
+            4: "禁止重复：不要修改 `daily_plans`、不要重新选择交通或住宿；若发现严重问题，使用 `request_backtrack(...)`。",
         }
         return mapping.get(phase, "禁止重复：仅在当前阶段职责内行动。")
 

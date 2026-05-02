@@ -186,7 +186,7 @@ class TestSplitMemoryExtractionTools:
             {
                 "working_memory": [
                     {
-                        "phase": 3,
+                        "phase": 2,
                         "kind": "temporary_rejection",
                         "domains": ["attraction"],
                         "content": "这轮先别考虑迪士尼",
@@ -342,7 +342,7 @@ class TestParseV3ExtractionResponse:
         response = (
             '{"profile_updates":{"constraints":[],"rejections":[],'
             '"stable_preferences":[],"preference_hypotheses":[]},'
-            '"working_memory":[{"id":"wm_1","phase":3,"kind":"temporary_rejection",'
+            '"working_memory":[{"id":"wm_1","phase":2,"kind":"temporary_rejection",'
             '"domains":["attraction"],"content":"先别考虑迪士尼",'
             '"reason":"当前候选筛选","status":"active",'
             '"expires":{"on_session_end":true,"on_trip_change":true,'

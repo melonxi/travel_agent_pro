@@ -7,12 +7,12 @@ from tools.base import ToolError
 
 def _make_plan() -> TravelPlanState:
     plan = TravelPlanState(session_id="test-schema")
-    plan.phase = 3
+    plan.phase = 2
     return plan
 
 
 def _make_tool(plan):
-    from tools.plan_tools.phase3_tools import make_set_skeleton_plans_tool
+    from tools.plan_tools.phase2_tools import make_set_skeleton_plans_tool
     return make_set_skeleton_plans_tool(plan)
 
 

@@ -32,7 +32,7 @@ def test_trip_basics_tool_metadata(field_name, expected_any_of_types):
     assert tool_fn.name == "update_trip_basics"
     assert tool_fn.side_effect == "write"
     assert tool_fn.human_label == "更新行程基础信息"
-    assert tool_fn.phases == [1, 3]
+    assert tool_fn.phases == [1, 2]
     assert "支持结构化输入和自然语言短语" in tool_fn.description
     assert tool_fn.parameters["type"] == "object"
     assert set(tool_fn.parameters["properties"]) == {

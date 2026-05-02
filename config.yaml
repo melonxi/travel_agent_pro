@@ -12,9 +12,6 @@ llm_overrides:
   phase_1_2:
     provider: "anthropic"
     model: "claude-sonnet-4-20250514"
-  phase_5:
-    provider: "openai"
-    model: "gpt-4o"
 
 api_keys:
   google_maps: "${GOOGLE_MAPS_API_KEY}"
@@ -64,7 +61,7 @@ guardrails:
   enabled: true
   disabled_rules: []
 
-phase5:
+phase3:
   parallel:
     enabled: true
     max_workers: 5

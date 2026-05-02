@@ -47,9 +47,9 @@ interface ChatMessage {
 
 const PHASE_NAMES: Record<number, string> = {
   1: '灵感与目的地',
-  3: '日期与住宿',
-  5: '行程组装',
-  7: '出发前查漏',
+  2: '日期与住宿',
+  3: '行程组装',
+  4: '出发前查漏',
 }
 
 function computeStateChanges(

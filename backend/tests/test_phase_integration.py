@@ -1,7 +1,7 @@
 # backend/tests/test_phase_integration.py
 """
 Phase integration tests — mock external APIs and test the full tool call chain
-for phases 1, 3, 5, and 7.
+for phases 1, 2, 3, and 4.
 
 Each test:
 1. Creates an app and session via POST /api/sessions
@@ -198,14 +198,14 @@ async def test_phase1_destination_search(app):
 
 
 # ---------------------------------------------------------------------------
-# Test: Phase 3 — Accommodation Search (merged from former Phase 4)
+# Test: Phase 2 — Accommodation Search
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_phase4_accommodation_search(app):
+async def test_phase2_accommodation_search(app):
     """
-    Phase 3 (merged): destination and dates are set but no accommodation.
+    Phase 2 (merged): destination and dates are set but no accommodation.
     Agent calls search_accommodations, then set_accommodation to set accommodation.
     Verify accommodation is set in plan state.
     """
@@ -263,12 +263,12 @@ async def test_phase4_accommodation_search(app):
             resp = await client.post("/api/sessions")
             session_id = resp.json()["session_id"]
 
-            # Set up phase 3 state: destination + dates, no accommodation
+            # Set up phase 2 state: destination + dates, no accommodation
             sessions = _get_sessions(app)
             plan = sessions[session_id]["plan"]
             plan.destination = "京都"
             plan.dates = DateRange(start="2026-04-10", end="2026-04-15")
-            plan.phase = 3
+            plan.phase = 2
 
             # Trigger agent via chat
             resp = await client.post(
@@ -284,19 +284,19 @@ async def test_phase4_accommodation_search(app):
     assert plan_data["accommodation"] is not None
     assert plan_data["accommodation"]["area"] == "祇園"
     assert plan_data["accommodation"]["hotel"] == "祇園白川旅館"
-    # Accommodation is set; with patched run() hooks don't fire for phase transition
-    assert plan_data["phase"] >= 3
+    # Accommodation is set; with patched run() hooks don't fire for phase transition.
+    assert plan_data["phase"] == 2
 
 
 # ---------------------------------------------------------------------------
-# Test: Phase 5 — Day Plan Assembly
+# Test: Phase 3 — Day Plan Assembly
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_phase5_day_plan_assembly(app):
+async def test_phase3_day_plan_assembly(app):
     """
-    Phase 5: destination+dates+accommodation set, daily_plans incomplete.
+    Phase 3: destination+dates+accommodation set, daily_plans incomplete.
     Agent calls optimize_day_route (a local tool, no external API).
     Then calls replace_all_day_plans to write the plans.
     """
@@ -365,13 +365,13 @@ async def test_phase5_day_plan_assembly(app):
             resp = await client.post("/api/sessions")
             session_id = resp.json()["session_id"]
 
-            # Set up phase 5 state
+            # Set up phase 3 state
             sessions = _get_sessions(app)
             plan = sessions[session_id]["plan"]
             plan.destination = "京都"
             plan.dates = DateRange(start="2026-04-10", end="2026-04-14")
             plan.accommodation = Accommodation(area="祇園", hotel="祇園白川旅館")
-            plan.phase = 5
+            plan.phase = 3
 
             # Trigger agent
             resp = await client.post(
@@ -388,8 +388,8 @@ async def test_phase5_day_plan_assembly(app):
     assert plan_data["daily_plans"][0]["day"] == 1
     assert plan_data["daily_plans"][0]["date"] == "2026-04-10"
     assert len(plan_data["daily_plans"][0]["activities"]) >= 1
-    # With all daily_plans filled (5 days for a 5-day trip), phase should reach 7
-    assert plan_data["phase"] >= 5
+    # Daily plans are set; with patched run() hooks don't fire for phase transition.
+    assert plan_data["phase"] == 3
 
 
 def _build_daily_plans_from_pois(ordered_pois: list[dict]) -> list[dict]:
@@ -474,11 +474,11 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
                 return
 
             if call_count == 2:
-                assert plan.phase == 3
-                assert "- 阶段：3" in messages[0].content
+                assert plan.phase == 2
+                assert "- 阶段：2" in messages[0].content
                 assert messages[1].role == Role.ASSISTANT
                 assert "[阶段交接]" in messages[1].content
-                assert "当前阶段：Phase 3" in messages[1].content
+                assert "当前阶段：Phase 2" in messages[1].content
                 assert (
                     "当前唯一目标：围绕已确认目的地完成旅行画像、候选筛选、骨架方案与锁定项。"
                     in messages[1].content
@@ -499,8 +499,8 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
                 yield LLMChunk(type=ChunkType.DONE)
                 return
 
-            assert plan.phase == 3
-            assert "- 阶段：3" in messages[0].content
+            assert plan.phase == 2
+            assert "- 阶段：2" in messages[0].content
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="日期已确认。")
             yield LLMChunk(type=ChunkType.DONE)
 
@@ -519,7 +519,7 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
     assert plan_data["destination"] == "巴厘岛"
     assert plan_data["dates"] == {"start": "2026-04-10", "end": "2026-04-15"}
     assert plan_data["budget"] == {"total": 30000.0, "currency": "CNY"}
-    assert plan_data["phase"] == 3
+    assert plan_data["phase"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +544,7 @@ async def test_backtrack_rebuild_uses_hard_boundary_context(app):
         plan.dates = DateRange(start="2026-04-10", end="2026-04-15")
         plan.accommodation = Accommodation(area="祇園", hotel="祇園白川旅館")
         plan.preferences.append(Preference(key="style", value="quiet"))
-        plan.phase = 5
+        plan.phase = 3
 
         call_count = 0
 
@@ -569,7 +569,7 @@ async def test_backtrack_rebuild_uses_hard_boundary_context(app):
             assert plan.phase == 1
             assert (
                 messages[1].content
-                == "[阶段回退]\n用户从 phase 5 回退到 phase 1，原因：用户想换目的地"
+                == "[阶段回退]\n用户从 phase 3 回退到 phase 1，原因：用户想换目的地"
             )
             assert messages[2].content == "不想去京都了，换个目的地"
             assert "祇園白川旅館" not in messages[0].content
@@ -599,17 +599,17 @@ async def test_backtrack_rebuild_uses_hard_boundary_context(app):
 
 
 # ---------------------------------------------------------------------------
-# Test: Phase 7 — Summary Generation
+# Test: Phase 4 — Summary Generation
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_phase7_summary_generation(app):
+async def test_phase4_summary_generation(app):
     """
-    Phase 7: complete plan (destination+dates+accommodation+daily_plans).
+    Phase 4: complete plan (destination+dates+accommodation+daily_plans).
     Agent calls check_weather, then generate_summary.
     Verify the response stream contains the tool call events and the plan
-    remains in phase 7.
+    remains in phase 4.
     """
 
     async def fake_run(self, messages, phase, tools_override=None):
@@ -667,7 +667,7 @@ async def test_phase7_summary_generation(app):
             resp = await client.post("/api/sessions")
             session_id = resp.json()["session_id"]
 
-            # Set up phase 7 state: complete plan
+            # Set up phase 4 state: complete plan
             sessions = _get_sessions(app)
             plan = sessions[session_id]["plan"]
             plan.destination = "京都"
@@ -690,7 +690,7 @@ async def test_phase7_summary_generation(app):
                 )
                 for i in range(5)
             ]
-            plan.phase = 7
+            plan.phase = 4
 
             # Trigger agent
             resp = await client.post(
@@ -704,11 +704,11 @@ async def test_phase7_summary_generation(app):
             assert "check_weather" in body
             assert "generate_summary" in body
 
-            # Verify plan remains at phase 7 (plan is complete)
+            # Verify plan remains at phase 4 (plan is complete)
             plan_resp = await client.get(f"/api/plan/{session_id}")
             plan_data = plan_resp.json()
 
-    assert plan_data["phase"] == 7
+    assert plan_data["phase"] == 4
     assert plan_data["destination"] == "京都"
     assert len(plan_data["daily_plans"]) == 5
     assert plan_data["accommodation"]["hotel"] == "祇園白川旅館"

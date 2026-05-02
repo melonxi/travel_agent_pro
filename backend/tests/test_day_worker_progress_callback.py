@@ -1,7 +1,7 @@
 import pytest
 
-from agent.phase5.day_worker import run_day_worker
-from agent.phase5.worker_prompt import DayTask
+from agent.phase3.day_worker import run_day_worker
+from agent.phase3.worker_prompt import DayTask
 from agent.types import ToolCall
 from llm.types import ChunkType, LLMChunk
 from state.models import TravelPlanState, DateRange
@@ -9,7 +9,7 @@ from state.models import TravelPlanState, DateRange
 
 def _stub_plan() -> TravelPlanState:
     plan = TravelPlanState(session_id="s-dw")
-    plan.phase = 5
+    plan.phase = 3
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.selected_skeleton_id = "x"
     plan.skeleton_plans = [{"id": "x", "days": [{"area": "A", "theme": "T"}]}]

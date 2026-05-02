@@ -29,9 +29,9 @@ async def test_full_session_roundtrip(storage_path):
     await messages.append(session_id, "user", "我想去东京玩5天", seq=1)
     await messages.append(session_id, "assistant", "好的！让我为你规划东京5日游。", seq=2)
 
-    plan = TravelPlanState(session_id=session_id, phase=3, destination="东京")
-    await archives.save_snapshot(session_id, 3, json.dumps(plan.to_dict(), ensure_ascii=False))
-    await sessions.update(session_id, phase=3, title="东京 · 5天4晚")
+    plan = TravelPlanState(session_id=session_id, phase=2, destination="东京")
+    await archives.save_snapshot(session_id, 2, json.dumps(plan.to_dict(), ensure_ascii=False))
+    await sessions.update(session_id, phase=2, title="东京 · 5天4晚")
     await db.close()
 
     restored_db = Database(str(storage_path))
@@ -43,7 +43,7 @@ async def test_full_session_roundtrip(storage_path):
     meta = await restored_sessions.load(session_id)
     assert meta is not None
     assert meta["title"] == "东京 · 5天4晚"
-    assert meta["phase"] == 3
+    assert meta["phase"] == 2
 
     loaded_messages = await restored_messages.load_all(session_id)
     assert len(loaded_messages) == 3
@@ -55,7 +55,7 @@ async def test_full_session_roundtrip(storage_path):
     assert snapshot is not None
     restored_plan = TravelPlanState.from_dict(json.loads(snapshot["plan_json"]))
     assert restored_plan.destination == "东京"
-    assert restored_plan.phase == 3
+    assert restored_plan.phase == 2
 
     await restored_db.close()
 
@@ -69,7 +69,7 @@ async def test_archived_session_has_archive(storage_path):
 
     session_id = "sess_archive_001"
     await sessions.create(session_id, "user1")
-    plan = TravelPlanState(session_id=session_id, phase=7, destination="大阪")
+    plan = TravelPlanState(session_id=session_id, phase=4, destination="大阪")
     await archives.save(session_id, json.dumps(plan.to_dict(), ensure_ascii=False), summary="大阪 · 3天2晚")
     await sessions.update(session_id, status="archived")
 

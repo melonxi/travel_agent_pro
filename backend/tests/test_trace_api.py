@@ -707,7 +707,7 @@ def test_trace_includes_error_code_and_suggestion():
         input_tokens=10,
         output_tokens=5,
         duration_ms=100,
-        phase=5,
+        phase=3,
         iteration=1,
     )
     stats.record_tool_call(
@@ -715,7 +715,7 @@ def test_trace_includes_error_code_and_suggestion():
         duration_ms=5.0,
         status="error",
         error_code="INVALID_ARGUMENTS",
-        phase=5,
+        phase=3,
         arguments_preview="{}",
         result_preview="ERROR: 缺少必填参数: days",
         suggestion="请提供以下参数: days",
@@ -739,7 +739,7 @@ def test_trace_success_tool_has_null_error_code():
         input_tokens=10,
         output_tokens=5,
         duration_ms=100,
-        phase=5,
+        phase=3,
         iteration=1,
     )
     stats.record_tool_call(
@@ -747,7 +747,7 @@ def test_trace_success_tool_has_null_error_code():
         duration_ms=10.0,
         status="success",
         error_code=None,
-        phase=5,
+        phase=3,
     )
 
     result = build_trace("test_session", {"stats": stats})

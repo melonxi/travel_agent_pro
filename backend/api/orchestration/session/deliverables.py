@@ -5,7 +5,7 @@ from collections.abc import Callable
 from state.models import TravelPlanState
 
 
-async def persist_phase7_deliverables(
+async def persist_phase4_deliverables(
     plan: TravelPlanState,
     result_data: dict,
     *,

@@ -33,7 +33,7 @@ def test_record_tool_call():
     stats = SessionStats()
     stats.record_tool_call(
         tool_name="search_flights", duration_ms=350.0,
-        status="success", error_code=None, phase=3,
+        status="success", error_code=None, phase=2,
     )
     assert len(stats.tool_calls) == 1
     assert stats.total_tool_duration_ms == 350.0

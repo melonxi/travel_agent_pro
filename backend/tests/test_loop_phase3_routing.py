@@ -1,105 +1,105 @@
-# backend/tests/test_loop_phase5_routing.py
+# backend/tests/test_loop_phase3_routing.py
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agent.hooks import HookManager
 from agent.loop import AgentLoop
-from agent.phase5.parallel import (
-    should_enter_parallel_phase5_at_iteration_boundary,
-    should_enter_parallel_phase5_now,
+from agent.phase3.parallel import (
+    should_enter_parallel_phase3_at_iteration_boundary,
+    should_enter_parallel_phase3_now,
 )
 from agent.types import Message, Role, ToolCall
-from config import Phase5ParallelConfig
+from config import Phase3ParallelConfig
 from llm.types import ChunkType, LLMChunk
 from tools.base import tool
 from tools.engine import ToolEngine
 
 
-class TestPhase5Routing:
+class TestPhase3Routing:
     def test_should_use_parallel_when_enabled(self):
-        """Phase 5 + 并行启用 + daily_plans 为空 → 应使用并行模式。"""
+        """Phase 3 + 并行启用 + daily_plans 为空 → 应使用并行模式。"""
         from state.models import TravelPlanState, DateRange, Accommodation
 
         plan = TravelPlanState(session_id="test-routing")
-        plan.phase = 5
+        plan.phase = 3
         plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
         plan.selected_skeleton_id = "plan_A"
         plan.skeleton_plans = [{"id": "plan_A", "days": [{}, {}, {}]}]
         plan.accommodation = Accommodation(area="新宿")
         plan.daily_plans = []
 
-        config = Phase5ParallelConfig(enabled=True)
-        assert AgentLoop.should_use_parallel_phase5(plan, config) is True
+        config = Phase3ParallelConfig(enabled=True)
+        assert AgentLoop.should_use_parallel_phase3(plan, config) is True
 
-    def test_named_phase5_guards_share_current_eligibility_rules(self):
+    def test_named_phase3_guards_share_current_eligibility_rules(self):
         from state.models import TravelPlanState, DateRange, Accommodation
 
         plan = TravelPlanState(session_id="test-routing-named")
-        plan.phase = 5
+        plan.phase = 3
         plan.dates = DateRange(start="2026-05-01", end="2026-05-02")
         plan.selected_skeleton_id = "plan_A"
         plan.skeleton_plans = [{"id": "plan_A", "days": [{}, {}]}]
         plan.accommodation = Accommodation(area="新宿")
         plan.daily_plans = []
 
-        config = Phase5ParallelConfig(enabled=True)
+        config = Phase3ParallelConfig(enabled=True)
 
-        assert should_enter_parallel_phase5_now(plan, config) is True
-        assert should_enter_parallel_phase5_at_iteration_boundary(plan, config) is True
+        assert should_enter_parallel_phase3_now(plan, config) is True
+        assert should_enter_parallel_phase3_at_iteration_boundary(plan, config) is True
 
     def test_should_not_use_parallel_when_disabled(self):
         from state.models import TravelPlanState, DateRange, Accommodation
 
         plan = TravelPlanState(session_id="test-routing")
-        plan.phase = 5
+        plan.phase = 3
         plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
         plan.selected_skeleton_id = "plan_A"
         plan.skeleton_plans = [{"id": "plan_A", "days": [{}, {}, {}]}]
         plan.accommodation = Accommodation(area="新宿")
         plan.daily_plans = []
 
-        config = Phase5ParallelConfig(enabled=False)
-        assert AgentLoop.should_use_parallel_phase5(plan, config) is False
+        config = Phase3ParallelConfig(enabled=False)
+        assert AgentLoop.should_use_parallel_phase3(plan, config) is False
 
     def test_should_not_use_parallel_when_plans_exist(self):
         """daily_plans 已有数据 → 用户在修改，用串行模式。"""
         from state.models import TravelPlanState, DateRange, Accommodation, DayPlan
 
         plan = TravelPlanState(session_id="test-routing")
-        plan.phase = 5
+        plan.phase = 3
         plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
         plan.selected_skeleton_id = "plan_A"
         plan.skeleton_plans = [{"id": "plan_A", "days": [{}, {}, {}]}]
         plan.accommodation = Accommodation(area="新宿")
         plan.daily_plans = [DayPlan(day=1, date="2026-05-01")]
 
-        config = Phase5ParallelConfig(enabled=True)
-        assert AgentLoop.should_use_parallel_phase5(plan, config) is False
+        config = Phase3ParallelConfig(enabled=True)
+        assert AgentLoop.should_use_parallel_phase3(plan, config) is False
 
-    def test_should_not_use_parallel_when_not_phase5(self):
+    def test_should_not_use_parallel_when_not_phase3(self):
         from state.models import TravelPlanState
 
         plan = TravelPlanState(session_id="test-routing")
-        plan.phase = 3
+        plan.phase = 2
 
-        config = Phase5ParallelConfig(enabled=True)
-        assert AgentLoop.should_use_parallel_phase5(plan, config) is False
+        config = Phase3ParallelConfig(enabled=True)
+        assert AgentLoop.should_use_parallel_phase3(plan, config) is False
 
     def test_should_not_use_parallel_when_plan_is_none(self):
-        config = Phase5ParallelConfig(enabled=True)
-        assert AgentLoop.should_use_parallel_phase5(None, config) is False
+        config = Phase3ParallelConfig(enabled=True)
+        assert AgentLoop.should_use_parallel_phase3(None, config) is False
 
     def test_should_not_use_parallel_when_config_is_none(self):
         from state.models import TravelPlanState
 
         plan = TravelPlanState(session_id="test-routing")
-        plan.phase = 5
-        assert AgentLoop.should_use_parallel_phase5(plan, None) is False
+        plan.phase = 3
+        assert AgentLoop.should_use_parallel_phase3(plan, None) is False
 
 
 class _PromotingRouter:
-    """Test double: any tool call in phase 3 promotes plan to phase 5."""
+    """Test double: any tool call in phase 2 promotes plan to phase 3."""
 
     def get_prompt(self, phase: int) -> str:
         return f"phase-{phase}-prompt"
@@ -108,8 +108,8 @@ class _PromotingRouter:
         return f"phase-{plan.phase}-prompt"
 
     async def check_and_apply_transition(self, plan, hooks=None) -> bool:
-        if plan.phase == 3:
-            plan.phase = 5
+        if plan.phase == 2:
+            plan.phase = 3
             return True
         return False
 
@@ -131,7 +131,7 @@ class _StubMemoryManager:
 
 @pytest.mark.asyncio
 async def test_parallel_orchestrator_fires_after_final_iteration_phase_promotion():
-    """Boundary: the single allowed iteration promotes phase 3→5 via a write tool.
+    """Boundary: the single allowed iteration promotes phase 2→5 via a write tool.
     The loop must still route to the parallel orchestrator rather than emitting
     the safety-limit fallback text.
     """
@@ -141,7 +141,7 @@ async def test_parallel_orchestrator_fires_after_final_iteration_phase_promotion
         TravelPlanState,
     )
 
-    plan = TravelPlanState(session_id="s-boundary", phase=3)
+    plan = TravelPlanState(session_id="s-boundary", phase=2)
     plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
     plan.selected_skeleton_id = "plan_A"
     plan.skeleton_plans = [{"id": "plan_A", "days": [{}, {}, {}]}]
@@ -150,7 +150,7 @@ async def test_parallel_orchestrator_fires_after_final_iteration_phase_promotion
     @tool(
         name="set_accommodation",
         description="Test write tool (reuses plan-writer name so loop treats it as state update).",
-        phases=[3, 5],
+        phases=[2, 3],
         parameters={"type": "object", "properties": {}, "required": []},
         side_effect="write",
     )
@@ -182,7 +182,7 @@ async def test_parallel_orchestrator_fires_after_final_iteration_phase_promotion
         llm_factory=lambda: MagicMock(),
         memory_mgr=_StubMemoryManager(),
         user_id="u",
-        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+        phase3_parallel_config=Phase3ParallelConfig(enabled=True),
     )
 
     orchestrator_fired = False
@@ -192,12 +192,12 @@ async def test_parallel_orchestrator_fires_after_final_iteration_phase_promotion
         orchestrator_fired = True
         yield LLMChunk(type=ChunkType.DONE)
 
-    agent._run_parallel_phase5_orchestrator = _fake_orchestrator
+    agent._run_parallel_phase3_orchestrator = _fake_orchestrator
 
     chunks = [
         chunk
         async for chunk in agent.run(
-            [Message(role=Role.USER, content="go")], phase=3
+            [Message(role=Role.USER, content="go")], phase=2
         )
     ]
 
@@ -210,10 +210,10 @@ async def test_parallel_orchestrator_fires_after_final_iteration_phase_promotion
 
 @pytest.mark.asyncio
 async def test_parallel_orchestrator_emits_internal_task_lifecycle(monkeypatch):
-    from agent.phase5.parallel import run_parallel_phase5_orchestrator
+    from agent.phase3.parallel import run_parallel_phase3_orchestrator
     from state.models import Accommodation, DateRange, TravelPlanState
 
-    plan = TravelPlanState(session_id="s-phase5", phase=5)
+    plan = TravelPlanState(session_id="s-phase3", phase=3)
     plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
     plan.selected_skeleton_id = "plan_A"
     plan.skeleton_plans = [{"id": "plan_A", "days": [{}]}]
@@ -227,35 +227,35 @@ async def test_parallel_orchestrator_emits_internal_task_lifecycle(monkeypatch):
         async def run(self):
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="完成")
 
-    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+    monkeypatch.setattr("agent.phase3.orchestrator.Phase3Orchestrator", FakeOrchestrator)
 
     chunks = [
         chunk
-        async for chunk in run_parallel_phase5_orchestrator(
+        async for chunk in run_parallel_phase3_orchestrator(
             plan=plan,
             llm=MagicMock(),
             tool_engine=ToolEngine(),
-            config=Phase5ParallelConfig(enabled=True),
+            config=Phase3ParallelConfig(enabled=True),
         )
     ]
     tasks = [chunk.internal_task for chunk in chunks if chunk.type == ChunkType.INTERNAL_TASK]
 
     assert any(
-        task and task.kind == "phase5_orchestration" and task.status == "pending"
+        task and task.kind == "phase3_orchestration" and task.status == "pending"
         for task in tasks
     )
     assert any(
-        task and task.kind == "phase5_orchestration" and task.status == "success"
+        task and task.kind == "phase3_orchestration" and task.status == "success"
         for task in tasks
     )
 
 
 @pytest.mark.asyncio
 async def test_parallel_wrapper_returns_final_dayplans_via_handoff(monkeypatch):
-    from agent.phase5.parallel import run_parallel_phase5_orchestrator
+    from agent.phase3.parallel import run_parallel_phase3_orchestrator
     from state.models import Accommodation, DateRange, TravelPlanState
 
-    plan = TravelPlanState(session_id="s-handoff", phase=5)
+    plan = TravelPlanState(session_id="s-handoff", phase=3)
     plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
     plan.selected_skeleton_id = "plan_A"
     plan.skeleton_plans = [{"id": "plan_A", "days": [{}]}]
@@ -283,16 +283,16 @@ async def test_parallel_wrapper_returns_final_dayplans_via_handoff(monkeypatch):
         async def run(self):
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行完成")
 
-    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+    monkeypatch.setattr("agent.phase3.orchestrator.Phase3Orchestrator", FakeOrchestrator)
 
     handoffs = []
     chunks = [
         chunk
-        async for chunk in run_parallel_phase5_orchestrator(
+        async for chunk in run_parallel_phase3_orchestrator(
             plan=plan,
             llm=MagicMock(),
             tool_engine=ToolEngine(),
-            config=Phase5ParallelConfig(enabled=True),
+            config=Phase3ParallelConfig(enabled=True),
             on_handoff=handoffs.append,
         )
     ]
@@ -309,7 +309,7 @@ async def test_parallel_wrapper_returns_final_dayplans_via_handoff(monkeypatch):
         for c in chunks
         if c.type == ChunkType.INTERNAL_TASK
         and c.internal_task
-        and c.internal_task.kind == "phase5_orchestration"
+        and c.internal_task.kind == "phase3_orchestration"
         and c.internal_task.status == "success"
     ]
     assert success_tasks
@@ -317,12 +317,12 @@ async def test_parallel_wrapper_returns_final_dayplans_via_handoff(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_parallel_phase5_handoff_commits_via_standard_tool_and_transitions(monkeypatch):
+async def test_parallel_phase3_handoff_commits_via_standard_tool_and_transitions(monkeypatch):
     from phase.router import PhaseRouter
     from state.models import Accommodation, DateRange, TravelPlanState
     from tests.helpers.register_plan_tools import register_all_plan_tools
 
-    plan = TravelPlanState(session_id="s-parallel-commit", phase=5)
+    plan = TravelPlanState(session_id="s-parallel-commit", phase=3)
     plan.destination = "東京"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
     plan.selected_skeleton_id = "plan_A"
@@ -351,7 +351,7 @@ async def test_parallel_phase5_handoff_commits_via_standard_tool_and_transitions
         async def run(self):
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行摘要")
 
-    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+    monkeypatch.setattr("agent.phase3.orchestrator.Phase3Orchestrator", FakeOrchestrator)
 
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
@@ -365,25 +365,25 @@ async def test_parallel_phase5_handoff_commits_via_standard_tool_and_transitions
         plan=plan,
         memory_mgr=_StubMemoryManager(),
         user_id="u",
-        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+        phase3_parallel_config=Phase3ParallelConfig(enabled=True),
     )
 
     chunks = [
         chunk
         async for chunk in agent.run(
             [Message(role=Role.USER, content="继续")],
-            phase=5,
+            phase=3,
         )
     ]
 
-    assert plan.phase == 7
+    assert plan.phase == 4
     assert len(plan.daily_plans) == 1
     assert plan.daily_plans[0].day == 1
     assert any(c.type == ChunkType.TOOL_RESULT for c in chunks)
     assert any(
         c.type == ChunkType.PHASE_TRANSITION
-        and c.phase_info["from_phase"] == 5
-        and c.phase_info["to_phase"] == 7
+        and c.phase_info["from_phase"] == 3
+        and c.phase_info["to_phase"] == 4
         for c in chunks
     )
     # Exactly one terminal DONE — orchestrator must not emit its own DONE.
@@ -392,12 +392,12 @@ async def test_parallel_phase5_handoff_commits_via_standard_tool_and_transitions
 
 
 @pytest.mark.asyncio
-async def test_parallel_phase5_handoff_commit_failure_is_reported(monkeypatch):
+async def test_parallel_phase3_handoff_commit_failure_is_reported(monkeypatch):
     from phase.router import PhaseRouter
     from state.models import Accommodation, DateRange, TravelPlanState
     from tests.helpers.register_plan_tools import register_all_plan_tools
 
-    plan = TravelPlanState(session_id="s-parallel-commit-fail", phase=5)
+    plan = TravelPlanState(session_id="s-parallel-commit-fail", phase=3)
     plan.destination = "東京"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
     plan.selected_skeleton_id = "plan_A"
@@ -423,7 +423,7 @@ async def test_parallel_phase5_handoff_commit_failure_is_reported(monkeypatch):
         async def run(self):
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行摘要")
 
-    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+    monkeypatch.setattr("agent.phase3.orchestrator.Phase3Orchestrator", FakeOrchestrator)
 
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
@@ -437,18 +437,18 @@ async def test_parallel_phase5_handoff_commit_failure_is_reported(monkeypatch):
         plan=plan,
         memory_mgr=_StubMemoryManager(),
         user_id="u",
-        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+        phase3_parallel_config=Phase3ParallelConfig(enabled=True),
     )
 
     chunks = [
         chunk
         async for chunk in agent.run(
             [Message(role=Role.USER, content="继续")],
-            phase=5,
+            phase=3,
         )
     ]
 
-    assert plan.phase == 5
+    assert plan.phase == 3
     assert plan.daily_plans == []
     assert any(
         c.type == ChunkType.TOOL_RESULT
@@ -467,10 +467,10 @@ async def test_parallel_phase5_handoff_commit_failure_is_reported(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_parallel_phase5_handoff_requires_commit_context(monkeypatch):
+async def test_parallel_phase3_handoff_requires_commit_context(monkeypatch):
     from state.models import Accommodation, DateRange, TravelPlanState
 
-    plan = TravelPlanState(session_id="s-missing-context", phase=5)
+    plan = TravelPlanState(session_id="s-missing-context", phase=3)
     plan.destination = "東京"
     plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
     plan.selected_skeleton_id = "plan_A"
@@ -497,27 +497,27 @@ async def test_parallel_phase5_handoff_requires_commit_context(monkeypatch):
         async def run(self):
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行摘要")
 
-    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+    monkeypatch.setattr("agent.phase3.orchestrator.Phase3Orchestrator", FakeOrchestrator)
 
     agent = AgentLoop(
         llm=MagicMock(),
         tool_engine=ToolEngine(),
         hooks=HookManager(),
         plan=plan,
-        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+        phase3_parallel_config=Phase3ParallelConfig(enabled=True),
     )
 
     with pytest.raises(TypeError):
-        chunks = [chunk async for chunk in agent._run_parallel_phase5_orchestrator()]
+        chunks = [chunk async for chunk in agent._run_parallel_phase3_orchestrator()]
 
 
 @pytest.mark.asyncio
-async def test_parallel_phase5_without_handoff_does_not_commit_or_transition(monkeypatch):
+async def test_parallel_phase3_without_handoff_does_not_commit_or_transition(monkeypatch):
     from phase.router import PhaseRouter
     from state.models import Accommodation, DateRange, TravelPlanState
     from tests.helpers.register_plan_tools import register_all_plan_tools
 
-    plan = TravelPlanState(session_id="s-no-handoff", phase=5)
+    plan = TravelPlanState(session_id="s-no-handoff", phase=3)
     plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
     plan.selected_skeleton_id = "plan_A"
     plan.skeleton_plans = [{"id": "plan_A", "days": [{}]}]
@@ -531,7 +531,7 @@ async def test_parallel_phase5_without_handoff_does_not_commit_or_transition(mon
         async def run(self):
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行失败，等待串行")
 
-    monkeypatch.setattr("agent.phase5.orchestrator.Phase5Orchestrator", FakeOrchestrator)
+    monkeypatch.setattr("agent.phase3.orchestrator.Phase3Orchestrator", FakeOrchestrator)
 
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
@@ -545,18 +545,18 @@ async def test_parallel_phase5_without_handoff_does_not_commit_or_transition(mon
         plan=plan,
         memory_mgr=_StubMemoryManager(),
         user_id="u",
-        phase5_parallel_config=Phase5ParallelConfig(enabled=True),
+        phase3_parallel_config=Phase3ParallelConfig(enabled=True),
     )
 
     chunks = [
         chunk
         async for chunk in agent.run(
             [Message(role=Role.USER, content="继续")],
-            phase=5,
+            phase=3,
         )
     ]
 
-    assert plan.phase == 5
+    assert plan.phase == 3
     assert plan.daily_plans == []
     assert not any(c.type == ChunkType.TOOL_RESULT for c in chunks)
     assert not any(c.type == ChunkType.PHASE_TRANSITION for c in chunks)

@@ -16,11 +16,11 @@ from state.models import (
 def test_create_empty_plan():
     plan = TravelPlanState(session_id="sess_001")
     assert plan.phase == 1
-    assert plan.phase3_step == "brief"
+    assert plan.phase2_step == "brief"
     assert plan.destination is None
     assert plan.daily_plans == []
     assert plan.backtrack_history == []
-    assert plan.version == 1
+    assert plan.version == 2
 
 
 def test_date_range():
@@ -44,7 +44,7 @@ def test_plan_serialization():
     plan = TravelPlanState(
         session_id="sess_001",
         destination="Kyoto",
-        phase=3,
+        phase=2,
         dates=DateRange(start="2026-04-10", end="2026-04-15"),
         trip_brief={"goal": "慢旅行"},
         skeleton_plans=[{"id": "balanced"}],
@@ -53,7 +53,7 @@ def test_plan_serialization():
     d = plan.to_dict()
     assert d["session_id"] == "sess_001"
     assert d["destination"] == "Kyoto"
-    assert d["phase3_step"] == "brief"
+    assert d["phase2_step"] == "brief"
     assert d["selected_skeleton_id"] == "balanced"
 
     restored = TravelPlanState.from_dict(d)
@@ -140,10 +140,10 @@ def test_day_plan_from_dict_raises_on_non_dict():
 def test_plan_clear_downstream_from_phase_3():
     plan = TravelPlanState(
         session_id="sess_001",
-        phase=5,
+        phase=3,
         destination="Kyoto",
         dates=DateRange(start="2026-04-10", end="2026-04-15"),
-        phase3_step="lock",
+        phase2_step="lock",
         trip_brief={"goal": "文化体验"},
         candidate_pool=[{"name": "清水寺"}],
         skeleton_plans=[{"id": "balanced"}],
@@ -156,8 +156,8 @@ def test_plan_clear_downstream_from_phase_3():
         },
         constraints=[Constraint(type="hard", description="预算 1 万")],
     )
-    plan.clear_downstream(from_phase=3)
-    assert plan.phase3_step == "brief"
+    plan.clear_downstream(from_phase=2)
+    assert plan.phase2_step == "brief"
     assert plan.trip_brief == {}
     assert plan.candidate_pool == []
     assert plan.skeleton_plans == []
@@ -186,10 +186,10 @@ def test_plan_serialization_roundtrips_deliverables():
     assert restored.deliverables == plan.deliverables
 
 
-def test_clear_downstream_from_phase_5_clears_deliverables():
+def test_clear_downstream_from_phase_3_clears_deliverables():
     plan = TravelPlanState(
         session_id="sess_001",
-        phase=7,
+        phase=4,
         deliverables={
             "travel_plan_md": "travel_plan.md",
             "checklist_md": "checklist.md",
@@ -198,7 +198,7 @@ def test_clear_downstream_from_phase_5_clears_deliverables():
         daily_plans=[DayPlan(day=1, date="2026-04-10", activities=[])],
     )
 
-    plan.clear_downstream(from_phase=5)
+    plan.clear_downstream(from_phase=3)
     assert plan.daily_plans == []
     assert plan.deliverables is None
 
@@ -206,7 +206,7 @@ def test_clear_downstream_from_phase_5_clears_deliverables():
 def test_clear_downstream_from_phase_1_clears_deliverables():
     plan = TravelPlanState(
         session_id="sess_001",
-        phase=7,
+        phase=4,
         destination="Kyoto",
         daily_plans=[DayPlan(day=1, date="2026-04-10", activities=[])],
         deliverables={

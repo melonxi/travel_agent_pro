@@ -45,10 +45,10 @@ def make_generate_summary_tool(plan: TravelPlanState):
     @tool(
         name="generate_summary",
         description="""提交正式交付物。
-Use when: 用户在阶段 7，需要冻结最终 travel_plan.md 与 checklist.md。
+Use when: 用户在阶段 4，需要冻结最终 travel_plan.md 与 checklist.md。
 Don't use when: 逐日行程未完成，或需要回退前序阶段。
         返回规范化后的双 markdown 交付物内容。""",
-        phases=[7],
+        phases=[4],
         parameters=_PARAMETERS,
         side_effect="write",
         human_label="提交正式交付物",

@@ -110,9 +110,9 @@
 
 /* Phase-specific badge colors */
 .trace-phase-group.phase-1 .phase-badge { background: #f59e0b; }
-.trace-phase-group.phase-3 .phase-badge { background: #3b82f6; color: #fff; }
-.trace-phase-group.phase-5 .phase-badge { background: #22c55e; }
-.trace-phase-group.phase-7 .phase-badge { background: #a78bfa; }
+.trace-phase-group.phase-2 .phase-badge { background: #3b82f6; color: #fff; }
+.trace-phase-group.phase-3 .phase-badge { background: #22c55e; }
+.trace-phase-group.phase-4 .phase-badge { background: #a78bfa; }
 
 .phase-label {
   font-size: 13px;

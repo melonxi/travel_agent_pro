@@ -68,9 +68,9 @@ async def test_plan_tool_injects_realtime_incremental_feedback(app, sessions):
 
         session = sessions[session_id]
         plan: TravelPlanState = session["plan"]
-        plan.phase = 5
+        plan.phase = 3
         plan.destination = "东京"
-        plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
+        plan.dates = DateRange(start="2026-06-01", end="2026-06-03")
         plan.budget = Budget(total=10_000)
         plan.accommodation = Accommodation(area="新宿", hotel="A")
 
@@ -85,7 +85,7 @@ async def test_plan_tool_injects_realtime_incremental_feedback(app, sessions):
                     arguments={
                         "mode": "create",
                         "day": 1,
-                        "date": "2026-05-01",
+                        "date": "2026-06-01",
                         "activities": [
                             {
                                 "name": "浅草寺",
@@ -204,7 +204,7 @@ async def test_save_day_plan_replace_existing_shows_soft_judge_after_tool_result
 
         session = sessions[session_id]
         plan: TravelPlanState = session["plan"]
-        plan.phase = 5
+        plan.phase = 3
         plan.destination = "惠州"
         plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
         plan.budget = Budget(total=3_000)

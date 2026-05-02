@@ -5,7 +5,7 @@ description: |
   用户要求以极低预算去日本旅行5天。测试系统是否：
   1. 在 Phase 1 就通过 feasibility gate 拦截
   2. 给出合理的预算不足说明
-  3. 不盲目进入 Phase 3 搜索航班
+  3. 不盲目进入 Phase 2 搜索航班
 difficulty: hard
 tags: [failure-analysis, budget, feasibility]
 messages:

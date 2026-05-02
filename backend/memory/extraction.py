@@ -213,7 +213,7 @@ def _build_working_item_schema() -> dict[str, Any]:
         "properties": {
             "phase": {
                 "type": "integer",
-                "description": "该临时信号产生于哪个阶段，例如 1 / 3 / 5 / 7。",
+                "description": "该临时信号产生于哪个阶段，例如 1 / 2 / 3 / 4。",
             },
             "kind": {
                 "type": "string",

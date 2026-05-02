@@ -251,12 +251,12 @@ def make_save_day_plan_tool(plan: TravelPlanState):
     @tool(
         name="save_day_plan",
         description=(
-            "保存 Phase 5 的单日行程。"
+            "保存 Phase 3 的单日行程。"
             'Use when: 新增一天用 mode="create"；修改已有某天或修复该天冲突用 mode="replace_existing"。'
             "Don't use when: 需要一次性替换所有天，改用 replace_all_day_plans。"
             "写入后会返回 covered_days/missing_days/conflicts，严重冲突必须先修复。"
         ),
-        phases=[5],
+        phases=[3],
         parameters=_SAVE_DAY_PLAN_PARAMETERS,
         side_effect="write",
         human_label="保存单日行程",
@@ -321,12 +321,12 @@ def make_replace_all_day_plans_tool(plan: TravelPlanState):
     @tool(
         name="replace_all_day_plans",
         description=(
-            "整体替换 Phase 5 的所有逐日行程。"
+            "整体替换 Phase 3 的所有逐日行程。"
             "Use when: 用户要求一次性完整版、全局重排、或跨多天结构需要整体替换。"
             "Don't use when: 只新增或修改一天，改用 save_day_plan。"
             "days 必须覆盖完整 1..total_days。"
         ),
-        phases=[5],
+        phases=[3],
         parameters=_REPLACE_ALL_DAY_PLANS_PARAMETERS,
         side_effect="write",
         human_label="整体替换逐日行程",
@@ -377,7 +377,7 @@ def make_replace_all_day_plans_tool(plan: TravelPlanState):
 
 
 # ---------------------------------------------------------------------------
-# Legacy factories (hidden from Phase 5, kept for backward compatibility)
+# Legacy factories (hidden from Phase 3, kept for backward compatibility)
 # ---------------------------------------------------------------------------
 
 

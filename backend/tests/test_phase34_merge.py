@@ -1,9 +1,5 @@
 # backend/tests/test_phase34_merge.py
-"""
-TDD tests for Phase 3+4 merge.
-Phase 3 now covers both date/rhythm planning AND accommodation selection.
-Phase 4 no longer exists as a separate phase.
-"""
+"""Regression tests for the current Phase 1/2/3/4 routing surface."""
 
 from __future__ import annotations
 
@@ -23,7 +19,7 @@ from tools.engine import ToolEngine
 
 
 # ---------------------------------------------------------------------------
-# 1. PhaseRouter.infer_phase — Phase 4 no longer returned
+# 1. PhaseRouter.infer_phase — current routing returns 1/2/3/4
 # ---------------------------------------------------------------------------
 
 
@@ -32,20 +28,20 @@ class TestInferPhaseAfterMerge:
     def router(self):
         return PhaseRouter()
 
-    def test_destination_only_returns_phase3(self, router):
+    def test_destination_only_returns_phase2(self, router):
         plan = TravelPlanState(session_id="s", destination="Tokyo")
-        assert router.infer_phase(plan) == 3
+        assert router.infer_phase(plan) == 2
 
-    def test_destination_and_dates_still_phase3(self, router):
-        """After merge: dates set but no accommodation → still phase 3."""
+    def test_destination_and_dates_still_phase2(self, router):
+        """After merge: dates set but no accommodation → still phase 2."""
         plan = TravelPlanState(
             session_id="s",
             destination="Tokyo",
             dates=DateRange(start="2026-05-01", end="2026-05-05"),
         )
-        assert router.infer_phase(plan) == 3
+        assert router.infer_phase(plan) == 2
 
-    def test_destination_dates_and_accommodation_goes_to_phase5(self, router):
+    def test_destination_dates_and_accommodation_goes_to_phase3(self, router):
         plan = TravelPlanState(
             session_id="s",
             destination="Tokyo",
@@ -53,10 +49,10 @@ class TestInferPhaseAfterMerge:
             selected_skeleton_id="balanced",
             accommodation=Accommodation(area="新宿"),
         )
-        assert router.infer_phase(plan) == 5
+        assert router.infer_phase(plan) == 3
 
-    def test_infer_phase_never_returns_4(self, router):
-        """Phase 4 should never be returned by infer_phase."""
+    def test_infer_phase_never_returns_legacy_ids(self, router):
+        """Legacy phase ids should never be returned by infer_phase."""
         combos = [
             TravelPlanState(session_id="s"),
             TravelPlanState(session_id="s", destination="A"),
@@ -82,72 +78,74 @@ class TestInferPhaseAfterMerge:
             ),
         ]
         for plan in combos:
-            assert router.infer_phase(plan) != 4, f"phase 4 returned for {plan}"
+            assert router.infer_phase(plan) not in {5, 7}, (
+                f"legacy phase returned for {plan}"
+            )
 
 
 # ---------------------------------------------------------------------------
-# 2. PHASE_PROMPTS and PHASE_CONTROL_MODE — no key 4
+# 2. PHASE_PROMPTS and PHASE_CONTROL_MODE — contiguous keys
 # ---------------------------------------------------------------------------
 
 
 class TestPromptsAfterMerge:
-    def test_phase4_not_in_prompts(self):
-        assert 4 not in PHASE_PROMPTS
+    def test_prompt_keys_are_contiguous(self):
+        assert set(PHASE_PROMPTS) == {1, 2, 3, 4}
 
-    def test_phase4_not_in_control_mode(self):
-        assert 4 not in PHASE_CONTROL_MODE
+    def test_control_mode_keys_are_contiguous(self):
+        assert set(PHASE_CONTROL_MODE) == {1, 2, 3, 4}
 
-    def test_phase3_prompt_covers_accommodation(self):
-        """Merged phase 3 prompt must mention accommodation."""
-        prompt = PHASE_PROMPTS[3]
+    def test_phase2_prompt_covers_accommodation(self):
+        """Merged phase 2 prompt must mention accommodation."""
+        prompt = PHASE_PROMPTS[2]
         assert "住宿" in prompt
 
-    def test_phase3_prompt_covers_dates(self):
-        prompt = PHASE_PROMPTS[3]
+    def test_phase2_prompt_covers_dates(self):
+        prompt = PHASE_PROMPTS[2]
         assert "日期" in prompt
 
-    def test_phase3_prompt_covers_skeleton(self):
-        prompt = PHASE_PROMPTS[3]
+    def test_phase2_prompt_covers_skeleton(self):
+        prompt = PHASE_PROMPTS[2]
         assert "骨架" in prompt
         assert "candidate" in prompt
 
     def test_remaining_phases_still_exist(self):
-        for phase in [1, 3, 5, 7]:
+        for phase in [1, 2, 3, 4]:
             assert phase in PHASE_PROMPTS
             assert phase in PHASE_CONTROL_MODE
 
 
 # ---------------------------------------------------------------------------
-# 3. _PHASE_DOWNSTREAM — merged phase 3 clears dates+accommodation+daily_plans
+# 3. _PHASE_DOWNSTREAM — merged phase 2 clears dates+accommodation+daily_plans
 # ---------------------------------------------------------------------------
 
 
 class TestDownstreamAfterMerge:
-    def test_phase4_not_in_downstream(self):
+    def test_phase4_has_no_downstream_fields(self):
         assert 4 not in _PHASE_DOWNSTREAM
 
-    def test_phase3_downstream_includes_accommodation(self):
-        assert "accommodation" in _PHASE_DOWNSTREAM[3]
+    def test_phase2_downstream_includes_accommodation(self):
+        assert "accommodation" in _PHASE_DOWNSTREAM[2]
 
-    def test_phase3_downstream_includes_dates(self):
-        assert "dates" in _PHASE_DOWNSTREAM[3]
+    def test_phase2_downstream_includes_dates(self):
+        assert "dates" in _PHASE_DOWNSTREAM[2]
 
     def test_phase3_downstream_includes_daily_plans(self):
         assert "daily_plans" in _PHASE_DOWNSTREAM[3]
 
-    def test_phase3_downstream_includes_skeleton_fields(self):
-        assert "skeleton_plans" in _PHASE_DOWNSTREAM[3]
-        assert "selected_skeleton_id" in _PHASE_DOWNSTREAM[3]
+    def test_phase2_downstream_includes_skeleton_fields(self):
+        assert "skeleton_plans" in _PHASE_DOWNSTREAM[2]
+        assert "selected_skeleton_id" in _PHASE_DOWNSTREAM[2]
 
 
 # ---------------------------------------------------------------------------
-# 4. Tool phases — no tool should have phase 4
+# 4. Tool phases — current routing surface uses 1/2/3/4
 # ---------------------------------------------------------------------------
 
 
 class TestToolPhasesAfterMerge:
-    def test_tools_with_former_phase34_now_phase3(self):
-        """Tools that were [3,4] should now be [3]."""
+    def test_transport_and_accommodation_tools_are_phase2(self):
+        """Transport and accommodation search tools belong to Phase 2."""
         # We test by creating tools and checking; the actual tool files
         # are validated by importing them.
         from tools.search_flights import make_search_flights_tool
@@ -158,19 +156,16 @@ class TestToolPhasesAfterMerge:
         keys = ApiKeysConfig()
 
         flight_tool = make_search_flights_tool(keys)
-        assert 4 not in flight_tool.phases
-        assert 3 in flight_tool.phases
+        assert flight_tool.phases == [2]
 
         train_tool = make_search_trains_tool(None)
-        assert 4 not in train_tool.phases
-        assert 3 in train_tool.phases
+        assert train_tool.phases == [2]
 
         accom_tool = make_search_accommodations_tool(keys)
-        assert 4 not in accom_tool.phases
-        assert 3 in accom_tool.phases
+        assert accom_tool.phases == [2]
 
-    def test_tools_with_former_phase45_now_phase35(self):
-        """Tools that were [4,5] should now be [3,5]."""
+    def test_route_and_availability_tools_are_phase2_and_phase3(self):
+        """Route and availability tools are available while framing and assembling."""
         from tools.calculate_route import make_calculate_route_tool
         from tools.check_availability import make_check_availability_tool
         from tools.assemble_day_plan import make_assemble_day_plan_tool
@@ -179,33 +174,25 @@ class TestToolPhasesAfterMerge:
         keys = ApiKeysConfig()
 
         route_tool = make_calculate_route_tool(keys)
-        assert 4 not in route_tool.phases
-        assert 3 in route_tool.phases
-        assert 5 in route_tool.phases
+        assert route_tool.phases == [2, 3]
 
         avail_tool = make_check_availability_tool(keys)
-        assert 4 not in avail_tool.phases
-        assert 3 in avail_tool.phases
-        assert 5 in avail_tool.phases
+        assert avail_tool.phases == [2, 3]
 
         assemble_tool = make_assemble_day_plan_tool()
-        assert 4 not in assemble_tool.phases
-        assert 3 in assemble_tool.phases
-        assert 5 not in assemble_tool.phases
+        assert assemble_tool.phases == [2]
 
-    def test_tools_with_former_phase345_now_phase35(self):
-        """get_poi_info was [3,4,5], should now be [3,5]."""
+    def test_get_poi_info_is_phase2_and_phase3(self):
+        """POI details are available while framing and assembling."""
         from tools.get_poi_info import make_get_poi_info_tool
         from config import ApiKeysConfig
 
         keys = ApiKeysConfig()
         poi_tool = make_get_poi_info_tool(keys)
-        assert 4 not in poi_tool.phases
-        assert 3 in poi_tool.phases
-        assert 5 in poi_tool.phases
+        assert poi_tool.phases == [2, 3]
 
-    def test_universal_tools_no_phase4(self):
-        """Xiaohongshu tools and update_trip_basics should not include phase 4."""
+    def test_universal_and_basics_tool_phases(self):
+        """Universal browse tools span current phases; basics updates stay early."""
         from tools.xiaohongshu_search import (
             make_xiaohongshu_get_comments_tool,
             make_xiaohongshu_read_note_tool,
@@ -219,14 +206,14 @@ class TestToolPhasesAfterMerge:
             make_xiaohongshu_read_note_tool(XhsConfig()),
             make_xiaohongshu_get_comments_tool(XhsConfig()),
         ]:
-            assert 4 not in xhs_tool.phases
+            assert xhs_tool.phases == [1, 2, 3, 4]
 
         plan = TravelPlanState(session_id="s")
         utb_tool = make_update_trip_basics_tool(plan)
-        assert 4 not in utb_tool.phases
+        assert utb_tool.phases == [1, 2]
 
-    def test_engine_returns_no_tools_for_phase4(self):
-        """ToolEngine.get_tools_for_phase(4) should return empty list."""
+    def test_engine_returns_no_tools_for_legacy_phase_id(self):
+        """ToolEngine should return no tools for a retired phase id."""
 
         @tool(name="t1", description="d", phases=[3], parameters={})
         async def t1():
@@ -239,11 +226,11 @@ class TestToolPhasesAfterMerge:
         engine = ToolEngine()
         engine.register(t1)
         engine.register(t2)
-        assert engine.get_tools_for_phase(4) == []
+        assert engine.get_tools_for_phase(5) == []
 
 
 # ---------------------------------------------------------------------------
-# 5. Backtrack — phase 3 clears accommodation now
+# 5. Backtrack — phase 2 clears accommodation now
 # ---------------------------------------------------------------------------
 
 
@@ -253,7 +240,7 @@ class TestBacktrackAfterMerge:
 
         plan = TravelPlanState(
             session_id="s",
-            phase=5,
+            phase=3,
             destination="Tokyo",
             dates=DateRange(start="2026-05-01", end="2026-05-05"),
             selected_skeleton_id="balanced",
@@ -261,9 +248,9 @@ class TestBacktrackAfterMerge:
             accommodation=Accommodation(area="新宿"),
             daily_plans=[DayPlan(day=1, date="2026-05-01")],
         )
-        BacktrackService().execute(plan, to_phase=3, reason="改日期", snapshot_path="")
+        BacktrackService().execute(plan, to_phase=2, reason="改日期", snapshot_path="")
 
-        assert plan.phase == 3
+        assert plan.phase == 2
         assert plan.dates is None
         assert plan.accommodation is None
         assert plan.daily_plans == []
@@ -279,7 +266,7 @@ class TestBacktrackAfterMerge:
 
 class TestPhase4MigrationInFromDict:
     def test_from_dict_migrates_phase4_to_phase3(self):
-        """Old sessions saved with phase=4 should load as phase=3."""
+        """Old sessions saved with phase=4 should load as phase=2."""
         raw = {
             "session_id": "old-session",
             "phase": 4,
@@ -287,4 +274,4 @@ class TestPhase4MigrationInFromDict:
             "dates": {"start": "2026-05-01", "end": "2026-05-05"},
         }
         plan = TravelPlanState.from_dict(raw)
-        assert plan.phase == 3
+        assert plan.phase == 2

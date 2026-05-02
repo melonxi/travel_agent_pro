@@ -1,6 +1,6 @@
 # Travel Agent Pro — Demo Recording
 
-一键录制 Travel Agent Pro 的核心规划流程。当前录制采用 **deterministic scripted playback**：前端可见的 Phase 1 → Phase 3 → Phase 5 → backtrack 流程由固定 fixture 回放，不依赖后端或实时 LLM 输出稳定性。
+一键录制 Travel Agent Pro 的核心规划流程。当前录制采用 **deterministic scripted playback**：前端可见的 Phase 1 → Phase 2 → Phase 3 → backtrack 流程由固定 fixture 回放，不依赖后端或实时 LLM 输出稳定性。
 
 ## 前置要求
 
@@ -30,15 +30,15 @@ scripts/demo/run-all-demos.sh
 `demo-full-flow.spec.ts` 读取 `demo-scripted-session.json`，在一个共享会话里串联四段核心路径：
 
 1. Phase 1：从模糊意图收敛候选目的地
-2. Phase 3：确认京都方向后生成旅行骨架
-3. Phase 3 → 5：**显式选择住宿候选**，锁定住宿并进入日程组装
-4. Phase 5 → 1：回退并重新收敛海边候选，验证 backtrack 清理
+2. Phase 2：确认京都方向后生成旅行骨架
+3. Phase 2 → 3：**显式选择住宿候选**，锁定住宿并进入日程组装
+4. Phase 3 → 1：回退并重新收敛海边候选，验证 backtrack 清理
 
 截图输出：
 
 - `screenshots/demos/phase1-recommendations.png`
-- `screenshots/demos/phase3-planning.png`
-- `screenshots/demos/phase5-backtrack-change-preference.png`
+- `screenshots/demos/phase2-planning.png`
+- `screenshots/demos/phase3-backtrack-change-preference.png`
 
 录屏输出：
 
@@ -48,7 +48,7 @@ scripts/demo/run-all-demos.sh
 
 - `demo-scripted-session.json` 定义会话元数据、每一轮用户输入、工具卡片、SSE `state_update` 和最终 plan 快照
 - `demo-full-flow.spec.ts` 在内存里推进 fixture 状态，并把成功 run 的视频直接保存为 `screenshots/demos/demo-full-flow.webm`
-- 这意味着 demo 录制结果稳定可复现，不会再因为模型临场波动卡在 Phase 3
+- 这意味着 demo 录制结果稳定可复现，不会再因为模型临场波动卡在 Phase 2
 
 ## Seed Memory
 

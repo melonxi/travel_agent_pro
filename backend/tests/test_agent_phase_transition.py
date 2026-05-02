@@ -12,9 +12,9 @@ from run import IterationProgress
 
 
 class _Plan:
-    def __init__(self, *, phase: int, phase3_step: str | None = None):
+    def __init__(self, *, phase: int, phase2_step: str | None = None):
         self.phase = phase
-        self.phase3_step = phase3_step
+        self.phase2_step = phase2_step
 
 
 @pytest.mark.asyncio
@@ -36,15 +36,15 @@ async def test_detects_backtrack_before_router_check():
         phase_router=router,
         hooks=None,
         batch_outcome=batch,
-        phase_before_batch=5,
-        phase3_step_before_batch=None,
-        current_phase=5,
+        phase_before_batch=3,
+        phase2_step_before_batch=None,
+        current_phase=3,
         drain_internal_task_events=lambda: [],
     )
 
     assert detection.request is not None
     assert detection.request.reason == "backtrack"
-    assert detection.request.from_phase == 5
+    assert detection.request.from_phase == 3
     assert detection.request.to_phase == 1
     assert detection.request.result is result
     router.check_and_apply_transition.assert_not_awaited()
@@ -52,7 +52,7 @@ async def test_detects_backtrack_before_router_check():
 
 @pytest.mark.asyncio
 async def test_detects_direct_plan_phase_write_before_router_check():
-    plan = _Plan(phase=3)
+    plan = _Plan(phase=2)
     router = AsyncMock()
     router.check_and_apply_transition = AsyncMock(return_value=True)
     batch = ToolBatchOutcome(
@@ -69,7 +69,7 @@ async def test_detects_direct_plan_phase_write_before_router_check():
         hooks=None,
         batch_outcome=batch,
         phase_before_batch=1,
-        phase3_step_before_batch=None,
+        phase2_step_before_batch=None,
         current_phase=1,
         drain_internal_task_events=lambda: [],
     )
@@ -77,7 +77,7 @@ async def test_detects_direct_plan_phase_write_before_router_check():
     assert detection.request is not None
     assert detection.request.reason == "plan_tool_direct"
     assert detection.request.from_phase == 1
-    assert detection.request.to_phase == 3
+    assert detection.request.to_phase == 2
     router.check_and_apply_transition.assert_not_awaited()
 
 
@@ -92,7 +92,7 @@ async def test_detects_router_transition_and_returns_internal_tasks_first():
     )
 
     async def _promote(_plan, hooks=None):
-        _plan.phase = 3
+        _plan.phase = 2
         return True
 
     router = AsyncMock()
@@ -111,7 +111,7 @@ async def test_detects_router_transition_and_returns_internal_tasks_first():
         hooks="hooks",
         batch_outcome=batch,
         phase_before_batch=1,
-        phase3_step_before_batch=None,
+        phase2_step_before_batch=None,
         current_phase=1,
         drain_internal_task_events=lambda: [task],
     )
@@ -119,13 +119,13 @@ async def test_detects_router_transition_and_returns_internal_tasks_first():
     assert detection.internal_tasks == [task]
     assert detection.request is not None
     assert detection.request.reason == "check_and_apply_transition"
-    assert detection.request.to_phase == 3
+    assert detection.request.to_phase == 2
     router.check_and_apply_transition.assert_awaited_once_with(plan, hooks="hooks")
 
 
 @pytest.mark.asyncio
-async def test_returns_phase3_step_after_batch_without_phase_transition():
-    plan = _Plan(phase=3, phase3_step="candidate")
+async def test_returns_phase2_step_after_batch_without_phase_transition():
+    plan = _Plan(phase=2, phase2_step="candidate")
     router = AsyncMock()
     router.check_and_apply_transition = AsyncMock(return_value=False)
     batch = ToolBatchOutcome(
@@ -141,13 +141,13 @@ async def test_returns_phase3_step_after_batch_without_phase_transition():
         phase_router=router,
         hooks=None,
         batch_outcome=batch,
-        phase_before_batch=3,
-        phase3_step_before_batch="brief",
-        current_phase=3,
+        phase_before_batch=2,
+        phase2_step_before_batch="brief",
+        current_phase=2,
         drain_internal_task_events=lambda: [],
     )
 
     assert detection.request is None
     assert detection.internal_tasks == []
-    assert detection.phase3_step_after_batch == "candidate"
+    assert detection.phase2_step_after_batch == "candidate"
     router.check_and_apply_transition.assert_not_awaited()
