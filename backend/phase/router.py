@@ -7,11 +7,11 @@ from opentelemetry import trace
 
 from phase.backtrack import BacktrackService
 from phase.prompts import (
-    GLOBAL_RED_FLAGS,
     PHASE_CONTROL_MODE,
     PHASE_PROMPTS,
     build_phase3_prompt,
 )
+from phase.red_flags import render_red_flags
 from state.models import TravelPlanState, infer_phase3_step_from_state
 from telemetry.attributes import EVENT_PHASE_PLAN_SNAPSHOT, PHASE_FROM, PHASE_TO
 
@@ -95,12 +95,13 @@ class PhaseRouter:
         return PHASE_PROMPTS.get(phase, PHASE_PROMPTS[1])
 
     def get_prompt_for_plan(self, plan: TravelPlanState) -> str:
-        """Return phase prompt with GLOBAL_RED_FLAGS appended."""
+        """Return phase prompt with active Red Flags appended."""
         if plan.phase == 3:
             step = getattr(plan, "phase3_step", "brief") or "brief"
-            return build_phase3_prompt(step)
+            base = build_phase3_prompt(step)
+            return base + "\n\n" + render_red_flags(phase=3, phase3_step=step)
         base = PHASE_PROMPTS.get(plan.phase, PHASE_PROMPTS[1])
-        return base + "\n\n# 全局 Red Flags\n\n" + GLOBAL_RED_FLAGS
+        return base + "\n\n" + render_red_flags(phase=plan.phase)
 
     def get_control_mode(self, phase: int) -> str:
         return PHASE_CONTROL_MODE.get(phase, "conversational")

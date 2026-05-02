@@ -1,18 +1,5 @@
 # backend/phase/prompts.py
 
-GLOBAL_RED_FLAGS = """以下行为是高频失败信号，出现任何一条说明你正在走偏：
-
-- 用户没有明确确认，你却写入了确定性选择字段（destination、dates、selected_skeleton_id、selected_transport、accommodation）。
-- 用户只说了"玩5天""五一""下个月"，你却写入了具体年月日。
-- 你在正文中给出了候选池、骨架方案或逐日行程，但没有通过状态写入工具写入状态。
-- 你凭记忆或常识声称营业时间、价格、签证政策、天气已验证，但实际没有调用工具获取结果。
-- 你把小红书 UGC 内容（价格、营业时间、政策）当成确定性事实，没有交叉验证。
-- 当前可用工具列表中没有某工具，你却承诺会调用它或暗示你拥有该能力。
-- 用户要求推翻前序决策，你没有使用 `request_backtrack(to_phase=..., reason="...")`。
-- 你把自己的推断、推荐、联想、示例、默认值写入了 preferences 或 constraints。
-- 你在 Phase 1（目的地未确认）就主动追问用户出行日期、人数、预算、节奏偏好等非目的地字段。
-- 你在同一轮工具调用批次里同时调用了 `set_shortlist` 和 `set_skeleton_plans`（或 `set_candidate_pool` 和 `set_skeleton_plans`）——骨架生成必须另起一轮，先做攻略搜索。"""
-
 PHASE1_PROMPT = """## 角色
 
 你是目的地收敛顾问。
@@ -105,15 +92,6 @@ PHASE1_PROMPT = """## 角色
 - 用户已明确确认目的地。
 - 已调用 `update_trip_basics(destination="...")` 写入。
 - 没有把推荐候选误写成用户最终决定。
-
-## Red Flags
-
-- 用户还没确认目的地，你就开始推荐住宿、查航班或规划行程。
-- 【硬禁条】用户只提了模糊意愿，你就主动追问"预算多少""几个人去""什么时候出发""节奏偏好"。除非候选地在季节/预算维度上强依赖，否则这些问题一个都不能问。
-- 你写了大段目的地背景知识（历史、地理、文化概述），但没有针对用户的具体需求做推荐。
-- 你没有调工具就给出了具体的签证政策、价格、开放时间等事实性声明。
-- 你把推荐候选直接写入了 destination 字段。
-- 你凭常识或记忆给出候选排名，但缺乏任何搜索结果支撑。
 
 ## 压力场景
 
@@ -297,13 +275,7 @@ PHASE3_STEP_PROMPTS: dict[str, str] = {
 
 ## 收敛压力
 
-如果已超过 3 轮对话仍未形成 trip_brief，检查是否在追问非关键信息；优先用已有信息先形成 brief 草稿再迭代。
-
-## Red Flags
-
-- 在 brief 未成型前调用交通住宿工具
-- 把系统推断写入用户偏好
-- 超过 3 轮仍在反复追问细节而不形成 brief""",
+如果已超过 3 轮对话仍未形成 trip_brief，检查是否在追问非关键信息；优先用已有信息先形成 brief 草稿再迭代。""",
     "candidate": """# 当前子阶段：candidate — 构建候选池并做筛选
 
 ## ⚠️ 输出协议
@@ -383,14 +355,7 @@ PHASE3_STEP_PROMPTS: dict[str, str] = {
 ## 跨子阶段禁令
 
 - **严禁在写入 `set_shortlist` 的同一轮工具批次里，继续调用 `set_skeleton_plans`。** shortlist 写入后，本轮回复只能以自然语言告诉用户"短名单已定，下一步我去搜 N 天攻略再给你骨架方案"，然后停下等系统把你切换到 skeleton 子阶段。
-- 骨架生成需要先做"攻略经验采集"（见 skeleton 子阶段），这件事必须在新一轮对话里、基于 skeleton 子阶段的提示词进行，不能压缩进 candidate 这一轮。
-
-## Red Flags
-
-- 只在正文列候选不写状态
-- 搜索超过 3 轮仍未产出候选池
-- shortlist 没有任何 `xiaohongshu_read_note` 支撑就写入
-- 同一轮同时调用了 set_shortlist 和 set_skeleton_plans""",
+- 骨架生成需要先做"攻略经验采集"（见 skeleton 子阶段），这件事必须在新一轮对话里、基于 skeleton 子阶段的提示词进行，不能压缩进 candidate 这一轮。""",
     "skeleton": """# 当前子阶段：skeleton — 生成行程骨架方案
 
 ## ⚠️ 输出协议
@@ -501,16 +466,7 @@ Day 2:
 ## 完成 Gate
 
 - skeleton_plans 已写入
-- 用户已选择 selected_skeleton_id
-
-## Red Flags
-
-- **没有搜索攻略就直接生成骨架**——这是最常见的失败模式，会导致方案"逻辑正确但不实用"
-- 骨架之间差异太小（仅顺序不同，无实质取舍差异）
-- 没有说明取舍（保留了什么、放弃了什么）
-- 没有按锚点思考直接生成方案
-- **locked_pois 跨天重复**——同一个 POI 被两天同时 lock，会导致 Phase 5 并行 Worker 产生冲突
-- **candidate_pois 为空**——Phase 5 Worker 没有候选池就只能凭空创造，容易偏离骨架意图""",
+- 用户已选择 selected_skeleton_id""",
     "lock": """# 当前子阶段：lock — 锁定大交通和住宿
 
 ## ⚠️ 输出协议
@@ -555,24 +511,13 @@ Day 2:
 
 建议满足（不阻塞阶段推进，但强烈建议）：
 - 关键风险已被指出或给出备选（写入 `risks` / `alternatives`）
-- 大交通方案已搜索并给出选项（写入 `transport_options`）
-
-## Red Flags
-
-- 用户未确认就写入 selected_transport 或 accommodation
-- 大交通搜索被跳过（未调用 search_flights / search_trains 就进入下一阶段）""",
+- 大交通方案已搜索并给出选项（写入 `transport_options`）""",
 }
 
 
 def build_phase3_prompt(step: str = "brief") -> str:
     """Assemble Phase 3 prompt from base + sub-stage specific rules."""
-    return (
-        PHASE3_BASE_PROMPT
-        + "\n\n"
-        + PHASE3_STEP_PROMPTS[step]
-        + "\n\n# 全局 Red Flags\n\n"
-        + GLOBAL_RED_FLAGS
-    )
+    return PHASE3_BASE_PROMPT + "\n\n" + PHASE3_STEP_PROMPTS[step]
 
 
 PHASE5_PROMPT = """## 角色
@@ -722,16 +667,6 @@ save_day_plan / replace_all_day_plans 返回结果中可能包含 conflicts 和 
 - 已对关键开放性、移动成本做过验证
 - 没有明显时间冲突、天数超限或预算失控
 
-## Red Flags
-
-- 你生成了逐日行程但没有调用 `save_day_plan` 或 `replace_all_day_plans` 写入 daily_plans。
-- 你把全部天数攒到最后一次性输出，中间没有任何写入。
-- 你没有用 calculate_route 验证任何一条跨区路线就声称"路线合理"。
-- 你偷偷替换了骨架方案的核心安排（主区域、主题、关键取舍）。
-- 你把所有活动的 cost 都写成 0，或所有 transport_duration_min 都写成相同值。
-- 你在行程中加入了骨架里不存在的远郊一日游或重大新增项，但没有征求用户意见。
-- 你写了大段自然语言描述行程，但 DayPlan 结构缺失必要字段。
-
 ## 压力场景
 
 场景 A：骨架内容不足
@@ -842,18 +777,7 @@ PHASE7_PROMPT = """## 角色
 - 已生成个性化的出行准备清单（不是通用模板）
 - 已调用 `generate_summary` 提交 `travel_plan_markdown`
 - 已调用 `generate_summary` 提交 `checklist_markdown`
-- 清单覆盖了证件、财务、穿着、通讯、注意事项、安全、贴士等核心类别
-
-## Red Flags
-
-- 你生成了穿衣建议但没有调用 check_weather。
-- 你推荐了签证服务但没有调用 search_travel_services，链接是编造的。
-- 你的清单是通用旅行清单，没有基于实际行程内容做个性化。
-- 你修改了 daily_plans 或重新规划了行程安排。
-- 你没有调用 `generate_summary` 就声称正式交付物已完成。
-- 你只提交了 `travel_plan_markdown` 或只提交了 `checklist_markdown`。
-- 交付物已冻结，你却没有提示用户先回退。
-- 你凭记忆给出了签证政策或入境要求，没有通过工具验证。"""
+- 清单覆盖了证件、财务、穿着、通讯、注意事项、安全、贴士等核心类别"""
 
 
 PHASE_PROMPTS: dict[int, str] = {

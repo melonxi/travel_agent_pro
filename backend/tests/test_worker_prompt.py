@@ -260,6 +260,15 @@ def test_build_shared_prefix_no_soul_md():
     assert "提供 2-3 个选项" not in prefix
 
 
+def test_build_shared_prefix_no_main_agent_red_flags():
+    plan = _make_plan()
+    prefix = build_shared_prefix(plan)
+    assert "## Active Red Flags" not in prefix
+    assert "G-EVIDENCE" not in prefix
+    assert "P5-1" not in prefix
+    assert "P7-1" not in prefix
+
+
 def test_build_shared_prefix_stable_ordering():
     """Same plan object produces identical output (stable sorted fields)."""
     plan1 = _make_plan()

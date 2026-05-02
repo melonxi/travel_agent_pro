@@ -2,7 +2,6 @@
 """Tests for prompt skill-card architecture upgrade."""
 
 from phase.prompts import (
-    GLOBAL_RED_FLAGS,
     PHASE1_PROMPT,
     PHASE3_BASE_PROMPT,
     PHASE3_STEP_PROMPTS,
@@ -11,24 +10,104 @@ from phase.prompts import (
     PHASE_PROMPTS,
     build_phase3_prompt,
 )
+from phase.red_flags import (
+    CORE_RED_FLAGS,
+    build_active_red_flags,
+    render_red_flags,
+)
 
 _LEGACY_STATE_WRITE_CALL = "update_plan_state("
 _LEGACY_STATE_WRITE_FIELD_CALL = "update_plan_state(field="
 _LEGACY_STATE_WRITE_TOOL = "update_plan_state"
 
 
-class TestGlobalRedFlags:
-    def test_global_red_flags_exists_and_nonempty(self):
-        assert len(GLOBAL_RED_FLAGS) > 100
+class TestScopedRedFlags:
+    def test_core_red_flags_exists_and_nonempty(self):
+        assert len(CORE_RED_FLAGS) == 3
+        rendered = render_red_flags(phase=1)
+        assert "G-EVIDENCE" in rendered
+        assert "G-STATE-AUTHORITY" in rendered
+        assert "G-CAPABILITY-BOUNDARY" in rendered
 
-    def test_global_red_flags_covers_state_write_discipline(self):
-        assert "用户没有明确确认" in GLOBAL_RED_FLAGS
+    def test_red_flags_header_explains_non_goal_semantics_and_tracking_ids(self):
+        rendered = render_red_flags(phase=1)
+        assert "不是任务目标" in rendered
+        assert "不是执行步骤" in rendered
+        assert "正在走偏" in rendered
+        assert "编号仅用于系统测试和追踪" in rendered
+        assert "不是额外指令" in rendered
 
-    def test_global_red_flags_covers_tool_hallucination(self):
-        assert "当前可用工具列表" in GLOBAL_RED_FLAGS
+    def test_core_red_flags_have_no_phase_specific_terms(self):
+        rendered_core = "\n".join(
+            f"{flag.id} {flag.trigger} {flag.repair}" for flag in CORE_RED_FLAGS
+        )
+        forbidden_terms = {
+            "destination",
+            "dates",
+            "selected_skeleton_id",
+            "selected_transport",
+            "accommodation",
+            "daily_plans",
+            "travel_plan_markdown",
+            "checklist_markdown",
+            "generate_summary",
+            "save_day_plan",
+            "set_shortlist",
+            "set_skeleton_plans",
+        }
+        for term in forbidden_terms:
+            assert term not in rendered_core
 
-    def test_global_red_flags_covers_evidence_requirement(self):
-        assert "凭记忆" in GLOBAL_RED_FLAGS or "凭常识" in GLOBAL_RED_FLAGS
+    def test_phase1_prompt_does_not_include_phase5_or_phase7_red_flags(self):
+        prompt = PhaseRouter().get_prompt_for_plan(self._make_plan(1))
+        assert "P1-1" in prompt
+        assert "P5-1" not in prompt
+        assert "P7-1" not in prompt
+
+    def test_phase3_candidate_does_not_include_skeleton_generation_red_flags(self):
+        prompt = PhaseRouter().get_prompt_for_plan(self._make_plan(3, "candidate"))
+        assert "P3-CAND-1" in prompt
+        assert "P3-SKEL-1" not in prompt
+
+    def test_phase3_skeleton_includes_no_search_no_skeleton_flag(self):
+        prompt = PhaseRouter().get_prompt_for_plan(self._make_plan(3, "skeleton"))
+        assert "P3-SKEL-1" in prompt
+        assert "P3-CAND-1" not in prompt
+
+    def test_phase5_prompt_does_not_include_phase1_destination_flags(self):
+        prompt = PhaseRouter().get_prompt_for_plan(self._make_plan(5))
+        assert "P5-1" in prompt
+        assert "P1-1" not in prompt
+
+    def test_phase7_prompt_does_not_include_dayplan_assembly_flags(self):
+        prompt = PhaseRouter().get_prompt_for_plan(self._make_plan(7))
+        assert "P7-1" in prompt
+        assert "P5-1" not in prompt
+
+    def test_worker_red_flags_are_isolated_from_main_agent(self):
+        worker_rendered = render_red_flags(phase=5, worker=True)
+        assert "W5-1" in worker_rendered
+        assert "P5-1" not in worker_rendered
+        assert "G-EVIDENCE" not in worker_rendered
+
+    def test_active_red_flags_stay_under_budget(self):
+        cases = [
+            (1, None),
+            (3, "brief"),
+            (3, "candidate"),
+            (3, "skeleton"),
+            (3, "lock"),
+            (5, None),
+            (7, None),
+        ]
+        for phase, step in cases:
+            assert len(build_active_red_flags(phase=phase, phase3_step=step)) <= 12
+
+    def _make_plan(self, phase: int, phase3_step: str = "brief") -> "TravelPlanState":
+        plan = TravelPlanState(session_id="test")
+        plan.phase = phase
+        plan.phase3_step = phase3_step
+        return plan
 
 
 class TestPhase1SkillCard:
@@ -45,7 +124,8 @@ class TestPhase1SkillCard:
         assert "## 完成 Gate" in PHASE1_PROMPT
 
     def test_phase1_has_red_flags(self):
-        assert "## Red Flags" in PHASE1_PROMPT
+        prompt = PhaseRouter().get_prompt_for_plan(TravelPlanState(session_id="test"))
+        assert "## 当前阶段 Red Flags（高危失败信号）" in prompt
 
     def test_phase1_has_response_discipline(self):
         """Phase 1 must constrain output focus — the core fix for Question 1."""
@@ -68,8 +148,8 @@ class TestPhase1SkillCard:
     def test_phase1_boundary_red_flag(self):
         """Phase 1 Red Flags must warn against boundary violations (Question 7)."""
         assert "预算" in PHASE1_PROMPT
-        prompt_lower = PHASE1_PROMPT.lower()
-        assert "red flag" in prompt_lower or "Red Flags" in PHASE1_PROMPT
+        prompt = PhaseRouter().get_prompt_for_plan(TravelPlanState(session_id="test"))
+        assert "P1-2" in prompt
 
 
 class TestPhase3Split:
@@ -109,8 +189,13 @@ class TestPhase3Split:
             )
 
     def test_each_step_has_red_flags(self):
-        for step, prompt in PHASE3_STEP_PROMPTS.items():
-            assert "Red Flags" in prompt or "red flag" in prompt.lower(), (
+        router = PhaseRouter()
+        for step in PHASE3_STEP_PROMPTS:
+            plan = TravelPlanState(session_id="test")
+            plan.phase = 3
+            plan.phase3_step = step
+            prompt = router.get_prompt_for_plan(plan)
+            assert "## 当前阶段 Red Flags（高危失败信号）" in prompt, (
                 f"step {step} missing Red Flags"
             )
 
@@ -244,7 +329,10 @@ class TestPhase5SkillCard:
         assert "## 完成 Gate" in PHASE5_PROMPT
 
     def test_phase5_has_red_flags(self):
-        assert "## Red Flags" in PHASE5_PROMPT
+        plan = TravelPlanState(session_id="test")
+        plan.phase = 5
+        prompt = PhaseRouter().get_prompt_for_plan(plan)
+        assert "P5-1" in prompt
 
     def test_phase5_has_incremental_strategy(self):
         """Phase 5 must use incremental generation — fix for Question 3."""
@@ -315,7 +403,10 @@ class TestPhase7SkillCard:
         assert "## 完成 Gate" in PHASE7_PROMPT
 
     def test_phase7_has_red_flags(self):
-        assert "## Red Flags" in PHASE7_PROMPT
+        plan = TravelPlanState(session_id="test")
+        plan.phase = 7
+        prompt = PhaseRouter().get_prompt_for_plan(plan)
+        assert "P7-1" in prompt
 
     def test_phase7_has_tool_contract(self):
         assert "工具契约" in PHASE7_PROMPT or "工具策略" in PHASE7_PROMPT
@@ -346,65 +437,65 @@ class TestPhase7SkillCard:
         assert "天气" in PHASE7_PROMPT
 
 
-class TestGlobalRedFlagsInjection:
-    """GLOBAL_RED_FLAGS must be injected into all phase prompts."""
+class TestActiveRedFlagsInjection:
+    """Only active scoped Red Flags must be injected into router prompts."""
 
-    def test_phase1_includes_global_red_flags(self):
-        from phase.router import PhaseRouter
-        from state.models import TravelPlanState
-
+    def test_phase1_includes_active_red_flags(self):
         router = PhaseRouter()
         plan = TravelPlanState(session_id="test")
         plan.phase = 1
         prompt = router.get_prompt_for_plan(plan)
-        assert GLOBAL_RED_FLAGS in prompt
+        assert "G-EVIDENCE" in prompt
+        assert "P1-1" in prompt
 
-    def test_phase3_includes_global_red_flags(self):
-        from phase.router import PhaseRouter
-        from state.models import TravelPlanState
-
+    def test_phase3_includes_active_red_flags(self):
         router = PhaseRouter()
         plan = TravelPlanState(session_id="test")
         plan.phase = 3
         plan.phase3_step = "brief"
         prompt = router.get_prompt_for_plan(plan)
-        assert GLOBAL_RED_FLAGS in prompt
+        assert "G-EVIDENCE" in prompt
+        assert "P3-BASE-1" in prompt
+        assert "P3-BRIEF-1" in prompt
 
-    def test_phase3_all_steps_include_global_red_flags(self):
+    def test_phase3_all_steps_include_scoped_red_flags(self):
+        router = PhaseRouter()
+        expected_prefixes = {
+            "brief": "P3-BRIEF",
+            "candidate": "P3-CAND",
+            "skeleton": "P3-SKEL",
+            "lock": "P3-LOCK",
+        }
         for step in ("brief", "candidate", "skeleton", "lock"):
-            result = build_phase3_prompt(step)
-            assert GLOBAL_RED_FLAGS in result, f"step {step} missing GLOBAL_RED_FLAGS"
+            plan = TravelPlanState(session_id="test")
+            plan.phase = 3
+            plan.phase3_step = step
+            prompt = router.get_prompt_for_plan(plan)
+            assert expected_prefixes[step] in prompt
 
-    def test_phase5_includes_global_red_flags(self):
-        from phase.router import PhaseRouter
-        from state.models import TravelPlanState
-
+    def test_phase5_includes_active_red_flags(self):
         router = PhaseRouter()
         plan = TravelPlanState(session_id="test")
         plan.phase = 5
         prompt = router.get_prompt_for_plan(plan)
-        assert GLOBAL_RED_FLAGS in prompt
+        assert "G-EVIDENCE" in prompt
+        assert "P5-1" in prompt
 
-    def test_phase7_includes_global_red_flags(self):
-        from phase.router import PhaseRouter
-        from state.models import TravelPlanState
-
+    def test_phase7_includes_active_red_flags(self):
         router = PhaseRouter()
         plan = TravelPlanState(session_id="test")
         plan.phase = 7
         prompt = router.get_prompt_for_plan(plan)
-        assert GLOBAL_RED_FLAGS in prompt
+        assert "G-EVIDENCE" in prompt
+        assert "P7-1" in prompt
 
     def test_red_flags_at_end_of_prompt(self):
-        """GLOBAL_RED_FLAGS should be appended at the end."""
-        from phase.router import PhaseRouter
-        from state.models import TravelPlanState
-
+        """Active Red Flags should be appended at the end of the phase prompt."""
         router = PhaseRouter()
         plan = TravelPlanState(session_id="test")
         plan.phase = 1
         prompt = router.get_prompt_for_plan(plan)
-        assert prompt.rstrip().endswith(GLOBAL_RED_FLAGS.rstrip())
+        assert prompt.rstrip().endswith(render_red_flags(phase=1).rstrip())
 
 
 class TestLegacyStateWriterRemovedInPrompts:
@@ -431,7 +522,7 @@ class TestLegacyStateWriterRemovedInPrompts:
         assert _LEGACY_STATE_WRITE_CALL not in PHASE7_PROMPT
 
     def test_no_legacy_state_writer_call_in_global_red_flags(self):
-        assert _LEGACY_STATE_WRITE_CALL not in GLOBAL_RED_FLAGS
+        assert _LEGACY_STATE_WRITE_CALL not in render_red_flags(phase=1)
 
     def test_phase3_skeleton_prompt_mentions_select_skeleton(self):
         skeleton = PHASE3_STEP_PROMPTS["skeleton"]
@@ -463,9 +554,6 @@ class TestLegacyStateWriterRemovedInPrompts:
 
     def test_phase1_mentions_update_trip_basics(self):
         assert "update_trip_basics" in PHASE1_PROMPT
-
-    def test_global_red_flags_mentions_request_backtrack(self):
-        assert "request_backtrack" in GLOBAL_RED_FLAGS
 
     def test_phase1_state_write_mentions_split_constraint_tools(self):
         """Finding 1: Phase 1 prompt should mention add_preferences/add_constraints for explicit constraints/preferences."""
