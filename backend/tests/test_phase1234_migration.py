@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from config import ApiKeysConfig
 from phase.router import PhaseRouter
 from phase.prompts import PHASE_CONTROL_MODE, PHASE_PROMPTS
@@ -12,6 +14,8 @@ from state.models import (
     TravelPlanState,
     _PHASE_DOWNSTREAM,
 )
+from tools.calculate_route import make_calculate_route_tool
+from tools.check_availability import make_check_availability_tool
 from tools.web_search import make_web_search_tool
 
 
@@ -66,11 +70,13 @@ def test_phase_prompt_and_downstream_maps_only_use_current_phase_numbers() -> No
     assert set(_PHASE_DOWNSTREAM) == {1, 2, 3}
 
 
-def test_legacy_saved_phase_numbers_migrate_to_1234_protocol() -> None:
-    assert TravelPlanState.from_dict({"session_id": "old-1", "phase": 1}).phase == 1
-    assert TravelPlanState.from_dict({"session_id": "old-2", "phase": 3}).phase == 2
-    assert TravelPlanState.from_dict({"session_id": "old-3", "phase": 5}).phase == 3
-    assert TravelPlanState.from_dict({"session_id": "old-4", "phase": 7}).phase == 4
+def test_saved_phase_numbers_reject_legacy_phase_ids() -> None:
+    assert TravelPlanState.from_dict({"session_id": "saved-1", "phase": 1}).phase == 1
+    assert TravelPlanState.from_dict({"session_id": "saved-3", "phase": 3}).phase == 3
+    with pytest.raises(ValueError, match="Unsupported phase"):
+        TravelPlanState.from_dict({"session_id": "saved-5", "phase": 5})
+    with pytest.raises(ValueError, match="Unsupported phase"):
+        TravelPlanState.from_dict({"session_id": "saved-7", "phase": 7})
 
 
 def test_new_saved_phase_numbers_are_not_remapped_when_state_version_is_current() -> None:
@@ -90,6 +96,18 @@ def test_new_saved_phase_numbers_are_not_remapped_when_state_version_is_current(
 
 def test_phase4_prompt_tools_are_available_to_agent() -> None:
     assert make_web_search_tool(ApiKeysConfig()).phases == [1, 2, 3, 4]
+
+
+def test_phase_sensitive_tool_descriptions_use_current_phase_numbers() -> None:
+    tools = [
+        make_check_availability_tool(ApiKeysConfig()),
+        make_calculate_route_tool(ApiKeysConfig()),
+    ]
+
+    for tool in tools:
+        assert "阶段 4-5" not in tool.description
+        assert "Phase 5" not in tool.description
+        assert "Phase 7" not in tool.description
 
 
 def test_demo_phase_labels_use_current_phase_numbers() -> None:

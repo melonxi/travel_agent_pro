@@ -37,11 +37,11 @@ def test_build_system_message_uses_only_phase1_soul(ctx_manager):
         available_tools=["update_trip_basics", "xiaohongshu_search_notes"],
     )
 
-    assert "## 全局身份" in msg.content
-    assert "## Phase 1 交互基调" in msg.content
-    assert "## Phase 2 交互基调" not in msg.content
-    assert "## Phase 3 落地基调" not in msg.content
-    assert "## Phase 4 交付基调" not in msg.content
+    assert "## 长期身份" in msg.content
+    assert "## 当前阶段职责：Phase 1 目的地收敛" in msg.content
+    assert "## 当前阶段职责：Phase 2 行程框架规划" not in msg.content
+    assert "## 当前阶段职责：Phase 3 逐日行程落地" not in msg.content
+    assert "## 当前阶段职责：Phase 4 出发前查漏交付" not in msg.content
 
 
 def test_build_system_message_uses_only_current_phase2_step_soul(ctx_manager):
@@ -53,13 +53,13 @@ def test_build_system_message_uses_only_current_phase2_step_soul(ctx_manager):
         available_tools=["set_candidate_pool", "set_shortlist"],
     )
 
-    assert "## 全局身份" in msg.content
-    assert "## Phase 2 交互基调" in msg.content
-    assert "## Phase 2 Candidate 基调" in msg.content
-    assert "## Phase 2 Brief 基调" not in msg.content
-    assert "## Phase 2 Skeleton 基调" not in msg.content
-    assert "## Phase 2 Lock 基调" not in msg.content
-    assert "## Phase 3 落地基调" not in msg.content
+    assert "## 长期身份" in msg.content
+    assert "## 当前阶段职责：Phase 2 行程框架规划" in msg.content
+    assert "## 当前子阶段任务：candidate 构建候选池" in msg.content
+    assert "## 当前子阶段任务：brief 收束旅行画像" not in msg.content
+    assert "## 当前子阶段任务：skeleton 生成骨架方案" not in msg.content
+    assert "## 当前子阶段任务：lock 锁定交通住宿" not in msg.content
+    assert "## 当前阶段职责：Phase 3 逐日行程落地" not in msg.content
 
 
 def test_build_system_message_uses_only_phase3_soul(ctx_manager):
@@ -71,11 +71,11 @@ def test_build_system_message_uses_only_phase3_soul(ctx_manager):
         available_tools=["save_day_plan", "optimize_day_route"],
     )
 
-    assert "## 全局身份" in msg.content
-    assert "## Phase 3 落地基调" in msg.content
-    assert "## Phase 1 交互基调" not in msg.content
-    assert "## Phase 2 交互基调" not in msg.content
-    assert "## Phase 4 交付基调" not in msg.content
+    assert "## 长期身份" in msg.content
+    assert "## 当前阶段职责：Phase 3 逐日行程落地" in msg.content
+    assert "## 当前阶段职责：Phase 1 目的地收敛" not in msg.content
+    assert "## 当前阶段职责：Phase 2 行程框架规划" not in msg.content
+    assert "## 当前阶段职责：Phase 4 出发前查漏交付" not in msg.content
 
 
 def test_legacy_unmarked_soul_file_still_loads(tmp_path):
@@ -106,9 +106,9 @@ def test_build_system_message(ctx_manager):
     assert "## 当前时间" in msg.content
     assert "当前本地日期" in msg.content
     assert "当前时区" in msg.content
-    assert "必须先调用对应的状态写入工具" in msg.content
+    assert "## 状态写入机制" in msg.content
     assert "不要重复写入相同值" in msg.content
-    assert 'request_backtrack(to_phase=..., reason="...")' in msg.content
+    assert "只写入用户本轮或历史中明确说过的信息" in msg.content
     assert "当前可用工具：update_trip_basics, xiaohongshu_search_notes" in msg.content
 
 

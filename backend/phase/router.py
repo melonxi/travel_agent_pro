@@ -95,7 +95,14 @@ class PhaseRouter:
         return PHASE_PROMPTS.get(phase, PHASE_PROMPTS[1])
 
     def get_prompt_for_plan(self, plan: TravelPlanState) -> str:
-        """Return phase prompt with active Red Flags appended."""
+        """Return phase prompt with active Red Flags appended.
+
+        ⚠️ The returned string is **not** self-contained: identity / 目标 / 节奏
+        live in soul.md (loaded by ContextManager). Callers must compose this
+        prompt with ``ContextManager.build_system_message(plan, phase_prompt, ...)``
+        for the model to receive a complete system message. Do not feed this
+        prompt to an LLM directly.
+        """
         if plan.phase == 2:
             step = getattr(plan, "phase2_step", "brief") or "brief"
             base = build_phase2_prompt(step)

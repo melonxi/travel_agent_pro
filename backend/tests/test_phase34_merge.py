@@ -260,18 +260,17 @@ class TestBacktrackAfterMerge:
 
 
 # ---------------------------------------------------------------------------
-# 6. from_dict phase 4 migration — old sessions that saved phase=4
+# 6. from_dict loads saved phase numbers without legacy remapping
 # ---------------------------------------------------------------------------
 
 
 class TestPhase4MigrationInFromDict:
-    def test_from_dict_migrates_phase4_to_phase3(self):
-        """Old sessions saved with phase=4 should load as phase=2."""
+    def test_from_dict_keeps_saved_phase_number(self):
         raw = {
-            "session_id": "old-session",
+            "session_id": "saved-session",
             "phase": 4,
             "destination": "Tokyo",
             "dates": {"start": "2026-05-01", "end": "2026-05-05"},
         }
         plan = TravelPlanState.from_dict(raw)
-        assert plan.phase == 2
+        assert plan.phase == 4

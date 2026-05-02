@@ -26,9 +26,17 @@ CORE_RED_FLAGS: tuple[RedFlag, ...] = (
     ),
     RedFlag(
         id="G-CAPABILITY-BOUNDARY",
-        trigger="你承诺当前可用工具列表之外的能力，或在用户推翻上游决策时继续局部修改。",
-        repair="按当前工具列表回答；涉及上游决策推翻时走阶段回退。",
+        trigger="你承诺当前可用工具列表之外的能力。",
+        repair="按当前工具列表如实回答能或不能；明确告知用户哪些动作要等到下一阶段才能做。",
     ),
+)
+
+
+# 仅在 phase >= 2 注入：Phase 1 是最早阶段，没有上游可回退。
+G_BACKTRACK_BOUNDARY = RedFlag(
+    id="G-BACKTRACK-BOUNDARY",
+    trigger="用户要推翻上游阶段决策（如已确认目的地、已选骨架），但你只在当前阶段做局部修改。",
+    repair="调用 request_backtrack(to_phase=..., reason=...) 让系统先回到对应阶段，再处理。",
 )
 
 
@@ -282,6 +290,8 @@ def build_active_red_flags(
         return PHASE3_WORKER_RED_FLAGS
 
     flags: list[RedFlag] = list(CORE_RED_FLAGS)
+    if phase != 1:
+        flags.append(G_BACKTRACK_BOUNDARY)
     if phase == 2:
         step = phase2_step or "brief"
         flags.extend(PHASE2_BASE_RED_FLAGS)

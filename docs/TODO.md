@@ -1,5 +1,96 @@
 # TODO
 
+## 0. 分阶段状态机硬约束与 prompt 自律解耦
+
+### 背景
+
+当前分阶段机制里，prompt 负责引导模型按阶段行动，状态机负责确定性推进、冻结和回退。风险点在于：部分不可逆或高副作用动作仍主要依赖 prompt 自律。一旦模型某轮写错状态，状态机会把错误固化，后续只能通过有副作用的回退修复。
+
+这类问题优先级高于单纯的提示词措辞优化。
+
+### P0 / P1 待办项
+
+#### 1. Phase 1 destination 粒度硬校验
+
+问题：`update_trip_basics(destination=...)` 当前只写字符串，不校验目的地粒度。`PhaseRouter.infer_phase()` 只要看到 `destination` 非空就离开 Phase 1。如果模型把“日本 / 美国 / 东南亚”等多城市国家或大区域写入 destination，就会跳过城市级收敛。
+
+待办：
+
+- 在 `update_trip_basics` 写入边界增加 destination 粒度校验。
+- Phase 1 下拒收明确多城市国家 / 大区域 destination，并返回可操作 suggestion。
+- 保留紧凑旅行单元例外，如冰岛、马尔代夫、不丹等可整体规划目的地。
+- 评估是否在 `PhaseRouter` 增加二次兜底，防止旧状态或绕过工具写入的异常 destination 推进阶段。
+
+#### 2. request_backtrack 副作用显式化与确认机制
+
+问题：`request_backtrack(to_phase=...)` 会调用 `clear_downstream(from_phase=to_phase)`，清掉目标阶段及之后产物。Phase 4 回退到 Phase 2 会清除骨架、交通、住宿、`daily_plans` 和 `deliverables`。当前 prompt / red flag 只告诉模型“该回退”，没有告诉模型回退会删除哪些成果。
+
+待办：
+
+- 在 `G-BACKTRACK-BOUNDARY`、`request_backtrack` 工具描述和相关 phase prompt 中明确回退会清除的下游产物。
+- 要求模型在调用回退前先告知用户影响范围，尤其是会丢失 `daily_plans` / `deliverables` 的场景。
+- 评估将 `request_backtrack` 改成两步式 preflight：第一次返回 `needs_confirmation` 与 `will_clear`，用户确认后才真正执行。
+- 评估保留可恢复快照，避免用户感知为“系统把已确认成果删了”。
+
+#### 3. Phase 4 工具失败降级交付协议
+
+问题：Phase 4 prompt 要求先查天气 / 服务，再通过 `generate_summary` 同时提交 `travel_plan_markdown` 和 `checklist_markdown`。如果 `check_weather` 或 `search_travel_services` 失败、超时或返回空，模型可能卡在“必须交付双 markdown”和“不能编造事实”之间。
+
+待办：
+
+- 在 `PHASE4_PROMPT` 中加入显式降级规则。
+- 工具失败、超时或返回空时，最多重试 1 次。
+- 仍然正常生成双 markdown，但在清单里标注“未获取到 X，出发前请自行确认”。
+- 禁止编造天气、政策、价格、链接、订单号。
+- 确认 `generate_summary` 接收带未知项标注的 markdown，并保持冻结语义。
+
+#### 4. skeleton days 长度与 dates.total_days 一致性
+
+问题：`_skeleton_days_match()` 会在 router 层阻止 Phase 2 进入 Phase 3，但 `set_skeleton_plans` 写入工具和 skeleton prompt 未把 “days 长度必须等于 `dates.total_days`” 作为前置硬约束。
+
+待办：
+
+- 在 skeleton step 字段契约中加入 `len(days) == dates.total_days` 规则。
+- 在 `set_skeleton_plans` 工具层校验：若 `plan.dates` 已存在，所有 skeleton 的 `days` 长度必须等于 `plan.dates.total_days`。
+- 工具错误中返回明确 suggestion，例如“当前行程为 5 天，请生成 5 天骨架”。
+
+#### 5. candidate 到 skeleton 的两轮节奏硬化
+
+问题：candidate step 当前开放 `set_skeleton_plans`，因为现有状态机依赖写入 `skeleton_plans` 触发进入 skeleton。但 prompt 又禁止在写入 `shortlist` 的同一轮工具批次里继续写 skeleton。这是用 prompt 软协议表达“两轮节奏”，模型可能跳过攻略经验采集直接写骨架。
+
+待办：
+
+- 不要直接从 candidate 工具集中移除 `set_skeleton_plans`，否则现有 candidate 无法推进到 skeleton。
+- 评估新增硬状态，如 `route_research_done` / `skeleton_research_notes`，让攻略经验采集成为可验证状态。
+- 或将 Phase 2 子阶段拆成 `candidate -> route_research -> skeleton`，由状态机而不是 prompt 自律保证节奏。
+- 在未引入新状态前，保留 prompt 禁令，但把风险记录为质量降级而非流程阻断。
+
+### 目标
+
+把“会冻结、会推进、会清下游”的确定性状态机动作，从 prompt 自律迁移到工具层和 router 层硬约束。prompt 继续负责解释和节奏，工具 / 状态机负责防止单次模型失误造成不可逆损害。
+
+## Phase 1 prompt / soul 职责边界整理
+
+### 背景
+
+Phase 1 的身份、目标和节奏正在从 `PHASE1_PROMPT` 与 `soul.md` 之间重新分层。当前 `PHASE1_PROMPT` 不再自包含“目的地收敛顾问”等身份信息，而 `soul.md` 的 Phase 1 标题也从旧的“交互基调”改成了“身份 / 目标 / 不做 / 节奏”结构。
+
+这会影响两类测试/调用边界：
+
+- `PhaseRouter.get_prompt(1)` / `get_prompt_for_plan(phase=1)` 单独读取时缺少 Phase 1 身份和目标。
+- `ContextManager` 的 soul 注入测试仍断言旧标题 `## Phase 1 交互基调`。
+
+### 待办项
+
+- 明确 Phase prompt 是否必须保持自包含任务合同。
+- 明确 `soul.md` 是否只承载语气/节奏，还是也承载阶段身份。
+- 根据最终边界同步更新 `PHASE1_PROMPT`、`soul.md` 和相关单测。
+- 避免在 prompt 中使用“见 Phase 1 身份”这类跨文件隐式引用，除非所有调用路径都保证注入 soul。
+
+### 目标
+
+把 Phase 1 prompt 合同和 soul 人格片段的职责边界整理清楚，避免在 1/2/3/4 阶段迁移之外混入未定稿的 prompt 架构改动。
+
 ## 1. tool-self-repair
 
 ### 背景

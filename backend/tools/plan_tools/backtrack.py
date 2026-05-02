@@ -24,7 +24,7 @@ def make_request_backtrack_tool(plan: TravelPlanState):
     @tool(
         name="request_backtrack",
         description="请求回退到更早的规划阶段。当用户想推翻之前的阶段决策时使用。目标阶段必须小于当前阶段。",
-        phases=[1, 2, 3, 4],
+        phases=[2, 3, 4],
         parameters=_PARAMETERS,
         side_effect="write",
         human_label="请求回退阶段",

@@ -8,13 +8,7 @@ from typing import Any
 
 
 CURRENT_STATE_VERSION = 2
-LEGACY_PHASE_MAP = {
-    2: 1,
-    3: 2,
-    4: 2,
-    5: 3,
-    7: 4,
-}
+SUPPORTED_PHASES = {1, 2, 3, 4}
 
 
 @dataclass
@@ -462,12 +456,16 @@ class TravelPlanState:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TravelPlanState:
-        raw_phase = d.get("phase", 1)
         raw_version = int(d.get("version", 1) or 1)
-        if raw_version < CURRENT_STATE_VERSION:
-            phase = LEGACY_PHASE_MAP.get(raw_phase, raw_phase)
-        else:
-            phase = raw_phase
+        raw_phase = d.get("phase", 1)
+        try:
+            phase = int(raw_phase)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Unsupported phase value: {raw_phase!r}") from exc
+        if phase not in SUPPORTED_PHASES:
+            raise ValueError(
+                f"Unsupported phase {phase}; migrate or delete legacy state before loading."
+            )
         dates = DateRange.from_dict(d["dates"]) if d.get("dates") else None
         accommodation = (
             Accommodation.from_dict(d["accommodation"])

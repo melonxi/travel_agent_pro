@@ -107,7 +107,8 @@ def test_sync_phase_state_hydrates_minimal_trip_brief_from_explicit_state(router
 
 def test_get_prompt_for_phase(router):
     prompt = router.get_prompt(1)
-    assert "目的地收敛顾问" in prompt
+    assert "## 操作规则" in prompt
+    assert "目的地收敛顾问" not in prompt
 
 
 def test_phase3_prompt_mentions_daily_plan_commit_and_backtrack(router):
@@ -151,31 +152,29 @@ def test_phase3_prompt_avoids_unavailable_phase2_tools(router):
 
 def test_phase1_prompt_encourages_reading_recommendation_posts_and_comments(router):
     prompt = router.get_prompt(1)
-    assert "不要只看标题就下结论" in prompt
-    assert "求推荐旅行目的地" in prompt
-    assert "评论区提炼高频候选" in prompt
+    assert "标题和热度不足以支撑推荐或比较判断" in prompt
+    assert "至少读 1 篇笔记正文再下结论" in prompt
+    assert "评论区比正文更有参考价值" in prompt
 
 
 def test_phase1_prompt_skips_search_when_destination_is_already_confirmed(router):
     prompt = router.get_prompt(1)
-    assert "不要先调 `xiaohongshu_search_notes` 或 `web_search`" in prompt
+    assert "用户已明确拍板目的地时，不要先做目的地研究" in prompt
 
 
 def test_phase2_prompt_prioritizes_brief_sync_before_external_search(router):
     prompt = router.get_prompt(2)
-    assert "优先先写 `trip_brief` 并进入 `candidate`" in prompt
-    assert "不要在 brief 已经足够成型时先去做外部搜索" in prompt
+    assert "优先用已有信息先形成 brief 草稿再迭代" in prompt
+    assert "即使是成熟热门目的地，UGC" not in prompt
 
 
 def test_phase2_candidate_prompt_limits_search_and_forbids_search_narration(router):
     from phase.prompts import build_phase2_prompt
 
     prompt = build_phase2_prompt("candidate")
-    assert (
-        "获取到足够信息后应立即写入 `set_candidate_pool` 和 `set_shortlist`" in prompt
-    )
-    assert '不要为了"查全"而反复搜索延迟写入' in prompt
-    assert '不要在正文里反复说"我先搜一下"' in prompt
+    assert "扩展产出粗筛候选，写入 `set_candidate_pool`" in prompt
+    assert "保留必选项和通过验证的高潜力项写入 `set_shortlist`" in prompt
+    assert "获取足够信息后立即写入，不要为查全反复延迟" in prompt
 
 
 def test_get_prompt_for_all_phases(router):

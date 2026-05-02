@@ -111,18 +111,22 @@ class TestScopedRedFlags:
         return plan
 
 
-class TestPhase1SkillCard:
-    def test_phase1_has_role_section(self):
-        assert "## 角色" in PHASE1_PROMPT
+class TestPhase1ExecutionRules:
+    def test_phase1_prompt_is_execution_rules_not_identity(self):
+        assert "## 操作规则" in PHASE1_PROMPT
+        assert "## 角色" not in PHASE1_PROMPT
+        assert "目的地收敛顾问" not in PHASE1_PROMPT
 
-    def test_phase1_has_goal_section(self):
-        assert "## 目标" in PHASE1_PROMPT
+    def test_phase1_goal_lives_in_soul_not_phase_rules(self):
+        assert "## 目标" not in PHASE1_PROMPT
+        assert "把用户的模糊意图收敛" not in PHASE1_PROMPT
 
-    def test_phase1_has_hard_rules_section(self):
-        assert "## 硬法则" in PHASE1_PROMPT
+    def test_phase1_rules_have_operational_boundaries(self):
+        assert "## 边界例外" in PHASE1_PROMPT
+        assert "## 工具契约" in PHASE1_PROMPT
 
-    def test_phase1_has_completion_gate(self):
-        assert "## 完成 Gate" in PHASE1_PROMPT
+    def test_phase1_uses_write_then_close_protocol(self):
+        assert "## 写入即收尾" in PHASE1_PROMPT
 
     def test_phase1_has_red_flags(self):
         prompt = PhaseRouter().get_prompt_for_plan(TravelPlanState(session_id="test"))
@@ -144,7 +148,7 @@ class TestPhase1SkillCard:
         assert "web_search" in PHASE1_PROMPT
 
     def test_phase1_skips_search_when_destination_confirmed(self):
-        assert "不要先调" in PHASE1_PROMPT
+        assert "不要先做目的地研究" in PHASE1_PROMPT
 
     def test_phase1_boundary_red_flag(self):
         """Phase 1 Red Flags must warn against boundary violations (Question 7)."""
@@ -159,8 +163,9 @@ class TestPhase2Split:
     def test_base_prompt_exists(self):
         assert len(PHASE2_BASE_PROMPT) > 100
 
-    def test_base_prompt_has_role(self):
-        assert "## 角色" in PHASE2_BASE_PROMPT
+    def test_base_prompt_is_execution_rules_not_identity(self):
+        assert "## 角色" not in PHASE2_BASE_PROMPT
+        assert "## 状态写入纪律" in PHASE2_BASE_PROMPT
 
     def test_base_prompt_has_state_write_discipline(self):
         assert (
@@ -175,18 +180,21 @@ class TestPhase2Split:
             "lock",
         }
 
-    def test_each_step_has_goal(self):
+    def test_each_step_declares_current_substage(self):
         for step, prompt in PHASE2_STEP_PROMPTS.items():
-            assert "目标" in prompt, f"step {step} missing 目标"
+            assert "当前子阶段" in prompt, f"step {step} missing substage header"
 
     def test_each_step_has_tool_strategy(self):
         for step, prompt in PHASE2_STEP_PROMPTS.items():
             assert "工具" in prompt, f"step {step} missing tool strategy"
 
-    def test_each_step_has_completion_gate(self):
+    def test_each_step_has_key_output_or_write_contract(self):
         for step, prompt in PHASE2_STEP_PROMPTS.items():
-            assert "完成 Gate" in prompt or "完成标志" in prompt, (
-                f"step {step} missing completion gate"
+            assert any(
+                marker in prompt
+                for marker in ("状态写入分工", "字段契约", "写入 `", "用户确认")
+            ), (
+                f"step {step} missing output/write contract"
             )
 
     def test_each_step_has_red_flags(self):
@@ -223,8 +231,8 @@ class TestPhase2Split:
         assert "candidate_pois" in prompt
         assert "同一套 skeleton 内" in prompt
         assert "只能出现在一天" in prompt
-        assert "上野公園" in prompt
-        assert "不要把 `上野公園` 同时写进 Day 1 和 Day 2 的 `candidate_pois`。" in prompt
+        assert "写入前自查" in prompt
+        assert "两天的 `candidate_pois`" in prompt
 
     def test_lock_mentions_transport_timing(self):
         """Lock must address transport timing — the fix for Question 2."""
@@ -274,7 +282,8 @@ class TestPhaseRouterGetPromptForPlan:
         router = PhaseRouter()
         plan = self._make_plan(1)
         prompt = router.get_prompt_for_plan(plan)
-        assert "目的地收敛顾问" in prompt
+        assert "## 操作规则" in prompt
+        assert "目的地收敛顾问" not in prompt
 
     def test_phase2_brief(self):
         router = PhaseRouter()
@@ -314,20 +323,23 @@ class TestPhaseRouterGetPromptForPlan:
         assert len(prompt) > 100
 
 
-class TestPhase3SkillCard:
-    """Phase 3 must be rewritten as a skill-card with incremental generation."""
+class TestPhase3ExecutionRules:
+    """Phase 3 prompt contains execution rules; identity lives in soul.md."""
 
-    def test_phase3_has_role(self):
-        assert "## 角色" in PHASE3_PROMPT
+    def test_phase3_prompt_is_execution_rules_not_identity(self):
+        assert "## 角色" not in PHASE3_PROMPT
+        assert "## 硬法则" in PHASE3_PROMPT
 
-    def test_phase3_has_goal(self):
-        assert "## 目标" in PHASE3_PROMPT
+    def test_phase3_goal_lives_in_soul_not_phase_rules(self):
+        assert "## 目标" not in PHASE3_PROMPT
+        assert "逐日行程落地规划师" not in PHASE3_PROMPT
 
     def test_phase3_has_hard_rules(self):
         assert "## 硬法则" in PHASE3_PROMPT
 
-    def test_phase3_has_completion_gate(self):
-        assert "## 完成 Gate" in PHASE3_PROMPT
+    def test_phase3_completion_is_state_driven_not_manual_gate(self):
+        assert "## 完成 Gate" not in PHASE3_PROMPT
+        assert "save_day_plan" in PHASE3_PROMPT
 
     def test_phase3_has_red_flags(self):
         plan = TravelPlanState(session_id="test")
@@ -381,17 +393,19 @@ class TestPhase3SkillCard:
         assert "压力场景" in PHASE3_PROMPT or "场景" in PHASE3_PROMPT
 
 
-class TestPhase4SkillCard:
-    """Phase 4 must be rewritten with full skill-card structure."""
+class TestPhase4ExecutionRules:
+    """Phase 4 prompt contains execution rules; identity lives in soul.md."""
 
-    def test_phase4_has_role(self):
-        assert "## 角色" in PHASE4_PROMPT
+    def test_phase4_prompt_is_execution_rules_not_identity(self):
+        assert "## 角色" not in PHASE4_PROMPT
+        assert "## 输入 Gate" in PHASE4_PROMPT
 
-    def test_phase4_has_goal(self):
-        assert "## 目标" in PHASE4_PROMPT
+    def test_phase4_goal_lives_in_soul_not_phase_rules(self):
+        assert "## 目标" not in PHASE4_PROMPT
+        assert "出发前查漏补缺顾问" not in PHASE4_PROMPT
 
-    def test_phase4_has_hard_rules(self):
-        assert "## 硬法则" in PHASE4_PROMPT
+    def test_phase4_has_state_write_rules(self):
+        assert "## 状态写入契约" in PHASE4_PROMPT
 
     def test_phase4_has_input_gate(self):
         assert (
@@ -400,8 +414,9 @@ class TestPhase4SkillCard:
             or "接手" in PHASE4_PROMPT
         )
 
-    def test_phase4_has_completion_gate(self):
-        assert "## 完成 Gate" in PHASE4_PROMPT
+    def test_phase4_completion_is_generate_summary_contract(self):
+        assert "## 完成 Gate" not in PHASE4_PROMPT
+        assert "generate_summary" in PHASE4_PROMPT
 
     def test_phase4_has_red_flags(self):
         plan = TravelPlanState(session_id="test")
@@ -566,4 +581,4 @@ class TestLegacyStateWriterRemovedInPrompts:
         assert 'save_day_plan(mode="create"' in PHASE3_PROMPT
         assert 'save_day_plan(mode="replace_existing"' in PHASE3_PROMPT
         assert "replace_all_day_plans(days=[" in PHASE3_PROMPT
-        assert "optimize_day_route 只是路线辅助" in PHASE3_PROMPT
+        assert "`optimize_day_route` 不写状态" in PHASE3_PROMPT
