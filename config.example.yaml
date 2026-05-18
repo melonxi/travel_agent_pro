@@ -1,6 +1,6 @@
-# ⚠️ WARNING: Do NOT put real API keys in this file.
-# Use environment variables instead. The ${VAR} syntax will be resolved at runtime.
-# config.yaml
+# Example local configuration.
+# Copy to config.yaml for machine-specific overrides.
+# Do not put real API keys in config.yaml; use environment variables instead.
 llm:
   provider: "openai"
   model: "gpt-4o"
@@ -36,7 +36,6 @@ parallel_tool_execution: true
 
 memory_extraction:
   enabled: true
-  # 与主模型一致；若 gateway 支持独立轻量模型可替换为 gpt-4o-mini 等
   model: "astron-code-latest"
 
 memory:

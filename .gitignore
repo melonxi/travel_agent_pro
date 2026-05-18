@@ -34,6 +34,20 @@ yarn-error.log*
 # Logs
 *.log
 
+# Local configuration and private tool state
+config.yaml
+*.local.yaml
+ikun.json
+opencode.json
+
+# Generated snapshots and exported personal artifacts
+snapshot-*.md
+*_简历_*.html
+*_简历_*.pdf
+*简历*.html
+*简历*.pdf
+docs/agent-interview/html/
+
 # OS
 Thumbs.db
 
