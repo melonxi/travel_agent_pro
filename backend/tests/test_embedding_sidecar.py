@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import sqlite3
+import threading
+from pathlib import Path
+
 import pytest
 
 from memory.embedding_sidecar import decode_vector, encode_vector
@@ -63,3 +67,36 @@ def test_sidecar_row_default_construction():
     )
     assert row.source == "profile"
     assert row.vector == [1.0, 0.0]
+
+
+def test_store_creates_index_db_on_first_use(tmp_path: Path):
+    from memory.embedding_sidecar import SidecarStore
+
+    store = SidecarStore(data_dir=tmp_path)
+    store.ensure_user_index("u1")
+
+    db_path = tmp_path / "users" / "u1" / "memory" / "embeddings" / "index.db"
+    assert db_path.exists()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+        assert "embedding_index" in {row[0] for row in rows}
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal"
+    finally:
+        conn.close()
+
+
+def test_store_returns_per_user_rlock():
+    from memory.embedding_sidecar import SidecarStore
+
+    store = SidecarStore(data_dir=Path("."))
+    lock_a = store._lock_for("u1")
+    lock_a_again = store._lock_for("u1")
+    lock_b = store._lock_for("u2")
+    assert lock_a is lock_a_again
+    assert lock_a is not lock_b
+    assert isinstance(lock_a, type(threading.RLock()))
