@@ -274,3 +274,36 @@ def test_is_row_invalid_when_any_field_mismatches():
     ]:
         kwargs = dict(base, **{field_name: bad_value})
         assert is_row_valid_for(row, **kwargs) is False
+
+
+def test_delete_for_item_removes_matching_row(tmp_path: Path):
+    from memory.embedding_sidecar import SidecarRow, SidecarStore
+
+    store = SidecarStore(data_dir=tmp_path)
+    row = SidecarRow(
+        source="profile",
+        item_id="stable_preferences:hotel:quiet",
+        text_hash="a" * 64,
+        text_builder="profile_item_text:v1",
+        embedding_provider="fastembed",
+        embedding_model="m",
+        dimension=2,
+        vector=[1.0, 0.0],
+        bucket="stable_preferences",
+        created_at="t",
+        updated_at="t",
+    )
+    store.upsert_many("u1", [row])
+
+    store.delete_for_item("u1", "profile", "stable_preferences:hotel:quiet")
+    result = store.fetch_many(
+        "u1", [("profile", "stable_preferences:hotel:quiet")]
+    )
+    assert result == {}
+
+
+def test_delete_for_item_is_noop_when_db_missing(tmp_path: Path):
+    from memory.embedding_sidecar import SidecarStore
+
+    store = SidecarStore(data_dir=tmp_path)
+    store.delete_for_item("u1", "profile", "anything")  # no raise

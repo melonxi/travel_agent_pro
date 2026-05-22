@@ -238,3 +238,22 @@ class SidecarStore:
                 )
             finally:
                 conn.close()
+
+    def delete_for_item(
+        self,
+        user_id: str,
+        source: str,
+        item_id: str,
+    ) -> None:
+        path = self._db_path(user_id)
+        if not path.exists():
+            return
+        with self._lock_for(user_id):
+            conn = self._connect(user_id)
+            try:
+                conn.execute(
+                    "DELETE FROM embedding_index WHERE source = ? AND item_id = ?",
+                    (source, item_id),
+                )
+            finally:
+                conn.close()
