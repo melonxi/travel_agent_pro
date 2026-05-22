@@ -104,6 +104,57 @@ class MemoryManager:
         self._sidecar_store = SidecarStore(data_dir=self.v3_store.data_dir)
         return self._sidecar_store
 
+    async def warm_profile_item(self, user_id, bucket, item):
+        import asyncio
+        from datetime import datetime, timezone
+
+        from memory.embedding_sidecar import (
+            PROFILE_TEXT_BUILDER_VERSION,
+            SidecarRow,
+            compute_text_hash,
+        )
+        from memory.recall_stage3_lanes import _profile_item_text
+
+        index_cfg = self.retrieval_config.stage3.semantic.embedding_index
+        if not index_cfg.enabled or not index_cfg.warm_on_write:
+            return
+        if bucket not in index_cfg.warm_buckets:
+            return
+        provider = self._get_stage3_embedding_provider()
+        store = self._get_sidecar_store()
+        if provider is None or store is None:
+            return
+
+        text = _profile_item_text(bucket, item)
+        if not text:
+            return
+        try:
+            vectors = provider.embed([text])
+        except Exception:
+            return
+        if not vectors:
+            return
+        vector = list(vectors[0])
+        semantic_cfg = self.retrieval_config.stage3.semantic
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        row = SidecarRow(
+            source="profile",
+            item_id=item.id,
+            text_hash=compute_text_hash(text),
+            text_builder=PROFILE_TEXT_BUILDER_VERSION,
+            embedding_provider=semantic_cfg.provider,
+            embedding_model=semantic_cfg.model_name,
+            dimension=len(vector),
+            vector=vector,
+            bucket=bucket,
+            created_at=now,
+            updated_at=now,
+        )
+        try:
+            await asyncio.to_thread(store.upsert_many, user_id, [row])
+        except Exception:
+            return
+
     async def generate_context(
         self,
         user_id: str,
