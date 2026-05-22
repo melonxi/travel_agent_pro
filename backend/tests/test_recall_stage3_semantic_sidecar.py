@@ -177,3 +177,90 @@ def test_disabled_index_preserves_current_behavior(tmp_path: Path):
     assert telemetry.get("enabled") is False
     db_path = store._db_path("u1")
     assert not db_path.exists()
+
+
+def test_candidate_count_mismatch_returns_partial_telemetry_counters(tmp_path: Path):
+    from config import (
+        Stage3LaneConfig,
+        Stage3RecallConfig,
+        Stage3SemanticConfig,
+        Stage3SemanticEmbeddingIndexConfig,
+    )
+    from memory.embedding_sidecar import SidecarStore
+    from memory.recall_query import RecallRetrievalPlan
+    from memory.recall_stage3 import retrieve_recall_candidates
+    from memory.v3_models import MemoryProfileItem, UserMemoryProfile
+    from state.models import TravelPlanState
+
+    class MismatchProvider:
+        """First call (query embed) returns 1 vector;
+        second call (candidate embed) returns the wrong count."""
+
+        def __init__(self) -> None:
+            self.call_index = 0
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            self.call_index += 1
+            if self.call_index == 1:
+                return [[1.0, 0.0]]
+            # Candidate embed: return too many vectors to force count mismatch.
+            return [[0.5, 0.5] for _ in texts] + [[0.0, 0.0]]
+
+    store = SidecarStore(data_dir=tmp_path)
+    config = Stage3RecallConfig(
+        symbolic=Stage3LaneConfig(enabled=False),
+        semantic=Stage3SemanticConfig(
+            enabled=True,
+            min_score=0.1,
+            top_k=5,
+            embedding_index=Stage3SemanticEmbeddingIndexConfig(enabled=True),
+        ),
+    )
+    profile = UserMemoryProfile(
+        schema_version=3,
+        user_id="u1",
+        stable_preferences=[
+            MemoryProfileItem(
+                id="stable_preferences:hotel:quiet",
+                domain="hotel",
+                key="quiet",
+                value="x",
+                polarity="prefer",
+                stability="stable",
+                confidence=0.9,
+                status="active",
+                applicability="x",
+                created_at="t",
+                updated_at="t",
+            )
+        ],
+    )
+    query = RecallRetrievalPlan(
+        source="profile",
+        buckets=["stable_preferences"],
+        domains=["hotel"],
+        destination="",
+        keywords=[],
+        top_k=5,
+        reason="test",
+    )
+
+    result = retrieve_recall_candidates(
+        query=query,
+        profile=profile,
+        slices=[],
+        user_message="x",
+        plan=TravelPlanState(session_id="s1", trip_id="now"),
+        config=config,
+        embedding_provider=MismatchProvider(),
+        sidecar_store=store,
+        user_id="u1",
+    )
+
+    telemetry = result.telemetry.semantic_embedding_index
+    assert telemetry["enabled"] is True
+    assert telemetry["candidate_count"] == 1
+    assert "hit_count" in telemetry
+    assert "stale_count" in telemetry
+    assert "miss_count" in telemetry
+    assert telemetry["hit_count"] + telemetry["stale_count"] + telemetry["miss_count"] == 1

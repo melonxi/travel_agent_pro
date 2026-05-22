@@ -112,7 +112,7 @@ class SemanticLane:
         slices: list[EpisodeSlice],
         config: Stage3RecallConfig,
         embedding_provider: EmbeddingProvider | None,
-        sidecar_store: "SidecarStore | None" = None,
+        sidecar_store: SidecarStore | None = None,
         user_id: str = "",
     ) -> Stage3LaneResult:
         if embedding_provider is None:
@@ -194,7 +194,7 @@ class SemanticLane:
         query_text: str,
         embedding_provider: EmbeddingProvider,
         config: Stage3RecallConfig,
-        sidecar_store: "SidecarStore",
+        sidecar_store: SidecarStore,
         user_id: str,
     ) -> Stage3LaneResult:
         semantic_cfg = config.semantic
@@ -294,7 +294,15 @@ class SemanticLane:
                     lane_name=self.lane_name,
                     candidates=[],
                     error="embedding_count_mismatch",
-                    telemetry={"semantic_embedding_index": {"enabled": True}},
+                    telemetry={
+                        "semantic_embedding_index": {
+                            "enabled": True,
+                            "candidate_count": len(records),
+                            "hit_count": len(hit_vectors),
+                            "stale_count": len(stale_indices),
+                            "miss_count": len(miss_indices),
+                        }
+                    },
                 )
         else:
             computed = []
