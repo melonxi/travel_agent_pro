@@ -173,3 +173,49 @@ class SidecarStore:
                 updated_at=updated_at,
             )
         return rows
+
+    def upsert_many(
+        self,
+        user_id: str,
+        rows: list[SidecarRow],
+    ) -> None:
+        if not rows:
+            return
+        payload = [
+            (
+                row.source,
+                row.item_id,
+                row.text_hash,
+                row.text_builder,
+                row.embedding_provider,
+                row.embedding_model,
+                row.dimension,
+                encode_vector(row.vector),
+                row.bucket,
+                row.created_at,
+                row.updated_at,
+            )
+            for row in rows
+        ]
+        with self._lock_for(user_id):
+            conn = self._connect(user_id)
+            try:
+                conn.executemany(
+                    "INSERT INTO embedding_index "
+                    "(source, item_id, text_hash, text_builder, "
+                    "embedding_provider, embedding_model, dimension, vector, "
+                    "bucket, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(source, item_id) DO UPDATE SET "
+                    "text_hash=excluded.text_hash, "
+                    "text_builder=excluded.text_builder, "
+                    "embedding_provider=excluded.embedding_provider, "
+                    "embedding_model=excluded.embedding_model, "
+                    "dimension=excluded.dimension, "
+                    "vector=excluded.vector, "
+                    "bucket=excluded.bucket, "
+                    "updated_at=excluded.updated_at",
+                    payload,
+                )
+            finally:
+                conn.close()

@@ -152,3 +152,62 @@ def test_fetch_many_returns_only_matching_keys(tmp_path: Path):
     assert row.vector == [1.0, 0.0]
     assert row.dimension == 2
     assert row.embedding_model == "BAAI/bge-small-zh-v1.5"
+
+
+def test_upsert_many_inserts_new_rows(tmp_path: Path):
+    from memory.embedding_sidecar import SidecarRow, SidecarStore
+
+    store = SidecarStore(data_dir=tmp_path)
+    row = SidecarRow(
+        source="profile",
+        item_id="stable_preferences:hotel:quiet",
+        text_hash="a" * 64,
+        text_builder="profile_item_text:v1",
+        embedding_provider="fastembed",
+        embedding_model="BAAI/bge-small-zh-v1.5",
+        dimension=2,
+        vector=[1.0, 0.0],
+        bucket="stable_preferences",
+        created_at="2026-05-22T10:00:00Z",
+        updated_at="2026-05-22T10:00:00Z",
+    )
+    store.upsert_many("u1", [row])
+
+    fetched = store.fetch_many(
+        "u1", [("profile", "stable_preferences:hotel:quiet")]
+    )
+    assert fetched[("profile", "stable_preferences:hotel:quiet")].vector == [
+        1.0,
+        0.0,
+    ]
+
+
+def test_upsert_many_overwrites_old_hash_under_same_key(tmp_path: Path):
+    from memory.embedding_sidecar import SidecarRow, SidecarStore
+
+    store = SidecarStore(data_dir=tmp_path)
+    base = dict(
+        source="profile",
+        item_id="stable_preferences:hotel:quiet",
+        text_builder="profile_item_text:v1",
+        embedding_provider="fastembed",
+        embedding_model="BAAI/bge-small-zh-v1.5",
+        dimension=2,
+        bucket="stable_preferences",
+        created_at="2026-05-22T10:00:00Z",
+        updated_at="2026-05-22T10:00:00Z",
+    )
+    store.upsert_many("u1", [SidecarRow(text_hash="a" * 64, vector=[1.0, 0.0], **base)])
+    store.upsert_many("u1", [SidecarRow(text_hash="b" * 64, vector=[0.0, 1.0], **base)])
+
+    db_path = store._db_path("u1")
+    conn = sqlite3.connect(db_path)
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM embedding_index").fetchone()[0]
+        assert count == 1
+        text_hash = conn.execute(
+            "SELECT text_hash FROM embedding_index"
+        ).fetchone()[0]
+        assert text_hash == "b" * 64
+    finally:
+        conn.close()
