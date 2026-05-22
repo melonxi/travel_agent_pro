@@ -142,7 +142,10 @@ class SidecarStore:
         if not path.exists():
             return {}
         with self._lock_for(user_id):
-            conn = self._connect(user_id)
+            try:
+                conn = self._connect(user_id)
+            except sqlite3.DatabaseError:
+                return {}
             try:
                 placeholders = ",".join("(?,?)" for _ in keys)
                 params: list[object] = []
@@ -155,7 +158,10 @@ class SidecarStore:
                     "FROM embedding_index "
                     f"WHERE (source, item_id) IN (VALUES {placeholders})"
                 )
-                fetched = conn.execute(sql, params).fetchall()
+                try:
+                    fetched = conn.execute(sql, params).fetchall()
+                except sqlite3.DatabaseError:
+                    return {}
             finally:
                 conn.close()
 

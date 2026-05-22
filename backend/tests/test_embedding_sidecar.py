@@ -307,3 +307,47 @@ def test_delete_for_item_is_noop_when_db_missing(tmp_path: Path):
 
     store = SidecarStore(data_dir=tmp_path)
     store.delete_for_item("u1", "profile", "anything")  # no raise
+
+
+def test_fetch_many_returns_empty_dict_when_db_corrupted(tmp_path: Path):
+    from memory.embedding_sidecar import SidecarStore
+
+    store = SidecarStore(data_dir=tmp_path)
+    db_path = store._db_path("u1")
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_path.write_bytes(b"not a sqlite database")
+
+    result = store.fetch_many(
+        "u1", [("profile", "stable_preferences:hotel:quiet")]
+    )
+    assert result == {}
+
+
+def test_fetch_many_skips_row_with_bad_vector_blob(tmp_path: Path):
+    from memory.embedding_sidecar import SidecarStore
+
+    store = SidecarStore(data_dir=tmp_path)
+    store.ensure_user_index("u1")
+    db_path = store._db_path("u1")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO embedding_index VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "profile",
+            "x",
+            "h",
+            "profile_item_text:v1",
+            "fastembed",
+            "m",
+            4,
+            b"\x00\x00",  # 维度 4 期待 16 字节
+            "",
+            "t",
+            "t",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    result = store.fetch_many("u1", [("profile", "x")])
+    assert result == {}
