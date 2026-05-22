@@ -69,6 +69,7 @@ class MemoryManager:
         self.v3_store = FileMemoryV3Store(data_dir)
         self.retrieval_config = retrieval_config or MemoryRetrievalConfig()
         self._embedding_provider = None
+        self._sidecar_store = None
 
     def _get_stage3_embedding_provider(self):
         semantic_config = self.retrieval_config.stage3.semantic
@@ -91,6 +92,17 @@ class MemoryManager:
         except Exception:
             return None
         return self._embedding_provider
+
+    def _get_sidecar_store(self):
+        index_cfg = self.retrieval_config.stage3.semantic.embedding_index
+        if not index_cfg.enabled:
+            return None
+        if self._sidecar_store is not None:
+            return self._sidecar_store
+        from memory.embedding_sidecar import SidecarStore
+
+        self._sidecar_store = SidecarStore(data_dir=self.v3_store.data_dir)
+        return self._sidecar_store
 
     async def generate_context(
         self,
@@ -177,6 +189,8 @@ class MemoryManager:
                 plan=plan,
                 config=self.retrieval_config.stage3,
                 embedding_provider=self._get_stage3_embedding_provider(),
+                sidecar_store=self._get_sidecar_store(),
+                user_id=user_id,
             )
             recall_candidates.extend(stage3_result.candidates[: active_plan.top_k * 2])
 
