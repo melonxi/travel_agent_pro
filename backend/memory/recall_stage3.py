@@ -26,6 +26,8 @@ def retrieve_recall_candidates(
     plan: TravelPlanState,
     config: Stage3RecallConfig,
     embedding_provider: Any = None,
+    sidecar_store: Any = None,
+    user_id: str = "",
 ) -> Stage3RecallResult:
     envelope = build_query_envelope(
         query=query,
@@ -82,6 +84,8 @@ def retrieve_recall_candidates(
             slices,
             config,
             embedding_provider,
+            sidecar_store=sidecar_store,
+            user_id=user_id,
         )
         telemetry.candidates_by_lane[lane_name] = len(lane_result.candidates)
         if lane_result.error:
@@ -89,6 +93,9 @@ def retrieve_recall_candidates(
         else:
             lane_results.append(lane_result)
             telemetry.lanes_succeeded.append(lane_name)
+        index_payload = lane_result.telemetry.get("semantic_embedding_index")
+        if index_payload:
+            telemetry.semantic_embedding_index = dict(index_payload)
 
     telemetry.total_candidates_before_fusion = sum(
         len(lane_result.candidates) for lane_result in lane_results

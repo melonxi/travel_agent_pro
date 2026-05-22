@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from config import Stage3RecallConfig
 from memory.embedding_provider import EmbeddingProvider, cosine_similarity
+from memory.embedding_sidecar import (
+    PROFILE_TEXT_BUILDER_VERSION,
+    SLICE_TEXT_BUILDER_VERSION,
+    SidecarRow,
+    SidecarStore,
+    compute_text_hash,
+    is_row_valid_for,
+)
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3_models import (
     RecallQueryEnvelope,
@@ -103,6 +112,8 @@ class SemanticLane:
         slices: list[EpisodeSlice],
         config: Stage3RecallConfig,
         embedding_provider: EmbeddingProvider | None,
+        sidecar_store: "SidecarStore | None" = None,
+        user_id: str = "",
     ) -> Stage3LaneResult:
         if embedding_provider is None:
             return Stage3LaneResult(
@@ -122,6 +133,37 @@ class SemanticLane:
                 *envelope.expanded_keywords,
             ]
         )
+
+        index_cfg = config.semantic.embedding_index
+        index_enabled = (
+            index_cfg.enabled
+            and sidecar_store is not None
+            and bool(user_id)
+        )
+
+        if not index_enabled:
+            return self._run_without_sidecar(
+                records=records,
+                query_text=query_text,
+                embedding_provider=embedding_provider,
+                config=config,
+            )
+        return self._run_with_sidecar(
+            records=records,
+            query_text=query_text,
+            embedding_provider=embedding_provider,
+            config=config,
+            sidecar_store=sidecar_store,
+            user_id=user_id,
+        )
+
+    def _run_without_sidecar(
+        self,
+        records: list[tuple[RecallCandidate, RetrievalEvidence, str]],
+        query_text: str,
+        embedding_provider: EmbeddingProvider,
+        config: Stage3RecallConfig,
+    ) -> Stage3LaneResult:
         record_texts = [text for _, _, text in records]
         try:
             vectors = embedding_provider.embed([query_text, *record_texts])
@@ -130,36 +172,209 @@ class SemanticLane:
                 lane_name=self.lane_name,
                 candidates=[],
                 error=f"embedding_error:{type(exc).__name__}",
+                telemetry={"semantic_embedding_index": {"enabled": False}},
             )
-
         if len(vectors) != len(records) + 1:
             return Stage3LaneResult(
                 lane_name=self.lane_name,
                 candidates=[],
                 error="embedding_count_mismatch",
+                telemetry={"semantic_embedding_index": {"enabled": False}},
+            )
+        ranked = self._rank(records, vectors[0], vectors[1:], config)
+        return Stage3LaneResult(
+            lane_name=self.lane_name,
+            candidates=ranked[: config.semantic.top_k],
+            telemetry={"semantic_embedding_index": {"enabled": False}},
+        )
+
+    def _run_with_sidecar(
+        self,
+        records: list[tuple[RecallCandidate, RetrievalEvidence, str]],
+        query_text: str,
+        embedding_provider: EmbeddingProvider,
+        config: Stage3RecallConfig,
+        sidecar_store: "SidecarStore",
+        user_id: str,
+    ) -> Stage3LaneResult:
+        semantic_cfg = config.semantic
+        provider_name = semantic_cfg.provider
+        model_name = semantic_cfg.model_name
+
+        try:
+            query_vectors = embedding_provider.embed([query_text])
+        except Exception as exc:
+            return Stage3LaneResult(
+                lane_name=self.lane_name,
+                candidates=[],
+                error=f"embedding_error:{type(exc).__name__}",
+                telemetry={
+                    "semantic_embedding_index": {
+                        "enabled": True,
+                        "candidate_count": len(records),
+                    }
+                },
+            )
+        if len(query_vectors) != 1:
+            return Stage3LaneResult(
+                lane_name=self.lane_name,
+                candidates=[],
+                error="embedding_count_mismatch",
+                telemetry={"semantic_embedding_index": {"enabled": True}},
+            )
+        query_vector = query_vectors[0]
+        expected_dimension = len(query_vector)
+
+        candidate_meta: list[dict[str, object]] = []
+        keys: list[tuple[str, str]] = []
+        for candidate, _evidence, text in records:
+            text_builder = (
+                PROFILE_TEXT_BUILDER_VERSION
+                if candidate.source == "profile"
+                else SLICE_TEXT_BUILDER_VERSION
+            )
+            keys.append((candidate.source, candidate.item_id))
+            candidate_meta.append(
+                {
+                    "text": text,
+                    "text_hash": compute_text_hash(text),
+                    "text_builder": text_builder,
+                    "bucket": _bucket_for_candidate(candidate),
+                }
             )
 
-        query_vector = vectors[0]
+        fetched = sidecar_store.fetch_many(user_id, keys)
+
+        hit_vectors: dict[int, list[float]] = {}
+        stale_indices: list[int] = []
+        miss_indices: list[int] = []
+        for index, (candidate, _evidence, _text) in enumerate(records):
+            key = (candidate.source, candidate.item_id)
+            row = fetched.get(key)
+            meta = candidate_meta[index]
+            if row is None:
+                miss_indices.append(index)
+                continue
+            if is_row_valid_for(
+                row,
+                expected_hash=str(meta["text_hash"]),
+                expected_text_builder=str(meta["text_builder"]),
+                expected_provider=provider_name,
+                expected_model=model_name,
+                expected_dimension=expected_dimension,
+            ):
+                hit_vectors[index] = row.vector
+            else:
+                stale_indices.append(index)
+
+        to_embed_indices = miss_indices + stale_indices
+        candidate_embedding_texts = [
+            str(candidate_meta[i]["text"]) for i in to_embed_indices
+        ]
+        if candidate_embedding_texts:
+            try:
+                computed = embedding_provider.embed(candidate_embedding_texts)
+            except Exception as exc:
+                return Stage3LaneResult(
+                    lane_name=self.lane_name,
+                    candidates=[],
+                    error=f"embedding_error:{type(exc).__name__}",
+                    telemetry={
+                        "semantic_embedding_index": {
+                            "enabled": True,
+                            "candidate_count": len(records),
+                            "hit_count": len(hit_vectors),
+                            "stale_count": len(stale_indices),
+                            "miss_count": len(miss_indices),
+                        }
+                    },
+                )
+            if len(computed) != len(candidate_embedding_texts):
+                return Stage3LaneResult(
+                    lane_name=self.lane_name,
+                    candidates=[],
+                    error="embedding_count_mismatch",
+                    telemetry={"semantic_embedding_index": {"enabled": True}},
+                )
+        else:
+            computed = []
+
+        computed_by_index = dict(zip(to_embed_indices, computed))
+
+        write_count = 0
+        write_error_count = 0
+        if computed_by_index:
+            now = _utcnow_iso()
+            new_rows: list[SidecarRow] = []
+            for index, vector in computed_by_index.items():
+                meta = candidate_meta[index]
+                candidate, _evidence, _text = records[index]
+                new_rows.append(
+                    SidecarRow(
+                        source=candidate.source,
+                        item_id=candidate.item_id,
+                        text_hash=str(meta["text_hash"]),
+                        text_builder=str(meta["text_builder"]),
+                        embedding_provider=provider_name,
+                        embedding_model=model_name,
+                        dimension=expected_dimension,
+                        vector=list(vector),
+                        bucket=str(meta["bucket"]),
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            try:
+                sidecar_store.upsert_many(user_id, new_rows)
+                write_count = len(new_rows)
+            except Exception:
+                write_error_count = len(new_rows)
+
+        candidate_vectors: list[list[float]] = []
+        for index in range(len(records)):
+            if index in hit_vectors:
+                candidate_vectors.append(hit_vectors[index])
+            else:
+                candidate_vectors.append(list(computed_by_index[index]))
+
+        ranked = self._rank(records, query_vector, candidate_vectors, config)
+        telemetry = {
+            "enabled": True,
+            "candidate_count": len(records),
+            "hit_count": len(hit_vectors),
+            "stale_count": len(stale_indices),
+            "miss_count": len(miss_indices),
+            "write_count": write_count,
+            "write_error_count": write_error_count,
+        }
+        return Stage3LaneResult(
+            lane_name=self.lane_name,
+            candidates=ranked[: config.semantic.top_k],
+            telemetry={"semantic_embedding_index": telemetry},
+        )
+
+    def _rank(
+        self,
+        records: list[tuple[RecallCandidate, RetrievalEvidence, str]],
+        query_vector: list[float],
+        candidate_vectors: list[list[float]],
+        config: Stage3RecallConfig,
+    ) -> list[Stage3Candidate]:
         ranked: list[tuple[float, RecallCandidate, RetrievalEvidence]] = []
-        for (candidate, evidence, _), vector in zip(records, vectors[1:]):
+        for (candidate, evidence, _), vector in zip(records, candidate_vectors):
             score = cosine_similarity(query_vector, vector)
             if score < config.semantic.min_score:
                 continue
-
             candidate.score = score
             evidence.lanes = [self.lane_name]
             evidence.semantic_score = score
             evidence.retrieval_reason = f"semantic cosine score={score:.3f}"
             ranked.append((score, candidate, evidence))
-
         ranked.sort(key=lambda entry: (-entry[0], entry[1].source, entry[1].item_id))
-        return Stage3LaneResult(
-            lane_name=self.lane_name,
-            candidates=[
-                Stage3Candidate(candidate=candidate, evidence=evidence)
-                for _, candidate, evidence in ranked[: config.semantic.top_k]
-            ],
-        )
+        return [
+            Stage3Candidate(candidate=candidate, evidence=evidence)
+            for _, candidate, evidence in ranked
+        ]
 
 
 def _semantic_records(
@@ -459,3 +674,14 @@ def _is_cjk(char: str) -> bool:
             (0xF900, 0xFAFF),
         )
     )
+
+
+def _bucket_for_candidate(candidate: RecallCandidate) -> str:
+    if candidate.source != "profile":
+        return ""
+    parts = candidate.item_id.split(":", 1)
+    return parts[0] if parts else ""
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
