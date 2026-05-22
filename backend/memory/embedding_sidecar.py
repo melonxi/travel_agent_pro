@@ -54,6 +54,25 @@ class SidecarRow:
     updated_at: str
 
 
+def is_row_valid_for(
+    row: SidecarRow,
+    *,
+    expected_hash: str,
+    expected_text_builder: str,
+    expected_provider: str,
+    expected_model: str,
+    expected_dimension: int,
+) -> bool:
+    return (
+        row.text_hash == expected_hash
+        and row.text_builder == expected_text_builder
+        and row.embedding_provider == expected_provider
+        and row.embedding_model == expected_model
+        and row.dimension == expected_dimension
+        and len(row.vector) == expected_dimension
+    )
+
+
 def encode_vector(vector: list[float]) -> bytes:
     if not vector:
         return b""

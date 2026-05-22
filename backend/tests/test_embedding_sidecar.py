@@ -211,3 +211,66 @@ def test_upsert_many_overwrites_old_hash_under_same_key(tmp_path: Path):
         assert text_hash == "b" * 64
     finally:
         conn.close()
+
+
+def test_is_row_valid_when_all_fields_match():
+    from memory.embedding_sidecar import SidecarRow, is_row_valid_for
+
+    row = SidecarRow(
+        source="profile",
+        item_id="x",
+        text_hash="h",
+        text_builder="profile_item_text:v1",
+        embedding_provider="fastembed",
+        embedding_model="m",
+        dimension=2,
+        vector=[1.0, 0.0],
+        bucket="",
+        created_at="",
+        updated_at="",
+    )
+    assert (
+        is_row_valid_for(
+            row,
+            expected_hash="h",
+            expected_text_builder="profile_item_text:v1",
+            expected_provider="fastembed",
+            expected_model="m",
+            expected_dimension=2,
+        )
+        is True
+    )
+
+
+def test_is_row_invalid_when_any_field_mismatches():
+    from memory.embedding_sidecar import SidecarRow, is_row_valid_for
+
+    row = SidecarRow(
+        source="profile",
+        item_id="x",
+        text_hash="h",
+        text_builder="profile_item_text:v1",
+        embedding_provider="fastembed",
+        embedding_model="m",
+        dimension=2,
+        vector=[1.0, 0.0],
+        bucket="",
+        created_at="",
+        updated_at="",
+    )
+    base = dict(
+        expected_hash="h",
+        expected_text_builder="profile_item_text:v1",
+        expected_provider="fastembed",
+        expected_model="m",
+        expected_dimension=2,
+    )
+    for field_name, bad_value in [
+        ("expected_hash", "other"),
+        ("expected_text_builder", "profile_item_text:v2"),
+        ("expected_provider", "openai"),
+        ("expected_model", "other"),
+        ("expected_dimension", 3),
+    ]:
+        kwargs = dict(base, **{field_name: bad_value})
+        assert is_row_valid_for(row, **kwargs) is False
