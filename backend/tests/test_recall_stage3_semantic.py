@@ -120,3 +120,19 @@ def test_semantic_lane_degrades_when_embedding_provider_returns_wrong_count() ->
     assert result.candidates == []
     assert result.telemetry.lane_errors["semantic"] == "embedding_count_mismatch"
     assert "semantic" not in result.telemetry.lanes_succeeded
+
+
+def test_stage3_telemetry_has_semantic_embedding_index_field():
+    from memory.recall_stage3_models import Stage3Telemetry
+
+    telemetry = Stage3Telemetry()
+    assert telemetry.semantic_embedding_index == {}
+    payload = telemetry.to_dict()
+    assert payload["semantic_embedding_index"] == {}
+
+
+def test_stage3_lane_result_has_telemetry_field():
+    from memory.recall_stage3_models import Stage3LaneResult
+
+    result = Stage3LaneResult(lane_name="x", candidates=[])
+    assert result.telemetry == {}

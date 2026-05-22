@@ -79,6 +79,7 @@ class Stage3LaneResult:
     lane_name: str
     candidates: list[Stage3Candidate]
     error: str = ""
+    telemetry: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -94,6 +95,7 @@ class Stage3Telemetry:
     zero_hit: bool = False
     fallback_used: str = "none"
     lane_errors: dict[str, str] = field(default_factory=dict)
+    semantic_embedding_index: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -110,6 +112,7 @@ class Stage3Telemetry:
             "zero_hit": self.zero_hit,
             "fallback_used": self.fallback_used,
             "lane_errors": dict(self.lane_errors),
+            "semantic_embedding_index": dict(self.semantic_embedding_index),
         }
 
 
