@@ -24,3 +24,42 @@ def test_decode_rejects_dimension_mismatch():
     encoded = encode_vector([1.0, 2.0])
     with pytest.raises(ValueError):
         decode_vector(encoded, dimension=3)
+
+
+def test_compute_text_hash_is_stable_and_hex():
+    from memory.embedding_sidecar import compute_text_hash
+
+    h1 = compute_text_hash("hello")
+    h2 = compute_text_hash("hello")
+    h3 = compute_text_hash("hello ")
+    assert h1 == h2
+    assert h1 != h3
+    assert len(h1) == 64
+    assert all(c in "0123456789abcdef" for c in h1)
+
+
+def test_sidecar_row_default_construction():
+    from memory.embedding_sidecar import (
+        PROFILE_TEXT_BUILDER_VERSION,
+        SLICE_TEXT_BUILDER_VERSION,
+        SidecarRow,
+    )
+
+    assert PROFILE_TEXT_BUILDER_VERSION == "profile_item_text:v1"
+    assert SLICE_TEXT_BUILDER_VERSION == "episode_slice_text:v1"
+
+    row = SidecarRow(
+        source="profile",
+        item_id="stable_preferences:hotel:quiet",
+        text_hash="a" * 64,
+        text_builder="profile_item_text:v1",
+        embedding_provider="fastembed",
+        embedding_model="BAAI/bge-small-zh-v1.5",
+        dimension=2,
+        vector=[1.0, 0.0],
+        bucket="stable_preferences",
+        created_at="2026-05-22T10:00:00Z",
+        updated_at="2026-05-22T10:00:00Z",
+    )
+    assert row.source == "profile"
+    assert row.vector == [1.0, 0.0]
