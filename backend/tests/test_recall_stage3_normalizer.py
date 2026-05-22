@@ -221,6 +221,7 @@ def test_stage3_telemetry_to_dict_returns_shape_and_copies() -> None:
         "zero_hit": False,
         "fallback_used": "none",
         "lane_errors": {"semantic": "disabled"},
+        "semantic_embedding_index": {},
     }
 
     data["lanes_attempted"].append("lexical")
