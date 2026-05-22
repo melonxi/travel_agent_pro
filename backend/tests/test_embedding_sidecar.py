@@ -100,3 +100,55 @@ def test_store_returns_per_user_rlock():
     assert lock_a is lock_a_again
     assert lock_a is not lock_b
     assert isinstance(lock_a, type(threading.RLock()))
+
+
+def test_fetch_many_returns_empty_dict_for_empty_index(tmp_path: Path):
+    from memory.embedding_sidecar import SidecarStore
+
+    store = SidecarStore(data_dir=tmp_path)
+    result = store.fetch_many(
+        "u1", [("profile", "stable_preferences:hotel:quiet")]
+    )
+    assert result == {}
+
+
+def test_fetch_many_returns_only_matching_keys(tmp_path: Path):
+    from memory.embedding_sidecar import SidecarRow, SidecarStore, encode_vector
+
+    store = SidecarStore(data_dir=tmp_path)
+    store.ensure_user_index("u1")
+
+    db_path = store._db_path("u1")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO embedding_index VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "profile",
+            "stable_preferences:hotel:quiet",
+            "a" * 64,
+            "profile_item_text:v1",
+            "fastembed",
+            "BAAI/bge-small-zh-v1.5",
+            2,
+            encode_vector([1.0, 0.0]),
+            "stable_preferences",
+            "2026-05-22T10:00:00Z",
+            "2026-05-22T10:00:00Z",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    result = store.fetch_many(
+        "u1",
+        [
+            ("profile", "stable_preferences:hotel:quiet"),
+            ("profile", "stable_preferences:hotel:missing"),
+        ],
+    )
+    assert set(result.keys()) == {("profile", "stable_preferences:hotel:quiet")}
+    row = result[("profile", "stable_preferences:hotel:quiet")]
+    assert isinstance(row, SidecarRow)
+    assert row.vector == [1.0, 0.0]
+    assert row.dimension == 2
+    assert row.embedding_model == "BAAI/bge-small-zh-v1.5"

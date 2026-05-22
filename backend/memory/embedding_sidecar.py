@@ -111,3 +111,65 @@ class SidecarStore:
         with self._lock_for(user_id):
             conn = self._connect(user_id)
             conn.close()
+
+    def fetch_many(
+        self,
+        user_id: str,
+        keys: list[tuple[str, str]],
+    ) -> dict[tuple[str, str], SidecarRow]:
+        if not keys:
+            return {}
+        path = self._db_path(user_id)
+        if not path.exists():
+            return {}
+        with self._lock_for(user_id):
+            conn = self._connect(user_id)
+            try:
+                placeholders = ",".join("(?,?)" for _ in keys)
+                params: list[object] = []
+                for source, item_id in keys:
+                    params.extend([source, item_id])
+                sql = (
+                    "SELECT source, item_id, text_hash, text_builder, "
+                    "embedding_provider, embedding_model, dimension, vector, "
+                    "bucket, created_at, updated_at "
+                    "FROM embedding_index "
+                    f"WHERE (source, item_id) IN (VALUES {placeholders})"
+                )
+                fetched = conn.execute(sql, params).fetchall()
+            finally:
+                conn.close()
+
+        rows: dict[tuple[str, str], SidecarRow] = {}
+        for db_row in fetched:
+            (
+                source,
+                item_id,
+                text_hash,
+                text_builder,
+                embedding_provider,
+                embedding_model,
+                dimension,
+                vector_blob,
+                bucket,
+                created_at,
+                updated_at,
+            ) = db_row
+            try:
+                vector = decode_vector(vector_blob, dimension)
+            except ValueError:
+                continue
+            rows[(source, item_id)] = SidecarRow(
+                source=source,
+                item_id=item_id,
+                text_hash=text_hash,
+                text_builder=text_builder,
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                dimension=dimension,
+                vector=vector,
+                bucket=bucket or "",
+                created_at=created_at,
+                updated_at=updated_at,
+            )
+        return rows
