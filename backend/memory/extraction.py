@@ -302,6 +302,8 @@ def build_v3_profile_extraction_tool() -> dict[str, Any]:
         "description": (
             "只提取跨旅行长期用户画像 profile_updates。当前行程事实、"
             "会话临时信号、PII、以及推测内容都不要输出。"
+            "bucket 语义：constraints=必须遵守，rejections=明确不要，"
+            "stable_preferences=长期喜欢，preference_hypotheses=可能喜欢。"
         ),
         "parameters": {
             "type": "object",
@@ -519,6 +521,15 @@ def build_v3_profile_extraction_prompt(
 
 已有长期画像：
 {profile_text}
+
+用户画像设计模型：
+- profile item 可以先分成两层理解。
+- 语义层描述“这条记忆说了什么”：`domain`、`key`、`value`、`polarity`、`stability`、`confidence`。
+- 管理层或证据层描述“系统如何管理和使用这条记忆”：`applicability`、`recall_hints`、`source_refs`。不要输出 observation_count；重复观察次数由保存逻辑在 `context.observation_count` 中维护。
+- bucket 按约束强度和稳定性分类：`constraints` 表示必须遵守什么，`rejections` 表示明确不要什么，`stable_preferences` 表示长期喜欢什么，`preference_hypotheses` 表示可能喜欢什么。
+- hypothesis 是缓冲区，不是低质量 stable preference。单次观察到的长期倾向放 `preference_hypotheses`；多次观察或用户明确说“以后/每次/一直”才放 `stable_preferences`。
+- 合并 identity 由保存逻辑处理：`constraints` 和 `stable_preferences` 主要按 `domain + key` 合并；`rejections` 会把 `value` 纳入 identity，避免把不同拒绝对象合并。
+- 带“这轮/这次/当前行程先别”的拒绝通常是临时 `temporary_rejection`，不要放进长期 `rejections`；只有用户表达为长期或跨旅行都适用时才写入 profile。
 
 分类规则：
 - `constraints`：跨旅行硬约束，例如“不坐红眼航班”“不住青旅”。

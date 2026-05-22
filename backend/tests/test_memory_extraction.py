@@ -143,6 +143,35 @@ class TestSplitMemoryExtractionTools:
         assert "quote" in prompt
         assert "敏感信息" in prompt
 
+    def test_profile_prompt_explains_profile_bucket_design_model(self):
+        prompt = build_v3_profile_extraction_prompt(
+            user_messages=["这次想住设计感酒店"],
+            profile=UserMemoryProfile.empty("u1"),
+            plan_facts={"destination": "京都"},
+        )
+
+        assert "语义层" in prompt
+        assert "管理层或证据层" in prompt
+        assert "必须遵守什么" in prompt
+        assert "明确不要什么" in prompt
+        assert "长期喜欢什么" in prompt
+        assert "可能喜欢什么" in prompt
+        assert "hypothesis 是缓冲区" in prompt
+        assert "observation_count" in prompt
+        assert "不要输出 observation_count" in prompt
+        assert "domain + key" in prompt
+        assert "rejections" in prompt and "value" in prompt
+        assert "这轮" in prompt and "temporary_rejection" in prompt
+
+    def test_profile_tool_description_points_to_bucket_semantics(self):
+        tool = build_v3_profile_extraction_tool()
+
+        description = tool["description"]
+        assert "constraints=必须遵守" in description
+        assert "rejections=明确不要" in description
+        assert "stable_preferences=长期喜欢" in description
+        assert "preference_hypotheses=可能喜欢" in description
+
     def test_working_prompt_excludes_profile_updates_target(self):
         prompt = build_v3_working_memory_extraction_prompt(
             user_messages=["这轮先别考虑迪士尼"],
