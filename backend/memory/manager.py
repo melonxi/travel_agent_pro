@@ -155,6 +155,55 @@ class MemoryManager:
         except Exception:
             return
 
+    async def warm_episode_slice(self, user_id, slice_):
+        import asyncio
+        from datetime import datetime, timezone
+
+        from memory.embedding_sidecar import (
+            SLICE_TEXT_BUILDER_VERSION,
+            SidecarRow,
+            compute_text_hash,
+        )
+        from memory.recall_stage3_lanes import _slice_text
+
+        index_cfg = self.retrieval_config.stage3.semantic.embedding_index
+        if not index_cfg.enabled or not index_cfg.warm_on_write:
+            return
+        provider = self._get_stage3_embedding_provider()
+        store = self._get_sidecar_store()
+        if provider is None or store is None:
+            return
+
+        text = _slice_text(slice_)
+        if not text:
+            return
+        try:
+            vectors = provider.embed([text])
+        except Exception:
+            return
+        if not vectors:
+            return
+        vector = list(vectors[0])
+        semantic_cfg = self.retrieval_config.stage3.semantic
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        row = SidecarRow(
+            source="episode_slice",
+            item_id=slice_.id,
+            text_hash=compute_text_hash(text),
+            text_builder=SLICE_TEXT_BUILDER_VERSION,
+            embedding_provider=semantic_cfg.provider,
+            embedding_model=semantic_cfg.model_name,
+            dimension=len(vector),
+            vector=vector,
+            bucket="",
+            created_at=now,
+            updated_at=now,
+        )
+        try:
+            await asyncio.to_thread(store.upsert_many, user_id, [row])
+        except Exception:
+            return
+
     async def generate_context(
         self,
         user_id: str,
