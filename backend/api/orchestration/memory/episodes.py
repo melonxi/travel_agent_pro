@@ -40,3 +40,4 @@ async def append_episode_slices(
     now = now_iso()
     for slice_ in build_episode_slices(episode, now=now):
         await memory_mgr.v3_store.append_episode_slice(slice_)
+        await memory_mgr.warm_episode_slice(slice_.user_id, slice_)

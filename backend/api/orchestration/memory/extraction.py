@@ -488,6 +488,9 @@ def create_memory_extraction_runtime(
                     user_id, merged_bucket, sanitized
                 )
                 _upsert_profile_item_in_memory(merged_bucket, sanitized)
+                await memory_mgr.warm_profile_item(
+                    user_id, merged_bucket, sanitized
+                )
                 route_progress.saved_count += 1
                 aggregate_progress.saved_profile_count += 1
                 if action in {"pending", "pending_conflict"}:
