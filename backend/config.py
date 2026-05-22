@@ -158,6 +158,14 @@ class Stage3LaneConfig:
 
 
 @dataclass(frozen=True)
+class Stage3SemanticEmbeddingIndexConfig:
+    enabled: bool = False
+    warm_on_write: bool = False
+    warm_buckets: tuple[str, ...] = ("constraints", "stable_preferences")
+    max_records_per_user: int = 20000
+
+
+@dataclass(frozen=True)
 class Stage3SemanticConfig(Stage3LaneConfig):
     enabled: bool = True
     provider: str = "fastembed"
@@ -167,6 +175,9 @@ class Stage3SemanticConfig(Stage3LaneConfig):
     min_score: float = 0.58
     cache_max_items: int = 10000
     cache_max_mb: int = 64
+    embedding_index: Stage3SemanticEmbeddingIndexConfig = field(
+        default_factory=Stage3SemanticEmbeddingIndexConfig
+    )
 
 
 @dataclass(frozen=True)
@@ -392,6 +403,26 @@ def _build_stage3_lane_config(
     )
 
 
+def _build_stage3_semantic_embedding_index_config(
+    raw: dict,
+) -> Stage3SemanticEmbeddingIndexConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    default = Stage3SemanticEmbeddingIndexConfig()
+    warm_buckets_raw = raw.get("warm_buckets", list(default.warm_buckets))
+    if isinstance(warm_buckets_raw, list):
+        warm_buckets = tuple(str(item) for item in warm_buckets_raw if item)
+    else:
+        warm_buckets = default.warm_buckets
+    return Stage3SemanticEmbeddingIndexConfig(
+        enabled=_as_bool(raw.get("enabled"), default.enabled),
+        warm_on_write=_as_bool(raw.get("warm_on_write"), default.warm_on_write),
+        warm_buckets=warm_buckets,
+        max_records_per_user=int(
+            raw.get("max_records_per_user", default.max_records_per_user)
+        ),
+    )
+
+
 def _build_stage3_semantic_config(raw: dict) -> Stage3SemanticConfig:
     raw = raw if isinstance(raw, dict) else {}
     default = Stage3SemanticConfig()
@@ -416,6 +447,9 @@ def _build_stage3_semantic_config(raw: dict) -> Stage3SemanticConfig:
         min_score=float(raw.get("min_score", default.min_score)),
         cache_max_items=int(raw.get("cache_max_items", default.cache_max_items)),
         cache_max_mb=int(raw.get("cache_max_mb", default.cache_max_mb)),
+        embedding_index=_build_stage3_semantic_embedding_index_config(
+            raw.get("embedding_index", {})
+        ),
     )
 
 

@@ -180,3 +180,41 @@ memory:
     assert cfg.memory.retrieval.reranker.evidence.lane_fused_weight == 0.0
     assert cfg.memory.retrieval.reranker.evidence.semantic_score_weight == 0.0
     assert cfg.memory.retrieval.reranker.evidence.lexical_score_weight == 0.0
+
+
+def test_stage3_semantic_embedding_index_defaults():
+    from config import Stage3SemanticConfig
+
+    semantic = Stage3SemanticConfig()
+    index = semantic.embedding_index
+    assert index.enabled is False
+    assert index.warm_on_write is False
+    assert index.warm_buckets == ("constraints", "stable_preferences")
+    assert index.max_records_per_user == 20000
+
+
+def test_load_config_parses_embedding_index_block(tmp_path):
+    from config import load_config
+
+    path = tmp_path / "c.yaml"
+    path.write_text(
+        """
+memory:
+  retrieval:
+    stage3:
+      semantic:
+        embedding_index:
+          enabled: true
+          warm_on_write: true
+          warm_buckets:
+            - stable_preferences
+          max_records_per_user: 5000
+""",
+        encoding="utf-8",
+    )
+    cfg = load_config(str(path))
+    index = cfg.memory.retrieval.stage3.semantic.embedding_index
+    assert index.enabled is True
+    assert index.warm_on_write is True
+    assert index.warm_buckets == ("stable_preferences",)
+    assert index.max_records_per_user == 5000
