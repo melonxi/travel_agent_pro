@@ -264,3 +264,44 @@ def test_candidate_count_mismatch_returns_partial_telemetry_counters(tmp_path: P
     assert "stale_count" in telemetry
     assert "miss_count" in telemetry
     assert telemetry["hit_count"] + telemetry["stale_count"] + telemetry["miss_count"] == 1
+
+
+class FailingUpsertSidecarStore(SidecarStore):
+    def upsert_many(self, user_id, rows):  # type: ignore[override]
+        raise RuntimeError("disk_full")
+
+
+def test_sidecar_write_failure_records_telemetry_but_keeps_results(tmp_path: Path):
+    provider = CountingEmbeddingProvider()
+    store = FailingUpsertSidecarStore(data_dir=tmp_path)
+
+    result = _retrieve(provider, store)
+    assert [c.item_id for c in result.candidates] == [
+        "stable_preferences:hotel:quiet"
+    ]
+    telemetry = result.telemetry.semantic_embedding_index
+    assert telemetry["write_error_count"] >= 1
+    assert telemetry["write_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_recalls_share_sidecar_safely(tmp_path: Path):
+    import asyncio
+
+    provider = CountingEmbeddingProvider()
+    store = SidecarStore(data_dir=tmp_path)
+
+    def _one_call() -> int:
+        result = _retrieve(provider, store)
+        return len(result.candidates)
+
+    results = await asyncio.gather(
+        *(asyncio.to_thread(_one_call) for _ in range(8))
+    )
+    assert all(count == 1 for count in results)
+
+    # 至少有一个真正 hit（不可能 8 个都各自先到）：
+    fetched = store.fetch_many(
+        "u1", [("profile", "stable_preferences:hotel:quiet")]
+    )
+    assert ("profile", "stable_preferences:hotel:quiet") in fetched
