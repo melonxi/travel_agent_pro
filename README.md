@@ -323,7 +323,7 @@ WAL 模式会生成同目录下的 `index.db-wal` / `index.db-shm`，备份时�
 `stage3.semantic_embedding_index` 字段：
 
 - `hit_count + stale_count + miss_count == candidate_count`
-- `write_count == miss_count + stale_count - write_error_count`
+- `write_count + write_error_count == miss_count + stale_count`
 - `write_error_count > 0` 表示有 sidecar 写失败但召回结果未受影响。
 
 ### 设计取舍备注
