@@ -179,8 +179,6 @@ def create_memory_orchestration(
         memory_mgr=memory_mgr,
         create_llm_provider_func=create_llm_provider_func,
         collect_forced_tool_call_arguments=collect_forced_tool_call_arguments,
-        build_memory_prompt_summary=_build_memory_prompt_summary,
-        memory_plan_facts=_memory_plan_facts,
         publish_memory_task=(
             lambda session_id, task: task_runtime.get_publish_memory_task()(
                 session_id, task

@@ -14,7 +14,12 @@ from llm.types import ChunkType, LLMChunk
 from main import create_app
 from memory.formatter import MemoryRecallTelemetry
 from memory.recall_query import RecallRetrievalPlan
-from memory.v3_models import ArchivedTripEpisode, MemoryAuditEvent, WorkingMemoryItem
+from memory.v3_models import (
+    ArchivedTripEpisode,
+    MemoryAuditEvent,
+    MemoryProfileItem,
+    WorkingMemoryItem,
+)
 from state.models import Budget, DateRange, TravelPlanState
 
 
@@ -2376,6 +2381,103 @@ async def test_memory_extraction_profile_route_writes_profile_only(app):
     ]
     assert profile.json()["stable_preferences"][0]["key"] == "avoid_spicy"
     assert working.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_gate_prompt_includes_compact_profile_hint_values(app):
+    observed: dict[str, str] = {}
+    memory_mgr = _get_closure_value(app, "memory_mgr")
+    await memory_mgr.v3_store.upsert_profile_item(
+        "u1",
+        "rejections",
+        MemoryProfileItem(
+            id="rej_hotel_area_shinjuku",
+            domain="hotel",
+            key="reject_area",
+            value="新宿",
+            polarity="avoid",
+            stability="explicit_declared",
+            confidence=0.9,
+            status="active",
+            context={},
+            applicability="适用于住宿区域筛选。",
+            recall_hints={
+                "domains": ["hotel"],
+                "keywords": ["新宿", "住宿"],
+                "aliases": ["Shinjuku"],
+            },
+            source_refs=[
+                {
+                    "kind": "message",
+                    "session_id": "old_session",
+                    "quote": "不要住新宿",
+                }
+            ],
+            created_at="2026-01-01T00:00:00Z",
+            updated_at="2026-01-01T00:00:00Z",
+        ),
+    )
+
+    async def fake_run(self, messages, phase, tools_override=None):
+        yield LLMChunk(type=ChunkType.DONE)
+
+    class ExtractionProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None):
+            tool_name = tools[0]["name"]
+            if tool_name == "decide_memory_recall":
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_recall_gate",
+                        name=tool_name,
+                        arguments={
+                            "needs_recall": False,
+                            "intent_type": "no_recall_needed",
+                            "reason": "current_trip_request",
+                            "confidence": 0.9,
+                        },
+                    ),
+                )
+                yield LLMChunk(type=ChunkType.DONE)
+                return
+            assert tool_name == "decide_memory_extraction"
+            observed["gate_prompt"] = messages[0].content
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_gate",
+                    name=tool_name,
+                    arguments={
+                        "should_extract": False,
+                        "routes": {"profile": False, "working_memory": False},
+                        "reason": "trip_state_only",
+                        "message": "本轮只是当前行程事实",
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("agent.loop.AgentLoop.run", fake_run)
+        mp.setattr("main.create_llm_provider", lambda _config: ExtractionProvider())
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            session_resp = await client.post("/api/sessions")
+            session_id = session_resp.json()["session_id"]
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "这次想看看涩谷附近住宿", "user_id": "u1"},
+            )
+            await _wait_for_memory_scheduler_idle(app, session_id)
+
+    assert resp.status_code == 200
+    assert "已有长期画像提示" in observed["gate_prompt"]
+    assert "reject_area" in observed["gate_prompt"]
+    assert "hotel" in observed["gate_prompt"]
+    assert "avoid" in observed["gate_prompt"]
+    assert "新宿" in observed["gate_prompt"]
 
 
 @pytest.mark.asyncio

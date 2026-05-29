@@ -442,14 +442,12 @@ def build_v3_extraction_prompt(
     user_messages: list[str],
     profile: UserMemoryProfile,
     working_memory: SessionWorkingMemory,
-    plan_facts: dict[str, Any],
 ) -> str:
     messages_text = "\n".join(f"- {message}" for message in user_messages)
     profile_text = json.dumps(profile.to_dict(), ensure_ascii=False, indent=2)
     working_text = json.dumps(
         working_memory.to_dict(), ensure_ascii=False, indent=2
     )
-    facts_text = json.dumps(plan_facts, ensure_ascii=False, indent=2)
     return f"""你在执行一个内部记忆提取任务。你的目标只有两类输出：
 
 1. `profile_updates`
@@ -466,9 +464,6 @@ def build_v3_extraction_prompt(
 
 用户消息：
 {messages_text}
-
-当前解析出的本次行程事实：
-{facts_text}
 
 已有长期画像：
 {profile_text}
@@ -504,20 +499,15 @@ def build_v3_extraction_prompt(
 def build_v3_profile_extraction_prompt(
     user_messages: list[str],
     profile: UserMemoryProfile,
-    plan_facts: dict[str, Any],
 ) -> str:
     messages_text = "\n".join(f"- {message}" for message in user_messages)
     profile_text = json.dumps(profile.to_dict(), ensure_ascii=False, indent=2)
-    facts_text = json.dumps(plan_facts, ensure_ascii=False, indent=2)
     return f"""你在执行一个内部长期画像提取任务。你的目标只有 `profile_updates`。
 
 请调用工具 `{_V3_PROFILE_EXTRACTION_TOOL_NAME}` 提交结果，不要输出 JSON 正文、不要输出解释文字、不要输出代码块。
 
 用户消息：
 {messages_text}
-
-当前解析出的本次行程事实：
-{facts_text}
 
 已有长期画像：
 {profile_text}
@@ -553,20 +543,15 @@ def build_v3_profile_extraction_prompt(
 def build_v3_working_memory_extraction_prompt(
     user_messages: list[str],
     working_memory: SessionWorkingMemory,
-    plan_facts: dict[str, Any],
 ) -> str:
     messages_text = "\n".join(f"- {message}" for message in user_messages)
     working_text = json.dumps(working_memory.to_dict(), ensure_ascii=False, indent=2)
-    facts_text = json.dumps(plan_facts, ensure_ascii=False, indent=2)
     return f"""你在执行一个内部会话工作记忆提取任务。你的目标只有 `working_memory`。
 
 请调用工具 `{_V3_WORKING_MEMORY_EXTRACTION_TOOL_NAME}` 提交结果，不要输出 JSON 正文、不要输出解释文字、不要输出代码块。
 
 用户消息：
 {messages_text}
-
-当前解析出的本次行程事实：
-{facts_text}
 
 已有会话工作记忆：
 {working_text}
@@ -591,13 +576,11 @@ def build_v3_working_memory_extraction_prompt(
 
 def build_v3_extraction_gate_prompt(
     user_messages: list[str],
-    plan_facts: dict[str, Any],
-    existing_memory_summary: dict[str, Any] | None = None,
+    existing_profile_hints: dict[str, list[dict[str, Any]]] | None = None,
 ) -> str:
     messages_text = "\n".join(f"- {message}" for message in user_messages)
-    facts_text = json.dumps(plan_facts, ensure_ascii=False, indent=2)
-    memory_summary_text = json.dumps(
-        existing_memory_summary or {},
+    profile_hints_text = json.dumps(
+        existing_profile_hints or {},
         ensure_ascii=False,
         indent=2,
     )
@@ -615,26 +598,25 @@ def build_v3_extraction_gate_prompt(
 用户消息：
 {messages_text}
 
-当前解析出的本次行程事实：
-{facts_text}
-
-已有记忆摘要（仅用于避免重复和辅助判断）：
-{memory_summary_text}
+已有长期画像提示（弱去重，只用于识别明显重复，不是完整记忆库）：
+{profile_hints_text}
 
 判定规则：
 - 如果用户表达了跨旅行可复用的长期偏好、硬约束、明确拒绝，设置 `routes.profile=true`
 - 如果用户表达了只对当前会话短期有用的临时信号，设置 `routes.working_memory=true`
 - 如果 `routes.profile` 或 `routes.working_memory` 其中任意一个为 true，则 `should_extract=true`
 - 如果本轮只是推进当前 trip 的事实状态，例如目的地、日期、预算、候选池、骨架、每日安排，没有新的可复用偏好信号，返回 `should_extract=false`
-- 如果只是寒暄、确认、重复既有偏好、或空泛追问，返回 `should_extract=false`
-- 如果已有记忆摘要里已经明确覆盖本轮信号，且没有新增细化或冲突信息，优先返回 `should_extract=false`
+- 如果只是寒暄、确认、空泛追问，返回 `should_extract=false`
+- 已有长期画像提示只用于识别明显重复；只有用户消息只是重复同一长期信号，且没有新增范围、强度、例外、冲突或不同 value 时，才返回 `routes.profile=false`
+- 如果无法确认已有提示是否完全覆盖本轮信号，或者用户表达了新增细化、例外、冲突、不同 value，必须设置 `routes.profile=true`
+- 不确定时放行：无法确认是否需要提取时，设置对应 route=true
 - 不要输出 JSON 正文、不要解释、不要输出具体 memory item
 
 示例：
-- “我以后都不坐红眼航班” -> `routes.profile=true`, `routes.working_memory=false`
-- “这轮先别考虑迪士尼” -> `routes.profile=false`, `routes.working_memory=true`
-- “我不吃辣，这轮先别考虑迪士尼” -> `routes.profile=true`, `routes.working_memory=true`
-- “这次五一去京都，预算 3 万” -> `routes.profile=false`, `routes.working_memory=false`
+- "我以后都不坐红眼航班" -> `routes.profile=true`, `routes.working_memory=false`
+- "这轮先别考虑迪士尼" -> `routes.profile=false`, `routes.working_memory=true`
+- "我不吃辣，这轮先别考虑迪士尼" -> `routes.profile=true`, `routes.working_memory=true`
+- "这次五一去京都，预算 3 万" -> `routes.profile=false`, `routes.working_memory=false`
 """
 
 

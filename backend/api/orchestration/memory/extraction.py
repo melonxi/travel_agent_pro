@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -42,6 +43,48 @@ from api.orchestration.memory.contracts import (
 
 logger = logging.getLogger(__name__)
 
+_GATE_MAX_PROFILE_HINTS_PER_BUCKET = 8
+_GATE_PROFILE_HINT_VALUE_MAX_CHARS = 60
+
+
+def _compact_profile_hint_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+    else:
+        text = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    if len(text) <= _GATE_PROFILE_HINT_VALUE_MAX_CHARS:
+        return text
+    limit = _GATE_PROFILE_HINT_VALUE_MAX_CHARS - 3
+    return f"{text[:limit]}..."
+
+
+def _build_gate_profile_hints(profile: Any) -> dict[str, list[dict[str, Any]]]:
+    hints: dict[str, list[dict[str, Any]]] = {}
+    for bucket in (
+        "constraints",
+        "rejections",
+        "stable_preferences",
+        "preference_hypotheses",
+    ):
+        bucket_items = getattr(profile, bucket, [])
+        hints[bucket] = [
+            {
+                "domain": item.domain,
+                "key": item.key,
+                "value": _compact_profile_hint_value(item.value),
+                "polarity": item.polarity,
+            }
+            for item in bucket_items[:_GATE_MAX_PROFILE_HINTS_PER_BUCKET]
+        ]
+    return hints
+
 
 @dataclass
 class MemoryExtractionRuntime:
@@ -55,8 +98,6 @@ def create_memory_extraction_runtime(
     memory_mgr: Any,
     create_llm_provider_func: Callable[[Any], Any],
     collect_forced_tool_call_arguments: Callable[..., Any],
-    build_memory_prompt_summary: Callable[..., Any],
-    memory_plan_facts: Callable[[TravelPlanState], dict[str, Any]],
     publish_memory_task: Callable[[str, InternalTask], None],
     now_iso: Callable[[], str],
 ) -> MemoryExtractionRuntime:
@@ -103,15 +144,10 @@ def create_memory_extraction_runtime(
                 message="本轮没有可提取的用户消息",
             )
 
-        memory_summary = await build_memory_prompt_summary(
-            user_id=user_id,
-            session_id=session_id,
-            plan_snapshot=plan_snapshot,
-        )
+        profile = await memory_mgr.v3_store.load_profile(user_id)
         prompt = build_v3_extraction_gate_prompt(
             user_messages=gate_window,
-            plan_facts=memory_plan_facts(plan_snapshot),
-            existing_memory_summary=memory_summary,
+            existing_profile_hints=_build_gate_profile_hints(profile),
         )
         gate_llm = create_llm_provider_func(config.llm)
         logger.warning(
@@ -278,7 +314,6 @@ def create_memory_extraction_runtime(
             user_messages=user_messages,
             profile=profile,
             working_memory=working_memory,
-            plan_facts=memory_plan_facts(plan_snapshot),
         )
         extraction_llm = create_llm_provider_func(config.llm)
         logger.warning(
@@ -314,7 +349,6 @@ def create_memory_extraction_runtime(
         prompt = build_v3_profile_extraction_prompt(
             user_messages=user_messages,
             profile=profile,
-            plan_facts=memory_plan_facts(plan_snapshot),
         )
         extraction_llm = create_llm_provider_func(config.llm)
         logger.warning(
@@ -350,7 +384,6 @@ def create_memory_extraction_runtime(
         prompt = build_v3_working_memory_extraction_prompt(
             user_messages=user_messages,
             working_memory=working_memory,
-            plan_facts=memory_plan_facts(plan_snapshot),
         )
         extraction_llm = create_llm_provider_func(config.llm)
         logger.warning(

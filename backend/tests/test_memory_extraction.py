@@ -28,12 +28,11 @@ class TestBuildV3ExtractionPrompt:
             user_messages=["我不想坐红眼航班", "这次预算3万"],
             profile=profile,
             working_memory=working,
-            plan_facts={"destination": "京都", "budget": 30000},
         )
 
         assert "preference_hypotheses" in prompt
         assert "working_memory" in prompt
-        assert "京都" in prompt
+        assert "当前解析出的本次行程事实" not in prompt
         assert "红眼航班" in prompt
         assert "extract_memory_candidates" in prompt
         assert "不要输出 JSON 正文" in prompt
@@ -118,19 +117,18 @@ class TestSplitMemoryExtractionTools:
         prompt = build_v3_profile_extraction_prompt(
             user_messages=["以后我都不坐红眼航班"],
             profile=UserMemoryProfile.empty("u1"),
-            plan_facts={"destination": "京都"},
         )
 
         assert "extract_profile_memory" in prompt
         assert "profile_updates" in prompt
         assert "working_memory" not in prompt
+        assert "当前解析出的本次行程事实" not in prompt
         assert "本次目的地、日期、预算" in prompt
 
     def test_profile_prompt_requires_recall_ready_metadata(self):
         prompt = build_v3_profile_extraction_prompt(
             user_messages=["以后我都不坐红眼航班"],
             profile=UserMemoryProfile.empty("u1"),
-            plan_facts={"destination": "京都"},
         )
 
         assert "applicability" in prompt
@@ -147,7 +145,6 @@ class TestSplitMemoryExtractionTools:
         prompt = build_v3_profile_extraction_prompt(
             user_messages=["这次想住设计感酒店"],
             profile=UserMemoryProfile.empty("u1"),
-            plan_facts={"destination": "京都"},
         )
 
         assert "语义层" in prompt
@@ -176,12 +173,12 @@ class TestSplitMemoryExtractionTools:
         prompt = build_v3_working_memory_extraction_prompt(
             user_messages=["这轮先别考虑迪士尼"],
             working_memory=SessionWorkingMemory.empty("u1", "s1", "trip_1"),
-            plan_facts={"destination": "东京"},
         )
 
         assert "extract_working_memory" in prompt
         assert "working_memory" in prompt
         assert "profile_updates" not in prompt
+        assert "当前解析出的本次行程事实" not in prompt
         assert "长期偏好" in prompt
 
     def test_parse_profile_tool_arguments(self):
@@ -239,13 +236,32 @@ class TestBuildV3ExtractionGate:
     def test_gate_prompt_focuses_on_judgement_only(self):
         prompt = build_v3_extraction_gate_prompt(
             user_messages=["我不吃辣", "继续规划吧"],
-            plan_facts={"destination": "京都", "budget": 30000},
         )
 
         assert "decide_memory_extraction" in prompt
         assert "不要输出具体 memory item" in prompt
         assert "继续规划吧" in prompt
-        assert "京都" in prompt
+
+    def test_gate_prompt_treats_profile_hints_as_weak_dedupe(self):
+        prompt = build_v3_extraction_gate_prompt(
+            user_messages=["我现在不太能吃辣了"],
+            existing_profile_hints={
+                "stable_preferences": [
+                    {
+                        "domain": "food",
+                        "key": "avoid_spicy",
+                        "value": "不吃辣",
+                        "polarity": "avoid",
+                    }
+                ]
+            },
+        )
+
+        assert "已有长期画像提示" in prompt
+        assert "不吃辣" in prompt
+        assert "只用于识别明显重复" in prompt
+        assert "无法确认" in prompt
+        assert "routes.profile=true" in prompt
 
     def test_gate_tool_requires_routes(self):
         tool = build_v3_extraction_gate_tool()
