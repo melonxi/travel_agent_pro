@@ -110,7 +110,29 @@ class RerankerDynamicBudgetConfig:
 
 
 @dataclass(frozen=True)
+class ProfileRerankConfig:
+    profile_top_n: int = 4
+    w_bucket: float = 0.40
+    w_conf: float = 0.20
+    w_match: float = 0.30
+    w_rec: float = 0.10
+    recency_half_life_days: int = 180
+
+
+@dataclass(frozen=True)
+class EpisodeRerankConfig:
+    episode_top_n: int = 3
+    w_rel: float = 0.45
+    w_match: float = 0.25
+    w_type: float = 0.20
+    w_rec: float = 0.10
+    recency_half_life_days: int = 365
+
+
+@dataclass(frozen=True)
 class MemoryRerankerConfig:
+    profile: ProfileRerankConfig = field(default_factory=ProfileRerankConfig)
+    episode: EpisodeRerankConfig = field(default_factory=EpisodeRerankConfig)
     small_candidate_set_threshold: int = 3
     profile_top_n: int = 4
     slice_top_n: int = 3
@@ -523,6 +545,77 @@ def _build_stage3_recall_config(raw: dict) -> Stage3RecallConfig:
     )
 
 
+def _build_profile_rerank_config(raw: dict) -> ProfileRerankConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    default = ProfileRerankConfig()
+    return ProfileRerankConfig(
+        profile_top_n=int(raw.get("profile_top_n", default.profile_top_n)),
+        w_bucket=float(raw.get("w_bucket", default.w_bucket)),
+        w_conf=float(raw.get("w_conf", default.w_conf)),
+        w_match=float(raw.get("w_match", default.w_match)),
+        w_rec=float(raw.get("w_rec", default.w_rec)),
+        recency_half_life_days=int(
+            raw.get("recency_half_life_days", default.recency_half_life_days)
+        ),
+    )
+
+
+def _build_episode_rerank_config(raw: dict) -> EpisodeRerankConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    default = EpisodeRerankConfig()
+    return EpisodeRerankConfig(
+        episode_top_n=int(
+            raw.get("episode_top_n", raw.get("slice_top_n", default.episode_top_n))
+        ),
+        w_rel=float(raw.get("w_rel", default.w_rel)),
+        w_match=float(raw.get("w_match", default.w_match)),
+        w_type=float(raw.get("w_type", default.w_type)),
+        w_rec=float(raw.get("w_rec", default.w_rec)),
+        recency_half_life_days=int(
+            raw.get("recency_half_life_days", default.recency_half_life_days)
+        ),
+    )
+
+
+def _build_memory_reranker_config(raw: dict) -> MemoryRerankerConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    profile_cfg = _build_profile_rerank_config(raw.get("profile", raw))
+    episode_cfg = _build_episode_rerank_config(raw.get("episode", raw))
+    evidence_raw = raw.get("evidence", {})
+    dynamic_budget_raw = raw.get("dynamic_budget", {})
+    return MemoryRerankerConfig(
+        profile=profile_cfg,
+        episode=episode_cfg,
+        small_candidate_set_threshold=int(raw.get("small_candidate_set_threshold", 3)),
+        profile_top_n=int(raw.get("profile_top_n", profile_cfg.profile_top_n)),
+        slice_top_n=int(raw.get("slice_top_n", episode_cfg.episode_top_n)),
+        hybrid_top_n=int(raw.get("hybrid_top_n", 4)),
+        hybrid_profile_top_n=int(raw.get("hybrid_profile_top_n", 2)),
+        hybrid_slice_top_n=int(raw.get("hybrid_slice_top_n", 2)),
+        recency_half_life_days=int(
+            raw.get("recency_half_life_days", profile_cfg.recency_half_life_days)
+        ),
+        # Phase A/B keeps intent_weights as code-only defaults on purpose.
+        intent_weights=MemoryRerankerConfig().intent_weights,
+        evidence=RerankerEvidenceConfig(
+            symbolic_hit_weight=float(evidence_raw.get("symbolic_hit_weight", 0.0)),
+            lexical_hit_weight=float(evidence_raw.get("lexical_hit_weight", 0.0)),
+            semantic_hit_weight=float(evidence_raw.get("semantic_hit_weight", 0.0)),
+            lane_fused_weight=float(evidence_raw.get("lane_fused_weight", 0.25)),
+            lexical_score_weight=float(evidence_raw.get("lexical_score_weight", 0.08)),
+            semantic_score_weight=float(
+                evidence_raw.get("semantic_score_weight", 0.15)
+            ),
+            destination_match_type_weight=float(
+                evidence_raw.get("destination_match_type_weight", 0.0)
+            ),
+        ),
+        dynamic_budget=RerankerDynamicBudgetConfig(
+            enabled=_as_bool(dynamic_budget_raw.get("enabled"), False),
+        ),
+    )
+
+
 def _build_memory_config(
     raw: dict, legacy_extraction: MemoryExtractionConfig
 ) -> MemoryConfig:
@@ -531,8 +624,6 @@ def _build_memory_config(
     retrieval_raw = raw.get("retrieval", {})
     storage_raw = raw.get("storage", {})
     reranker_raw = retrieval_raw.get("reranker", {})
-    evidence_raw = reranker_raw.get("evidence", {})
-    dynamic_budget_raw = reranker_raw.get("dynamic_budget", {})
     stage3_raw = retrieval_raw.get("stage3", {})
 
     extraction = MemoryExtractionV2Config(
@@ -565,45 +656,7 @@ def _build_memory_config(
             recall_gate_timeout_seconds=float(
                 retrieval_raw.get("recall_gate_timeout_seconds", 6.0)
             ),
-            reranker=MemoryRerankerConfig(
-                small_candidate_set_threshold=int(
-                    reranker_raw.get("small_candidate_set_threshold", 3)
-                ),
-                profile_top_n=int(reranker_raw.get("profile_top_n", 4)),
-                slice_top_n=int(reranker_raw.get("slice_top_n", 3)),
-                hybrid_top_n=int(reranker_raw.get("hybrid_top_n", 4)),
-                hybrid_profile_top_n=int(reranker_raw.get("hybrid_profile_top_n", 2)),
-                hybrid_slice_top_n=int(reranker_raw.get("hybrid_slice_top_n", 2)),
-                recency_half_life_days=int(
-                    reranker_raw.get("recency_half_life_days", 180)
-                ),
-                # Phase A/B keeps intent_weights as code-only defaults on purpose.
-                intent_weights=MemoryRerankerConfig().intent_weights,
-                evidence=RerankerEvidenceConfig(
-                    symbolic_hit_weight=float(
-                        evidence_raw.get("symbolic_hit_weight", 0.0)
-                    ),
-                    lexical_hit_weight=float(
-                        evidence_raw.get("lexical_hit_weight", 0.0)
-                    ),
-                    semantic_hit_weight=float(
-                        evidence_raw.get("semantic_hit_weight", 0.0)
-                    ),
-                    lane_fused_weight=float(evidence_raw.get("lane_fused_weight", 0.25)),
-                    lexical_score_weight=float(
-                        evidence_raw.get("lexical_score_weight", 0.08)
-                    ),
-                    semantic_score_weight=float(
-                        evidence_raw.get("semantic_score_weight", 0.15)
-                    ),
-                    destination_match_type_weight=float(
-                        evidence_raw.get("destination_match_type_weight", 0.0)
-                    ),
-                ),
-                dynamic_budget=RerankerDynamicBudgetConfig(
-                    enabled=_as_bool(dynamic_budget_raw.get("enabled"), False),
-                ),
-            ),
+            reranker=_build_memory_reranker_config(reranker_raw),
             stage3=_build_stage3_recall_config(stage3_raw),
         ),
         storage=MemoryStorageConfig(
