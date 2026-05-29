@@ -76,6 +76,23 @@ def _recall_telemetry_record_from_recall(
         reranker_per_item_scores=dict(memory_recall.reranker_per_item_scores),
         reranker_intent_label=memory_recall.reranker_intent_label,
         reranker_selection_metrics=dict(memory_recall.reranker_selection_metrics),
+        profile_reranker_selected_ids=list(
+            memory_recall.profile_reranker_selected_ids
+        ),
+        episode_reranker_selected_ids=list(
+            memory_recall.episode_reranker_selected_ids
+        ),
+        profile_reranker_final_reason=memory_recall.profile_reranker_final_reason,
+        episode_reranker_final_reason=memory_recall.episode_reranker_final_reason,
+        profile_reranker_per_item_scores=dict(
+            memory_recall.profile_reranker_per_item_scores
+        ),
+        episode_reranker_per_item_scores=dict(
+            memory_recall.episode_reranker_per_item_scores
+        ),
+        dual_recall_plan=dict(memory_recall.dual_recall_plan),
+        stage3_profile=dict(memory_recall.stage3_profile),
+        stage3_episode=dict(memory_recall.stage3_episode),
     )
 
 
