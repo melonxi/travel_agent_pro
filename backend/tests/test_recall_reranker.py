@@ -2,7 +2,12 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from config import IntentWeightProfile, RerankerEvidenceConfig
+from config import (
+    EpisodeRerankConfig,
+    IntentWeightProfile,
+    ProfileRerankConfig,
+    RerankerEvidenceConfig,
+)
 from memory.manager import select_recall_candidates
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import (
@@ -19,6 +24,8 @@ from memory.recall_reranker import (
     _resolve_intent_profile,
     choose_reranker_path,
     empty_rerank_result,
+    rerank_episode_candidates,
+    rerank_profile_candidates,
 )
 from memory.recall_stage3_models import RetrievalEvidence
 from memory.retrieval_candidates import RecallCandidate
@@ -70,6 +77,97 @@ def make_candidate(**overrides) -> RecallCandidate:
     )
     base.update(overrides)
     return RecallCandidate(**base)
+
+
+def test_rerank_profile_prefers_constraints_and_confidence():
+    candidates = [
+        make_candidate(
+            item_id="stable_preferences:hotel:quiet",
+            source="profile",
+            bucket="stable_preferences",
+            domains=["hotel"],
+            content_summary="hotel:quiet=喜欢安静住宿",
+            key="quiet",
+            polarity="prefer",
+            score=0.7,
+            retrieval_score=0.7,
+        ),
+        make_candidate(
+            item_id="constraints:hotel:no_smoking",
+            source="profile",
+            bucket="constraints",
+            domains=["hotel"],
+            content_summary="hotel:no_smoking=必须无烟房",
+            key="no_smoking",
+            polarity="must",
+            score=0.6,
+            retrieval_score=0.6,
+        ),
+    ]
+
+    result = rerank_profile_candidates(
+        candidates=candidates,
+        user_message="住宿按我的要求",
+        destination="",
+        domains=["hotel"],
+        keywords=["住宿"],
+        config=ProfileRerankConfig(profile_top_n=2),
+    )
+
+    assert result.selected_item_ids[0] == "constraints:hotel:no_smoking"
+    assert "profile rerank selected 2 items" in result.final_reason
+
+
+def test_rerank_episode_keeps_semantic_only_retrieval_score():
+    candidates = [
+        make_candidate(
+            item_id="slice_semantic",
+            source="episode_slice",
+            bucket="stay_choice",
+            domains=[],
+            content_summary="以前住过一个安静小旅馆，体验很好。",
+            score=0.92,
+            retrieval_score=0.92,
+        )
+    ]
+
+    result = rerank_episode_candidates(
+        candidates=candidates,
+        user_message="找个安静住宿",
+        destination="",
+        domains=[],
+        keywords=[],
+        config=EpisodeRerankConfig(episode_top_n=1),
+    )
+
+    assert result.selected_item_ids == ["slice_semantic"]
+    assert result.per_item_scores["slice_semantic"]["retrieval_score"] == 0.92
+
+
+def test_rerank_episode_filters_rejected_option_when_user_asks_positive_specific_option():
+    candidates = [
+        make_candidate(
+            item_id="slice_rejected",
+            source="episode_slice",
+            bucket="rejected_option",
+            domains=["hotel"],
+            content_summary="上次明确拒绝住青旅。",
+            score=0.9,
+            retrieval_score=0.9,
+        )
+    ]
+
+    result = rerank_episode_candidates(
+        candidates=candidates,
+        user_message="这次想住青旅",
+        destination="",
+        domains=["hotel"],
+        keywords=["青旅"],
+        config=EpisodeRerankConfig(episode_top_n=1),
+    )
+
+    assert result.selected_item_ids == []
+    assert "filtered: conflict" in result.per_item_reason["slice_rejected"]
 
 
 def test_normalize_optional_scores_ignores_missing_values():

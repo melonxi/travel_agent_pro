@@ -6,7 +6,12 @@ import math
 import re
 from typing import Any
 
-from config import IntentWeightProfile, MemoryRerankerConfig
+from config import (
+    EpisodeRerankConfig,
+    IntentWeightProfile,
+    MemoryRerankerConfig,
+    ProfileRerankConfig,
+)
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_stage3_models import RetrievalEvidence
 from memory.retrieval_candidates import RecallCandidate
@@ -79,7 +84,7 @@ class RecallRerankResult:
     final_reason: str
     per_item_reason: dict[str, str]
     fallback_used: str = "none"
-    per_item_scores: dict[str, SignalScoreDetail] = field(default_factory=dict)
+    per_item_scores: dict[str, Any] = field(default_factory=dict)
     intent_label: str = ""
     selection_metrics: dict[str, float | None] = field(default_factory=dict)
 
@@ -120,6 +125,207 @@ def empty_rerank_result() -> RecallRerankResult:
         intent_label="",
         selection_metrics=selection_metrics_placeholder(),
     )
+
+
+def rerank_profile_candidates(
+    *,
+    candidates: list[RecallCandidate],
+    user_message: str,
+    destination: str,
+    domains: list[str],
+    keywords: list[str],
+    config: ProfileRerankConfig,
+) -> RecallRerankResult:
+    scored: list[tuple[float, str, RecallCandidate]] = []
+    per_item_reason: dict[str, str] = {}
+    per_item_scores: dict[str, dict[str, float | str | None]] = {}
+
+    for candidate in candidates:
+        if candidate.source != "profile":
+            continue
+        score_detail = _profile_score(candidate, destination, domains, keywords, config)
+        per_item_scores[candidate.item_id] = score_detail
+        if _profile_conflicts(candidate, user_message):
+            per_item_reason[candidate.item_id] = "filtered: conflict"
+            continue
+        scored.append(
+            (
+                float(score_detail["final_score"] or 0.0),
+                _profile_duplicate_group(candidate),
+                candidate,
+            )
+        )
+        per_item_reason[candidate.item_id] = _score_reason(score_detail)
+
+    selected = _dedupe_source_scored(scored)[: config.profile_top_n]
+    return RecallRerankResult(
+        selected_item_ids=[candidate.item_id for _, _, candidate in selected],
+        final_reason=f"profile rerank selected {len(selected)} items",
+        per_item_reason=per_item_reason,
+        fallback_used="none",
+        per_item_scores=per_item_scores,
+        intent_label="profile",
+        selection_metrics=selection_metrics_placeholder(),
+    )
+
+
+def rerank_episode_candidates(
+    *,
+    candidates: list[RecallCandidate],
+    user_message: str,
+    destination: str,
+    domains: list[str],
+    keywords: list[str],
+    config: EpisodeRerankConfig,
+) -> RecallRerankResult:
+    scored: list[tuple[float, str, RecallCandidate]] = []
+    per_item_reason: dict[str, str] = {}
+    per_item_scores: dict[str, dict[str, float | str | None]] = {}
+
+    for candidate in candidates:
+        if candidate.source != "episode_slice":
+            continue
+        score_detail = _episode_score(candidate, destination, domains, keywords, config)
+        per_item_scores[candidate.item_id] = score_detail
+        if _episode_conflicts(candidate, user_message):
+            per_item_reason[candidate.item_id] = "filtered: conflict"
+            continue
+        scored.append(
+            (
+                float(score_detail["final_score"] or 0.0),
+                _episode_duplicate_group(candidate),
+                candidate,
+            )
+        )
+        per_item_reason[candidate.item_id] = _score_reason(score_detail)
+
+    selected = _dedupe_source_scored(scored)[: config.episode_top_n]
+    return RecallRerankResult(
+        selected_item_ids=[candidate.item_id for _, _, candidate in selected],
+        final_reason=f"episode rerank selected {len(selected)} items",
+        per_item_reason=per_item_reason,
+        fallback_used="none",
+        per_item_scores=per_item_scores,
+        intent_label="episode_slice",
+        selection_metrics=selection_metrics_placeholder(),
+    )
+
+
+def _profile_score(
+    candidate: RecallCandidate,
+    destination: str,
+    domains: list[str],
+    keywords: list[str],
+    config: ProfileRerankConfig,
+) -> dict[str, float | str | None]:
+    bucket_score = _PROFILE_BUCKET_PRIOR.get(candidate.bucket, 0.5)
+    retrieval_score = max(0.0, min(candidate.retrieval_score or candidate.score, 1.0))
+    match_score = max(
+        _jaccard(set(domains), set(candidate.domains)),
+        1.0
+        if destination
+        and destination in f"{candidate.content_summary} {candidate.applicability}"
+        else 0.0,
+        _jaccard(set(keywords), set(_candidate_terms(candidate))),
+    )
+    recency_score = _recency_score(candidate, config.recency_half_life_days)
+    final_score = (
+        config.w_bucket * bucket_score
+        + config.w_conf * retrieval_score
+        + config.w_match * match_score
+        + config.w_rec * recency_score
+    )
+    return {
+        "bucket_score": bucket_score,
+        "retrieval_score": retrieval_score,
+        "match_score": match_score,
+        "recency_score": recency_score,
+        "final_score": final_score,
+        "source": "profile",
+    }
+
+
+def _episode_score(
+    candidate: RecallCandidate,
+    destination: str,
+    domains: list[str],
+    keywords: list[str],
+    config: EpisodeRerankConfig,
+) -> dict[str, float | str | None]:
+    retrieval_score = max(0.0, min(candidate.retrieval_score or candidate.score, 1.0))
+    match_score = max(
+        _jaccard(set(domains), set(candidate.domains)),
+        1.0
+        if destination
+        and destination in f"{candidate.content_summary} {candidate.applicability}"
+        else 0.0,
+        _jaccard(set(keywords), set(_candidate_terms(candidate))),
+    )
+    type_score = _episode_type_score(candidate)
+    recency_score = _recency_score(candidate, config.recency_half_life_days)
+    final_score = (
+        config.w_rel * retrieval_score
+        + config.w_match * match_score
+        + config.w_type * type_score
+        + config.w_rec * recency_score
+    )
+    return {
+        "retrieval_score": retrieval_score,
+        "match_score": match_score,
+        "type_score": type_score,
+        "recency_score": recency_score,
+        "final_score": final_score,
+        "source": "episode_slice",
+    }
+
+
+def _episode_type_score(candidate: RecallCandidate) -> float:
+    if candidate.bucket in {"stay_choice", "transport_choice", "itinerary_pattern"}:
+        return 1.0
+    if candidate.bucket in {"rejected_option", "pitfall"}:
+        return 0.88
+    return 0.62
+
+
+def _profile_conflicts(candidate: RecallCandidate, user_message: str) -> bool:
+    return _conflict_score(candidate, user_message) >= 0.95
+
+
+def _episode_conflicts(candidate: RecallCandidate, user_message: str) -> bool:
+    return _conflict_score(candidate, user_message) >= 0.95
+
+
+def _profile_duplicate_group(candidate: RecallCandidate) -> str:
+    return _duplicate_group(candidate)
+
+
+def _episode_duplicate_group(candidate: RecallCandidate) -> str:
+    return _duplicate_group(candidate)
+
+
+def _score_reason(score_detail: dict[str, float | str | None]) -> str:
+    return (
+        f"retrieval={float(score_detail.get('retrieval_score') or 0.0):.2f} "
+        f"match={float(score_detail.get('match_score') or 0.0):.2f} "
+        f"recency={float(score_detail.get('recency_score') or 0.0):.2f} "
+        f"final={float(score_detail.get('final_score') or 0.0):.2f}"
+    )
+
+
+def _dedupe_source_scored(
+    scored_candidates: list[tuple[float, str, RecallCandidate]],
+) -> list[tuple[float, str, RecallCandidate]]:
+    deduped: list[tuple[float, str, RecallCandidate]] = []
+    seen_groups: set[str] = set()
+    for score, group, candidate in sorted(
+        scored_candidates,
+        key=lambda item: (-item[0], item[2].item_id),
+    ):
+        if group in seen_groups:
+            continue
+        seen_groups.add(group)
+        deduped.append((score, group, candidate))
+    return deduped
 
 
 def choose_reranker_path(
@@ -847,6 +1053,7 @@ def _tokenize(text: str) -> list[str]:
             "安静",
             "热闹",
             "避世",
+            "青旅",
         )
     ):
         if "红眼" in text:
@@ -875,6 +1082,8 @@ def _tokenize(text: str) -> list[str]:
             tokens.append("热闹")
         if "避世" in text:
             tokens.append("避世")
+        if "青旅" in text:
+            tokens.append("青旅")
     return tokens
 
 
