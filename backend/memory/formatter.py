@@ -51,6 +51,19 @@ class MemoryRecallTelemetry:
     )
     reranker_intent_label: str = ""
     reranker_selection_metrics: dict[str, float | None] = field(default_factory=dict)
+    profile_reranker_selected_ids: list[str] = field(default_factory=list)
+    episode_reranker_selected_ids: list[str] = field(default_factory=list)
+    profile_reranker_final_reason: str = ""
+    episode_reranker_final_reason: str = ""
+    profile_reranker_per_item_scores: dict[str, dict[str, float | str | None]] = field(
+        default_factory=dict
+    )
+    episode_reranker_per_item_scores: dict[str, dict[str, float | str | None]] = field(
+        default_factory=dict
+    )
+    dual_recall_plan: dict[str, Any] = field(default_factory=dict)
+    stage3_profile: dict[str, Any] = field(default_factory=dict)
+    stage3_episode: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -88,12 +101,33 @@ class MemoryRecallTelemetry:
             },
             "reranker_intent_label": self.reranker_intent_label,
             "reranker_selection_metrics": dict(self.reranker_selection_metrics),
+            "profile_reranker_selected_ids": list(
+                self.profile_reranker_selected_ids
+            ),
+            "episode_reranker_selected_ids": list(
+                self.episode_reranker_selected_ids
+            ),
+            "profile_reranker_final_reason": self.profile_reranker_final_reason,
+            "episode_reranker_final_reason": self.episode_reranker_final_reason,
+            "profile_reranker_per_item_scores": {
+                item_id: dict(scores)
+                for item_id, scores in self.profile_reranker_per_item_scores.items()
+            },
+            "episode_reranker_per_item_scores": {
+                item_id: dict(scores)
+                for item_id, scores in self.episode_reranker_per_item_scores.items()
+            },
+            "dual_recall_plan": dict(self.dual_recall_plan),
+            "stage3_profile": dict(self.stage3_profile),
+            "stage3_episode": dict(self.stage3_episode),
         }
 
 
 def format_v3_memory_context(
     working_items: list[WorkingMemoryItem],
-    recall_candidates: list[RecallCandidate],
+    recall_candidates: list[RecallCandidate] | None = None,
+    profile_candidates: list[RecallCandidate] | None = None,
+    episode_candidates: list[RecallCandidate] | None = None,
 ) -> str:
     sections: list[str] = []
 
@@ -103,9 +137,38 @@ def format_v3_memory_context(
             lines.append(_format_v3_working_memory_item(item))
         sections.append("\n".join(lines))
 
-    history_lines = [_format_recall_candidate(candidate) for candidate in recall_candidates]
-    if history_lines:
-        sections.append("\n".join(["## 本轮请求命中的历史记忆", *history_lines]))
+    if (
+        recall_candidates is not None
+        and profile_candidates is None
+        and episode_candidates is None
+    ):
+        profile_candidates = [
+            candidate for candidate in recall_candidates if candidate.source == "profile"
+        ]
+        episode_candidates = [
+            candidate
+            for candidate in recall_candidates
+            if candidate.source == "episode_slice"
+        ]
+
+    profile_candidates = profile_candidates or []
+    episode_candidates = episode_candidates or []
+
+    if profile_candidates:
+        lines = [
+            "## User Profile Memory",
+            "以下是稳定画像、约束、拒绝项和偏好。除非用户本轮明确改口，否则作为默认约束遵守。",
+        ]
+        lines.extend(_format_recall_candidate(candidate) for candidate in profile_candidates)
+        sections.append("\n".join(lines))
+
+    if episode_candidates:
+        lines = [
+            "## Relevant Past Episodes",
+            "以下是历史案例和经验，只能作为参考证据，不能单独覆盖 User Profile Memory。",
+        ]
+        lines.extend(_format_recall_candidate(candidate) for candidate in episode_candidates)
+        sections.append("\n".join(lines))
 
     return "\n\n".join(sections) if sections else "暂无相关用户记忆"
 

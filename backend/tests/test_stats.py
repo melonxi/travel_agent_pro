@@ -142,3 +142,24 @@ def test_to_dict_keeps_memory_hit_count_for_real_hits_only():
         ]
         is None
     )
+
+
+def test_recall_telemetry_record_serializes_dual_recall_fields():
+    record = RecallTelemetryRecord(
+        profile_reranker_selected_ids=["p1"],
+        episode_reranker_selected_ids=["e1"],
+        profile_reranker_final_reason="profile rerank selected 1 items",
+        episode_reranker_final_reason="episode rerank selected 1 items",
+        dual_recall_plan={"need_profile": True, "need_episode": True},
+        stage3_profile={"source": "profile"},
+        stage3_episode={"source": "episode_slice"},
+    )
+
+    payload = record.to_dict()
+
+    assert payload["profile_reranker_selected_ids"] == ["p1"]
+    assert payload["episode_reranker_selected_ids"] == ["e1"]
+    assert payload["dual_recall_plan"] == {
+        "need_profile": True,
+        "need_episode": True,
+    }

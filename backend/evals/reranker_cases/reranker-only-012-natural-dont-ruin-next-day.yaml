@@ -14,10 +14,10 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> natural expression next day fatigue
 config:
-  small_candidate_set_threshold: 1
-  hybrid_top_n: 3
-  hybrid_profile_top_n: 1
-  hybrid_slice_top_n: 2
+  profile:
+    profile_top_n: 1
+  episode:
+    episode_top_n: 2
 candidates:
   - source: profile
     item_id: constraints:flight:avoid_red_eye

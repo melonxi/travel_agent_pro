@@ -22,19 +22,63 @@ def test_memory_retrieval_config_stage3_defaults():
     )
 
 
-def test_memory_retrieval_config_reranker_defaults_include_evidence_blocks():
+def test_memory_retrieval_config_reranker_defaults_include_source_blocks():
     cfg = MemoryRetrievalConfig()
 
-    assert cfg.reranker.small_candidate_set_threshold == 3
-    assert cfg.reranker.evidence.symbolic_hit_weight == 0.0
-    assert cfg.reranker.evidence.lexical_hit_weight == 0.0
-    assert cfg.reranker.evidence.semantic_hit_weight == 0.0
-    assert cfg.reranker.evidence.lane_fused_weight == 0.25
-    assert cfg.reranker.evidence.lexical_score_weight == 0.08
-    assert cfg.reranker.evidence.semantic_score_weight == 0.15
-    assert cfg.reranker.evidence.destination_match_type_weight == 0.0
-    assert cfg.reranker.dynamic_budget.enabled is False
-    assert dict(cfg.reranker.intent_weights)["profile"].profile_source_prior == 1.0
+    assert cfg.reranker.profile.profile_top_n == 4
+    assert cfg.reranker.profile.recency_half_life_days == 180
+    assert cfg.reranker.episode.episode_top_n == 3
+    assert cfg.reranker.episode.recency_half_life_days == 365
+
+
+def test_memory_reranker_config_has_profile_and_episode_blocks():
+    from config import EpisodeRerankConfig, MemoryRerankerConfig, ProfileRerankConfig
+
+    cfg = MemoryRerankerConfig()
+
+    assert isinstance(cfg.profile, ProfileRerankConfig)
+    assert isinstance(cfg.episode, EpisodeRerankConfig)
+    assert cfg.profile.profile_top_n == 4
+    assert cfg.profile.w_bucket == 0.40
+    assert cfg.episode.episode_top_n == 3
+    assert cfg.episode.w_rel == 0.45
+
+
+def test_load_config_parses_dual_reranker_blocks(tmp_path):
+    from config import load_config
+
+    path = tmp_path / "dual-reranker.yaml"
+    path.write_text(
+        """
+memory:
+  retrieval:
+    reranker:
+      profile:
+        profile_top_n: 6
+        w_bucket: 0.50
+        w_conf: 0.10
+        w_match: 0.30
+        w_rec: 0.10
+        recency_half_life_days: 90
+      episode:
+        episode_top_n: 5
+        w_rel: 0.40
+        w_match: 0.30
+        w_type: 0.20
+        w_rec: 0.10
+        recency_half_life_days: 400
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(str(path)).memory.retrieval.reranker
+
+    assert cfg.profile.profile_top_n == 6
+    assert cfg.profile.w_bucket == 0.50
+    assert cfg.profile.recency_half_life_days == 90
+    assert cfg.episode.episode_top_n == 5
+    assert cfg.episode.w_rel == 0.40
+    assert cfg.episode.recency_half_life_days == 400
 
 
 def test_load_config_reranker_missing_blocks_fall_back_to_defaults(tmp_path):
@@ -44,16 +88,18 @@ def test_load_config_reranker_missing_blocks_fall_back_to_defaults(tmp_path):
 memory:
   retrieval:
     reranker:
-      hybrid_top_n: 5
+      profile:
+        profile_top_n: 5
 """,
         encoding="utf-8",
     )
 
     cfg = load_config(str(cfg_file))
 
-    assert cfg.memory.retrieval.reranker.hybrid_top_n == 5
-    assert cfg.memory.retrieval.reranker.evidence.semantic_score_weight == 0.15
-    assert cfg.memory.retrieval.reranker.dynamic_budget.enabled is False
+    assert cfg.memory.retrieval.reranker.profile.profile_top_n == 5
+    assert cfg.memory.retrieval.reranker.profile.recency_half_life_days == 180
+    assert cfg.memory.retrieval.reranker.episode.episode_top_n == 3
+    assert cfg.memory.retrieval.reranker.episode.recency_half_life_days == 365
 
 
 def test_load_config_parses_stage3_recall_config(tmp_path):
@@ -155,8 +201,7 @@ memory:
     )
 
 
-def test_load_config_production_rollback_yaml_restores_phase_zero_behavior(tmp_path):
-    """Production can restore pre-phase-1 behavior by writing the documented rollback snippet."""
+def test_load_config_parses_stage3_and_source_specific_reranker_blocks(tmp_path):
     cfg_file = tmp_path / "config.yaml"
     cfg_file.write_text(
         """\
@@ -166,10 +211,12 @@ memory:
       semantic:
         enabled: false
     reranker:
-      evidence:
-        lane_fused_weight: 0.0
-        semantic_score_weight: 0.0
-        lexical_score_weight: 0.0
+      profile:
+        profile_top_n: 2
+        recency_half_life_days: 120
+      episode:
+        episode_top_n: 1
+        recency_half_life_days: 240
 """,
         encoding="utf-8",
     )
@@ -177,9 +224,10 @@ memory:
     cfg = load_config(str(cfg_file))
 
     assert cfg.memory.retrieval.stage3.semantic.enabled is False
-    assert cfg.memory.retrieval.reranker.evidence.lane_fused_weight == 0.0
-    assert cfg.memory.retrieval.reranker.evidence.semantic_score_weight == 0.0
-    assert cfg.memory.retrieval.reranker.evidence.lexical_score_weight == 0.0
+    assert cfg.memory.retrieval.reranker.profile.profile_top_n == 2
+    assert cfg.memory.retrieval.reranker.profile.recency_half_life_days == 120
+    assert cfg.memory.retrieval.reranker.episode.episode_top_n == 1
+    assert cfg.memory.retrieval.reranker.episode.recency_half_life_days == 240
 
 
 def test_stage3_semantic_embedding_index_defaults():

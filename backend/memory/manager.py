@@ -1,9 +1,9 @@
 # backend/memory/manager.py
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 
-from config import MemoryRerankerConfig, MemoryRetrievalConfig
+from config import MemoryRetrievalConfig
 from memory.destination_normalization import match_destination
 from memory.embedding_provider import (
     CachedEmbeddingProvider,
@@ -11,14 +11,17 @@ from memory.embedding_provider import (
     NullEmbeddingProvider,
 )
 from memory.formatter import MemoryRecallTelemetry, format_v3_memory_context
-from memory.recall_stage3 import retrieve_recall_candidates
-from memory.recall_stage3_models import RetrievalEvidence
+from memory.recall_stage3 import retrieve_dual_recall_candidates
 from memory.retrieval_candidates import RecallCandidate
-from memory.recall_query import RecallRetrievalPlan
+from memory.recall_query import (
+    DualRecallPlan,
+    RecallRetrievalPlan,
+    dual_plan_from_retrieval_plan,
+)
 from memory.recall_reranker import (
-    RecallRerankResult,
-    choose_reranker_path,
     empty_rerank_result,
+    rerank_episode_candidates,
+    rerank_profile_candidates,
     selection_metrics_placeholder,
 )
 from memory.symbolic_recall import (
@@ -33,31 +36,6 @@ from state.models import TravelPlanState
 _WORKING_MEMORY_LIMIT = 10
 _QUERY_PROFILE_LIMIT = 5
 _QUERY_SLICE_LIMIT = 5
-
-
-async def select_recall_candidates(
-    *,
-    user_message: str,
-    plan: TravelPlanState,
-    retrieval_plan: RecallRetrievalPlan | None,
-    candidates: list[RecallCandidate],
-    evidence_by_id: dict[str, RetrievalEvidence] | None = None,
-    reranker_config: MemoryRerankerConfig | None = None,
-) -> tuple[list[RecallCandidate], RecallRerankResult]:
-    if not candidates:
-        return [], empty_rerank_result()
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message=user_message,
-        plan=plan,
-        retrieval_plan=retrieval_plan,
-        evidence_by_id=evidence_by_id or {},
-        config=reranker_config,
-    )
-    if not path.result.selection_metrics:
-        path.result.selection_metrics = selection_metrics_placeholder()
-    return list(path.selected_candidates), path.result
 
 
 class MemoryManager:
@@ -211,7 +189,7 @@ class MemoryManager:
         user_message: str = "",
         recall_gate: bool | None = None,
         short_circuit: str = "undecided",
-        retrieval_plan: RecallRetrievalPlan | None = None,
+        retrieval_plan: RecallRetrievalPlan | DualRecallPlan | None = None,
         stage0_matched_rule: str = "",
         stage0_signals: dict[str, list[str] | tuple[str, ...]] | None = None,
         query_plan_source: str = "",
@@ -225,7 +203,6 @@ class MemoryManager:
         )
         working_items = self._active_working_memory_items(working_memory.items)
 
-        recall_candidates: list[RecallCandidate] = []
         normalized_stage0_signals = self._normalize_stage0_signals(stage0_signals)
         active_plan = retrieval_plan
         effective_query_plan_source = query_plan_source
@@ -259,17 +236,30 @@ class MemoryManager:
             should_run_query_recall = True
             final_recall_decision = "query_recall_enabled"
 
-        recall_attempted = should_run_query_recall and active_plan is not None
+        dual_plan = self._build_dual_plan(
+            active_plan,
+            user_message,
+            short_circuit,
+            normalized_stage0_signals,
+        )
+        recall_attempted = (
+            should_run_query_recall and dual_plan is not None and dual_plan.needs_recall
+        )
         stage3_result = None
-        if should_run_query_recall and active_plan is not None:
+        profile_candidates: list[RecallCandidate] = []
+        episode_candidates: list[RecallCandidate] = []
+        profile_rerank = empty_rerank_result()
+        episode_rerank = empty_rerank_result()
+
+        if recall_attempted and dual_plan is not None:
             should_load_slices = (
-                active_plan.source in {"episode_slice", "hybrid_history"}
+                dual_plan.need_episode
                 or self.retrieval_config.stage3.source_widening.enabled
             )
             candidate_slices = []
             if should_load_slices:
                 destination_filter = (
-                    active_plan.destination
+                    dual_plan.destination
                     if not self.retrieval_config.stage3.destination_normalization_enabled
                     else None
                 )
@@ -278,11 +268,11 @@ class MemoryManager:
                     destination=destination_filter or None,
                 )
                 candidate_slices = self._filter_slices_by_normalized_destination(
-                    active_plan.destination,
+                    dual_plan.destination,
                     candidate_slices,
                 )
-            stage3_result = retrieve_recall_candidates(
-                query=active_plan,
+            stage3_result = retrieve_dual_recall_candidates(
+                query=dual_plan,
                 profile=profile,
                 slices=candidate_slices,
                 user_message=user_message,
@@ -292,29 +282,41 @@ class MemoryManager:
                 sidecar_store=self._get_sidecar_store(),
                 user_id=user_id,
             )
-            recall_candidates.extend(stage3_result.candidates[: active_plan.top_k * 2])
-
-        selected_candidates = list(recall_candidates)
-        rerank_result = RecallRerankResult(
-            selected_item_ids=[],
-            final_reason="",
-            per_item_reason={},
-            fallback_used="none",
-            selection_metrics=selection_metrics_placeholder(),
-        )
-        stage3_evidence_by_id = (
-            stage3_result.evidence_by_id if stage3_result is not None else {}
-        )
-        if recall_candidates:
-            selected_candidates, rerank_result = await select_recall_candidates(
-                user_message=user_message,
-                plan=plan,
-                retrieval_plan=active_plan,
-                candidates=recall_candidates,
-                evidence_by_id=stage3_evidence_by_id,
-                reranker_config=self.retrieval_config.reranker,
+            if stage3_result.profile.candidates:
+                profile_rerank = rerank_profile_candidates(
+                    candidates=stage3_result.profile.candidates,
+                    user_message=user_message,
+                    destination=dual_plan.destination,
+                    domains=dual_plan.domains,
+                    keywords=dual_plan.keywords,
+                    config=self.retrieval_config.reranker.profile,
+                )
+            if stage3_result.episode.candidates:
+                episode_rerank = rerank_episode_candidates(
+                    candidates=stage3_result.episode.candidates,
+                    user_message=user_message,
+                    destination=dual_plan.destination,
+                    domains=dual_plan.domains,
+                    keywords=dual_plan.keywords,
+                    config=self.retrieval_config.reranker.episode,
+                )
+            profile_candidates = self._candidates_for_ids(
+                stage3_result.profile.candidates,
+                profile_rerank.selected_item_ids,
+            )
+            episode_candidates = self._candidates_for_ids(
+                stage3_result.episode.candidates,
+                episode_rerank.selected_item_ids,
             )
 
+        raw_profile_candidates = (
+            stage3_result.profile.candidates if stage3_result is not None else []
+        )
+        raw_episode_candidates = (
+            stage3_result.episode.candidates if stage3_result is not None else []
+        )
+        recall_candidates = [*raw_profile_candidates, *raw_episode_candidates]
+        selected_candidates = [*profile_candidates, *episode_candidates]
         telemetry = self._build_v3_telemetry(
             working_items,
             selected_candidates,
@@ -329,35 +331,138 @@ class MemoryManager:
             recall_attempted and len(recall_candidates) == 0
         )
         if stage3_result is not None:
-            telemetry.stage3 = stage3_result.telemetry.to_dict()
-        telemetry.reranker_selected_ids = list(rerank_result.selected_item_ids)
-        telemetry.reranker_final_reason = rerank_result.final_reason
-        telemetry.reranker_fallback = rerank_result.fallback_used
-        telemetry.reranker_per_item_reason = dict(rerank_result.per_item_reason)
-        telemetry.reranker_per_item_scores = {
-            item_id: asdict(detail)
-            for item_id, detail in rerank_result.per_item_scores.items()
+            telemetry.stage3_profile = dict(stage3_result.profile.telemetry)
+            telemetry.stage3_episode = dict(stage3_result.episode.telemetry)
+            if dual_plan is not None and dual_plan.need_profile and not dual_plan.need_episode:
+                telemetry.stage3 = dict(stage3_result.profile.telemetry)
+            elif dual_plan is not None and dual_plan.need_episode and not dual_plan.need_profile:
+                telemetry.stage3 = dict(stage3_result.episode.telemetry)
+            else:
+                telemetry.stage3 = {
+                    "profile": dict(stage3_result.profile.telemetry),
+                    "episode": dict(stage3_result.episode.telemetry),
+                }
+        telemetry.profile_reranker_selected_ids = list(
+            profile_rerank.selected_item_ids
+        )
+        telemetry.episode_reranker_selected_ids = list(
+            episode_rerank.selected_item_ids
+        )
+        telemetry.profile_reranker_final_reason = profile_rerank.final_reason
+        telemetry.episode_reranker_final_reason = episode_rerank.final_reason
+        telemetry.profile_reranker_per_item_scores = self._serialize_reranker_scores(
+            profile_rerank.per_item_scores
+        )
+        telemetry.episode_reranker_per_item_scores = self._serialize_reranker_scores(
+            episode_rerank.per_item_scores
+        )
+        telemetry.reranker_selected_ids = [
+            *telemetry.profile_reranker_selected_ids,
+            *telemetry.episode_reranker_selected_ids,
+        ]
+        telemetry.reranker_final_reason = (
+            (
+                f"dual rerank selected {len(telemetry.profile_reranker_selected_ids)} "
+                f"profile, {len(telemetry.episode_reranker_selected_ids)} episode"
+            )
+            if recall_attempted
+            else ""
+        )
+        telemetry.reranker_fallback = "none"
+        telemetry.reranker_per_item_reason = {
+            **profile_rerank.per_item_reason,
+            **episode_rerank.per_item_reason,
         }
-        telemetry.reranker_intent_label = rerank_result.intent_label
-        telemetry.reranker_selection_metrics = dict(rerank_result.selection_metrics)
-        if recall_attempted and active_plan is not None:
+        telemetry.reranker_per_item_scores = {
+            **telemetry.profile_reranker_per_item_scores,
+            **telemetry.episode_reranker_per_item_scores,
+        }
+        telemetry.reranker_intent_label = "dual" if recall_attempted else ""
+        telemetry.reranker_selection_metrics = selection_metrics_placeholder()
+        if recall_attempted and dual_plan is not None:
+            telemetry.dual_recall_plan = self._dual_plan_to_dict(dual_plan)
             telemetry.query_plan = {
-                "buckets": list(active_plan.buckets),
-                "domains": list(active_plan.domains),
-                "destination": active_plan.destination,
-                "top_k": active_plan.top_k,
+                "buckets": list(dual_plan.profile_buckets),
+                "profile_buckets": list(dual_plan.profile_buckets),
+                "domains": list(dual_plan.domains),
+                "destination": dual_plan.destination,
+                "top_k": dual_plan.top_k,
+                "need_profile": dual_plan.need_profile,
+                "need_episode": dual_plan.need_episode,
             }
             telemetry.query_plan_source = effective_query_plan_source
             telemetry.query_plan_fallback = (
                 effective_query_plan_fallback
                 if effective_query_plan_fallback != "none"
-                else active_plan.fallback_used
+                else dual_plan.fallback_used
             )
         context = format_v3_memory_context(
             working_items=working_items,
-            recall_candidates=selected_candidates,
+            profile_candidates=profile_candidates,
+            episode_candidates=episode_candidates,
         )
         return context, telemetry
+
+    def _build_dual_plan(
+        self,
+        active_plan: RecallRetrievalPlan | DualRecallPlan | None,
+        user_message: str,
+        short_circuit: str,
+        stage0_signals: dict[str, list[str] | tuple[str, ...]] | None,
+    ) -> DualRecallPlan | None:
+        if isinstance(active_plan, DualRecallPlan):
+            return active_plan
+        if isinstance(active_plan, RecallRetrievalPlan):
+            if active_plan.fallback_used == "no_historical_recall_cue":
+                return None
+            return dual_plan_from_retrieval_plan(active_plan)
+        if not user_message:
+            return None
+        legacy = heuristic_retrieval_plan_from_message(
+            user_message,
+            stage0_decision=short_circuit,
+            stage0_signals=stage0_signals,
+        )
+        if legacy.fallback_used == "no_historical_recall_cue":
+            return None
+        return dual_plan_from_retrieval_plan(legacy)
+
+    def _candidates_for_ids(
+        self,
+        candidates: list[RecallCandidate],
+        selected_item_ids: list[str],
+    ) -> list[RecallCandidate]:
+        by_id = {candidate.item_id: candidate for candidate in candidates}
+        return [
+            by_id[item_id]
+            for item_id in selected_item_ids
+            if item_id in by_id
+        ]
+
+    def _serialize_reranker_scores(
+        self,
+        scores: dict[str, object],
+    ) -> dict[str, dict[str, float | str | None]]:
+        serialized: dict[str, dict[str, float | str | None]] = {}
+        for item_id, detail in scores.items():
+            if isinstance(detail, dict):
+                serialized[item_id] = dict(detail)
+            elif is_dataclass(detail):
+                serialized[item_id] = asdict(detail)
+        return serialized
+
+    def _dual_plan_to_dict(self, plan: DualRecallPlan) -> dict[str, object]:
+        return {
+            "need_profile": plan.need_profile,
+            "need_episode": plan.need_episode,
+            "profile_buckets": list(plan.profile_buckets),
+            "domains": list(plan.domains),
+            "destination": plan.destination,
+            "keywords": list(plan.keywords),
+            "top_k": plan.top_k,
+            "reason": plan.reason,
+            "fallback_used": plan.fallback_used,
+        }
 
     def _active_working_memory_items(
         self, items: list[WorkingMemoryItem]

@@ -110,6 +110,19 @@ class RecallTelemetryRecord:
     )
     reranker_intent_label: str = ""
     reranker_selection_metrics: dict[str, float | None] = field(default_factory=dict)
+    profile_reranker_selected_ids: list[str] = field(default_factory=list)
+    episode_reranker_selected_ids: list[str] = field(default_factory=list)
+    profile_reranker_final_reason: str = ""
+    episode_reranker_final_reason: str = ""
+    profile_reranker_per_item_scores: dict[str, dict[str, float | str | None]] = field(
+        default_factory=dict
+    )
+    episode_reranker_per_item_scores: dict[str, dict[str, float | str | None]] = field(
+        default_factory=dict
+    )
+    dual_recall_plan: dict = field(default_factory=dict)
+    stage3_profile: dict = field(default_factory=dict)
+    stage3_episode: dict = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
@@ -138,6 +151,25 @@ class RecallTelemetryRecord:
             },
             "reranker_intent_label": self.reranker_intent_label,
             "reranker_selection_metrics": dict(self.reranker_selection_metrics),
+            "profile_reranker_selected_ids": list(
+                self.profile_reranker_selected_ids
+            ),
+            "episode_reranker_selected_ids": list(
+                self.episode_reranker_selected_ids
+            ),
+            "profile_reranker_final_reason": self.profile_reranker_final_reason,
+            "episode_reranker_final_reason": self.episode_reranker_final_reason,
+            "profile_reranker_per_item_scores": {
+                item_id: dict(scores)
+                for item_id, scores in self.profile_reranker_per_item_scores.items()
+            },
+            "episode_reranker_per_item_scores": {
+                item_id: dict(scores)
+                for item_id, scores in self.episode_reranker_per_item_scores.items()
+            },
+            "dual_recall_plan": dict(self.dual_recall_plan),
+            "stage3_profile": dict(self.stage3_profile),
+            "stage3_episode": dict(self.stage3_episode),
             "timestamp": self.timestamp,
         }
 

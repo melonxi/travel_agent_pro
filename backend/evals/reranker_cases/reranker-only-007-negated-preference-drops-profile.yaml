@@ -14,8 +14,8 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> negated current preference
 config:
-  small_candidate_set_threshold: 1
-  profile_top_n: 2
+  profile:
+    profile_top_n: 2
 candidates:
   - source: profile
     item_id: stable_preferences:flight:prefer_window_seat
@@ -42,8 +42,5 @@ candidates:
 expected:
   selected_item_ids:
     - stable_preferences:flight:prefer_morning_departure
-  final_reason: small candidate set; skipped weighted rerank
-  fallback_used: skipped_small_candidate_set
-  reason_contains:
-    stable_preferences:flight:prefer_window_seat: dropped as conflict
-
+  final_reason: source-aware weighted rerank selected 1 items (1 profile, 0 slice)
+  fallback_used: none

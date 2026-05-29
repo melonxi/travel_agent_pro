@@ -17,7 +17,9 @@ from memory.recall_gate import apply_recall_short_circuit
 from memory.recall_query import RecallRetrievalPlan
 from memory.recall_reranker import RecallRerankResult
 from memory.recall_stage3_models import (
+    DualStage3RecallResult,
     RetrievalEvidence,
+    SourceStage3RecallResult,
     Stage3RecallResult,
     Stage3Telemetry,
 )
@@ -206,7 +208,7 @@ async def test_generate_context_uses_slice_recall_without_fixed_profile_injectio
     )
 
     assert "长期用户画像" not in text
-    assert "## 本轮请求命中的历史记忆" in text
+    assert "## Relevant Past Episodes" in text
     assert "## 本次旅行记忆" not in text
     assert "上次京都住四条附近的町屋。" in text
     assert "query_profile" in recall.sources
@@ -263,7 +265,8 @@ async def test_generate_context_merges_profile_and_slice_candidates(tmp_path: Pa
         user_message="我上次去京都住哪里？",
     )
 
-    assert "## 本轮请求命中的历史记忆" in text
+    assert "## User Profile Memory" in text
+    assert "## Relevant Past Episodes" in text
     assert "京都住四条附近" in text
     assert "上次京都住四条附近的町屋。" in text
     assert recall.sources["query_profile"] == 1
@@ -354,12 +357,14 @@ async def test_generate_context_drops_fixed_profile_when_gate_blocks_query_recal
         ),
     )
 
-    def fail_retrieve_recall_candidates(*args, **kwargs):
-        raise AssertionError("retrieve_recall_candidates should not run when recall gate blocks")
+    def fail_retrieve_dual_recall_candidates(*args, **kwargs):
+        raise AssertionError(
+            "retrieve_dual_recall_candidates should not run when recall gate blocks"
+        )
 
     monkeypatch.setattr(
-        "memory.manager.retrieve_recall_candidates",
-        fail_retrieve_recall_candidates,
+        "memory.manager.retrieve_dual_recall_candidates",
+        fail_retrieve_dual_recall_candidates,
     )
 
     text, recall = await manager.generate_context(
@@ -473,18 +478,27 @@ async def test_generate_context_formats_selected_candidates_only(
 
     selected_ids: list[str] = []
 
-    async def fake_select_candidates(*args, **kwargs):
+    def fake_profile_rerank(*args, **kwargs):
+        return RecallRerankResult(
+            selected_item_ids=[],
+            final_reason="profile selected by test",
+            per_item_reason={},
+            fallback_used="none",
+        )
+
+    def fake_episode_rerank(*args, **kwargs):
         candidates = kwargs["candidates"]
         selected = candidates[:1]
         selected_ids.extend(candidate.item_id for candidate in selected)
-        return selected, RecallRerankResult(
+        return RecallRerankResult(
             selected_item_ids=[candidate.item_id for candidate in selected],
-            final_reason="selected_by_test",
+            final_reason="episode selected by test",
             per_item_reason={candidate.item_id: "selected by test" for candidate in selected},
             fallback_used="none",
         )
 
-    monkeypatch.setattr("memory.manager.select_recall_candidates", fake_select_candidates)
+    monkeypatch.setattr("memory.manager.rerank_profile_candidates", fake_profile_rerank)
+    monkeypatch.setattr("memory.manager.rerank_episode_candidates", fake_episode_rerank)
 
     text, recall = await manager.generate_context(
         "u1",
@@ -493,7 +507,8 @@ async def test_generate_context_formats_selected_candidates_only(
     )
 
     assert selected_ids
-    assert "京都住四条附近" in text or "上次京都住四条附近的町屋。" in text
+    assert "上次京都住四条附近的町屋。" in text
+    assert "preferred_area: 京都住四条附近" not in text
     assert recall.candidate_count >= len(selected_ids)
     assert recall.reranker_selected_ids == selected_ids
     assert recall.reranker_per_item_reason == {
@@ -575,13 +590,12 @@ memory:
     phase_limit: 3
     include_pending: "true"
     reranker:
-      small_candidate_set_threshold: 2
-      profile_top_n: 5
-      slice_top_n: 4
-      hybrid_top_n: 6
-      hybrid_profile_top_n: 3
-      hybrid_slice_top_n: 2
-      recency_half_life_days: 90
+      profile:
+        profile_top_n: 5
+        recency_half_life_days: 90
+      episode:
+        episode_top_n: 4
+        recency_half_life_days: 365
   storage:
     backend: json
 telemetry:
@@ -610,13 +624,10 @@ parallel_tool_execution: "false"
     assert cfg.memory.retrieval.core_limit == 5
     assert cfg.memory.retrieval.phase_limit == 3
     assert cfg.memory.retrieval.include_pending is True
-    assert cfg.memory.retrieval.reranker.small_candidate_set_threshold == 2
-    assert cfg.memory.retrieval.reranker.profile_top_n == 5
-    assert cfg.memory.retrieval.reranker.slice_top_n == 4
-    assert cfg.memory.retrieval.reranker.hybrid_top_n == 6
-    assert cfg.memory.retrieval.reranker.hybrid_profile_top_n == 3
-    assert cfg.memory.retrieval.reranker.hybrid_slice_top_n == 2
-    assert cfg.memory.retrieval.reranker.recency_half_life_days == 90
+    assert cfg.memory.retrieval.reranker.profile.profile_top_n == 5
+    assert cfg.memory.retrieval.reranker.profile.recency_half_life_days == 90
+    assert cfg.memory.retrieval.reranker.episode.episode_top_n == 4
+    assert cfg.memory.retrieval.reranker.episode.recency_half_life_days == 365
     assert cfg.memory.storage.backend == "json"
     assert cfg.telemetry.enabled is False
     assert cfg.flyai.enabled is False
@@ -717,35 +728,36 @@ async def test_generate_context_passes_stage3_evidence_to_reranker(
     manager = MemoryManager(data_dir=str(tmp_path))
     seen = {}
 
-    def fake_retrieve_recall_candidates(**kwargs):
+    def fake_retrieve_dual_recall_candidates(**kwargs):
         candidate = RecallCandidate(
             source="profile",
             item_id="profile_1",
             bucket="stable_preferences",
             score=1.0,
+            retrieval_score=0.8,
             matched_reason=["exact domain match on hotel"],
             content_summary="hotel:preferred_area=京都四条",
             domains=["hotel"],
             applicability="适用于大多数住宿选择。",
         )
-        evidence = RetrievalEvidence(
-            item_id="profile_1",
-            source="profile",
-            lanes=["symbolic"],
-            fused_score=0.8,
-        )
-        return Stage3RecallResult(
-            candidates=[candidate],
-            evidence_by_id={"profile_1": evidence},
-            telemetry=Stage3Telemetry(
-                lanes_attempted=["symbolic"],
-                lanes_succeeded=["symbolic"],
+        return DualStage3RecallResult(
+            profile=SourceStage3RecallResult(
+                source="profile",
+                candidates=[candidate],
+                evidence_by_id={},
+                telemetry={"source": "profile"},
+            ),
+            episode=SourceStage3RecallResult(
+                source="episode_slice",
+                candidates=[],
+                evidence_by_id={},
+                telemetry={"source": "episode_slice"},
             ),
         )
 
-    async def fake_select_recall_candidates(**kwargs):
-        seen["evidence_by_id"] = kwargs["evidence_by_id"]
-        return kwargs["candidates"], RecallRerankResult(
+    def fake_profile_rerank(**kwargs):
+        seen["retrieval_score"] = kwargs["candidates"][0].retrieval_score
+        return RecallRerankResult(
             selected_item_ids=["profile_1"],
             final_reason="fake",
             per_item_reason={
@@ -757,13 +769,10 @@ async def test_generate_context_passes_stage3_evidence_to_reranker(
         )
 
     monkeypatch.setattr(
-        "memory.manager.retrieve_recall_candidates",
-        fake_retrieve_recall_candidates,
+        "memory.manager.retrieve_dual_recall_candidates",
+        fake_retrieve_dual_recall_candidates,
     )
-    monkeypatch.setattr(
-        "memory.manager.select_recall_candidates",
-        fake_select_recall_candidates,
-    )
+    monkeypatch.setattr("memory.manager.rerank_profile_candidates", fake_profile_rerank)
 
     await manager.generate_context(
         "u1",
@@ -781,7 +790,7 @@ async def test_generate_context_passes_stage3_evidence_to_reranker(
         ),
     )
 
-    assert "profile_1" in seen["evidence_by_id"]
+    assert seen["retrieval_score"] == 0.8
 
 
 @pytest.mark.asyncio
@@ -792,16 +801,17 @@ async def test_generate_context_passes_active_plan_to_reranker_when_plan_is_heur
     manager = MemoryManager(data_dir=str(tmp_path))
     seen = {}
 
-    async def fake_select_recall_candidates(**kwargs):
-        seen["retrieval_plan"] = kwargs["retrieval_plan"]
-        return kwargs["candidates"], RecallRerankResult(
+    def fake_profile_rerank(**kwargs):
+        seen["domains"] = kwargs["domains"]
+        seen["keywords"] = kwargs["keywords"]
+        return RecallRerankResult(
             selected_item_ids=[candidate.item_id for candidate in kwargs["candidates"]],
             final_reason="fake",
             per_item_reason={},
             fallback_used="none",
         )
 
-    monkeypatch.setattr("memory.manager.select_recall_candidates", fake_select_recall_candidates)
+    monkeypatch.setattr("memory.manager.rerank_profile_candidates", fake_profile_rerank)
     await manager.v3_store.upsert_profile_item(
         "u1",
         "stable_preferences",
@@ -832,8 +842,8 @@ async def test_generate_context_passes_active_plan_to_reranker_when_plan_is_heur
         retrieval_plan=None,
     )
 
-    assert seen["retrieval_plan"] is not None
-    assert seen["retrieval_plan"].source == "profile"
+    assert "hotel" in seen["domains"]
+    assert "住宿" in seen["keywords"]
 
 
 @pytest.mark.asyncio
@@ -878,21 +888,26 @@ async def test_generate_context_filters_slices_by_normalized_destination_before_
 
     seen = {}
 
-    def fake_retrieve_recall_candidates(**kwargs):
+    def fake_retrieve_dual_recall_candidates(**kwargs):
         seen["slice_ids"] = [slice_.id for slice_ in kwargs["slices"]]
-        return Stage3RecallResult(
-            candidates=[],
-            evidence_by_id={},
-            telemetry=Stage3Telemetry(
-                lanes_attempted=["symbolic"],
-                lanes_succeeded=["symbolic"],
-                zero_hit=True,
+        return DualStage3RecallResult(
+            profile=SourceStage3RecallResult(
+                source="profile",
+                candidates=[],
+                evidence_by_id={},
+                telemetry={"source": "profile"},
+            ),
+            episode=SourceStage3RecallResult(
+                source="episode_slice",
+                candidates=[],
+                evidence_by_id={},
+                telemetry={"source": "episode_slice"},
             ),
         )
 
     monkeypatch.setattr(
-        "memory.manager.retrieve_recall_candidates",
-        fake_retrieve_recall_candidates,
+        "memory.manager.retrieve_dual_recall_candidates",
+        fake_retrieve_dual_recall_candidates,
     )
 
     await manager.generate_context(

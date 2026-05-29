@@ -82,6 +82,21 @@ def _serialize_recall_telemetry(hit: RecallTelemetryRecord) -> dict:
         },
         "reranker_intent_label": hit.reranker_intent_label,
         "reranker_selection_metrics": dict(hit.reranker_selection_metrics),
+        "profile_reranker_selected_ids": list(hit.profile_reranker_selected_ids),
+        "episode_reranker_selected_ids": list(hit.episode_reranker_selected_ids),
+        "profile_reranker_final_reason": hit.profile_reranker_final_reason,
+        "episode_reranker_final_reason": hit.episode_reranker_final_reason,
+        "profile_reranker_per_item_scores": {
+            item_id: dict(scores)
+            for item_id, scores in hit.profile_reranker_per_item_scores.items()
+        },
+        "episode_reranker_per_item_scores": {
+            item_id: dict(scores)
+            for item_id, scores in hit.episode_reranker_per_item_scores.items()
+        },
+        "dual_recall_plan": dict(hit.dual_recall_plan),
+        "stage3_profile": dict(hit.stage3_profile),
+        "stage3_episode": dict(hit.stage3_episode),
     }
 
 

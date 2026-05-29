@@ -121,3 +121,17 @@ class Stage3RecallResult:
     candidates: list[RecallCandidate]
     evidence_by_id: dict[str, RetrievalEvidence]
     telemetry: Stage3Telemetry
+
+
+@dataclass
+class SourceStage3RecallResult:
+    source: str
+    candidates: list[RecallCandidate]
+    evidence_by_id: dict[str, RetrievalEvidence]
+    telemetry: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DualStage3RecallResult:
+    profile: SourceStage3RecallResult
+    episode: SourceStage3RecallResult

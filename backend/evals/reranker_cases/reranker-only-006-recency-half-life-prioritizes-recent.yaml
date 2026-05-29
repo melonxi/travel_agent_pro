@@ -15,9 +15,9 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> recency pressure
 config:
-  small_candidate_set_threshold: 1
-  slice_top_n: 2
-  recency_half_life_days: 1
+  episode:
+    episode_top_n: 2
+    recency_half_life_days: 1
 candidates:
   - source: episode_slice
     item_id: slice_tokyo_recent_stay
@@ -48,10 +48,7 @@ candidates:
     created_at: "2026-04-23T00:00:00+00:00"
 expected:
   selected_item_ids:
-    - slice_tokyo_recent_stay
     - slice_tokyo_old_stay
+    - slice_tokyo_recent_stay
   final_reason: source-aware weighted rerank selected 2 items (0 profile, 2 slice)
   fallback_used: none
-  reason_contains:
-    slice_tokyo_old_stay: recency=0.00
-

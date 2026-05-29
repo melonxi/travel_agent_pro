@@ -1,58 +1,18 @@
-from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from config import IntentWeightProfile, RerankerEvidenceConfig
-from memory.manager import select_recall_candidates
-from memory.recall_query import RecallRetrievalPlan
+from config import EpisodeRerankConfig, ProfileRerankConfig
 from memory.recall_reranker import (
-    DESTINATION_MATCH_TYPE_SCORE,
-    RecallRerankPath,
-    RecallRerankResult,
-    SignalScoreDetail,
-    _ScoredCandidate,
-    _build_scored_candidate,
     _conflict_score,
-    _normalize_source_scores,
-    _normalize_optional_scores,
-    _resolve_intent_label,
-    _resolve_intent_profile,
-    choose_reranker_path,
+    _duplicate_group,
+    _jaccard,
+    _recency_score,
     empty_rerank_result,
+    rerank_episode_candidates,
+    rerank_profile_candidates,
 )
-from memory.recall_stage3_models import RetrievalEvidence
 from memory.retrieval_candidates import RecallCandidate
-from state.models import TravelPlanState, Travelers
-
-
-@dataclass(frozen=True)
-class DummyRerankerConfig:
-    small_candidate_set_threshold: int = 3
-    profile_top_n: int = 4
-    slice_top_n: int = 3
-    hybrid_top_n: int = 4
-    hybrid_profile_top_n: int = 2
-    hybrid_slice_top_n: int = 2
-    recency_half_life_days: int = 180
-    evidence: RerankerEvidenceConfig = field(
-        default_factory=lambda: RerankerEvidenceConfig(
-            lane_fused_weight=0.0,
-            lexical_score_weight=0.0,
-            semantic_score_weight=0.0,
-        )
-    )
-
-
-@dataclass(frozen=True)
-class PartialIntentRerankerConfig(DummyRerankerConfig):
-    intent_weights: tuple[tuple[str, IntentWeightProfile], ...] = (
-        (
-            "profile",
-            IntentWeightProfile(
-                1.0, 0.62, 0.34, 0.24, 0.18, 0.08, 0.06, 0.10, 1.4
-            ),
-        ),
-    )
 
 
 def make_candidate(**overrides) -> RecallCandidate:
@@ -61,46 +21,20 @@ def make_candidate(**overrides) -> RecallCandidate:
         item_id="profile_1",
         bucket="stable_preferences",
         score=1.0,
+        retrieval_score=1.0,
         matched_reason=["domain=hotel"],
         content_summary="hotel:preferred_area=京都四条",
         domains=["hotel"],
         applicability="适用于大多数住宿选择。",
         polarity="prefer",
+        key="preferred_area",
         created_at="2026-04-01T00:00:00",
     )
     base.update(overrides)
     return RecallCandidate(**base)
 
 
-def test_normalize_optional_scores_ignores_missing_values():
-    values = {"a": 0.4, "b": None, "c": 0.9}
-
-    normalized = _normalize_optional_scores(values)
-
-    assert normalized["c"] == 1.0
-    assert normalized["a"] == 0.0
-    assert normalized["b"] == 0.0
-
-
-def test_normalize_optional_scores_single_value_returns_one():
-    normalized = _normalize_optional_scores({"a": None, "b": 0.55})
-
-    assert normalized["a"] == 0.0
-    assert normalized["b"] == 1.0
-
-
-def test_normalize_optional_scores_single_zero_value_stays_zero():
-    assert _normalize_optional_scores({"only": 0.0}) == {"only": 0.0}
-
-
-def test_normalize_optional_scores_equal_zero_values_stay_zero():
-    assert _normalize_optional_scores({"a": 0.0, "b": 0.0}) == {
-        "a": 0.0,
-        "b": 0.0,
-    }
-
-
-def test_selection_metrics_placeholder_is_always_present():
+def test_empty_rerank_result_keeps_selection_metrics_placeholder():
     result = empty_rerank_result()
 
     assert result.selection_metrics == {
@@ -109,1233 +43,181 @@ def test_selection_metrics_placeholder_is_always_present():
     }
 
 
-def test_normalize_source_scores_uses_per_source_min_max_plus_source_prior():
-    scored = [
-        _ScoredCandidate(
-            candidate=make_candidate(item_id="profile_1"),
-            source_score=0.5,
-            normalized_score=0.5,
-            final_score=0.5,
-            duplicate_group="profile:1",
-            conflict_score=0.0,
-            weak_relevance=False,
-            reason="r1",
-            score_detail=SignalScoreDetail(
-                bucket_score=0.82,
-                domain_exact_score=1.0,
-                keyword_exact_score=0.5,
-                destination_score=0.0,
-                recency_score=1.0,
-                applicability_score=0.35,
-                conflict_score=0.0,
-            ),
-        ),
-        _ScoredCandidate(
-            candidate=make_candidate(item_id="profile_2"),
-            source_score=0.9,
-            normalized_score=0.9,
-            final_score=0.9,
-            duplicate_group="profile:2",
-            conflict_score=0.0,
-            weak_relevance=False,
-            reason="r2",
-            score_detail=SignalScoreDetail(
-                bucket_score=0.82,
-                domain_exact_score=1.0,
-                keyword_exact_score=0.5,
-                destination_score=0.0,
-                recency_score=1.0,
-                applicability_score=0.35,
-                conflict_score=0.0,
-            ),
-        ),
-    ]
-
-    normalized = _normalize_source_scores(scored, source_prior=1.0)
-
-    assert normalized[0].candidate.item_id == "profile_2"
-    assert normalized[0].score_detail.source_normalized_score == 1.0
-    assert normalized[0].score_detail.final_score == 2.0
-
-
-def test_build_scored_candidate_source_score_equals_rule_plus_evidence():
-    detail = SignalScoreDetail(
-        bucket_score=0.82,
-        domain_exact_score=1.0,
-        keyword_exact_score=0.5,
-        destination_score=1.0,
-        recency_score=1.0,
-        applicability_score=0.65,
-        conflict_score=0.0,
-        rule_score=0.71,
-        evidence_score=0.19,
-    )
-
-    scored = _build_scored_candidate(
-        candidate=make_candidate(item_id="profile_1"),
-        detail=detail,
-        duplicate_group="profile:1",
-        reason="r1",
-    )
-
-    assert scored.source_score == pytest.approx(0.90)
-
-
-@pytest.mark.asyncio
-async def test_select_recall_candidates_empty_result_uses_selection_metrics_placeholder():
-    _, result = await select_recall_candidates(
-        user_message="住宿按我习惯",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="",
-            keywords=["住宿"],
-            top_k=5,
-            reason="test",
-        ),
-        candidates=[],
-        evidence_by_id={},
-    )
-
-    assert result.selection_metrics == {
-        "selected_pairwise_similarity_max": None,
-        "selected_pairwise_similarity_avg": None,
-    }
-
-
-def test_destination_match_type_score_mapping_covers_supported_labels():
-    assert DESTINATION_MATCH_TYPE_SCORE == {
-        "exact": 1.0,
-        "alias": 0.8,
-        "parent_child": 0.6,
-        "region_weak": 0.3,
-        "none": 0.0,
-        "": 0.0,
-    }
-
-
-def test_recall_rerank_result_supports_structured_score_payload():
-    result = RecallRerankResult(
-        selected_item_ids=["profile_1"],
-        final_reason="selected profile memory",
-        per_item_reason={"profile_1": "bucket=0.82 domain=1.00 keyword=0.50"},
-        per_item_scores={
-            "profile_1": SignalScoreDetail(
-                bucket_score=0.82,
-                domain_exact_score=1.0,
-                keyword_exact_score=0.5,
-                destination_score=0.0,
-                recency_score=0.9,
-                applicability_score=0.35,
-                conflict_score=0.0,
-                rule_score=0.71,
-                evidence_score=0.0,
-                source_normalized_score=1.0,
-                final_score=2.0,
-            )
-        },
-        intent_label="profile",
-        selection_metrics={
-            "selected_pairwise_similarity_max": None,
-            "selected_pairwise_similarity_avg": None,
-        },
-    )
-
-    assert result.intent_label == "profile"
-    assert result.per_item_scores["profile_1"].rule_score == 0.71
-
-
-@pytest.mark.asyncio
-async def test_select_recall_candidates_forwards_evidence_to_choose_reranker_path(
-    monkeypatch,
-):
-    seen = {}
-
-    def fake_choose_reranker_path(**kwargs):
-        seen["evidence_by_id"] = kwargs["evidence_by_id"]
-        return RecallRerankPath(
-            selected_candidates=kwargs["candidates"],
-            result=RecallRerankResult(
-                selected_item_ids=[
-                    candidate.item_id for candidate in kwargs["candidates"]
-                ],
-                final_reason="fake",
-                per_item_reason={},
-            ),
-        )
-
-    monkeypatch.setattr("memory.manager.choose_reranker_path", fake_choose_reranker_path)
-
-    candidates = [make_candidate(item_id="profile_1")]
-    evidence_by_id = {
-        "profile_1": RetrievalEvidence(
-            item_id="profile_1",
-            source="profile",
-            lanes=["symbolic"],
-            fused_score=0.8,
-        )
-    }
-
-    selected, result = await select_recall_candidates(
-        user_message="住宿按我习惯",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="",
-            keywords=["住宿"],
-            top_k=5,
-            reason="test",
-        ),
-        candidates=candidates,
-        evidence_by_id=evidence_by_id,
-    )
-
-    assert [candidate.item_id for candidate in selected] == ["profile_1"]
-    assert result.selected_item_ids == ["profile_1"]
-    assert seen["evidence_by_id"] == evidence_by_id
-
-
-def test_choose_reranker_path_treats_missing_evidence_as_empty():
-    candidate = make_candidate(item_id="profile_missing_evidence")
-
-    path = choose_reranker_path(
-        candidates=[candidate],
-        user_message="住宿按我习惯",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="",
-            keywords=["住宿"],
-            top_k=5,
-            reason="test",
-        ),
-        evidence_by_id={},
-    )
-
-    assert path.result.selected_item_ids == ["profile_missing_evidence"]
-
-
-def test_resolve_intent_label_preserves_current_heuristic_branches():
-    assert _resolve_intent_label(
-        "按我偏好选机票",
-        RecallRetrievalPlan(
-            source="profile",
-            buckets=["constraints"],
-            domains=["flight"],
-            destination="",
-            keywords=["机票"],
-            top_k=5,
-            reason="profile_constraint_recall",
-        ),
-    ) == "profile"
-
-    assert _resolve_intent_label(
-        "沿用上次大阪行程的节奏",
-        RecallRetrievalPlan(
-            source="episode_slice",
-            buckets=["day_rhythm"],
-            domains=["itinerary"],
-            destination="大阪",
-            keywords=["行程"],
-            top_k=5,
-            reason="past_trip_slice_lookup",
-        ),
-    ) == "episode_slice"
-
-    assert _resolve_intent_label(
-        "推荐这次京都住哪里比较好",
-        RecallRetrievalPlan(
-            source="hybrid_history",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="recommend",
-        ),
-    ) == "recommend"
-
-    assert _resolve_intent_label(
-        "查查巴黎餐厅",
-        RecallRetrievalPlan(
-            source="hybrid_history",
-            buckets=["poi_preferences"],
-            domains=["food"],
-            destination="巴黎",
-            keywords=["餐厅"],
-            top_k=5,
-            reason="lookup",
-        ),
-    ) == "default"
-
-
-def test_default_config_per_item_reason_bit_stable():
-    candidate = make_candidate(
-        item_id="profile_kyoto_area",
-        matched_reason=["exact domain match on hotel", "keyword match on 住宿"],
-        content_summary="hotel:preferred_area=京都四条",
-        domains=["hotel"],
-        applicability="适用于京都住宿选择。",
-        created_at="",
-    )
-
-    path = choose_reranker_path(
-        candidates=[candidate],
-        user_message="推荐这次京都住哪里",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="profile",
-        ),
-        evidence_by_id={},
-        config=DummyRerankerConfig(small_candidate_set_threshold=0),
-    )
-
-    assert path.result.per_item_reason["profile_kyoto_area"] == (
-        "exact domain match on hotel | keyword match on 住宿 | "
-        "bucket=0.82 domain=1.00 keyword=0.08 destination=1.00 "
-        "recency=1.00 applicability=0.65 conflict=0.00"
-    )
-
-
-def test_resolve_intent_profile_allows_partial_override_for_matching_intent():
-    profile = _resolve_intent_profile(
-        "按我偏好选机票",
-        RecallRetrievalPlan(
-            source="profile",
-            buckets=["constraints"],
-            domains=["flight"],
-            destination="",
-            keywords=["机票"],
-            top_k=5,
-            reason="profile_constraint_recall",
-        ),
-        PartialIntentRerankerConfig(),
-    )
-
-    assert profile.profile_source_prior == 1.0
-
-
-def test_conflict_score_fixture_for_hard_drop_is_reachable():
-    candidate = make_candidate(
-        item_id="constraint_avoid_red_eye",
-        bucket="constraints",
-        polarity="avoid",
-        matched_reason=["exact domain match on flight", "keyword match on 红眼"],
-        content_summary="flight:avoid_red_eye=true",
-        domains=["flight"],
-        applicability="适用于所有旅行。",
-    )
-
-    assert _conflict_score(candidate, "这次可以坐红眼航班") == 1.0
-
-
-def test_hard_dropped_candidate_still_keeps_score_detail_for_trace():
-    candidate = make_candidate(
-        item_id="constraint_avoid_red_eye",
-        bucket="constraints",
-        polarity="avoid",
-        matched_reason=["exact domain match on flight", "keyword match on 红眼"],
-        content_summary="flight:avoid_red_eye=true",
-        domains=["flight"],
-        applicability="适用于所有旅行。",
-    )
-
-    path = choose_reranker_path(
-        candidates=[candidate],
-        user_message="这次可以坐红眼航班",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["constraints"],
-            domains=["flight"],
-            destination="",
-            keywords=["红眼", "航班"],
-            top_k=5,
-            reason="profile",
-        ),
-        evidence_by_id={},
-        config=DummyRerankerConfig(small_candidate_set_threshold=0),
-    )
-
-    assert path.result.selected_item_ids == []
-    assert (
-        path.result.per_item_scores["constraint_avoid_red_eye"].hard_filter
-        == "conflict"
-    )
-
-
-def test_evidence_scores_do_not_change_order_when_all_evidence_weights_are_zero():
+def test_rerank_profile_prefers_constraints_and_confidence():
     candidates = [
         make_candidate(
-            item_id="profile_kyoto_area",
-            matched_reason=["exact domain match on hotel", "keyword match on 住宿"],
-            content_summary="hotel:preferred_area=京都四条",
-            domains=["hotel"],
-            applicability="适用于京都住宿选择。",
-        ),
-        make_candidate(
-            source="episode_slice",
-            item_id="slice_kyoto_machiya",
-            bucket="stay_choice",
-            matched_reason=["exact destination match on 京都", "keyword match on 住宿"],
-            content_summary="上次京都住四条附近的町屋。",
-            domains=["hotel"],
-            applicability="仅供住宿选择参考。",
-            polarity="",
-        ),
-    ]
-    evidence_by_id = {
-        "profile_kyoto_area": RetrievalEvidence(
-            item_id="profile_kyoto_area",
-            source="profile",
-            lanes=["symbolic"],
-            fused_score=0.0,
-        ),
-        "slice_kyoto_machiya": RetrievalEvidence(
-            item_id="slice_kyoto_machiya",
-            source="episode_slice",
-            lanes=["symbolic", "semantic"],
-            fused_score=0.0,
-            semantic_score=0.88,
-        ),
-    }
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="推荐这次京都住哪里",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="hybrid_history",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="recommend",
-        ),
-        evidence_by_id=evidence_by_id,
-        config=DummyRerankerConfig(small_candidate_set_threshold=0),
-    )
-
-    assert path.result.selected_item_ids == [
-        "profile_kyoto_area",
-        "slice_kyoto_machiya",
-    ]
-    assert path.result.per_item_scores["profile_kyoto_area"].lane_fused_score == 0.0
-    assert path.result.per_item_scores["slice_kyoto_machiya"].semantic_score > 0.0
-    assert path.result.per_item_scores["slice_kyoto_machiya"].evidence_score == 0.0
-    assert path.result.selection_metrics == {
-        "selected_pairwise_similarity_max": None,
-        "selected_pairwise_similarity_avg": None,
-    }
-
-
-def test_lane_fused_score_stays_zero_for_single_symbolic_unfused_evidence():
-    candidate = make_candidate(
-        item_id="profile_symbolic_only",
-        matched_reason=["exact domain match on hotel"],
-    )
-
-    path = choose_reranker_path(
-        candidates=[candidate],
-        user_message="住宿按我习惯",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="",
-            keywords=["住宿"],
-            top_k=5,
-            reason="profile",
-        ),
-        evidence_by_id={
-            "profile_symbolic_only": RetrievalEvidence(
-                item_id="profile_symbolic_only",
-                source="profile",
-                lanes=["symbolic"],
-                fused_score=0.0,
-            )
-        },
-        config=DummyRerankerConfig(small_candidate_set_threshold=0),
-    )
-
-    assert (
-        path.result.per_item_scores["profile_symbolic_only"].lane_fused_score
-        == 0.0
-    )
-
-
-def test_small_candidate_path_skips_scoring_and_keeps_selection_metrics_placeholder():
-    candidates = [
-        make_candidate(
-            item_id="profile_1",
-            matched_reason=["exact domain match on hotel"],
-        ),
-        make_candidate(
-            source="episode_slice",
-            item_id="slice_1",
-            bucket="accommodation_decision",
-            score=0.5,
-            matched_reason=["exact destination match on 京都"],
-            content_summary="上次京都住四条附近的町屋。",
-            domains=["hotel"],
-            applicability="仅供住宿选择参考。",
-            polarity="",
-        ),
-    ]
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="我上次去京都住哪里？",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="episode_slice",
-            buckets=[],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="past_trip_experience_recall -> Kyoto hotel slice lookup",
-        ),
-        config=DummyRerankerConfig(small_candidate_set_threshold=3),
-    )
-
-    assert [candidate.item_id for candidate in path.selected_candidates] == ["slice_1"]
-    assert path.result.fallback_used == "skipped_small_candidate_set"
-    assert "small candidate set" in path.result.final_reason
-    assert "exact domain match on hotel" in path.result.per_item_reason["profile_1"]
-    assert path.result.selection_metrics == {
-        "selected_pairwise_similarity_max": None,
-        "selected_pairwise_similarity_avg": None,
-    }
-
-
-def test_choose_reranker_path_prefers_profile_constraints_for_preference_queries():
-    candidates = [
-        make_candidate(
-            item_id="constraint_avoid_red_eye",
-            bucket="constraints",
-            polarity="avoid",
-            matched_reason=["exact domain match on flight", "keyword match on 红眼"],
-            content_summary="flight:avoid_red_eye=true",
-            domains=["flight"],
-            applicability="适用于所有旅行。",
-        ),
-        make_candidate(
-            item_id="stable_window_pref",
+            item_id="stable_preferences:hotel:quiet",
             bucket="stable_preferences",
+            content_summary="hotel:quiet=喜欢安静住宿",
+            key="quiet",
             polarity="prefer",
-            matched_reason=["exact domain match on flight", "keyword match on 靠窗"],
-            content_summary="flight:seat_preference=靠窗",
-            domains=["flight"],
-            applicability="适用于大多数航班选择。",
+            score=0.7,
+            retrieval_score=0.7,
         ),
         make_candidate(
-            source="episode_slice",
-            item_id="slice_kyoto_red_eye",
-            bucket="transport_choice",
-            score=0.4,
-            matched_reason=["domain match on flight", "keyword match on 红眼"],
-            content_summary="上次京都行程为了省钱选了红眼航班，第二天状态很差。",
-            domains=["flight"],
-            applicability="仅供交通方式参考；班次和出发条件变化时需重新判断。",
-            polarity="",
-        ),
-    ]
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="按我偏好，这次机票别选红眼航班",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["constraints", "stable_preferences"],
-            domains=["flight"],
-            destination="",
-            keywords=["机票", "红眼"],
-            top_k=5,
-            reason="profile_constraint_recall -> flight preference profile",
-        ),
-        config=DummyRerankerConfig(small_candidate_set_threshold=1, profile_top_n=2),
-    )
-
-    assert [candidate.item_id for candidate in path.selected_candidates] == [
-        "constraint_avoid_red_eye",
-        "stable_window_pref",
-    ]
-    assert "source-aware weighted rerank" in path.result.final_reason
-    assert "bucket=" in path.result.per_item_reason["constraint_avoid_red_eye"]
-
-
-def test_choose_reranker_path_records_conflict_hard_filter_label():
-    candidates = [
-        make_candidate(
-            item_id="constraint_avoid_red_eye",
+            item_id="constraints:hotel:no_smoking",
             bucket="constraints",
-            polarity="avoid",
-            matched_reason=["exact domain match on flight", "keyword match on 红眼"],
-            content_summary="flight:avoid_red_eye=true",
-            domains=["flight"],
-            applicability="适用于所有旅行。",
-        ),
-        make_candidate(
-            source="episode_slice",
-            item_id="slice_recent_red_eye",
-            bucket="transport_choice",
-            score=0.5,
-            matched_reason=["domain match on flight", "keyword match on 红眼"],
-            content_summary="上次东京行程坐红眼虽然便宜，但状态很差。",
-            domains=["flight"],
-            applicability="仅供交通方式参考；班次和出发条件变化时需重新判断。",
-            polarity="",
-        ),
-    ]
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="这次为了省预算，可以坐红眼航班",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["constraints"],
-            domains=["flight"],
-            destination="",
-            keywords=["红眼", "航班"],
-            top_k=5,
-            reason="mixed_or_ambiguous -> flight tradeoff",
-        ),
-        config=DummyRerankerConfig(small_candidate_set_threshold=1, profile_top_n=2),
-    )
-
-    assert [candidate.item_id for candidate in path.selected_candidates] == [
-        "slice_recent_red_eye"
-    ]
-    assert "conflict" in path.result.per_item_reason["constraint_avoid_red_eye"]
-    assert (
-        path.result.per_item_scores["constraint_avoid_red_eye"].hard_filter
-        == "conflict"
-    )
-
-
-def test_choose_reranker_path_applies_source_budgets_and_dedupes_profile_candidates():
-    candidates = [
-        make_candidate(
-            item_id="profile_kyoto_area",
-            bucket="stable_preferences",
-            matched_reason=["exact domain match on hotel", "keyword match on 住宿"],
-            content_summary="hotel:preferred_area=京都四条",
-            domains=["hotel"],
-            applicability="适用于京都住宿选择。",
-        ),
-        make_candidate(
-            item_id="profile_kyoto_area_dup",
-            bucket="stable_preferences",
-            matched_reason=["exact domain match on hotel", "keyword match on 住哪里"],
-            content_summary="hotel:avoid_far_station=false",
-            domains=["hotel"],
-            applicability="适用于京都住宿选择。",
-        ),
-        make_candidate(
-            source="episode_slice",
-            item_id="slice_kyoto_machiya",
-            bucket="stay_choice",
+            content_summary="hotel:no_smoking=必须无烟房",
+            key="no_smoking",
+            polarity="must",
             score=0.6,
-            matched_reason=["exact destination match on 京都", "keyword match on 住宿"],
-            content_summary="上次京都住四条附近的町屋，步行和觅食都方便。",
-            domains=["hotel"],
-            applicability="仅供住宿选择参考。",
-            polarity="",
+            retrieval_score=0.6,
         ),
+    ]
+
+    result = rerank_profile_candidates(
+        candidates=candidates,
+        user_message="住宿按我的要求",
+        destination="",
+        domains=["hotel"],
+        keywords=["住宿"],
+        config=ProfileRerankConfig(profile_top_n=2),
+    )
+
+    assert result.selected_item_ids[0] == "constraints:hotel:no_smoking"
+    assert "profile rerank selected 2 items" in result.final_reason
+    assert result.intent_label == "profile"
+
+
+def test_rerank_profile_ignores_episode_candidates():
+    result = rerank_profile_candidates(
+        candidates=[
+            make_candidate(
+                source="episode_slice",
+                item_id="slice_1",
+                bucket="stay_choice",
+                content_summary="上次京都住在安静旅馆。",
+            )
+        ],
+        user_message="住宿按我的要求",
+        destination="京都",
+        domains=["hotel"],
+        keywords=["住宿"],
+        config=ProfileRerankConfig(profile_top_n=2),
+    )
+
+    assert result.selected_item_ids == []
+    assert result.per_item_scores == {}
+
+
+def test_rerank_episode_keeps_semantic_only_retrieval_score():
+    candidates = [
         make_candidate(
+            item_id="slice_semantic",
             source="episode_slice",
-            item_id="slice_kyoto_station_hotel",
             bucket="stay_choice",
-            score=0.55,
-            matched_reason=["exact destination match on 京都", "keyword match on 酒店"],
-            content_summary="另一次京都住京都站旁边，交通方便但晚上体验一般。",
-            domains=["hotel"],
-            applicability="仅供住宿选择参考。",
-            polarity="",
-        ),
+            domains=[],
+            content_summary="以前住过一个安静小旅馆，体验很好。",
+            score=0.92,
+            retrieval_score=0.92,
+        )
     ]
 
-    path = choose_reranker_path(
+    result = rerank_episode_candidates(
         candidates=candidates,
-        user_message="推荐这次京都住哪里比较适合带孩子，优先参考我过往偏好",
-        plan=TravelPlanState(
-            session_id="s1",
-            trip_id="trip_now",
-            destination="京都",
-            travelers=Travelers(adults=2, children=1),
-        ),
-        retrieval_plan=RecallRetrievalPlan(
-            source="hybrid_history",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿", "带孩子"],
-            top_k=5,
-            reason="recommend -> Kyoto hotel preference and historical stay",
-        ),
-        config=DummyRerankerConfig(
-            small_candidate_set_threshold=1,
-            hybrid_top_n=3,
-            hybrid_profile_top_n=1,
-            hybrid_slice_top_n=2,
-        ),
+        user_message="找个安静住宿",
+        destination="",
+        domains=[],
+        keywords=[],
+        config=EpisodeRerankConfig(episode_top_n=1),
     )
 
-    assert [candidate.item_id for candidate in path.selected_candidates] == [
-        "profile_kyoto_area",
-        "slice_kyoto_machiya",
-        "slice_kyoto_station_hotel",
-    ]
-    assert "duplicate group" in path.result.per_item_reason["profile_kyoto_area_dup"]
+    assert result.selected_item_ids == ["slice_semantic"]
+    assert result.per_item_scores["slice_semantic"]["retrieval_score"] == 0.92
 
 
-def test_choose_reranker_path_hybrid_default_config_keeps_selected_ids_and_placeholder_metrics():
+def test_rerank_episode_filters_rejected_option_when_user_asks_positive_specific_option():
     candidates = [
-        make_candidate(item_id="profile_kyoto_area", domains=["hotel"]),
         make_candidate(
+            item_id="slice_rejected",
             source="episode_slice",
-            item_id="slice_kyoto_machiya",
+            bucket="rejected_option",
+            content_summary="上次明确拒绝住青旅。",
+            score=0.9,
+            retrieval_score=0.9,
+        )
+    ]
+
+    result = rerank_episode_candidates(
+        candidates=candidates,
+        user_message="这次想住青旅",
+        destination="",
+        domains=["hotel"],
+        keywords=["青旅"],
+        config=EpisodeRerankConfig(episode_top_n=1),
+    )
+
+    assert result.selected_item_ids == []
+    assert "filtered: conflict" in result.per_item_reason["slice_rejected"]
+
+
+def test_rerank_episode_dedupes_redundant_slices():
+    candidates = [
+        make_candidate(
+            item_id="slice_a",
+            source="episode_slice",
             bucket="stay_choice",
-            matched_reason=["exact destination match on 京都", "keyword match on 住宿"],
-            content_summary="上次京都住四条附近的町屋。",
-            domains=["hotel"],
-            applicability="仅供住宿选择参考。",
-            polarity="",
-        ),
-    ]
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="推荐这次京都住哪里",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="hybrid_history",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="recommend",
-        ),
-        evidence_by_id={},
-        config=DummyRerankerConfig(small_candidate_set_threshold=0),
-    )
-
-    assert path.result.selected_item_ids == [
-        "profile_kyoto_area",
-        "slice_kyoto_machiya",
-    ]
-    assert path.result.selection_metrics == {
-        "selected_pairwise_similarity_max": None,
-        "selected_pairwise_similarity_avg": None,
-    }
-
-
-def test_choose_reranker_path_per_item_scores_expose_normalized_final_score():
-    candidates = [
-        make_candidate(
-            item_id="profile_kyoto_area",
-            key="preferred_area",
-            bucket="stable_preferences",
-            matched_reason=["exact domain match on hotel", "keyword match on 住宿"],
-            content_summary="hotel:preferred_area=京都四条",
-            domains=["hotel"],
-            applicability="适用于京都住宿选择。",
+            content_summary="上次京都住在安静旅馆。",
+            retrieval_score=0.8,
         ),
         make_candidate(
-            item_id="profile_kyoto_weak",
-            bucket="preference_hypotheses",
-            matched_reason=["exact domain match on hotel"],
-            content_summary="hotel:preferred_style=安静",
-            domains=["hotel"],
-            applicability="仅供住宿选择参考。",
-        ),
-    ]
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="推荐这次京都住哪里",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="profile",
-        ),
-        evidence_by_id={},
-        config=DummyRerankerConfig(small_candidate_set_threshold=0),
-    )
-
-    selected_id = path.result.selected_item_ids[0]
-    selected_detail = path.result.per_item_scores[selected_id]
-
-    assert selected_id == "profile_kyoto_area"
-    assert selected_detail.source_normalized_score == pytest.approx(1.0)
-    assert selected_detail.final_score == pytest.approx(2.0)
-
-
-def test_choose_reranker_path_per_item_scores_include_unselected_normalized_score():
-    candidates = [
-        make_candidate(
-            item_id="profile_kyoto_area",
-            bucket="stable_preferences",
-            matched_reason=["exact domain match on hotel", "keyword match on 住宿"],
-            content_summary="hotel:preferred_area=京都四条",
-            domains=["hotel"],
-            applicability="适用于京都住宿选择。",
-        ),
-        make_candidate(
-            item_id="profile_kyoto_food",
-            key="food_area",
-            bucket="stable_preferences",
-            matched_reason=["exact domain match on hotel", "keyword match on 京都"],
-            content_summary="hotel:preferred_area=京都河原町",
-            domains=["hotel"],
-            applicability="适用于京都住宿选择。",
-        ),
-        make_candidate(
-            item_id="profile_kyoto_quiet",
-            key="quiet_style",
-            bucket="preference_hypotheses",
-            matched_reason=["exact domain match on hotel"],
-            content_summary="hotel:preferred_style=安静",
-            domains=["hotel"],
-            applicability="仅供住宿选择参考。",
-        ),
-    ]
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="推荐这次京都住哪里",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="profile",
-        ),
-        evidence_by_id={},
-        config=DummyRerankerConfig(
-            small_candidate_set_threshold=0,
-            profile_top_n=1,
-        ),
-    )
-
-    unselected_id = "profile_kyoto_food"
-    unselected_detail = path.result.per_item_scores[unselected_id]
-
-    assert unselected_id not in path.result.selected_item_ids
-    assert unselected_detail.source_normalized_score > 0.0
-    assert unselected_detail.final_score > 1.0
-
-
-def test_default_config_small_set_still_drops_conflicting_profile_candidates():
-    # Regression: the small-set fast path used to skip conflict detection entirely.
-    # With the default config (small_candidate_set_threshold=3) and only 2 candidates,
-    # the conflicting profile item must still be dropped.
-    candidates = [
-        make_candidate(
-            item_id="constraint_avoid_red_eye",
-            bucket="constraints",
-            polarity="avoid",
-            matched_reason=["exact domain match on flight", "keyword match on 红眼"],
-            content_summary="flight:avoid_red_eye=true",
-            domains=["flight"],
-            applicability="适用于所有旅行。",
-        ),
-        make_candidate(
+            item_id="slice_b",
             source="episode_slice",
-            item_id="slice_neutral",
-            bucket="transport_choice",
-            score=0.5,
-            matched_reason=["domain match on flight"],
-            content_summary="上次的交通选择记录。",
-            domains=["flight"],
-            applicability="仅供交通方式参考。",
-            polarity="",
+            bucket="stay_choice",
+            content_summary="上次京都住在安静旅馆。",
+            retrieval_score=0.7,
         ),
     ]
 
-    path = choose_reranker_path(
+    result = rerank_episode_candidates(
         candidates=candidates,
-        user_message="这次为了省预算，可以坐红眼航班",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["constraints"],
-            domains=["flight"],
-            destination="",
-            keywords=["红眼", "航班"],
-            top_k=5,
-            reason="mixed_or_ambiguous -> flight tradeoff",
-        ),
-        config=DummyRerankerConfig(),  # default threshold=3, triggers small-set path
+        user_message="上次京都住宿",
+        destination="京都",
+        domains=["hotel"],
+        keywords=["住宿"],
+        config=EpisodeRerankConfig(episode_top_n=2),
     )
 
-    assert [c.item_id for c in path.selected_candidates] == ["slice_neutral"]
-    assert "conflict" in path.result.per_item_reason["constraint_avoid_red_eye"]
+    assert result.selected_item_ids == ["slice_a"]
+
+
+def test_conflict_score_drops_profile_avoid_when_user_asks_positive_specific_option():
+    candidate = make_candidate(
+        item_id="rejections:hotel:hostel",
+        bucket="rejections",
+        content_summary="hotel:hostel=不住青旅",
+        polarity="avoid",
+        key="hostel",
+    )
+
+    assert _conflict_score(candidate, "这次想住青旅") == 1.0
+
+
+def test_duplicate_group_preserves_profile_items_with_different_polarity():
+    prefer = make_candidate(
+        item_id="stable_preferences:hotel:quiet",
+        key="quiet",
+        polarity="prefer",
+    )
+    avoid = make_candidate(
+        item_id="rejections:hotel:quiet",
+        bucket="rejections",
+        key="quiet",
+        polarity="avoid",
+    )
+
+    assert _duplicate_group(prefer) != _duplicate_group(avoid)
 
 
 def test_recency_score_handles_tz_aware_created_at():
-    # Regression: naive datetime.now() used to raise TypeError when created_at
-    # carried a timezone offset (e.g. `...Z` or `+08:00`).
-    candidates = [
-        make_candidate(
-            item_id="profile_utc_z",
-            matched_reason=["exact domain match on hotel"],
-            created_at="2024-01-01T00:00:00Z",
-        ),
-        make_candidate(
-            item_id="profile_with_offset",
-            matched_reason=["exact domain match on hotel"],
-            created_at="2024-01-01T00:00:00+08:00",
-        ),
-        make_candidate(
-            item_id="profile_naive",
-            matched_reason=["exact domain match on hotel"],
-            created_at="2024-01-01T00:00:00",
-        ),
-        make_candidate(
-            source="episode_slice",
-            item_id="slice_1",
-            bucket="stay_choice",
-            score=0.5,
-            matched_reason=["exact destination match on 京都"],
-            content_summary="上次京都住了四条附近。",
-            domains=["hotel"],
-            applicability="仅供住宿选择参考。",
-            polarity="",
-            created_at="2024-01-01T00:00:00Z",
-        ),
-    ]
+    recent = datetime.now(timezone.utc) - timedelta(days=10)
+    candidate = make_candidate(created_at=recent.isoformat())
 
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="我这次京都住哪里比较好",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="hybrid_history",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="recommend -> Kyoto hotel preference",
-        ),
-        config=DummyRerankerConfig(small_candidate_set_threshold=1),
+    assert _recency_score(candidate, half_life_days=30) == pytest.approx(
+        0.7937005259,
+        rel=0.2,
     )
 
-    # No exception and every candidate still has a reason line populated.
-    assert {c.item_id for c in path.selected_candidates}.issubset(
-        {"profile_utc_z", "profile_with_offset", "profile_naive", "slice_1"}
-    )
-    for item_id in ("profile_utc_z", "profile_with_offset", "profile_naive"):
-        assert "recency=" in path.result.per_item_reason[item_id]
 
-
-def test_profile_intent_never_lets_slice_outrank_profile_on_single_source():
-    # Regression: the profile path used to cross-source sort by final_score
-    # after filling slices, so a high-score slice could jump above the
-    # profile items the intent asked for.
-    candidates = [
-        make_candidate(
-            item_id="profile_weak",
-            bucket="preference_hypotheses",
-            polarity="prefer",
-            matched_reason=["exact domain match on hotel"],
-            content_summary="hotel:preferred_area=unknown",
-            domains=["hotel"],
-            applicability="",
-            created_at="2020-01-01T00:00:00",
-        ),
-        make_candidate(
-            source="episode_slice",
-            item_id="slice_strong",
-            bucket="stay_choice",
-            score=0.9,
-            matched_reason=[
-                "exact destination match on 京都",
-                "domain match on hotel",
-                "keyword match on 住宿",
-            ],
-            content_summary="京都四条町屋住宿体验非常好。",
-            domains=["hotel"],
-            applicability="适用于大多数住宿选择。京都",
-            polarity="",
-            created_at="2026-04-01T00:00:00",
-        ),
-        make_candidate(
-            source="episode_slice",
-            item_id="slice_extra",
-            bucket="stay_choice",
-            score=0.5,
-            matched_reason=["domain match on hotel"],
-            content_summary="另一次住宿记录。",
-            domains=["hotel"],
-            applicability="仅供参考。",
-            polarity="",
-            created_at="2026-04-01T00:00:00",
-        ),
-    ]
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="按我偏好，这次京都住宿选哪里比较好",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["stable_preferences", "preference_hypotheses"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="profile_constraint_recall -> Kyoto hotel",
-        ),
-        config=DummyRerankerConfig(small_candidate_set_threshold=1, profile_top_n=2),
-    )
-
-    # The profile candidate must occupy position 0 even though the slice has
-    # a much stronger raw signal.
-    ids = [c.item_id for c in path.selected_candidates]
-    assert ids[0] == "profile_weak", ids
-
-
-def test_slice_rejected_option_conflicts_with_positive_intent():
-    # Regression: slice conflict detection used to be disabled entirely.
-    candidates = [
-        make_candidate(
-            source="episode_slice",
-            item_id="slice_rejected_capsule",
-            bucket="rejected_option",
-            score=0.8,
-            matched_reason=[
-                "exact destination match on 京都",
-                "keyword match on 胶囊",
-            ],
-            content_summary="上次在京都订了胶囊酒店，体验很差。",
-            domains=["hotel"],
-            applicability="仅供住宿选择参考。",
-            polarity="",
-            created_at="2026-04-01T00:00:00",
-        ),
-        make_candidate(
-            item_id="profile_neutral",
-            bucket="stable_preferences",
-            polarity="prefer",
-            matched_reason=["exact domain match on hotel"],
-            content_summary="hotel:preferred_area=京都四条",
-            domains=["hotel"],
-            applicability="适用于大多数住宿选择。",
-        ),
-    ]
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="这次京都我想试试胶囊酒店，可以体验一下",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="hybrid_history",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["胶囊", "酒店"],
-            top_k=5,
-            reason="recommend -> Kyoto capsule hotel",
-        ),
-        config=DummyRerankerConfig(small_candidate_set_threshold=1),
-    )
-
-    ids = [c.item_id for c in path.selected_candidates]
-    assert "slice_rejected_capsule" not in ids
-    assert "conflict" in path.result.per_item_reason["slice_rejected_capsule"]
-
-
-def test_profile_dedup_preserves_items_with_different_keys():
-    # Regression: profile dedup used (domain, polarity) as the group key, so two
-    # distinct constraints on the same domain with the same polarity were merged.
-    candidates = [
-        make_candidate(
-            item_id="profile_avoid_redeye",
-            bucket="constraints",
-            polarity="avoid",
-            key="avoid_red_eye",
-            matched_reason=["exact domain match on flight"],
-            content_summary="flight:avoid_red_eye=true",
-            domains=["flight"],
-            applicability="适用于所有旅行。",
-        ),
-        make_candidate(
-            item_id="profile_avoid_long_layover",
-            bucket="constraints",
-            polarity="avoid",
-            key="avoid_long_layover",
-            matched_reason=["exact domain match on flight"],
-            content_summary="flight:avoid_long_layover=true",
-            domains=["flight"],
-            applicability="适用于所有旅行。",
-        ),
-        make_candidate(
-            item_id="profile_avoid_redeye_dup",
-            bucket="constraints",
-            polarity="avoid",
-            key="avoid_red_eye",
-            matched_reason=["exact domain match on flight"],
-            content_summary="flight:avoid_red_eye=true_dup",
-            domains=["flight"],
-            applicability="适用于所有旅行。",
-        ),
-    ]
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="这次航班安排参考我的偏好",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["constraints"],
-            domains=["flight"],
-            destination="",
-            keywords=["航班"],
-            top_k=5,
-            reason="profile_constraint_recall -> flight",
-        ),
-        config=DummyRerankerConfig(small_candidate_set_threshold=1, profile_top_n=4),
-    )
-
-    ids = [c.item_id for c in path.selected_candidates]
-    # Two distinct keys preserved; duplicate key merged.
-    assert "profile_avoid_redeye" in ids
-    assert "profile_avoid_long_layover" in ids
-    assert "profile_avoid_redeye_dup" not in ids
-    assert "duplicate group" in path.result.per_item_reason["profile_avoid_redeye_dup"]
-
-
-def test_profile_dedup_keeps_same_key_with_different_polarity():
-    candidates = [
-        make_candidate(
-            item_id="profile_prefer_window",
-            bucket="stable_preferences",
-            polarity="prefer",
-            key="seat_preference",
-            matched_reason=["exact domain match on flight"],
-            content_summary="flight:seat_preference=window",
-            domains=["flight"],
-            applicability="适用于大多数航班选择。",
-        ),
-        make_candidate(
-            item_id="profile_avoid_window",
-            bucket="constraints",
-            polarity="avoid",
-            key="seat_preference",
-            matched_reason=["exact domain match on flight"],
-            content_summary="flight:seat_preference=window",
-            domains=["flight"],
-            applicability="这次临时不想坐靠窗。",
-        ),
-    ]
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message="这次航班还是参考我的偏好",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["constraints", "stable_preferences"],
-            domains=["flight"],
-            destination="",
-            keywords=["航班", "座位"],
-            top_k=5,
-            reason="profile_constraint_recall -> flight seat preference",
-        ),
-        config=DummyRerankerConfig(small_candidate_set_threshold=1, profile_top_n=4),
-    )
-
-    ids = [c.item_id for c in path.selected_candidates]
-    assert "profile_prefer_window" in ids
-    assert "profile_avoid_window" in ids
-
-
-def test_recency_half_life_config_changes_selection():
-    candidates = [
-        make_candidate(
-            item_id="profile_recent",
-            bucket="stable_preferences",
-            matched_reason=["exact domain match on hotel"],
-            content_summary="hotel:preferred_area=京都四条",
-            domains=["hotel"],
-            created_at="2026-04-20T00:00:00Z",
-        ),
-        make_candidate(
-            item_id="profile_old",
-            bucket="stable_preferences",
-            matched_reason=["exact domain match on hotel"],
-            content_summary="hotel:preferred_area=京都河原町",
-            domains=["hotel"],
-            created_at="2024-01-01T00:00:00Z",
-        ),
-    ]
-
-    short_half_life = choose_reranker_path(
-        candidates=candidates,
-        user_message="这次京都住宿参考我的偏好",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="profile_preference_recall -> Kyoto hotel",
-        ),
-        config=DummyRerankerConfig(
-            small_candidate_set_threshold=1,
-            profile_top_n=1,
-            recency_half_life_days=7,
-        ),
-    )
-
-    long_half_life = choose_reranker_path(
-        candidates=candidates,
-        user_message="这次京都住宿参考我的偏好",
-        plan=TravelPlanState(session_id="s1", trip_id="trip_now", destination="京都"),
-        retrieval_plan=RecallRetrievalPlan(
-            source="profile",
-            buckets=["stable_preferences"],
-            domains=["hotel"],
-            destination="京都",
-            keywords=["住宿"],
-            top_k=5,
-            reason="profile_preference_recall -> Kyoto hotel",
-        ),
-        config=DummyRerankerConfig(
-            small_candidate_set_threshold=1,
-            profile_top_n=1,
-            recency_half_life_days=3650,
-        ),
-    )
-
-    assert short_half_life.result.per_item_reason["profile_recent"] != long_half_life.result.per_item_reason["profile_recent"]
+def test_jaccard_scores_overlap():
+    assert _jaccard({"hotel", "quiet"}, {"hotel", "food"}) == pytest.approx(1 / 3)

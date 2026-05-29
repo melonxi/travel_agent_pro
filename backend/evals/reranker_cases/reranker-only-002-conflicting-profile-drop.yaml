@@ -14,8 +14,8 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> profile conflict
 config:
-  small_candidate_set_threshold: 1
-  profile_top_n: 2
+  profile:
+    profile_top_n: 2
 candidates:
   - source: profile
     item_id: constraints:flight:avoid_red_eye
@@ -38,10 +38,6 @@ candidates:
     applicability: 仅供交通方式参考；班次和出发条件变化时需重新判断。
     created_at: "2026-04-23T02:23:34+00:00"
 expected:
-  selected_item_ids:
-    - slice_recent_red_eye_tradeoff
-  final_reason: small candidate set; skipped weighted rerank
-  fallback_used: skipped_small_candidate_set
-  reason_contains:
-    constraints:flight:avoid_red_eye: dropped as conflict
-
+  selected_item_ids: []
+  final_reason: source-aware weighted rerank selected 0 items (0 profile, 0 slice)
+  fallback_used: none

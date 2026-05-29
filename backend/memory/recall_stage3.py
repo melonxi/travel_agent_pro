@@ -4,14 +4,18 @@ from collections import Counter
 from typing import Any
 
 from config import Stage3FusionConfig, Stage3RecallConfig
-from memory.recall_query import RecallRetrievalPlan
+from memory.recall_query import DualRecallPlan, RecallRetrievalPlan
 from memory.recall_stage3_fusion import fuse_lane_results
 from memory.recall_stage3_lanes import LexicalLane, SemanticLane, SymbolicLane
 from memory.recall_stage3_models import (
+    DualStage3RecallResult,
+    RetrievalEvidence,
+    SourceStage3RecallResult,
     Stage3LaneResult,
     Stage3RecallResult,
     Stage3Telemetry,
 )
+from memory.retrieval_candidates import RecallCandidate
 from memory.recall_stage3_normalizer import build_query_envelope
 from memory.v3_models import EpisodeSlice, UserMemoryProfile
 from state.models import TravelPlanState
@@ -118,6 +122,133 @@ def retrieve_recall_candidates(
         },
         telemetry=telemetry,
     )
+
+
+def retrieve_dual_recall_candidates(
+    *,
+    query: DualRecallPlan,
+    profile: UserMemoryProfile,
+    slices: list[EpisodeSlice],
+    user_message: str,
+    plan: TravelPlanState,
+    config: Stage3RecallConfig,
+    embedding_provider: Any = None,
+    sidecar_store: Any = None,
+    user_id: str = "",
+) -> DualStage3RecallResult:
+    profile_result = _empty_source_result("profile")
+    episode_result = _empty_source_result("episode_slice")
+
+    if query.need_profile:
+        profile_plan = RecallRetrievalPlan(
+            source="profile",
+            buckets=list(query.profile_buckets),
+            domains=list(query.domains),
+            destination=query.destination,
+            keywords=list(query.keywords),
+            top_k=query.top_k,
+            reason=query.reason,
+            fallback_used=query.fallback_used,
+        )
+        raw_profile = retrieve_recall_candidates(
+            query=profile_plan,
+            profile=profile,
+            slices=[],
+            user_message=user_message,
+            plan=plan,
+            config=config,
+            embedding_provider=embedding_provider,
+            sidecar_store=sidecar_store,
+            user_id=user_id,
+        )
+        _assign_retrieval_scores(
+            raw_profile.candidates, raw_profile.evidence_by_id, config.fusion.rrf_k
+        )
+        profile_result = SourceStage3RecallResult(
+            source="profile",
+            candidates=raw_profile.candidates,
+            evidence_by_id=raw_profile.evidence_by_id,
+            telemetry={"source": "profile", **raw_profile.telemetry.to_dict()},
+        )
+
+    if query.need_episode:
+        episode_plan = RecallRetrievalPlan(
+            source="episode_slice",
+            buckets=[],
+            domains=list(query.domains),
+            destination=query.destination,
+            keywords=list(query.keywords),
+            top_k=query.top_k,
+            reason=query.reason,
+            fallback_used=query.fallback_used,
+        )
+        raw_episode = retrieve_recall_candidates(
+            query=episode_plan,
+            profile=profile,
+            slices=slices,
+            user_message=user_message,
+            plan=plan,
+            config=config,
+            embedding_provider=embedding_provider,
+            sidecar_store=sidecar_store,
+            user_id=user_id,
+        )
+        _assign_retrieval_scores(
+            raw_episode.candidates, raw_episode.evidence_by_id, config.fusion.rrf_k
+        )
+        episode_result = SourceStage3RecallResult(
+            source="episode_slice",
+            candidates=raw_episode.candidates,
+            evidence_by_id=raw_episode.evidence_by_id,
+            telemetry={"source": "episode_slice", **raw_episode.telemetry.to_dict()},
+        )
+
+    return DualStage3RecallResult(profile=profile_result, episode=episode_result)
+
+
+def _empty_source_result(source: str) -> SourceStage3RecallResult:
+    return SourceStage3RecallResult(
+        source=source,
+        candidates=[],
+        evidence_by_id={},
+        telemetry={"source": source},
+    )
+
+
+def _assign_retrieval_scores(
+    candidates: list[RecallCandidate],
+    evidence_by_id: dict[str, RetrievalEvidence],
+    rrf_k: int,
+) -> None:
+    if not candidates:
+        return
+
+    evidence_items = [
+        evidence_by_id.get(
+            candidate.item_id, RetrievalEvidence(candidate.item_id, candidate.source)
+        )
+        for candidate in candidates
+    ]
+    fused_scores = [evidence.fused_score for evidence in evidence_items]
+    max_fused = max(fused_scores) if fused_scores else 0.0
+    if max_fused > 0.0:
+        for candidate, fused_score in zip(candidates, fused_scores):
+            candidate.retrieval_score = fused_score / max_fused
+        return
+
+    ordinal_scores = [
+        1.0 / float(rrf_k + index + 1) for index in range(len(candidates))
+    ]
+    max_ordinal = max(ordinal_scores)
+    for candidate, evidence, ordinal_score in zip(
+        candidates, evidence_items, ordinal_scores
+    ):
+        if evidence.semantic_score is not None:
+            candidate.retrieval_score = max(0.0, min(evidence.semantic_score, 1.0))
+        elif candidate.score > 0.0:
+            candidate.retrieval_score = max(0.0, min(candidate.score, 1.0))
+        else:
+            candidate.retrieval_score = ordinal_score / max_ordinal
 
 
 def _is_default_symbolic_only(

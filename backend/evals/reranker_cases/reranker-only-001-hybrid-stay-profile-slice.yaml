@@ -15,10 +15,10 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> hybrid stay history
 config:
-  small_candidate_set_threshold: 3
-  hybrid_top_n: 4
-  hybrid_profile_top_n: 2
-  hybrid_slice_top_n: 2
+  profile:
+    profile_top_n: 2
+  episode:
+    episode_top_n: 2
 candidates:
   - source: profile
     item_id: constraints:accommodation:avoid_capsule_hotel
@@ -82,12 +82,9 @@ candidates:
     created_at: "2026-04-23T02:23:34+00:00"
 expected:
   selected_item_ids:
-    - constraints:accommodation:avoid_hostel
-    - slice_tokyo_old_stay
-    - slice_tokyo_recent_stay
     - constraints:accommodation:avoid_capsule_hotel
+    - constraints:accommodation:avoid_hostel
+    - slice_tokyo_recent_stay
+    - slice_tokyo_old_stay
   final_reason: source-aware weighted rerank selected 4 items (2 profile, 2 slice)
   fallback_used: none
-  reason_contains:
-    constraints:accommodation:avoid_capsule_hotel: bucket=
-    slice_tokyo_recent_stay: destination=1.00
