@@ -35,13 +35,16 @@ def test_push_does_not_touch_messages():
     assert session["messages"] == []
 
 
-def test_flush_appends_each_note_as_system_message():
+def test_flush_appends_each_note_as_runtime_notice():
     session = {"messages": [], "_pending_system_notes": ["a", "b"]}
     msgs: list[Message] = []
     count = flush_pending_system_notes(session, msgs)
     assert count == 2
-    assert [m.role for m in msgs] == [Role.SYSTEM, Role.SYSTEM]
-    assert [m.content for m in msgs] == ["a", "b"]
+    assert [m.role for m in msgs] == [Role.USER, Role.USER]
+    assert all(m.transient for m in msgs)
+    assert all(m.content.startswith('<runtime_notice kind="validation">') for m in msgs)
+    assert "a" in msgs[0].content
+    assert "b" in msgs[1].content
 
 
 def test_flush_clears_buffer():
@@ -72,5 +75,7 @@ def test_flush_does_not_touch_existing_messages():
     session = {"messages": [], "_pending_system_notes": ["note"]}
     flush_pending_system_notes(session, msgs)
     assert msgs[0] is existing
-    assert msgs[1].role == Role.SYSTEM
-    assert msgs[1].content == "note"
+    assert msgs[1].role == Role.USER
+    assert msgs[1].transient is True
+    assert '<runtime_notice kind="validation">' in msgs[1].content
+    assert "note" in msgs[1].content

@@ -16,6 +16,7 @@ def copy_message(message: Message) -> Message:
         incomplete=message.incomplete,
         history_persisted=message.history_persisted,
         history_seq=message.history_seq,
+        transient=message.transient,
     )
 
 
@@ -87,22 +88,14 @@ async def rebuild_messages_for_phase_change(
         else ("暂无相关用户记忆", [], 0, 0, 0)
     )
     rebuilt = [
-        context_manager.build_system_message(
-            plan,
-            phase_prompt,
-            memory_context,
-            available_tools=current_tool_names(
-                tool_engine=tool_engine,
-                plan=plan,
-                phase=to_phase,
-            ),
-        )
+        context_manager.build_static_system_message(plan, phase_prompt),
+        copy_message(original_user_message),
     ]
 
     if to_phase < from_phase:
         rebuilt.append(
-            Message(
-                role=Role.SYSTEM,
+            context_manager.build_app_event_message(
+                kind="backtrack",
                 content=build_backtrack_notice(
                     plan=plan,
                     from_phase=from_phase,
@@ -123,7 +116,17 @@ async def rebuild_messages_for_phase_change(
             )
         )
 
-    rebuilt.append(copy_message(original_user_message))
+    rebuilt.append(
+        context_manager.build_turn_context_message(
+            plan=plan,
+            available_tools=current_tool_names(
+                tool_engine=tool_engine,
+                plan=plan,
+                phase=to_phase,
+            ),
+            memory_context=memory_context,
+        )
+    )
     return rebuilt
 
 
@@ -153,15 +156,15 @@ async def rebuild_messages_for_phase2_step_change(
         else ("暂无相关用户记忆", [], 0, 0, 0)
     )
     return [
-        context_manager.build_system_message(
-            plan,
-            phase_prompt,
-            memory_context,
+        context_manager.build_static_system_message(plan, phase_prompt),
+        copy_message(original_user_message),
+        context_manager.build_turn_context_message(
+            plan=plan,
             available_tools=current_tool_names(
                 tool_engine=tool_engine,
                 plan=plan,
                 phase=plan.phase,
             ),
+            memory_context=memory_context,
         ),
-        copy_message(original_user_message),
     ]

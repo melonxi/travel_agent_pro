@@ -120,6 +120,21 @@ class _StubContextManager:
     ):
         return Message(role=Role.SYSTEM, content=f"phase={plan.phase}")
 
+    def build_static_system_message(self, plan, phase_prompt):
+        return Message(role=Role.SYSTEM, content=f"phase={plan.phase}", transient=True)
+
+    def build_turn_context_message(
+        self, *, plan, available_tools=None, memory_context=""
+    ):
+        return Message(
+            role=Role.USER,
+            content=f"<turn_context>phase={plan.phase}</turn_context>",
+            transient=True,
+        )
+
+    def build_app_event_message(self, *, kind, content):
+        return Message(role=Role.USER, content=f"<app_event>{content}</app_event>")
+
     def build_phase_handoff_note(self, *, plan, from_phase, to_phase) -> str:
         return f"handoff {from_phase}->{to_phase}"
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from agent.types import ToolCall
+from agent.types import Message, Role, ToolCall
 from llm.types import ChunkType, LLMChunk
 from state.models import Accommodation, Budget, DateRange, DayPlan, TravelPlanState
 
@@ -76,7 +76,10 @@ async def test_plan_tool_injects_realtime_incremental_feedback(app, sessions):
 
         agent = session["agent"]
 
+        captured_messages: list[list[Message]] = []
+
         async def fake_chat(messages, tools=None, stream=True):
+            captured_messages.append([m for m in messages])
             yield LLMChunk(
                 type=ChunkType.TOOL_CALL_START,
                 tool_call=ToolCall(
@@ -128,8 +131,12 @@ async def test_plan_tool_injects_realtime_incremental_feedback(app, sessions):
     assert resp.status_code == 200
     realtime_messages = [
         message.content
-        for message in session["messages"]
-        if message.role.value == "system" and message.content
+        for call_messages in captured_messages[1:]
+        for message in call_messages
+        if message.role == Role.USER
+        and message.transient
+        and message.content
+        and '<runtime_notice kind="validation">' in message.content
     ]
     assert any("[实时约束检查]" in content for content in realtime_messages)
     assert any("时间冲突" in content for content in realtime_messages)

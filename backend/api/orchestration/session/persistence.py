@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -12,9 +13,14 @@ from api.orchestration.session.runtime_view import (
     HistoryMessage,
     build_runtime_view_for_restore,
 )
+from agent.message_filters import is_persisted_history_message
+from agent.tagged_context import legacy_app_event_message
 from agent.types import Message, Role, ToolCall, ToolResult
 from state.models import TravelPlanState
 from telemetry.stats import SessionStats
+
+
+logger = logging.getLogger(__name__)
 
 
 def generate_title(plan: TravelPlanState) -> str:
@@ -136,6 +142,49 @@ def deserialize_history_message(row: dict[str, object]) -> HistoryMessage:
     )
 
 
+def _converted_legacy_system(row: dict[str, object], *, kind: str) -> HistoryMessage:
+    converted = dict(row)
+    converted["role"] = "user"
+    converted["content"] = legacy_app_event_message(
+        kind,
+        str(row.get("content") or ""),
+    ).content
+    return deserialize_history_message(converted)
+
+
+def _warn_drop_legacy_system(row: dict[str, object], content: str) -> None:
+    logger.warning(
+        "Dropping legacy system history row history_seq=%s role=%s preview=%r",
+        row.get("history_seq"),
+        row.get("role"),
+        content[:120],
+    )
+
+
+def sanitize_history_row(row: dict[str, object]) -> HistoryMessage | None:
+    if row.get("role") != "system":
+        return deserialize_history_message(row)
+
+    content = str(row.get("content") or "")
+    if content.startswith("[对话摘要]"):
+        return _converted_legacy_system(row, kind="history_summary")
+
+    if content.startswith("[质量门控]"):
+        return _converted_legacy_system(row, kind="quality_gate")
+
+    if content.startswith("[可行性检查]"):
+        return _converted_legacy_system(row, kind="feasibility")
+
+    if content.startswith("[阶段回退]"):
+        return _converted_legacy_system(row, kind="backtrack")
+
+    if "行程质量评估" in content:
+        return _converted_legacy_system(row, kind="soft_judge")
+
+    _warn_drop_legacy_system(row, content)
+    return None
+
+
 def next_history_seq_from_history(history_view: list[HistoryMessage]) -> int:
     seq_values = [
         item.history_seq
@@ -202,6 +251,16 @@ class SessionPersistence:
         cursor = next_history_seq
         for message in messages:
             if message.history_persisted:
+                continue
+            if not is_persisted_history_message(message):
+                if message.role == Role.SYSTEM and not message.transient:
+                    logger.warning(
+                        "Skipping non-transient system message during persistence "
+                        "session_id=%s next_history_seq=%s preview=%r",
+                        session_id,
+                        cursor,
+                        (message.content or "")[:120],
+                    )
                 continue
 
             tool_calls_json = None
@@ -274,8 +333,17 @@ class SessionPersistence:
 
         history_rows = await self.message_store.load_all(session_id)
         current_context_epoch = current_context_epoch_from_rows(history_rows)
-        history_view = [deserialize_history_message(row) for row in history_rows]
-        next_history_seq = next_history_seq_from_history(history_view)
+        history_view = [
+            item
+            for item in (sanitize_history_row(row) for row in history_rows)
+            if item is not None
+        ]
+        seq_values = [
+            int(row["history_seq"])
+            for row in history_rows
+            if row.get("history_seq") is not None
+        ]
+        next_history_seq = max(seq_values) + 1 if seq_values else len(history_rows)
         self.phase_router.sync_phase_state(plan)
         compression_events: list[dict] = []
         agent = self.build_agent(

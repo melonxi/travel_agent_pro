@@ -20,6 +20,27 @@ class HistoryMessage:
     trip_id: str | None = None
 
 
+RESTORE_CACHE_FIRST_MAX_MESSAGES = 120
+
+
+def build_cache_first_history_for_restore(
+    history_view: list[HistoryMessage],
+    *,
+    max_messages: int = RESTORE_CACHE_FIRST_MAX_MESSAGES,
+) -> list[Message]:
+    restored: list[Message] = []
+    for item in history_view:
+        message = item.message
+        if message.role == Role.SYSTEM:
+            continue
+        if message.transient:
+            continue
+        restored.append(copy_message(message))
+    if max_messages > 0 and len(restored) > max_messages:
+        return restored[-max_messages:]
+    return restored
+
+
 def _is_backtrack_result(history_message: HistoryMessage) -> bool:
     result = history_message.message.tool_result
     return (
@@ -180,32 +201,4 @@ async def build_runtime_view_for_restore(
     memory_enabled: bool,
     tool_engine: Any,
 ) -> list[Message]:
-    if phase_router is None or context_manager is None or plan is None:
-        raise RuntimeError("Restore runtime view requires router/context/plan")
-    if memory_enabled and memory_mgr is None:
-        raise RuntimeError("Restore runtime view requires memory manager when enabled")
-    if tool_engine is None:
-        raise RuntimeError("Restore runtime view requires tool engine")
-
-    runtime_plan = _restore_runtime_plan(plan)
-    phase_prompt = phase_router.get_prompt_for_plan(runtime_plan)
-    memory_context, *_ = (
-        await memory_mgr.generate_context(user_id, runtime_plan)
-        if memory_enabled
-        else ("暂无相关用户记忆", [], 0, 0, 0)
-    )
-    system_message = context_manager.build_system_message(
-        runtime_plan,
-        phase_prompt,
-        memory_context,
-        available_tools=current_tool_names(
-            tool_engine=tool_engine,
-            plan=runtime_plan,
-            phase=runtime_plan.phase,
-        ),
-    )
-
-    return [
-        system_message,
-        select_restore_anchor(history_view=history_view, plan=plan),
-    ]
+    return build_cache_first_history_for_restore(history_view)

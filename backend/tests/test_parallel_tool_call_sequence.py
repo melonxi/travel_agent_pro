@@ -145,12 +145,16 @@ async def test_parallel_plan_tools_with_constraints_flushes_after_group(
 
     # The constraint note should be somewhere in the second-call messages,
     # strictly AFTER the tool group it was triggered by.
-    system_contents = [
+    runtime_notice_contents = [
         (i, m.content)
         for i, m in enumerate(second_call_msgs)
-        if m.role == Role.SYSTEM and m.content and "[实时约束检查]" in m.content
+        if m.role == Role.USER
+        and m.transient
+        and m.content
+        and '<runtime_notice kind="validation">' in m.content
+        and "[实时约束检查]" in m.content
     ]
-    assert system_contents, (
+    assert runtime_notice_contents, (
         "expected [实时约束检查] to be flushed into second-call messages"
     )
 
@@ -203,12 +207,16 @@ async def test_parallel_tool_calls_without_constraints_have_no_inject(app, sessi
     second_call_msgs = captured_messages[1]
     _assert_toolcalls_block_is_contiguous(second_call_msgs)
 
-    system_has_realtime = any(
-        m.role == Role.SYSTEM and m.content and "[实时约束检查]" in m.content
+    runtime_notice_has_realtime = any(
+        m.role == Role.USER
+        and m.transient
+        and m.content
+        and '<runtime_notice kind="validation">' in m.content
+        and "[实时约束检查]" in m.content
         for m in second_call_msgs
     )
-    assert not system_has_realtime, (
-        "unexpected [实时约束检查] SYSTEM when no constraint violated"
+    assert not runtime_notice_has_realtime, (
+        "unexpected [实时约束检查] runtime notice when no constraint violated"
     )
 
 

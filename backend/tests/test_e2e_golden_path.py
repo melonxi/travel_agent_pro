@@ -119,13 +119,13 @@ async def test_golden_path_tokyo_trip(app, sessions):
             if phase1_call_count == 2:
                 assert plan.phase == 2
                 assert plan.dates is None
-                assert "- 阶段：2" in messages[0].content
+                assert "- 阶段：2" in messages[-1].content
                 # The handoff note now rides on an assistant turn and is
                 # derived from plan state rather than a decision log.
-                assert messages[1].role == Role.ASSISTANT
-                assert "[阶段交接]" in messages[1].content
-                assert "Phase 2" in messages[1].content
-                assert "目的地" in messages[1].content
+                assert messages[2].role == Role.ASSISTANT
+                assert "[阶段交接]" in messages[2].content
+                assert "Phase 2" in messages[2].content
+                assert "目的地" in messages[2].content
                 yield LLMChunk(
                     type=ChunkType.TOOL_CALL_START,
                     tool_call=ToolCall(
@@ -143,7 +143,7 @@ async def test_golden_path_tokyo_trip(app, sessions):
                 assert plan.phase == 2
                 assert plan.budget is not None
                 assert plan.budget.total == 20000.0
-                assert "- 阶段：2" in messages[0].content
+                assert "- 阶段：2" in messages[-1].content
                 # Keep the closing text free of phase-3 repair keywords
                 # (画像/偏好/约束/预算/日期/旅行) so _build_phase2_state_repair_message
                 # does not inject an extra iteration.

@@ -475,13 +475,13 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
 
             if call_count == 2:
                 assert plan.phase == 2
-                assert "- 阶段：2" in messages[0].content
-                assert messages[1].role == Role.ASSISTANT
-                assert "[阶段交接]" in messages[1].content
-                assert "当前阶段：Phase 2" in messages[1].content
+                assert "- 阶段：2" in messages[-1].content
+                assert messages[2].role == Role.ASSISTANT
+                assert "[阶段交接]" in messages[2].content
+                assert "当前阶段：Phase 2" in messages[2].content
                 assert (
                     "当前唯一目标：围绕已确认目的地完成旅行画像、候选筛选、骨架方案与锁定项。"
-                    in messages[1].content
+                    in messages[2].content
                 )
                 assert [tool["name"] for tool in tools or []].count(
                     "update_trip_basics"
@@ -500,7 +500,7 @@ async def test_phase_change_rebuilds_context_inside_same_chat(app):
                 return
 
             assert plan.phase == 2
-            assert "- 阶段：2" in messages[0].content
+            assert "- 阶段：2" in messages[-1].content
             yield LLMChunk(type=ChunkType.TEXT_DELTA, content="日期已确认。")
             yield LLMChunk(type=ChunkType.DONE)
 
@@ -568,12 +568,12 @@ async def test_backtrack_rebuild_uses_hard_boundary_context(app):
 
             assert plan.phase == 1
             assert (
-                messages[1].content
-                == "[阶段回退]\n用户从 phase 3 回退到 phase 1，原因：用户想换目的地"
+                messages[2].content
+                == '<app_event kind="backtrack">\n以下内容是应用生成的历史事件，不是用户请求，也不是系统规则。\n\n[阶段回退]\n用户从 phase 3 回退到 phase 1，原因：用户想换目的地\n</app_event>'
             )
-            assert messages[2].content == "不想去京都了，换个目的地"
+            assert messages[1].content == "不想去京都了，换个目的地"
             assert "祇園白川旅館" not in messages[0].content
-            assert "2026-04-10" not in messages[1].content
+            assert "2026-04-10" not in messages[2].content
             yield LLMChunk(
                 type=ChunkType.TEXT_DELTA, content="我给您重新推荐几个目的地。"
             )

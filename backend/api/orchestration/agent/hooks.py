@@ -10,6 +10,8 @@ from agent.compaction import (
 )
 from agent.hooks import GateResult, HookManager
 from agent.internal_tasks import InternalTask
+from agent.message_filters import active_runtime_messages
+from agent.tagged_context import app_event_message
 from agent.types import Message, Role
 from harness.judge import (
     build_judge_prompt,
@@ -175,9 +177,9 @@ def build_agent_hooks(
             return
 
         summary_lines = summary_text.splitlines()
-        summary = Message(
-            role=Role.SYSTEM,
-            content="[对话摘要]\n" + "\n".join(summary_lines[-12:]),
+        summary = app_event_message(
+            "history_summary",
+            "[对话摘要]\n" + "\n".join(summary_lines[-12:]),
         )
 
         rebuilt: list[Message] = []
@@ -320,10 +322,10 @@ def build_agent_hooks(
                 latest.judge_scores = judge_scores
         if score.suggestions:
             suggestion_text = "\n".join(f"- {s}" for s in score.suggestions)
-            session["messages"].append(
-                Message(
-                    role=Role.SYSTEM,
-                    content=f"💡 行程质量评估（{score.overall:.1f}/5）：\n{suggestion_text}",
+            active_runtime_messages(session).append(
+                app_event_message(
+                    "soft_judge",
+                    f"行程质量评估（{score.overall:.1f}/5）：\n{suggestion_text}",
                 )
             )
         final_status = "warning" if score.suggestions else "success"
@@ -389,8 +391,8 @@ def build_agent_hooks(
                     + "\n请调整后再继续。"
                 )
                 if session:
-                    session["messages"].append(
-                        Message(role=Role.SYSTEM, content=feedback)
+                    active_runtime_messages(session).append(
+                        app_event_message("feasibility", feedback)
                     )
                 internal_task_events.append(
                     InternalTask(
@@ -414,8 +416,8 @@ def build_agent_hooks(
                 f"- {error}" for error in errors
             )
             if session:
-                session["messages"].append(
-                    Message(role=Role.SYSTEM, content=feedback)
+                active_runtime_messages(session).append(
+                    app_event_message("hard_constraint", feedback)
                 )
             internal_task_events.append(
                 InternalTask(
@@ -532,7 +534,9 @@ def build_agent_hooks(
             f"请修正后再进入 Phase {to_phase}：\n{suggestion_text}"
         )
         if session:
-            session["messages"].append(Message(role=Role.SYSTEM, content=feedback))
+            active_runtime_messages(session).append(
+                app_event_message("quality_gate", feedback)
+            )
         internal_task_events.append(
             InternalTask(
                 id=task_id,

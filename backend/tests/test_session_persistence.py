@@ -1,4 +1,5 @@
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ from api.orchestration.session.context_segments import ContextSegment
 from api.orchestration.session.persistence import (
     SessionPersistence,
     deserialize_tool_result,
+    sanitize_history_row,
     serialize_tool_result,
 )
 from state.models import TravelPlanState
@@ -193,6 +195,102 @@ async def test_persist_messages_skips_already_persisted_messages_without_len_cur
     assert rows[0]["history_seq"] == 4
     assert already_flushed.history_seq == 3
     assert new_reply.history_persisted is True
+
+
+@pytest.mark.asyncio
+async def test_persist_messages_skips_transient_and_system_messages():
+    rows: list[dict[str, object]] = []
+
+    class _MessageStore:
+        async def append_batch(self, session_id, payload):
+            rows.extend(payload)
+
+    persistence = SessionPersistence(
+        ensure_storage_ready=lambda: _noop(),
+        db=SimpleNamespace(execute=_noop),
+        session_store=None,
+        message_store=_MessageStore(),
+        archive_store=None,
+        state_mgr=None,
+        phase_router=None,
+        build_agent=lambda *args, **kwargs: None,
+    )
+
+    next_seq = await persistence.persist_messages(
+        "sess-1",
+        [
+            Message(role=Role.SYSTEM, content="static", transient=True),
+            Message(role=Role.USER, content="<turn_context>", transient=True),
+            Message(role=Role.SYSTEM, content="legacy dynamic system"),
+            Message(role=Role.USER, content="真实用户消息"),
+        ],
+        phase=1,
+        phase2_step=None,
+        run_id="run-1",
+        trip_id="trip-1",
+        next_history_seq=4,
+    )
+
+    assert next_seq == 5
+    assert [row["role"] for row in rows] == ["user"]
+    assert rows[0]["content"] == "真实用户消息"
+    assert rows[0]["history_seq"] == 4
+
+
+def test_deserialize_history_message_drops_legacy_full_system_prompt():
+    row = {
+        "role": "system",
+        "content": "## 当前时间\n\n- 当前本地日期：2026-05-29\n\n## 当前规划状态",
+        "history_seq": 3,
+    }
+
+    assert sanitize_history_row(row) is None
+
+
+def test_deserialize_history_message_converts_legacy_quality_gate_system():
+    row = {
+        "role": "system",
+        "content": "[质量门控]\n当前方案评分 3.0/5，请修正。",
+        "history_seq": 4,
+    }
+
+    history = sanitize_history_row(row)
+
+    assert history is not None
+    assert history.message.role == Role.USER
+    assert history.message.history_persisted is True
+    assert history.message.history_seq == 4
+    assert '<app_event kind="quality_gate">' in history.message.content
+    assert "当前方案评分" in history.message.content
+
+
+def test_deserialize_history_message_converts_legacy_summary_to_app_event():
+    row = {
+        "role": "system",
+        "content": "[对话摘要]\n用户想去京都。",
+        "history_seq": 5,
+    }
+
+    history = sanitize_history_row(row)
+
+    assert history is not None
+    assert history.message.role == Role.USER
+    assert '<app_event kind="history_summary">' in history.message.content
+    assert "用户想去京都" in history.message.content
+
+
+def test_deserialize_history_message_warns_when_dropping_unknown_system(caplog):
+    row = {
+        "role": "system",
+        "content": "unexpected legacy note",
+        "history_seq": 6,
+    }
+
+    with caplog.at_level(logging.WARNING):
+        assert sanitize_history_row(row) is None
+
+    assert "Dropping legacy system history row" in caplog.text
+    assert "history_seq=6" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -389,18 +487,16 @@ async def test_restore_session_returns_short_runtime_and_internal_history():
     restored = await persistence.restore_session("sess_restore")
 
     assert restored is not None
-    assert len(restored["history_messages"]) == 4
-    assert len(restored["messages"]) == 2
-    assert len(restored["messages"]) < len(restored["history_messages"])
+    assert len(restored["history_messages"]) == 3
+    assert len(restored["messages"]) == 3
     assert restored["next_history_seq"] == 10
-    assert restored["messages"][0].role == Role.SYSTEM
-    assert restored["messages"][0].content.startswith("rebuilt system restore prompt phase=3")
-    assert "save_day_plan" in restored["messages"][0].content
-    assert restored["messages"][1].role == Role.USER
-    assert restored["messages"][1].content == "继续细化每天路线"
-    assert all(message.role != Role.TOOL for message in restored["messages"])
-    assert all(message.tool_result is None for message in restored["messages"])
-    assert restored["history_messages"][2].message.tool_result.data == {"destination": "东京"}
+    assert all(message.role != Role.SYSTEM for message in restored["messages"])
+    assert restored["messages"][0].role == Role.USER
+    assert restored["messages"][0].content == "我想去东京"
+    assert restored["messages"][1].role == Role.TOOL
+    assert restored["messages"][2].role == Role.USER
+    assert restored["messages"][2].content == "继续细化每天路线"
+    assert restored["history_messages"][1].message.tool_result.data == {"destination": "东京"}
     assert built_agents[0][2] == "user_restore"
     assert restored["agent"] is built_agents[0][0]
 
@@ -457,7 +553,7 @@ async def test_restore_session_legacy_history_seq_falls_back_to_history_length()
 
     assert restored is not None
     assert restored["next_history_seq"] == 2
-    assert [message.role for message in restored["messages"]] == [Role.SYSTEM, Role.USER]
+    assert [message.role for message in restored["messages"]] == [Role.USER, Role.USER]
     assert restored["messages"][1].content == "legacy two"
 
 
@@ -547,12 +643,14 @@ async def test_restore_session_phase3_substep_keeps_previous_substeps_out_of_run
 
     assert restored is not None
     assert len(restored["history_messages"]) == 3
-    assert len(restored["messages"]) == 2
+    assert len(restored["messages"]) == 3
     rendered = "\n".join(str(message.content) for message in restored["messages"])
     assert "生成骨架" in rendered
-    assert "画像输入" not in rendered
-    assert "old brief" not in rendered
-    assert all(message.role != Role.TOOL for message in restored["messages"])
+    assert "画像输入" in rendered
+    assert any(
+        message.tool_result and message.tool_result.data == {"trip_brief": "old brief"}
+        for message in restored["messages"]
+    )
 
 
 class _BacktrackToPhase3StateManager:
@@ -658,12 +756,15 @@ async def test_restore_session_after_backtrack_does_not_replay_old_target_phase(
     restored = await persistence.restore_session("sess_backtrack")
 
     assert restored is not None
-    assert len(restored["messages"]) == 2
+    assert len(restored["messages"]) == 4
     rendered = "\n".join(str(message.content) for message in restored["messages"])
     assert "预算太高，回到框架规划" in rendered
-    assert "老 Phase 2 输入" not in rendered
-    assert "old target phase segment" not in rendered
-    assert all(message.role != Role.TOOL for message in restored["messages"])
+    assert "老 Phase 2 输入" in rendered
+    assert any(
+        message.tool_result
+        and message.tool_result.data == {"trip_brief": "old target phase segment"}
+        for message in restored["messages"]
+    )
 
 
 @pytest.mark.asyncio
@@ -772,7 +873,7 @@ async def test_restore_session_initializes_current_context_epoch_from_history(mo
             return None
 
     async def _fake_runtime_view(**kwargs):
-        return [Message(role=Role.SYSTEM, content="new system")]
+        return [Message(role=Role.USER, content="restored user")]
 
     monkeypatch.setattr(
         "api.orchestration.session.persistence.build_runtime_view_for_restore",
@@ -818,7 +919,7 @@ async def test_persist_messages_writes_context_epoch_and_rebuild_reason():
 
     next_seq = await persistence.persist_messages(
         "sess-1",
-        [Message(role=Role.SYSTEM, content="handoff")],
+        [Message(role=Role.USER, content="phase handoff")],
         phase=2,
         phase2_step="brief",
         run_id="run-1",

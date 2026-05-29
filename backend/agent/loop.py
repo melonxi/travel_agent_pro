@@ -49,6 +49,7 @@ from agent.phase3.parallel import (
     should_enter_parallel_phase3_now,
     should_use_parallel_phase3,
 )
+from agent.tagged_context import runtime_notice_message
 from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from telemetry.attributes import AGENT_PHASE, AGENT_ITERATION
@@ -432,9 +433,9 @@ class AgentLoop:
                             )
                         if repair_outcome:
                             messages.append(
-                                Message(
-                                    role=Role.SYSTEM,
-                                    content=repair_outcome.message,
+                                runtime_notice_message(
+                                    "repair",
+                                    repair_outcome.message,
                                 )
                             )
                             repair_hints_used.add(repair_outcome.key)

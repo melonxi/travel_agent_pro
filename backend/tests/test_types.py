@@ -46,6 +46,20 @@ def test_message_to_dict():
     assert d["content"] == "hello"
 
 
+def test_message_transient_defaults_false_and_is_not_serialized():
+    msg = Message(role=Role.USER, content="hello")
+
+    assert msg.transient is False
+    assert "transient" not in msg.to_dict()
+
+
+def test_message_transient_can_be_prompt_only_metadata():
+    msg = Message(role=Role.USER, content="<turn_context/>", transient=True)
+
+    assert msg.transient is True
+    assert msg.to_dict() == {"role": "user", "content": "<turn_context/>"}
+
+
 def test_message_to_dict_with_tool_calls():
     tc = ToolCall(id="tc_1", name="search_flights", arguments={"origin": "PVG"})
     msg = Message(role=Role.ASSISTANT, content=None, tool_calls=[tc])

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 
+from agent.message_filters import clean_persisted_session_messages
 from api.orchestration.chat.events import done_event, event_json
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ async def persist_unflushed_messages(
         if rebuild_reason is None
         else rebuild_reason
     )
+    messages[:] = clean_persisted_session_messages(messages)
     next_history_seq = await deps.persist_messages(
         plan.session_id,
         messages,

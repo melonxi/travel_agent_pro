@@ -7,6 +7,7 @@ import uuid
 from fastapi import FastAPI, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
+from agent.message_filters import clean_persisted_session_messages
 from agent.types import Message, Role
 from api.orchestration.chat.finalization import (
     make_context_rebuild_callback,
@@ -15,6 +16,14 @@ from api.orchestration.chat.finalization import (
 from api.orchestration.chat.stream import ChatStreamDeps, run_agent_stream
 from api.orchestration.memory.turn import build_memory_context_for_turn
 from api.schemas import BacktrackRequest, ChatRequest
+
+
+def _continuation_notice(context_type: str) -> str | None:
+    if context_type == "partial_text":
+        return "你的上一轮回复因网络中断未完成，请从断点继续，不要重复已说的内容。"
+    if context_type == "tools_read_only":
+        return "你已经调用了工具并获得结果，但总结被中断了。请根据已有的工具结果继续回复。"
+    return None
 
 
 def register_chat_routes(
@@ -130,12 +139,14 @@ def register_chat_routes(
                     ensure_ascii=False,
                 )
 
-            messages.append(Message(role=Role.USER, content=req.message))
+            persisted_history = clean_persisted_session_messages(messages)
+            current_user = Message(role=Role.USER, content=req.message)
+            recall_messages = [*persisted_history, current_user]
             submit_memory_snapshot(
                 build_memory_job_snapshot(
                     session_id=plan.session_id,
                     user_id=session["user_id"],
-                    messages=messages,
+                    messages=recall_messages,
                     plan=plan,
                 )
             )
@@ -145,7 +156,7 @@ def register_chat_routes(
                 memory_mgr=memory_mgr,
                 session=session,
                 plan=plan,
-                messages=messages,
+                messages=recall_messages,
                 user_id=req.user_id,
                 user_message=req.message,
                 decide_memory_recall=decide_memory_recall,
@@ -155,17 +166,17 @@ def register_chat_routes(
                 yield event
             memory_context = memory_turn.memory_context
 
-            sys_msg = context_mgr.build_system_message(
-                plan,
-                phase_prompt,
-                memory_context,
-                available_tools=available_tools,
-            )
-
-            if messages and messages[0].role == Role.SYSTEM:
-                messages[0] = sys_msg
-            else:
-                messages.insert(0, sys_msg)
+            llm_messages = [
+                context_mgr.build_static_system_message(plan, phase_prompt),
+                *persisted_history,
+                current_user,
+                context_mgr.build_turn_context_message(
+                    plan=plan,
+                    available_tools=available_tools,
+                    memory_context=memory_context,
+                ),
+            ]
+            session["_active_runtime_messages"] = llm_messages
 
             from run import RunRecord
 
@@ -184,18 +195,22 @@ def register_chat_routes(
                 run=run,
             )
 
-            async for event in run_agent_stream(
-                chat_stream_deps,
-                session,
-                plan,
-                messages,
-                agent,
-                run,
-                cancel_event,
-                phase_before_run,
-                user_message=req.message,
-            ):
-                yield event
+            try:
+                async for event in run_agent_stream(
+                    chat_stream_deps,
+                    session,
+                    plan,
+                    llm_messages,
+                    agent,
+                    run,
+                    cancel_event,
+                    phase_before_run,
+                    user_message=req.message,
+                ):
+                    yield event
+            finally:
+                session.pop("_active_runtime_messages", None)
+                session["messages"] = clean_persisted_session_messages(llm_messages)
 
         return EventSourceResponse(event_stream())
 
@@ -229,26 +244,33 @@ def register_chat_routes(
         agent = session["agent"]
         ctx = last_run.continuation_context or {}
         ctx_type = ctx.get("type", "")
-
-        if ctx_type == "partial_text":
-            messages.append(
-                Message(
-                    role=Role.SYSTEM,
-                    content="你的上一轮回复因网络中断未完成，请从断点继续，不要重复已说的内容。",
-                )
-            )
-        elif ctx_type == "tools_read_only":
-            messages.append(
-                Message(
-                    role=Role.SYSTEM,
-                    content="你已经调用了工具并获得结果，但总结被中断了。请根据已有的工具结果继续回复。",
-                )
-            )
-        else:
+        notice_text = _continuation_notice(ctx_type)
+        if notice_text is None:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown continuation type: {ctx_type}",
             )
+
+        phase_prompt = phase_router.get_prompt_for_plan(plan)
+        available_tools = [
+            tool["name"]
+            for tool in agent.tool_engine.get_tools_for_phase(plan.phase, plan)
+        ]
+        persisted_history = clean_persisted_session_messages(messages)
+        continuation_messages = [
+            context_mgr.build_static_system_message(plan, phase_prompt),
+            *persisted_history,
+            context_mgr.build_runtime_notice_message(
+                kind="continue",
+                content=notice_text,
+            ),
+            context_mgr.build_turn_context_message(
+                plan=plan,
+                available_tools=available_tools,
+                memory_context="暂无相关用户记忆",
+            ),
+        ]
+        session["_active_runtime_messages"] = continuation_messages
 
         from run import RunRecord
 
@@ -272,16 +294,22 @@ def register_chat_routes(
         phase_before_run = plan.phase
 
         async def event_stream():
-            async for event in run_agent_stream(
-                chat_stream_deps,
-                session,
-                plan,
-                messages,
-                agent,
-                run,
-                cancel_event,
-                phase_before_run,
-            ):
-                yield event
+            try:
+                async for event in run_agent_stream(
+                    chat_stream_deps,
+                    session,
+                    plan,
+                    continuation_messages,
+                    agent,
+                    run,
+                    cancel_event,
+                    phase_before_run,
+                ):
+                    yield event
+            finally:
+                session.pop("_active_runtime_messages", None)
+                session["messages"] = clean_persisted_session_messages(
+                    continuation_messages
+                )
 
         return EventSourceResponse(event_stream())

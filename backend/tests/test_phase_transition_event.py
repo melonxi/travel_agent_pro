@@ -31,6 +31,39 @@ class _PhaseTransitionContextManager:
             content=f"system phase={plan.phase} prompt={phase_prompt} user={memory_context}{suffix}",
         )
 
+    def build_static_system_message(
+        self,
+        plan: TravelPlanState,
+        phase_prompt: str,
+    ) -> Message:
+        return Message(
+            role=Role.SYSTEM,
+            content=f"system phase={plan.phase} prompt={phase_prompt}",
+            transient=True,
+        )
+
+    def build_turn_context_message(
+        self,
+        *,
+        plan: TravelPlanState,
+        available_tools: list[str] | None = None,
+        memory_context: str = "",
+    ) -> Message:
+        suffix = ""
+        if available_tools:
+            suffix = f" tools={','.join(available_tools)}"
+        return Message(
+            role=Role.USER,
+            content=f"<turn_context>user={memory_context}{suffix}</turn_context>",
+            transient=True,
+        )
+
+    def build_app_event_message(self, *, kind: str, content: str) -> Message:
+        return Message(
+            role=Role.USER,
+            content=f'<app_event kind="{kind}">{content}</app_event>',
+        )
+
     async def compress_for_transition(
         self,
         messages: list[Message],

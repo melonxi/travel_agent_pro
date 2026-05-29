@@ -110,7 +110,10 @@ async def test_run_llm_turn_emits_status_reflection_and_collects_outcome():
     assert outcome.next_iteration_idx == 1
     assert outcome.previous_phase2_step is None
     assert compression_events == []
-    assert messages[-1] == Message(role=Role.SYSTEM, content="reflection message")
+    assert messages[-1].role == Role.USER
+    assert messages[-1].transient is True
+    assert '<runtime_notice kind="reflection">' in messages[-1].content
+    assert "reflection message" in messages[-1].content
     assert llm.kwargs == {
         "tools": [{"name": "search"}],
         "stream": True,
@@ -206,3 +209,46 @@ async def test_run_llm_turn_updates_progress_before_stream_error():
             pass
 
     assert observed_progress == [IterationProgress.PARTIAL_TEXT]
+
+
+@pytest.mark.asyncio
+async def test_run_llm_turn_strips_non_initial_system_before_chat(caplog):
+    class _CaptureLLM:
+        def __init__(self):
+            self.roles = None
+
+        async def chat(self, messages, **kwargs):
+            self.roles = [message.role for message in messages]
+            yield LLMChunk(type=ChunkType.DONE)
+
+    llm = _CaptureLLM()
+    messages = [
+        Message(role=Role.SYSTEM, content="static", transient=True),
+        Message(role=Role.USER, content="hi"),
+        Message(role=Role.SYSTEM, content="dynamic"),
+    ]
+
+    with caplog.at_level("WARNING"):
+        async for _item in run_llm_turn(
+            llm=llm,
+            tool_engine=_ToolEngine(),
+            hooks=HookManager(),
+            messages=messages,
+            tools=[],
+            current_phase=1,
+            plan=None,
+            reflection=None,
+            tool_choice_decider=None,
+            compression_events=[],
+            iteration_idx=0,
+            previous_iteration_had_tools=False,
+            phase_changed_in_previous_iteration=False,
+            previous_phase2_step=None,
+            check_cancelled=lambda: None,
+            update_progress=lambda progress: None,
+        ):
+            pass
+
+    assert llm.roles == [Role.SYSTEM, Role.USER]
+    assert [message.role for message in messages] == [Role.SYSTEM, Role.USER]
+    assert "Stripping non-initial system message" in caplog.text

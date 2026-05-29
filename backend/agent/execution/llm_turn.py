@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from agent.internal_tasks import InternalTask
+from agent.message_filters import strip_non_initial_system_messages
 from agent.narration import compute_narration
+from agent.tagged_context import runtime_notice_message
 from agent.types import Message, Role, ToolCall
 from llm.types import ChunkType, LLMChunk
 from run import IterationProgress
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -127,7 +132,7 @@ async def run_llm_turn(
             previous_phase2_step,
         )
         if reflection_msg:
-            messages.append(Message(role=Role.SYSTEM, content=reflection_msg))
+            messages.append(runtime_notice_message("reflection", reflection_msg))
             now = time.time()
             yield LLMChunk(
                 type=ChunkType.INTERNAL_TASK,
@@ -160,6 +165,12 @@ async def run_llm_turn(
     }
     if tool_choice != "auto":
         chat_kwargs["tool_choice"] = tool_choice
+
+    strip_non_initial_system_messages(
+        messages,
+        logger=logger,
+        context="main AgentLoop LLM prompt",
+    )
 
     tool_calls: list[ToolCall] = []
     text_chunks: list[str] = []

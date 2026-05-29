@@ -481,7 +481,11 @@ telemetry:
     assert changed is False
     assert plan.phase == 2
     assert any(
-        message.content and "质量门控" in message.content and "补充交通住宿取舍" in message.content
+        message.role == Role.USER
+        and message.content
+        and '<app_event kind="quality_gate">' in message.content
+        and "质量门控" in message.content
+        and "补充交通住宿取舍" in message.content
         for message in session["messages"]
     )
 
@@ -1238,6 +1242,11 @@ async def test_chat_finalization_does_not_duplicate_preflushed_messages(app):
 @pytest.mark.asyncio
 async def test_api_messages_uses_active_runtime_view_not_full_internal_history(app):
     async def fake_run(self, messages, phase, tools_override=None):
+        original_user = next(
+            message
+            for message in messages
+            if message.role == Role.USER and not message.transient
+        )
         messages.append(Message(role=Role.ASSISTANT, content="旧阶段工具结论"))
         await self.on_context_rebuild(
             messages=messages,
@@ -1250,7 +1259,7 @@ async def test_api_messages_uses_active_runtime_view_not_full_internal_history(a
         messages[:] = [
             Message(role=Role.SYSTEM, content="phase 2 system"),
             Message(role=Role.ASSISTANT, content="进入方案设计"),
-            messages[-2],
+            original_user,
         ]
         messages.append(Message(role=Role.ASSISTANT, content="当前 runtime 回复"))
         yield LLMChunk(type=ChunkType.TEXT_DELTA, content="当前 runtime 回复")

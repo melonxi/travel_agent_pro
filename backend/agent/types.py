@@ -43,6 +43,7 @@ class Message:
     incomplete: bool = False
     history_persisted: bool = False
     history_seq: int | None = None
+    transient: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"role": self.role.value}

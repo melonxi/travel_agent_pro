@@ -53,6 +53,39 @@ class FakeContextManager:
             content=f"system phase={plan.phase} prompt={phase_prompt} user={memory_context}{suffix}",
         )
 
+    def build_static_system_message(
+        self,
+        plan: TravelPlanState,
+        phase_prompt: str,
+    ) -> Message:
+        return Message(
+            role=Role.SYSTEM,
+            content=f"system phase={plan.phase} prompt={phase_prompt}",
+            transient=True,
+        )
+
+    def build_turn_context_message(
+        self,
+        *,
+        plan: TravelPlanState,
+        available_tools: list[str] | None = None,
+        memory_context: str = "",
+    ) -> Message:
+        suffix = ""
+        if available_tools:
+            suffix = f" tools={','.join(available_tools)}"
+        return Message(
+            role=Role.USER,
+            content=f"<turn_context>user={memory_context}{suffix}</turn_context>",
+            transient=True,
+        )
+
+    def build_app_event_message(self, *, kind: str, content: str) -> Message:
+        return Message(
+            role=Role.USER,
+            content=f'<app_event kind="{kind}">{content}</app_event>',
+        )
+
     async def compress_for_transition(
         self,
         messages: list[Message],
@@ -446,7 +479,12 @@ async def test_reflection_message_is_injected_before_llm_call(engine, hooks):
     async for _ in agent.run([Message(role=Role.USER, content="继续")], phase=2):
         pass
 
-    assert "[自检] 请先检查方案" in observed_messages
+    assert any(
+        content
+        and '<runtime_notice kind="reflection">' in content
+        and "[自检] 请先检查方案" in content
+        for content in observed_messages
+    )
 
 
 @pytest.mark.asyncio
@@ -668,13 +706,14 @@ async def test_phase_change_runs_full_batch_then_rebuilds_context():
     assert context_manager.compress_calls == []
     assert observed_second_call["tool_names"] == ["phase2_only"]
     assert observed_second_call["messages"] == [
-        "system phase=2 prompt=phase-2-prompt user=memory:u1 tools=phase2_only",
-        "handoff 1->2 phase=2",
+        "system phase=2 prompt=phase-2-prompt",
         "帮我继续规划",
+        "handoff 1->2 phase=2",
+        "<turn_context>user=memory:u1 tools=phase2_only</turn_context>",
     ]
     observed_roles = observed_second_call.get("roles")
     if observed_roles is not None:
-        assert observed_roles == [Role.SYSTEM, Role.ASSISTANT, Role.USER]
+        assert observed_roles == [Role.SYSTEM, Role.USER, Role.ASSISTANT, Role.USER]
     assert any(chunk.content == "phase 2 ready" for chunk in chunks)
 
 
@@ -704,8 +743,9 @@ async def test_phase_rebuild_skips_memory_when_disabled(mock_llm, engine, hooks)
     )
 
     assert "memory:u1" not in rebuilt[0].content
-    assert "暂无相关用户记忆" in rebuilt[0].content
-    assert rebuilt[1].content == "handoff 1->2 phase=2"
+    assert "暂无相关用户记忆" in rebuilt[-1].content
+    assert rebuilt[-1].transient is True
+    assert rebuilt[2].content == "handoff 1->2 phase=2"
 
 
 @pytest.mark.asyncio
@@ -736,9 +776,16 @@ async def test_rebuild_messages_for_forward_phase_change_uses_handoff_note_not_s
         result=ToolResult(tool_call_id="", status="success"),
     )
 
-    assert [m.role for m in rebuilt] == [Role.SYSTEM, Role.ASSISTANT, Role.USER]
-    assert rebuilt[1].content == "handoff 2->3 phase=3"
-    assert rebuilt[2].content == "航班 ok 的，住宿就朵兰达+维也纳"
+    assert [m.role for m in rebuilt] == [
+        Role.SYSTEM,
+        Role.USER,
+        Role.ASSISTANT,
+        Role.USER,
+    ]
+    assert rebuilt[0].transient is True
+    assert rebuilt[1].content == "航班 ok 的，住宿就朵兰达+维也纳"
+    assert rebuilt[2].content == "handoff 2->3 phase=3"
+    assert rebuilt[3].transient is True
 
 
 @pytest.mark.asyncio
@@ -779,7 +826,7 @@ async def test_forward_transition_does_not_call_compress_for_transition(
     )
 
     assert not called
-    assert rebuilt[1].content == "handoff"
+    assert rebuilt[2].content == "handoff"
 
 
 @pytest.mark.asyncio
@@ -854,9 +901,10 @@ async def test_backtrack_rebuild_uses_hard_boundary_without_compression():
 
     assert context_manager.compress_calls == []
     assert observed_second_call["messages"] == [
-        "system phase=1 prompt=phase-1-prompt user=memory:u2",
-        "[阶段回退]\n用户从 phase 3 回退到 phase 1，原因：用户想换目的地",
+        "system phase=1 prompt=phase-1-prompt",
         "不想去这里了，换个目的地",
+        '<app_event kind="backtrack">[阶段回退]\n用户从 phase 3 回退到 phase 1，原因：用户想换目的地</app_event>',
+        "<turn_context>user=memory:u2</turn_context>",
     ]
 
 
@@ -917,9 +965,10 @@ async def test_forward_phase_rebuild_uses_handoff_note_when_summary_helper_is_em
 
     assert context_manager.compress_calls == []
     assert observed_second_call["messages"] == [
-        "system phase=2 prompt=phase-2-prompt user=memory:u-empty",
-        "handoff 1->2 phase=2",
+        "system phase=2 prompt=phase-2-prompt",
         "帮我继续规划",
+        "handoff 1->2 phase=2",
+        "<turn_context>user=memory:u-empty</turn_context>",
     ]
 
 
@@ -2363,8 +2412,9 @@ async def test_pre_rebuild_flush_failure_logs_warning_and_rebuilds(caplog):
             pass
 
     assert observed_second_call["messages"] == [
-        "system phase=2 prompt=phase-2-prompt user=memory:u1",
-        "handoff 1->2 phase=2",
+        "system phase=2 prompt=phase-2-prompt",
         "去东京",
+        "handoff 1->2 phase=2",
+        "<turn_context>user=memory:u1</turn_context>",
     ]
     assert "pre-rebuild message history flush failed" in caplog.text
