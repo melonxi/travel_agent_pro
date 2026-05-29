@@ -66,7 +66,7 @@ def test_format_v3_memory_context_renders_only_working_and_recall_sections():
 
     assert "长期用户画像" not in text
     assert "## 当前会话工作记忆" in text
-    assert "## 本轮请求命中的历史记忆" in text
+    assert "## Relevant Past Episodes" in text
     assert "## 本次旅行记忆" not in text
     assert "matched reason=exact destination match on 京都" in text
     assert "上次京都选择町屋。" in text
@@ -122,13 +122,56 @@ def test_format_v3_memory_context_renders_unified_recall_candidates():
         ],
     )
 
-    assert "## 本轮请求命中的历史记忆" in text
+    assert "## User Profile Memory" in text
+    assert "## Relevant Past Episodes" in text
     assert "source=profile bucket=constraints" in text
     assert "source=episode_slice bucket=accommodation_decision" in text
     assert "matched reason=exact domain match on flight；keyword match on 红眼航班" in text
     assert "[flight] avoid_red_eye: true" in text
     assert "content: flight:avoid_red_eye=true" not in text
     assert "content: 上次京都选择町屋。" in text
+
+
+def test_format_v3_memory_context_renders_profile_and_episode_sections_separately():
+    from memory.formatter import format_v3_memory_context
+
+    profile_candidate = RecallCandidate(
+        source="profile",
+        item_id="constraints:hotel:no_smoking",
+        bucket="constraints",
+        score=1.0,
+        retrieval_score=1.0,
+        matched_reason=["bucket=constraints"],
+        content_summary="hotel:no_smoking=必须无烟房",
+        domains=["hotel"],
+        applicability="适用于住宿选择。",
+        key="no_smoking",
+    )
+    episode_candidate = RecallCandidate(
+        source="episode_slice",
+        item_id="slice_1",
+        bucket="stay_choice",
+        score=1.0,
+        retrieval_score=1.0,
+        matched_reason=["destination=京都"],
+        content_summary="上次京都住在安静旅馆。",
+        domains=["hotel"],
+        applicability="仅作为历史案例参考。",
+    )
+
+    text = format_v3_memory_context(
+        working_items=[],
+        profile_candidates=[profile_candidate],
+        episode_candidates=[episode_candidate],
+    )
+
+    assert "## User Profile Memory" in text
+    assert "默认约束" in text
+    assert "## Relevant Past Episodes" in text
+    assert "只能作为参考证据" in text
+    assert text.index("## User Profile Memory") < text.index(
+        "## Relevant Past Episodes"
+    )
 
 
 def test_memory_recall_telemetry_to_dict_preserves_fields():
@@ -172,6 +215,15 @@ def test_memory_recall_telemetry_to_dict_preserves_fields():
         "reranker_per_item_scores": {},
         "reranker_intent_label": "",
         "reranker_selection_metrics": {},
+        "profile_reranker_selected_ids": [],
+        "episode_reranker_selected_ids": [],
+        "profile_reranker_final_reason": "",
+        "episode_reranker_final_reason": "",
+        "profile_reranker_per_item_scores": {},
+        "episode_reranker_per_item_scores": {},
+        "dual_recall_plan": {},
+        "stage3_profile": {},
+        "stage3_episode": {},
     }
 
 
@@ -294,3 +346,25 @@ def test_memory_recall_telemetry_to_dict_includes_recall_skip_source():
     payload = telemetry.to_dict()
 
     assert payload["recall_skip_source"] == "gate_failure_no_heuristic"
+
+
+def test_memory_recall_telemetry_to_dict_includes_dual_fields():
+    from memory.formatter import MemoryRecallTelemetry
+
+    telemetry = MemoryRecallTelemetry(
+        profile_reranker_selected_ids=["p1"],
+        episode_reranker_selected_ids=["e1"],
+        profile_reranker_final_reason="profile rerank selected 1 items",
+        episode_reranker_final_reason="episode rerank selected 1 items",
+        dual_recall_plan={"need_profile": True, "need_episode": True},
+        stage3_profile={"source": "profile"},
+        stage3_episode={"source": "episode_slice"},
+    )
+
+    payload = telemetry.to_dict()
+
+    assert payload["profile_reranker_selected_ids"] == ["p1"]
+    assert payload["episode_reranker_selected_ids"] == ["e1"]
+    assert payload["dual_recall_plan"] == {"need_profile": True, "need_episode": True}
+    assert payload["stage3_profile"] == {"source": "profile"}
+    assert payload["stage3_episode"] == {"source": "episode_slice"}
