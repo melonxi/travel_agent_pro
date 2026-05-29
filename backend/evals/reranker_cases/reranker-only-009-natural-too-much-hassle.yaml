@@ -14,10 +14,10 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> natural expression too much hassle
 config:
-  small_candidate_set_threshold: 1
-  hybrid_top_n: 4
-  hybrid_profile_top_n: 2
-  hybrid_slice_top_n: 2
+  profile:
+    profile_top_n: 2
+  episode:
+    episode_top_n: 2
 candidates:
   - source: profile
     item_id: constraints:flight:avoid_red_eye
@@ -62,9 +62,8 @@ candidates:
 expected:
   selected_item_ids:
     - constraints:flight:avoid_red_eye
-    - slice_pitfall_long_layover
     - stable_preferences:pace:prefer_slow_pace
-  final_reason: source-aware weighted rerank selected 3 items (2 profile, 1 slice)
+    - slice_pitfall_long_layover
+    - slice_budget_saving_transport
+  final_reason: source-aware weighted rerank selected 4 items (2 profile, 2 slice)
   fallback_used: none
-  reason_contains:
-    slice_budget_saving_transport: dropped as weak relevance

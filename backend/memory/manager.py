@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 
-from config import MemoryRerankerConfig, MemoryRetrievalConfig
+from config import MemoryRetrievalConfig
 from memory.destination_normalization import match_destination
 from memory.embedding_provider import (
     CachedEmbeddingProvider,
@@ -11,8 +11,7 @@ from memory.embedding_provider import (
     NullEmbeddingProvider,
 )
 from memory.formatter import MemoryRecallTelemetry, format_v3_memory_context
-from memory.recall_stage3 import retrieve_dual_recall_candidates, retrieve_recall_candidates
-from memory.recall_stage3_models import RetrievalEvidence
+from memory.recall_stage3 import retrieve_dual_recall_candidates
 from memory.retrieval_candidates import RecallCandidate
 from memory.recall_query import (
     DualRecallPlan,
@@ -20,8 +19,6 @@ from memory.recall_query import (
     dual_plan_from_retrieval_plan,
 )
 from memory.recall_reranker import (
-    RecallRerankResult,
-    choose_reranker_path,
     empty_rerank_result,
     rerank_episode_candidates,
     rerank_profile_candidates,
@@ -39,31 +36,6 @@ from state.models import TravelPlanState
 _WORKING_MEMORY_LIMIT = 10
 _QUERY_PROFILE_LIMIT = 5
 _QUERY_SLICE_LIMIT = 5
-
-
-async def select_recall_candidates(
-    *,
-    user_message: str,
-    plan: TravelPlanState,
-    retrieval_plan: RecallRetrievalPlan | None,
-    candidates: list[RecallCandidate],
-    evidence_by_id: dict[str, RetrievalEvidence] | None = None,
-    reranker_config: MemoryRerankerConfig | None = None,
-) -> tuple[list[RecallCandidate], RecallRerankResult]:
-    if not candidates:
-        return [], empty_rerank_result()
-
-    path = choose_reranker_path(
-        candidates=candidates,
-        user_message=user_message,
-        plan=plan,
-        retrieval_plan=retrieval_plan,
-        evidence_by_id=evidence_by_id or {},
-        config=reranker_config,
-    )
-    if not path.result.selection_metrics:
-        path.result.selection_metrics = selection_metrics_placeholder()
-    return list(path.selected_candidates), path.result
 
 
 class MemoryManager:

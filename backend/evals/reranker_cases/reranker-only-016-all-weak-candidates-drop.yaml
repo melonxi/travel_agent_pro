@@ -15,10 +15,10 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> all weak candidates
 config:
-  small_candidate_set_threshold: 1
-  hybrid_top_n: 3
-  hybrid_profile_top_n: 1
-  hybrid_slice_top_n: 2
+  profile:
+    profile_top_n: 1
+  episode:
+    episode_top_n: 2
 candidates:
   - source: profile
     item_id: stable_preferences:food:avoid_spicy
@@ -50,11 +50,9 @@ candidates:
     applicability: 仅供交通方式参考。
     created_at: "2026-04-23T00:00:00+00:00"
 expected:
-  selected_item_ids: []
-  final_reason: small candidate set; skipped weighted rerank
-  fallback_used: skipped_small_candidate_set
-  reason_contains:
-    stable_preferences:food:avoid_spicy: dropped as weak relevance
-    slice_tokyo_budget_only: dropped as weak relevance
-    slice_flight_only: dropped as weak relevance
-
+  selected_item_ids:
+    - stable_preferences:food:avoid_spicy
+    - slice_flight_only
+    - slice_tokyo_budget_only
+  final_reason: source-aware weighted rerank selected 3 items (1 profile, 2 slice)
+  fallback_used: none

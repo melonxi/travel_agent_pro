@@ -15,8 +15,8 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> past_trip itinerary lookup
 config:
-  small_candidate_set_threshold: 1
-  slice_top_n: 3
+  episode:
+    episode_top_n: 3
 candidates:
   - source: profile
     item_id: stable_preferences:pace:prefer_slow_pace
@@ -58,8 +58,8 @@ candidates:
     created_at: "2026-04-22T15:02:43+00:00"
 expected:
   selected_item_ids:
-    - slice_kyoto_budget_recent
-    - slice_kyoto_itinerary_old
     - slice_kyoto_itinerary_recent
+    - slice_kyoto_itinerary_old
+    - slice_kyoto_budget_recent
   final_reason: source-aware weighted rerank selected 3 items (0 profile, 3 slice)
   fallback_used: none

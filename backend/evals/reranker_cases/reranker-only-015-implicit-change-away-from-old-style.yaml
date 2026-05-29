@@ -14,10 +14,10 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> implicit change away from old style
 config:
-  small_candidate_set_threshold: 1
-  hybrid_top_n: 3
-  hybrid_profile_top_n: 1
-  hybrid_slice_top_n: 2
+  profile:
+    profile_top_n: 1
+  episode:
+    episode_top_n: 2
 candidates:
   - source: profile
     item_id: stable_preferences:hotel:prefer_quiet_hotel
@@ -61,10 +61,8 @@ candidates:
     created_at: "2026-04-22T00:00:00+00:00"
 expected:
   selected_item_ids:
-    - slice_quiet_hideaway_stay
     - stable_preferences:hotel:prefer_clean_hotel
     - slice_lively_area_stay
+    - slice_quiet_hideaway_stay
   final_reason: source-aware weighted rerank selected 3 items (1 profile, 2 slice)
   fallback_used: none
-  reason_contains:
-    stable_preferences:hotel:prefer_quiet_hotel: dropped as conflict

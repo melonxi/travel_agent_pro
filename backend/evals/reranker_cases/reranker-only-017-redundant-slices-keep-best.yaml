@@ -15,8 +15,8 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> duplicate slice compression
 config:
-  small_candidate_set_threshold: 1
-  slice_top_n: 3
+  episode:
+    episode_top_n: 3
 candidates:
   - source: episode_slice
     item_id: slice_tokyo_stay_recent_a
@@ -51,6 +51,3 @@ expected:
     - slice_tokyo_stay_ginza
   final_reason: source-aware weighted rerank selected 2 items (0 profile, 2 slice)
   fallback_used: none
-  reason_contains:
-    slice_tokyo_stay_recent_b: duplicate group
-

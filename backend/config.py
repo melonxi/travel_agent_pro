@@ -81,35 +81,6 @@ class MemoryPolicyConfig:
 
 
 @dataclass(frozen=True)
-class IntentWeightProfile:
-    profile_source_prior: float
-    slice_source_prior: float
-    bucket_weight: float
-    domain_weight: float
-    keyword_weight: float
-    destination_weight: float
-    recency_weight: float
-    applicability_weight: float
-    conflict_weight: float
-
-
-@dataclass(frozen=True)
-class RerankerEvidenceConfig:
-    symbolic_hit_weight: float = 0.0
-    lexical_hit_weight: float = 0.0
-    semantic_hit_weight: float = 0.0
-    lane_fused_weight: float = 0.25
-    lexical_score_weight: float = 0.08
-    semantic_score_weight: float = 0.15
-    destination_match_type_weight: float = 0.0
-
-
-@dataclass(frozen=True)
-class RerankerDynamicBudgetConfig:
-    enabled: bool = False
-
-
-@dataclass(frozen=True)
 class ProfileRerankConfig:
     profile_top_n: int = 4
     w_bucket: float = 0.40
@@ -133,43 +104,6 @@ class EpisodeRerankConfig:
 class MemoryRerankerConfig:
     profile: ProfileRerankConfig = field(default_factory=ProfileRerankConfig)
     episode: EpisodeRerankConfig = field(default_factory=EpisodeRerankConfig)
-    small_candidate_set_threshold: int = 3
-    profile_top_n: int = 4
-    slice_top_n: int = 3
-    hybrid_top_n: int = 4
-    hybrid_profile_top_n: int = 2
-    hybrid_slice_top_n: int = 2
-    recency_half_life_days: int = 180
-    intent_weights: tuple[tuple[str, IntentWeightProfile], ...] = (
-        (
-            "profile",
-            IntentWeightProfile(
-                1.0, 0.62, 0.34, 0.24, 0.18, 0.08, 0.06, 0.10, 1.4
-            ),
-        ),
-        (
-            "episode_slice",
-            IntentWeightProfile(
-                0.62, 1.0, 0.16, 0.22, 0.18, 0.24, 0.14, 0.08, 1.0
-            ),
-        ),
-        (
-            "recommend",
-            IntentWeightProfile(
-                0.90, 0.90, 0.22, 0.22, 0.20, 0.18, 0.10, 0.14, 1.2
-            ),
-        ),
-        (
-            "default",
-            IntentWeightProfile(
-                0.84, 0.84, 0.24, 0.22, 0.18, 0.14, 0.08, 0.12, 1.2
-            ),
-        ),
-    )
-    evidence: RerankerEvidenceConfig = field(default_factory=RerankerEvidenceConfig)
-    dynamic_budget: RerankerDynamicBudgetConfig = field(
-        default_factory=RerankerDynamicBudgetConfig
-    )
 
 
 @dataclass(frozen=True)
@@ -564,9 +498,7 @@ def _build_episode_rerank_config(raw: dict) -> EpisodeRerankConfig:
     raw = raw if isinstance(raw, dict) else {}
     default = EpisodeRerankConfig()
     return EpisodeRerankConfig(
-        episode_top_n=int(
-            raw.get("episode_top_n", raw.get("slice_top_n", default.episode_top_n))
-        ),
+        episode_top_n=int(raw.get("episode_top_n", default.episode_top_n)),
         w_rel=float(raw.get("w_rel", default.w_rel)),
         w_match=float(raw.get("w_match", default.w_match)),
         w_type=float(raw.get("w_type", default.w_type)),
@@ -579,40 +511,9 @@ def _build_episode_rerank_config(raw: dict) -> EpisodeRerankConfig:
 
 def _build_memory_reranker_config(raw: dict) -> MemoryRerankerConfig:
     raw = raw if isinstance(raw, dict) else {}
-    profile_cfg = _build_profile_rerank_config(raw.get("profile", raw))
-    episode_cfg = _build_episode_rerank_config(raw.get("episode", raw))
-    evidence_raw = raw.get("evidence", {})
-    dynamic_budget_raw = raw.get("dynamic_budget", {})
     return MemoryRerankerConfig(
-        profile=profile_cfg,
-        episode=episode_cfg,
-        small_candidate_set_threshold=int(raw.get("small_candidate_set_threshold", 3)),
-        profile_top_n=int(raw.get("profile_top_n", profile_cfg.profile_top_n)),
-        slice_top_n=int(raw.get("slice_top_n", episode_cfg.episode_top_n)),
-        hybrid_top_n=int(raw.get("hybrid_top_n", 4)),
-        hybrid_profile_top_n=int(raw.get("hybrid_profile_top_n", 2)),
-        hybrid_slice_top_n=int(raw.get("hybrid_slice_top_n", 2)),
-        recency_half_life_days=int(
-            raw.get("recency_half_life_days", profile_cfg.recency_half_life_days)
-        ),
-        # Phase A/B keeps intent_weights as code-only defaults on purpose.
-        intent_weights=MemoryRerankerConfig().intent_weights,
-        evidence=RerankerEvidenceConfig(
-            symbolic_hit_weight=float(evidence_raw.get("symbolic_hit_weight", 0.0)),
-            lexical_hit_weight=float(evidence_raw.get("lexical_hit_weight", 0.0)),
-            semantic_hit_weight=float(evidence_raw.get("semantic_hit_weight", 0.0)),
-            lane_fused_weight=float(evidence_raw.get("lane_fused_weight", 0.25)),
-            lexical_score_weight=float(evidence_raw.get("lexical_score_weight", 0.08)),
-            semantic_score_weight=float(
-                evidence_raw.get("semantic_score_weight", 0.15)
-            ),
-            destination_match_type_weight=float(
-                evidence_raw.get("destination_match_type_weight", 0.0)
-            ),
-        ),
-        dynamic_budget=RerankerDynamicBudgetConfig(
-            enabled=_as_bool(dynamic_budget_raw.get("enabled"), False),
-        ),
+        profile=_build_profile_rerank_config(raw.get("profile", {})),
+        episode=_build_episode_rerank_config(raw.get("episode", {})),
     )
 
 

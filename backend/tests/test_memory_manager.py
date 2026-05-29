@@ -357,12 +357,14 @@ async def test_generate_context_drops_fixed_profile_when_gate_blocks_query_recal
         ),
     )
 
-    def fail_retrieve_recall_candidates(*args, **kwargs):
-        raise AssertionError("retrieve_recall_candidates should not run when recall gate blocks")
+    def fail_retrieve_dual_recall_candidates(*args, **kwargs):
+        raise AssertionError(
+            "retrieve_dual_recall_candidates should not run when recall gate blocks"
+        )
 
     monkeypatch.setattr(
-        "memory.manager.retrieve_recall_candidates",
-        fail_retrieve_recall_candidates,
+        "memory.manager.retrieve_dual_recall_candidates",
+        fail_retrieve_dual_recall_candidates,
     )
 
     text, recall = await manager.generate_context(
@@ -588,13 +590,12 @@ memory:
     phase_limit: 3
     include_pending: "true"
     reranker:
-      small_candidate_set_threshold: 2
-      profile_top_n: 5
-      slice_top_n: 4
-      hybrid_top_n: 6
-      hybrid_profile_top_n: 3
-      hybrid_slice_top_n: 2
-      recency_half_life_days: 90
+      profile:
+        profile_top_n: 5
+        recency_half_life_days: 90
+      episode:
+        episode_top_n: 4
+        recency_half_life_days: 365
   storage:
     backend: json
 telemetry:
@@ -623,13 +624,10 @@ parallel_tool_execution: "false"
     assert cfg.memory.retrieval.core_limit == 5
     assert cfg.memory.retrieval.phase_limit == 3
     assert cfg.memory.retrieval.include_pending is True
-    assert cfg.memory.retrieval.reranker.small_candidate_set_threshold == 2
-    assert cfg.memory.retrieval.reranker.profile_top_n == 5
-    assert cfg.memory.retrieval.reranker.slice_top_n == 4
-    assert cfg.memory.retrieval.reranker.hybrid_top_n == 6
-    assert cfg.memory.retrieval.reranker.hybrid_profile_top_n == 3
-    assert cfg.memory.retrieval.reranker.hybrid_slice_top_n == 2
-    assert cfg.memory.retrieval.reranker.recency_half_life_days == 90
+    assert cfg.memory.retrieval.reranker.profile.profile_top_n == 5
+    assert cfg.memory.retrieval.reranker.profile.recency_half_life_days == 90
+    assert cfg.memory.retrieval.reranker.episode.episode_top_n == 4
+    assert cfg.memory.retrieval.reranker.episode.recency_half_life_days == 365
     assert cfg.memory.storage.backend == "json"
     assert cfg.telemetry.enabled is False
     assert cfg.flyai.enabled is False

@@ -17,10 +17,10 @@ retrieval_plan:
   top_k: 5
   reason: fixed_reranker_eval -> natural expression parents not tiring
 config:
-  small_candidate_set_threshold: 1
-  hybrid_top_n: 3
-  hybrid_profile_top_n: 2
-  hybrid_slice_top_n: 1
+  profile:
+    profile_top_n: 2
+  episode:
+    episode_top_n: 1
 candidates:
   - source: profile
     item_id: stable_preferences:pace:prefer_slow_pace
@@ -64,8 +64,8 @@ candidates:
     created_at: "2026-04-23T00:00:00+00:00"
 expected:
   selected_item_ids:
+    - stable_preferences:pace:prefer_slow_pace
     - preference_hypotheses:accessibility:avoid_steep_slopes
     - slice_tiring_walk_day
-    - stable_preferences:pace:prefer_slow_pace
   final_reason: source-aware weighted rerank selected 3 items (2 profile, 1 slice)
   fallback_used: none

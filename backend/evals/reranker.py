@@ -12,9 +12,14 @@ from typing import Any
 
 import yaml
 
-from config import MemoryRerankerConfig
+from config import EpisodeRerankConfig, MemoryRerankerConfig, ProfileRerankConfig
 from memory.recall_query import RecallRetrievalPlan
-from memory.recall_reranker import choose_reranker_path
+from memory.recall_reranker import (
+    RecallRerankResult,
+    rerank_episode_candidates,
+    rerank_profile_candidates,
+    selection_metrics_placeholder,
+)
 from memory.retrieval_candidates import RecallCandidate
 from state.models import TravelPlanState, Travelers
 
@@ -70,12 +75,8 @@ def load_reranker_cases(directory: str | Path) -> list[RerankerGoldenCase]:
 
 def run_reranker_case(case: RerankerGoldenCase) -> RerankerCaseResult:
     try:
-        path = choose_reranker_path(
-            candidates=case.candidates,
-            user_message=case.user_message,
-            plan=case.plan,
-            retrieval_plan=case.retrieval_plan,
-            config=case.config,
+        result = _run_source_specific_rerank(
+            case=case,
         )
     except Exception as exc:
         return RerankerCaseResult(
@@ -85,7 +86,6 @@ def run_reranker_case(case: RerankerGoldenCase) -> RerankerCaseResult:
             error=f"{type(exc).__name__}: {exc}",
         )
 
-    result = path.result
     selected_ids = list(result.selected_item_ids)
     failures: list[str] = []
     if selected_ids != case.expected_selected_item_ids:
@@ -152,7 +152,7 @@ def _case_from_dict(data: dict[str, Any]) -> RerankerGoldenCase:
         plan=_plan_from_dict(data.get("plan", {})),
         retrieval_plan=RecallRetrievalPlan(**data["retrieval_plan"]),
         candidates=[RecallCandidate(**candidate) for candidate in data["candidates"]],
-        config=MemoryRerankerConfig(**data.get("config", {})),
+        config=_reranker_config_from_dict(data.get("config", {})),
         expected_selected_item_ids=list(expected.get("selected_item_ids", [])),
         expected_final_reason=expected.get("final_reason"),
         expected_fallback_used=expected.get("fallback_used"),
@@ -166,3 +166,74 @@ def _plan_from_dict(data: dict[str, Any]) -> TravelPlanState:
     if isinstance(travelers_data, dict):
         plan_data["travelers"] = Travelers(**travelers_data)
     return TravelPlanState(**plan_data)
+
+
+def _reranker_config_from_dict(data: dict[str, Any]) -> MemoryRerankerConfig:
+    raw = data if isinstance(data, dict) else {}
+    profile_raw = raw.get("profile", {})
+    episode_raw = raw.get("episode", {})
+    return MemoryRerankerConfig(
+        profile=ProfileRerankConfig(**profile_raw),
+        episode=EpisodeRerankConfig(**episode_raw),
+    )
+
+
+def _run_source_specific_rerank(case: RerankerGoldenCase) -> RecallRerankResult:
+    source = case.retrieval_plan.source
+    wants_profile = source in {"profile", "hybrid_history"}
+    wants_episode = source in {"episode_slice", "hybrid_history"}
+
+    profile_result = (
+        rerank_profile_candidates(
+            candidates=case.candidates,
+            user_message=case.user_message,
+            destination=case.retrieval_plan.destination or case.plan.destination or "",
+            domains=case.retrieval_plan.domains,
+            keywords=case.retrieval_plan.keywords,
+            config=case.config.profile,
+        )
+        if wants_profile
+        else None
+    )
+    episode_result = (
+        rerank_episode_candidates(
+            candidates=case.candidates,
+            user_message=case.user_message,
+            destination=case.retrieval_plan.destination or case.plan.destination or "",
+            domains=case.retrieval_plan.domains,
+            keywords=case.retrieval_plan.keywords,
+            config=case.config.episode,
+        )
+        if wants_episode
+        else None
+    )
+
+    selected_item_ids = []
+    per_item_reason = {}
+    per_item_scores = {}
+    profile_count = 0
+    episode_count = 0
+
+    if profile_result is not None:
+        selected_item_ids.extend(profile_result.selected_item_ids)
+        per_item_reason.update(profile_result.per_item_reason)
+        per_item_scores.update(profile_result.per_item_scores)
+        profile_count = len(profile_result.selected_item_ids)
+    if episode_result is not None:
+        selected_item_ids.extend(episode_result.selected_item_ids)
+        per_item_reason.update(episode_result.per_item_reason)
+        per_item_scores.update(episode_result.per_item_scores)
+        episode_count = len(episode_result.selected_item_ids)
+
+    return RecallRerankResult(
+        selected_item_ids=selected_item_ids,
+        final_reason=(
+            f"source-aware weighted rerank selected {len(selected_item_ids)} items "
+            f"({profile_count} profile, {episode_count} slice)"
+        ),
+        per_item_reason=per_item_reason,
+        fallback_used="none",
+        per_item_scores=per_item_scores,
+        intent_label=source,
+        selection_metrics=selection_metrics_placeholder(),
+    )
