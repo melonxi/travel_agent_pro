@@ -21,6 +21,7 @@ class RecallCandidate:
     polarity: str = ""
     created_at: str = ""
     key: str = ""
+    retrieval_score: float = 0.0
 
 
 def build_profile_candidates(
