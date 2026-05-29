@@ -1,3 +1,4 @@
+from api.orchestration.memory.recall_planning import build_dual_recall_plan
 from memory.recall_query import (
     RecallRetrievalPlan,
     dual_plan_from_gate,
@@ -90,3 +91,31 @@ def test_stage0_history_profile_query_enables_both():
 
     assert dual.need_profile is True
     assert dual.need_episode is True
+
+
+def test_build_dual_recall_plan_prefers_legacy_tool_parameters():
+    dual = build_dual_recall_plan(
+        retrieval_plan=_legacy("episode_slice"),
+        gate_intent_type="mixed_or_ambiguous",
+        user_message="按我的习惯住宿",
+        stage0_reason="needs_llm_gate",
+        stage0_signals={},
+    )
+
+    assert dual.need_profile is False
+    assert dual.need_episode is True
+    assert dual.destination == "京都"
+
+
+def test_build_dual_recall_plan_falls_back_to_gate_mapping_without_tool_plan():
+    dual = build_dual_recall_plan(
+        retrieval_plan=None,
+        gate_intent_type="profile_constraint_recall",
+        user_message="不要红眼航班",
+        stage0_reason="needs_llm_gate",
+        stage0_signals={},
+    )
+
+    assert dual.need_profile is True
+    assert dual.need_episode is False
+    assert dual.profile_buckets == ["constraints", "rejections", "stable_preferences"]

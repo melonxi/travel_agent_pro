@@ -9,7 +9,10 @@ from llm.types import ChunkType
 from memory.recall_query import (
     ALLOWED_PROFILE_BUCKETS,
     ALLOWED_RECALL_DOMAINS,
+    DualRecallPlan,
     RecallRetrievalPlan,
+    dual_plan_from_gate,
+    dual_plan_from_retrieval_plan,
 )
 from memory.symbolic_recall import heuristic_retrieval_plan_from_message
 
@@ -25,6 +28,24 @@ _GATE_HEURISTIC_RECALL_FALLBACKS = {
 
 def _final_recall_decision_from_gate(needs_recall: bool) -> str:
     return "query_recall_enabled" if needs_recall else "no_recall_applied"
+
+
+def build_dual_recall_plan(
+    *,
+    retrieval_plan: RecallRetrievalPlan | None,
+    gate_intent_type: str,
+    user_message: str,
+    stage0_reason: str,
+    stage0_signals: dict[str, list[str] | tuple[str, ...]] | None,
+) -> DualRecallPlan:
+    if retrieval_plan is not None:
+        return dual_plan_from_retrieval_plan(retrieval_plan)
+    return dual_plan_from_gate(
+        intent_type=gate_intent_type,
+        user_message=user_message,
+        stage0_reason=stage0_reason,
+        stage0_signals=stage0_signals,
+    )
 
 
 def _stage0_signals_to_dict(
