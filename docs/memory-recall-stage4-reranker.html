@@ -18,7 +18,7 @@
 <main>
   <div class="nav"><a href="./memory-recall-overview.html">← 记忆召回总览</a></div>
   <h1>Stage 4：Reranker</h1>
-  <p class="lead">Stage 4 是最后一道筛选层。Stage 3 可以多拿候选，但真正进入系统 prompt 的记忆必须少、准、可解释。Reranker 会融合规则信号、source prior 和 Stage 3 evidence，选出最终记忆。</p>
+  <p class="lead">Stage 4 是最后一道筛选层。Stage 3 可以多拿候选，但真正进入本轮 <code>&lt;turn_context&gt;</code> 的记忆必须少、准、可解释。Reranker 会融合规则信号、source prior 和 Stage 3 evidence，选出最终记忆。</p>
 
   <section>
     <div class="head"><h2>从候选到上下文</h2><span class="hint">它回答的问题是：哪些记忆最终进入 prompt。</span></div>

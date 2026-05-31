@@ -4,6 +4,8 @@
 - **范围**：`backend/context/manager.py`、`backend/agent/loop.py` 及相关测试
 - **目标**：移除阶段切换时的 LLM 摘要调用，改为规则化抽取；裁剪富文本工具返回的 payload，降低上下文窗口压力
 
+> 2026-05 缓存友好上下文重构后，本文的“单一 system + assistant 回顾 + user”仍保留语义方向，但主对话实际 LLM 输入已经变为 `[static_system, *persisted_history, current_user, turn_context]`。阶段切换/回退时会重新生成 static system 和尾部 `<turn_context>`，需要长期保留的应用事件使用 `<app_event>`，不再把动态内容写成 `Role.SYSTEM`。
+
 ---
 
 ## 一、原设计与问题
@@ -72,7 +74,7 @@ rebuilt.append(
 rebuilt.append(self._copy_message(original_user_message))
 ```
 
-最终结构：`[system(阶段N指令), assistant(阶段N-1回顾), user(当前输入)]`。
+当前缓存友好链路里的最终结构是：`[static_system(阶段N稳定规则), user(原始锚点), assistant(阶段N-1回顾 / handoff), turn_context(本轮动态状态)]`；回退路径则用 `<app_event kind="backtrack">` 替代 assistant handoff。
 
 **好处**：
 - 单一 system 消息，provider 兼容性更强；

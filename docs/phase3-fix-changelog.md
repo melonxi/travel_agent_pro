@@ -44,7 +44,7 @@ Phase 2 已有 `_build_phase2_state_repair_message()`——当 LLM 只输出文�
 
 ### 修复 1：骨架内容注入（context/manager.py）
 
-当 `phase >= 5` 时，`build_runtime_context()` 把已选骨架的**完整内容**注入到 LLM 系统消息中。
+当 `phase >= 5` 时，`build_runtime_context()` 把已选骨架的**完整内容**注入到本轮 `<turn_context>` 中。
 
 ```
 修复前：

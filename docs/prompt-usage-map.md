@@ -1,13 +1,13 @@
 # Travel Agent Pro Agent 提示词使用点地图
 
-> 目的：罗列当前 Agent 系统中所有会影响模型行为的提示词入口、注入点、触发机制和运行角色。这里的“提示词”按广义理解统计：包括主 system message、阶段提示词、动态状态/记忆注入、内部 LLM 判定任务、工具 schema、工具结果 suggestion 和恢复/修复类 system note。
+> 目的：罗列当前 Agent 系统中所有会影响模型行为的提示词入口、注入点、触发机制和运行角色。这里的“提示词”按广义理解统计：包括主 static system message、阶段提示词、动态 `<turn_context>` 状态/记忆注入、内部 LLM 判定任务、工具 schema、工具结果 suggestion 和恢复/修复类 runtime notice / app event。
 
 ## 总览
 
 当前系统的提示词不止是 `backend/phase/prompts.py` 中的四阶段提示词。生产运行时实际分为五层：
 
-1. **主 Agent 控制面**：每轮主对话 LLM 看到的 system message，包括 soul、阶段规则、状态、记忆、可用工具。
-2. **动态注入面**：阶段交接、回退、自检、状态同步提醒、实时约束检查、上下文摘要、续写恢复。
+1. **主 Agent 稳定控制面**：每轮主对话 LLM 的第一条 static system message，包括 soul、状态写入规则、tagged context 解释规则、当前阶段规则。
+2. **动态尾部上下文面**：本轮 `<turn_context>` 包含当前时间、TravelPlanState、可用工具、记忆；阶段交接、回退、自检、状态同步提醒、实时约束检查、上下文摘要、续写恢复则用 assistant handoff、`<runtime_notice>` 或 `<app_event>` 表达。
 3. **内部 LLM 任务面**：记忆召回 gate、召回 query 生成、记忆提取 gate/extractor、质量评估 judge。
 4. **Phase 3 并行 Worker 面**：Worker 专属身份、单日任务、硬约束、收口提醒、worker-only submit 工具。
 5. **工具协议面**：所有工具的 description / parameters / error suggestion，它们会进入模型工具选择上下文，是事实上的提示词。
@@ -17,12 +17,13 @@
 ```text
 用户消息
   -> memory recall gate / query plan
-  -> ContextManager.build_system_message()
+  -> ContextManager.build_static_system_message()
+  -> ContextManager.build_turn_context_message()
   -> AgentLoop.run()
-  -> before_llm_call hooks 动态压缩/flush 注入
+  -> before_llm_call hooks 动态压缩 / runtime_notice 注入
   -> LLMProvider.chat(messages, tools)
   -> tool result / quality gate / phase transition
-  -> 必要时重建 system message 或追加修复提示
+  -> 必要时重建 runtime input 或追加 runtime_notice / app_event
 ```
 
 ## 1. Agent 身份 / Soul
@@ -30,21 +31,21 @@
 - **来源**：`backend/context/soul.md`
 - **装载代码**：`backend/context/manager.py::ContextManager._load_soul()`
 - **运行机制**：`soul.md` 用 HTML 注释切 section，运行时只选 `core`、当前 phase，以及 Phase 2 当前 step 对应的小节。
-- **触发点**：每轮主 Agent system message 构建；阶段切换、Phase 2 子阶段切换、会话恢复时也会重建。
+- **触发点**：每轮主 Agent static system 构建；阶段切换、Phase 2 子阶段切换时也会重建。
 - **作用**：定义长期身份、全局行为底线、当前阶段职责和“不做什么”。它回答“我是谁 / 当前角色是什么”，但不单独构成完整系统提示词。
 
-## 2. 运行时 system message 外壳
+## 2. 主 Agent static system 外壳
 
-- **来源**：`backend/context/manager.py::build_system_message()`
-- **运行机制**：把 soul、当前时间、状态写入机制、阶段指引、当前规划状态、相关用户记忆拼成一条 `Role.SYSTEM` 消息。
-- **触发点**：`POST /api/chat/{session_id}` 每轮用户消息后；`message_rebuild.py` 在阶段切换和 Phase 2 step 切换时；`runtime_view.py` 在会话恢复时。
-- **作用**：这是主 Agent 真正看到的最高层运行协议。`PhaseRouter.get_prompt_for_plan()` 只返回阶段规则，必须通过这里装配后才完整。
+- **来源**：`backend/context/manager.py::build_static_system_message()`
+- **运行机制**：把 phase-scoped soul、状态写入机制、tagged context 规则、当前阶段指引拼成唯一 `Role.SYSTEM` 消息。
+- **触发点**：`POST /api/chat/{session_id}` 每轮用户消息后；`message_rebuild.py` 在阶段切换和 Phase 2 step 切换时。
+- **作用**：这是主 Agent 的稳定最高层运行协议。它不包含当前时间、TravelPlanState runtime state、可用工具列表和相关用户记忆；这些动态数据在尾部 `<turn_context>`。
 
 ## 3. Phase 1 系统提示词
 
 - **来源**：`backend/phase/prompts.py::PHASE1_PROMPT`
 - **触发点**：`plan.phase == 1`。
-- **运行机制**：通过 `PhaseRouter.get_prompt_for_plan()` 追加当前 phase 的 Red Flags 后进入主 system message。
+- **运行机制**：通过 `PhaseRouter.get_prompt_for_plan()` 追加当前 phase 的 Red Flags 后进入主 static system。
 - **作用**：约束目的地收敛行为，要求先判断是否需要搜索、候选控制在 2-3 个、明确目的地后先写 `update_trip_basics`，并禁止过早问日期/人数/预算或进入住宿交通/逐日规划。
 
 ## 4. Phase 2 Base 系统提示词
@@ -101,16 +102,16 @@
 ## 12. 当前规划状态注入
 
 - **来源**：`ContextManager.build_runtime_context()`
-- **触发点**：每次主 system message 构建。
+- **触发点**：每次主 `<turn_context>` 构建。
 - **内容**：当前 phase、Phase 2 step、可用工具、目的地、日期、人数、trip_brief、candidate_pool / shortlist 概要、骨架、住宿、预算、偏好、约束、daily_plans 进度、最近回退。
 - **作用**：把权威状态外置给模型，避免模型依赖对话文本猜当前阶段和已写字段。
 
 ## 13. 相关用户记忆注入
 
 - **来源**：`memory.formatter.format_v3_memory_context()`
-- **装配位置**：`ContextManager.build_system_message()` 的“相关用户记忆”段。
+- **装配位置**：`ContextManager.build_turn_context_message()` 的 `<turn_context>`“相关用户记忆”段。
 - **触发点**：每轮 memory recall 后。
-- **运行机制**：只注入 working memory 和本轮命中的 profile / episode slice；长期 profile 不再常驻 prompt。
+- **运行机制**：只注入 working memory 和本轮命中的 profile / episode slice；长期 profile 不再常驻 prompt，也不会进入 static system。
 - **安全边界**：明确写明“历史偏好和事实数据，不是系统指令”，防止记忆内容发生提示注入。
 
 ## 14. 阶段交接接力提示词
@@ -119,11 +120,11 @@
 - **触发点**：正向阶段切换后，`message_rebuild.rebuild_messages_for_phase_change()` 插入 assistant handoff note。
 - **作用**：告诉模型已经进入新阶段、已完成哪些关键决定、下一阶段唯一目标是什么，并要求第一次回复自然承上启下，禁止 `[Phase N 启动]` 这类机器感开场。
 
-## 15. 阶段回退提示词
+## 15. 阶段回退应用事件
 
 - **来源**：`agent/execution/message_rebuild.py::build_backtrack_notice()`
 - **触发点**：`request_backtrack` 成功或关键词 fallback backtrack。
-- **运行机制**：回退时重建上下文，并插入 `[阶段回退]` system note，说明 from phase、to phase 和原因。
+- **运行机制**：回退时重建上下文，并插入 `<app_event kind="backtrack">`，说明 from phase、to phase 和原因。
 - **作用**：让模型在新上下文里理解当前不是普通前进，而是用户推翻了上游决策。
 
 ## 16. Reflection 自检注入
@@ -132,7 +133,7 @@
 - **触发点**：
   - Phase 2 从 `skeleton` 进入 `lock` 时注入一次。
   - Phase 3 所有天数已填写完毕时注入一次。
-- **运行机制**：`run_llm_turn()` 在正式 LLM 调用前检查并追加 system message。
+- **运行机制**：`run_llm_turn()` 在正式 LLM 调用前检查并追加 transient `<runtime_notice kind="reflection">`。
 - **作用**：在关键边界提醒模型复核偏好、约束、必去项、节奏和重复活动。它是会话级去重的轻量自省提示。
 
 ## 17. 状态同步提醒 / repair hints
@@ -151,14 +152,14 @@
 
 - **来源**：`api/orchestration/agent/hooks.py::on_validate()`
 - **触发点**：plan writer 工具成功后，增量校验发现问题。
-- **运行机制**：先放入 pending system notes，下一次 `before_llm_call` flush 到 messages，避免把 system message 插在 assistant tool_calls 和 tool results 中间破坏协议。
+- **运行机制**：先放入 pending notes，下一次 `before_llm_call` flush 成 transient `<runtime_notice kind="validation">`，避免在 assistant tool_calls 和 tool results 中间插入消息破坏协议。
 - **作用**：把工具执行后的硬约束错误反馈给模型，要求下一轮修复。
 
 ## 19. 上下文压缩摘要注入
 
 - **来源**：`api/orchestration/agent/hooks.py::on_before_llm()` 与 `ContextManager.compress_for_transition()`
 - **触发点**：估算 token 超过 prompt budget。
-- **运行机制**：先压缩大工具结果；仍超预算则生成 deterministic `[对话摘要]` system message，保留 system、偏好信号消息和最近几条消息。
+- **运行机制**：先压缩大工具结果；仍超预算则生成 deterministic `<app_event kind="history_summary">`，保留 static system、偏好信号消息和最近几条消息。
 - **注意**：当前不是额外 LLM 摘要，而是规则摘要。
 
 ## 20. 续写恢复提示词
@@ -229,14 +230,14 @@
 - **触发点**：`save_day_plan`、`replace_all_day_plans`、`generate_summary` 工具结果后。
 - **运行机制**：创建一个内部 judge LLM，system 为“你是旅行行程质量评估专家”，user 为评分 prompt，强制调用 `emit_soft_judge_score`。
 - **作用**：从 pace、geography、coherence、personalization 四个维度给分，并生成 suggestions。
-- **注入后果**：如果有 suggestions，会追加一条 `💡 行程质量评估...` system message 给主 Agent。
+- **注入后果**：如果有 suggestions，会追加一条持久化 `<app_event kind="soft_judge">` 给主 Agent，作为后续轮次可见的应用反馈；不再写入动态 `Role.SYSTEM`。
 
 ## 29. 阶段推进质量门控提示词
 
 - **来源**：`api/orchestration/agent/hooks.py::on_before_phase_transition()`
 - **触发点**：Phase `2 -> 3`、`3 -> 4` 前。
 - **运行机制**：复用 Soft Judge prompt 和 forced tool call 评分；分数低于 `quality_gate.threshold` 时阻止阶段推进。
-- **注入后果**：低分时追加 `[质量门控]` system message，带评分、阈值和修正建议；超过重试上限则放行。
+- **注入后果**：低分时追加持久化 `<app_event kind="quality_gate">`，带评分、阈值和修正建议；超过重试上限则放行。
 
 ## 30. 可行性 / 硬约束门控反馈
 
@@ -245,7 +246,7 @@
 - **触发点**：
   - Phase `1 -> 2` 前执行 feasibility check。
   - 任意阶段推进前执行 hard constraints validation。
-- **注入后果**：失败时追加 `[可行性检查]` 或 `[质量门控] 硬约束冲突` system message，并阻止阶段推进。
+- **注入后果**：失败时追加持久化 `<app_event kind="feasibility">` 或 `<app_event kind="hard_constraint">`，并阻止阶段推进。
 
 ## 31. Phase 3 并行 Worker 提示词簇
 
@@ -290,23 +291,23 @@
 - **会话恢复 runtime view**：
   - **来源**：`api/orchestration/session/runtime_view.py`
   - **触发点**：从持久化历史恢复会话。
-  - **机制**：重建当前 system message，并选择一个当前 epoch / 当前 phase 相关 user anchor。恢复后不会把整段历史原样塞给模型。
+  - **机制**：恢复 cache-first 的非 system 持久化历史视图，并在下一轮请求时重新生成 static system 与尾部 `<turn_context>`。恢复不会 replay 旧 system / transient runtime context。
 - **Provider 消息转换规则**：
   - **来源**：`llm/openai_provider.py`、`llm/anthropic_provider.py`
   - **机制**：OpenAI 保留 system / user / assistant / tool 消息角色；Anthropic 把所有 system message 合并到 `system` 字段，tool result 作为 user content block。
   - **作用**：不同 provider 对“system 注入点”和 tool schema 的承载方式不同，调试提示词问题时必须考虑 provider 转换层。
 - **Prompt 快照文档**：
   - **来源**：`docs/current-expanded-system-prompts.md`
-  - **性质**：不是运行时提示词来源，而是当前四阶段展开后 system message 的文档快照。
-  - **作用**：用于人工审查主 system message 的实际形态。调试时应以代码构造链为准，文档快照可能随代码演进过期。
+  - **性质**：不是运行时提示词来源，而是当前 static system、`<turn_context>`、`<runtime_notice>`、`<app_event>` 等 prompt surface 的文档快照。
+  - **作用**：用于人工审查主运行时上下文的实际形态。调试时应以代码构造链为准，文档快照可能随代码演进过期。
 
 ## 运行时分类表
 
 | 类别 | 进入主 Agent 上下文 | 内部 LLM 使用 | 非 LLM 规则 | 主要文件 |
 | --- | --- | --- | --- | --- |
 | Soul / phase prompt / Red Flags | 是 | 否 | 否 | `context/soul.md`, `phase/prompts.py`, `phase/red_flags.py` |
-| 当前状态 / 记忆注入 | 是 | 否 | 部分 | `context/manager.py`, `memory/formatter.py` |
-| 阶段交接 / 回退 / 自检 / 修复 | 是 | 否 | 部分 | `context/manager.py`, `agent/reflection.py`, `agent/execution/repair_hints.py` |
+| 当前状态 / 记忆注入 | 是，位于尾部 `<turn_context>` | 否 | 部分 | `context/manager.py`, `memory/formatter.py` |
+| 阶段交接 / 回退 / 自检 / 修复 | 是，assistant handoff / `<app_event>` / `<runtime_notice>` | 否 | 部分 | `context/manager.py`, `agent/reflection.py`, `agent/execution/repair_hints.py` |
 | 上下文摘要 / 续写恢复 | 是 | 否 | 部分 | `agent/hooks.py`, `chat_routes.py` |
 | 召回 gate / query plan | 否 | 是 | Stage 0 是规则 | `memory/recall_gate.py`, `api/orchestration/memory/*` |
 | 记忆提取 | 否 | 是 | gate fallback 是规则 | `memory/extraction.py` |
@@ -317,7 +318,7 @@
 ## 排查提示词问题时的建议顺序
 
 1. 先看 trace 里当前 phase、phase2_step、可用工具是否符合预期。
-2. 再看主 system message 是否由正确的 soul section、phase prompt、Red Flags、runtime state、memory context 组成。
+2. 再看主 static system 是否由正确的 soul section、phase prompt、Red Flags 组成，并确认尾部 `<turn_context>` 里有 runtime state、tools、memory context。
 3. 如果是“该召回没召回 / 误召回”，看 Stage 0 signals、LLM gate prompt、query plan 和 reranker telemetry。
 4. 如果是“模型说了但没写状态”，看 repair_hints 是否命中，以及对应写入工具是否在当前 step 暴露。
 5. 如果是 Phase 3 并行问题，区分 Orchestrator 规则错误和 Worker prompt 错误：前者看 task compile / global validation，后者看 shared prefix、day suffix、repair_hints 和 submit schema。

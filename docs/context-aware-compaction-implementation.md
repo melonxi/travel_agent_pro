@@ -41,7 +41,7 @@ flowchart TD
     F -- 是 --> H["按 tool 类型做结构化压缩"]
     H --> G
     G -- 否 --> I["调用 LLM"]
-    G -- 是 --> J["历史摘要压缩<br/>system + must_keep + 摘要 + recent 4"]
+    G -- 是 --> J["历史摘要压缩<br/>static system + must_keep + history_summary + recent 4"]
     J --> I
     I --> K{"phase 是否变化?"}
     K -- 否 --> L["进入下一轮或结束"]
@@ -197,7 +197,7 @@ Pre-LLM 总压缩分为 4 个行为分段：
 | No compaction | `usage_ratio < 0.6` 且没有 oversized tool | 原样保留 `messages` |
 | Tool compaction / moderate | 进入压缩区，但未达到 aggressive | 仅压 rich tool payload，保留更多正文和更多条目 |
 | Tool compaction / aggressive | `usage_ratio >= 0.85`，或单条 TOOL 消息极大 | 更激进地裁剪正文和列表规模 |
-| History summary | 工具级压缩后仍超预算 | 生成 `[对话摘要]`，只保留关键消息骨架 |
+| History summary | 工具级压缩后仍超预算 | 生成 `<app_event kind="history_summary">`，只保留关键消息骨架 |
 
 其中：
 
@@ -243,7 +243,7 @@ flowchart TD
     H -- 是 --> I["classify_messages()"]
     I --> J["挑选 summary_source"]
     J --> K["compress_for_transition(... from_phase=phase, to_phase=phase)"]
-    K --> L["重建 messages<br/>system + must_keep + [对话摘要] + recent 4"]
+    K --> L["重建 messages<br/>static system + must_keep + history_summary app_event + recent 4"]
     L --> F
 ```
 
@@ -304,9 +304,9 @@ sequenceDiagram
 
 此时会：
 
-- 保留原 `system` message
+- 保留当前 static system
 - 保留 `must_keep` 用户偏好消息
-- 用一条 `[对话摘要]` 表示旧历史
+- 用一条 `<app_event kind="history_summary">` 表示旧历史
 - 保留最近 `4` 条消息
 
 摘要内容复用 `compress_for_transition()` 的规则驱动渲染逻辑，并且只取最后 `12` 行摘要文本写回。
@@ -413,8 +413,8 @@ flowchart TD
     B -- 是 --> D{"to_phase < from_phase ?"}
     D -- 是 --> E["构建回退通知"]
     D -- 否 --> F["compress_for_transition(旧阶段 messages)"]
-    E --> G["重建 messages<br/>新 phase system + 回退说明 + 原始用户消息"]
-    F --> H["重建 messages<br/>新 phase system + 阶段摘要 + 原始用户消息"]
+    E --> G["重建 messages<br/>新 static system + backtrack app_event + 原始用户消息 + turn_context"]
+    F --> H["重建 messages<br/>新 static system + 阶段摘要 + 原始用户消息 + turn_context"]
     G --> I["刷新当前 phase tools"]
     H --> I
 ```
