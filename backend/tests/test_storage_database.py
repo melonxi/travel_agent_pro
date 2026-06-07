@@ -28,6 +28,39 @@ async def test_initialize_creates_tables(db: Database):
 
 
 @pytest.mark.asyncio
+async def test_initialize_creates_trace_tables(db: Database):
+    rows = await db.fetch_all(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    )
+    table_names = {row["name"] for row in rows}
+
+    assert "trace_runs" in table_names
+    assert "trace_events" in table_names
+    assert "trace_grades" in table_names
+
+
+@pytest.mark.asyncio
+async def test_trace_schema_contains_expected_indexes(db: Database):
+    trace_run_indexes = {
+        row["name"] for row in await db.fetch_all("PRAGMA index_list(trace_runs)")
+    }
+    trace_event_indexes = {
+        row["name"] for row in await db.fetch_all("PRAGMA index_list(trace_events)")
+    }
+    trace_grade_indexes = {
+        row["name"] for row in await db.fetch_all("PRAGMA index_list(trace_grades)")
+    }
+
+    assert "idx_trace_runs_session_created" in trace_run_indexes
+    assert "idx_trace_runs_trip" in trace_run_indexes
+    assert "idx_trace_events_run_sequence" in trace_event_indexes
+    assert "idx_trace_events_type" in trace_event_indexes
+    assert "idx_trace_events_tool" in trace_event_indexes
+    assert "idx_trace_grades_run" in trace_grade_indexes
+    assert "idx_trace_grades_status" in trace_grade_indexes
+
+
+@pytest.mark.asyncio
 async def test_initialize_is_idempotent(db: Database):
     await db.initialize()
     rows = await db.fetch_all(
@@ -200,6 +233,74 @@ async def test_messages_schema_has_context_epoch_columns():
     assert "rebuild_reason" in columns
     assert "idx_messages_epoch" in indexes
     assert "idx_messages_trip_epoch" in indexes
+
+
+@pytest.mark.asyncio
+async def test_initialize_migrates_legacy_database_with_trace_tables(tmp_path):
+    db_path = tmp_path / "legacy-no-trace.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+            session_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL DEFAULT 'default_user',
+            title TEXT,
+            phase INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_run_id TEXT,
+            last_run_status TEXT,
+            last_run_error TEXT
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT,
+            tool_calls TEXT,
+            tool_call_id TEXT,
+            provider_state TEXT,
+            phase INTEGER,
+            phase2_step TEXT,
+            history_seq INTEGER,
+            run_id TEXT,
+            trip_id TEXT,
+            context_epoch INTEGER,
+            rebuild_reason TEXT,
+            created_at TEXT NOT NULL,
+            seq INTEGER NOT NULL
+        );
+        CREATE TABLE plan_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            phase INTEGER NOT NULL,
+            plan_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE archives (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            plan_json TEXT NOT NULL,
+            summary TEXT,
+            created_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    database = Database(str(db_path))
+    await database.initialize()
+    try:
+        rows = await database.fetch_all(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        )
+    finally:
+        await database.close()
+
+    table_names = {row["name"] for row in rows}
+    assert {"trace_runs", "trace_events", "trace_grades"} <= table_names
 
 
 @pytest.mark.asyncio

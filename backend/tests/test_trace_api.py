@@ -754,3 +754,96 @@ def test_trace_success_tool_has_null_error_code():
     tc = result["iterations"][0]["tool_calls"][0]
     assert tc["error_code"] is None
     assert tc["suggestion"] is None
+
+
+def _get_trace_store(app):
+    for route in app.routes:
+        endpoint = getattr(route, "endpoint", None)
+        if endpoint is None or not hasattr(endpoint, "__closure__"):
+            continue
+        free_vars = getattr(endpoint.__code__, "co_freevars", ())
+        for name, cell in zip(free_vars, endpoint.__closure__ or ()):
+            if name == "trace_store":
+                return cell.cell_contents
+    raise RuntimeError("Cannot locate trace_store")
+
+
+async def _insert_trace_session(trace_store, session_id: str) -> None:
+    await trace_store._db.initialize()
+    await trace_store._db.execute(
+        "INSERT OR REPLACE INTO sessions "
+        "(session_id, user_id, title, phase, status, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            session_id,
+            "default_user",
+            "Trace Session",
+            1,
+            "active",
+            "2026-06-07T10:00:00+00:00",
+            "2026-06-07T10:00:00+00:00",
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_persisted_trace_by_run_id(app):
+    trace_store = _get_trace_store(app)
+    await _insert_trace_session(trace_store, "trace-session")
+    await trace_store.create_run(
+        run_id="run-api-1",
+        session_id="trace-session",
+        trip_id=None,
+        context_epoch=0,
+        started_at="2026-06-07T10:00:00+00:00",
+        status="completed",
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/traces/run-api-1")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run"]["run_id"] == "run-api-1"
+    assert data["events"] == []
+    assert data["grades"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_persisted_trace_not_found(app):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/traces/not-found")
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_grade_persisted_trace(app):
+    trace_store = _get_trace_store(app)
+    await _insert_trace_session(trace_store, "grade-session")
+    await trace_store.create_run(
+        run_id="run-grade-1",
+        session_id="grade-session",
+        trip_id=None,
+        context_epoch=0,
+        started_at="2026-06-07T10:00:00+00:00",
+        status="completed",
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/api/traces/run-grade-1/grade")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run_id"] == "run-grade-1"
+    assert len(data["grades"]) == 5
+    assert {grade["status"] for grade in data["grades"]} == {"skip"}
+
+    saved = await trace_store.load_grades("run-grade-1")
+    assert len(saved) == 5

@@ -14,6 +14,7 @@ from api.orchestration.chat.finalization import (
     persist_unflushed_messages,
 )
 from api.orchestration.chat.stream import ChatStreamDeps, run_agent_stream
+from api.orchestration.chat.trace_persistence import ensure_trace_run_started
 from api.orchestration.memory.turn import build_memory_context_for_turn
 from api.schemas import BacktrackRequest, ChatRequest
 
@@ -183,6 +184,12 @@ def register_chat_routes(
             run = RunRecord(
                 run_id=str(uuid.uuid4()), session_id=plan.session_id, status="running"
             )
+            await ensure_trace_run_started(
+                trace_store=chat_stream_deps.trace_store,
+                session=session,
+                plan=plan,
+                run=run,
+            )
             session["_current_run"] = run
             cancel_event = asyncio.Event()
             session["_cancel_event"] = cancel_event
@@ -278,6 +285,12 @@ def register_chat_routes(
             run_id=str(uuid.uuid4()),
             session_id=plan.session_id,
             status="running",
+        )
+        await ensure_trace_run_started(
+            trace_store=chat_stream_deps.trace_store,
+            session=session,
+            plan=plan,
+            run=run,
         )
         session["_current_run"] = run
         cancel_event = asyncio.Event()
