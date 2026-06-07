@@ -54,7 +54,7 @@ PERSONA = SimPersona(
         "目的地一开始还没最终敲定，但你心里倾向东京。"
     ),
     policy=(
-        "一次只推进当前这一个阶段的目标；绝不主动要求 agent 去做属于后续步骤的事；"
+        "按 agent 当前给出的进度自然推进；不要主动要求 agent 跳到最终锁定或交付物；"
         "只有 agent 已经给出具体选项后，你才考虑授权锁定；agent 反问就如实回答；"
         "如果 agent 给出的真实选项和你之前以为的不一样，就从真实选项里重新挑。"
     ),
@@ -77,32 +77,27 @@ def _p2i(plan: dict) -> int:
 AGENDA: list[AgendaStep] = [
     AgendaStep(
         key="discover",
-        goal="只帮你收敛/确定目的地方向，先别做具体行程，也别建候选池。",
-        forbidden_prefixes=("set_candidate_pool", "set_shortlist", "set_skeleton_plans"),
+        goal="确认东京这个目的地方向和预算可行性。",
         satisfied=lambda p: bool(p.get("destination")),
     ),
     AgendaStep(
         key="brief",
-        goal="补充基础信息和偏好（出发地、日期、人数、预算、住宿、节奏、口味），只写画像，先别搜候选。",
-        forbidden_prefixes=("set_candidate_pool", "set_shortlist", "set_skeleton_plans"),
+        goal="补充基础信息和偏好（出发地、日期、人数、预算、住宿、节奏、口味）。",
         satisfied=lambda p: _phase(p) >= 3 or _p2i(p) >= 1,
     ),
     AgendaStep(
         key="candidate",
-        goal="只完成候选池 candidate_pool，先别筛 shortlist、别生成 skeleton。",
-        forbidden_prefixes=("set_shortlist", "set_skeleton_plans", "select_skeleton"),
+        goal="开始整理东京候选池 candidate_pool。",
         satisfied=lambda p: _phase(p) >= 3 or _p2i(p) >= 2,
     ),
     AgendaStep(
         key="shortlist",
-        goal="基于已有候选筛选 shortlist，先别生成 skeleton、也别锁定。",
-        forbidden_prefixes=("set_skeleton_plans", "select_skeleton"),
+        goal="基于已有候选筛选 shortlist。",
         satisfied=lambda p: _phase(p) >= 3 or _p2i(p) >= 3,
     ),
     AgendaStep(
         key="skeleton",
-        goal="生成 2-3 套 skeleton 方案供你选择，先别替你锁定最终方案。",
-        forbidden_prefixes=("select_skeleton",),
+        goal="生成 2-3 套 skeleton 方案供你选择。",
         satisfied=lambda p: _phase(p) >= 3 or _p2i(p) >= 4,
     ),
     AgendaStep(
@@ -257,14 +252,134 @@ async def _fetch_trace_events(
     return []
 
 
-async def _grade_run(client: httpx.AsyncClient, run_id: str) -> list[dict[str, Any]]:
+def _grade_report(grader_ran: bool, grades: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "grader_ran": grader_ran,
+        "grade_count": len(grades),
+        "grade_fails": [
+            g.get("rubric_id") for g in grades if g.get("status") == "fail"
+        ],
+    }
+
+
+async def _grade_run(client: httpx.AsyncClient, run_id: str) -> tuple[bool, list[dict[str, Any]]]:
     try:
         resp = await client.post(f"/api/traces/{run_id}/grade", timeout=30.0)
         if resp.status_code == 200:
-            return resp.json().get("grades") or []
+            return True, resp.json().get("grades") or []
     except httpx.HTTPError:
         pass
-    return []
+    return False, []
+
+
+def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
+    raw = event.get("payload_json")
+    if isinstance(raw, str) and raw:
+        try:
+            payload = json.loads(raw)
+            return payload if isinstance(payload, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    payload = event.get("payload")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _cache_token_value(payload: dict[str, Any], key: str) -> int | None:
+    value = payload.get(key)
+    metadata = payload.get("metadata")
+    if value is None and isinstance(metadata, dict):
+        value = metadata.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _event_cost_usd(event: dict[str, Any], payload: dict[str, Any]) -> float:
+    value = payload.get("cost_usd")
+    if value is None:
+        value = event.get("cost_usd")
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cache_report_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
+    hit_tokens = 0
+    miss_tokens = 0
+    cost_usd = 0.0
+    llm_call_count = 0
+    calls_with_cache_usage = 0
+    for event in events:
+        if event.get("event_type") != "llm_call":
+            continue
+        payload = _event_payload(event)
+        llm_call_count += 1
+        cost_usd += _event_cost_usd(event, payload)
+        hit = _cache_token_value(payload, "prompt_cache_hit_tokens")
+        miss = _cache_token_value(payload, "prompt_cache_miss_tokens")
+        if hit is None and miss is None:
+            continue
+        calls_with_cache_usage += 1
+        hit_tokens += hit or 0
+        miss_tokens += miss or 0
+
+    total = hit_tokens + miss_tokens
+    return {
+        "llm_call_count": llm_call_count,
+        "llm_calls_with_cache_usage": calls_with_cache_usage,
+        "prompt_cache_hit_tokens": hit_tokens,
+        "prompt_cache_miss_tokens": miss_tokens,
+        "prompt_cache_hit_rate": round(hit_tokens / total, 4) if total else None,
+        "cache_aware_cost_usd": round(cost_usd, 6),
+    }
+
+
+def _cache_report_from_turns(turns: list[dict[str, Any]]) -> dict[str, Any]:
+    hit_tokens = 0
+    miss_tokens = 0
+    cost_usd = 0.0
+    llm_call_count = 0
+    calls_with_cache_usage = 0
+    for turn in turns:
+        cache = turn.get("cache")
+        if not isinstance(cache, dict):
+            continue
+        llm_call_count += int(cache.get("llm_call_count") or 0)
+        calls_with_cache_usage += int(cache.get("llm_calls_with_cache_usage") or 0)
+        hit_tokens += int(cache.get("prompt_cache_hit_tokens") or 0)
+        miss_tokens += int(cache.get("prompt_cache_miss_tokens") or 0)
+        cost_usd += float(cache.get("cache_aware_cost_usd") or 0.0)
+
+    total = hit_tokens + miss_tokens
+    return {
+        "llm_call_count": llm_call_count,
+        "llm_calls_with_cache_usage": calls_with_cache_usage,
+        "prompt_cache_hit_tokens": hit_tokens,
+        "prompt_cache_miss_tokens": miss_tokens,
+        "prompt_cache_hit_rate": round(hit_tokens / total, 4) if total else None,
+        "cache_aware_cost_usd": round(cost_usd, 6),
+    }
+
+
+def _format_cache_report(cache: dict[str, Any]) -> str:
+    if not cache.get("llm_calls_with_cache_usage") and not cache.get(
+        "cache_aware_cost_usd"
+    ):
+        return ""
+    rate = cache.get("prompt_cache_hit_rate")
+    rate_text = "n/a" if rate is None else f"{rate:.1%}"
+    return (
+        f"cache_hit_rate={rate_text} "
+        f"cache_hit={cache.get('prompt_cache_hit_tokens', 0)} "
+        f"cache_miss={cache.get('prompt_cache_miss_tokens', 0)} "
+        f"cache_aware_cost=${cache.get('cache_aware_cost_usd', 0.0):.6f}"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -281,26 +396,52 @@ async def drive(args: argparse.Namespace, provider) -> dict[str, Any]:
         cursor = 0
         last_reply = ""
 
+        turn_num = 0
         for _ in range(args.max_turns):
+            turn_num += 1
             plan = await _get_plan(client, session_id)
             cursor = advance_index(AGENDA, cursor, plan)
             step = AGENDA[cursor]
 
+            print(f"[turn {turn_num}] step={step.key} goal=\"{step.goal}\" ...")
+
             sim = await run_sim_turn(provider, PERSONA, step, last_reply, plan)
             if sim.done:
+                print(f"[turn {turn_num}] sim_done: step={step.key} reason=\"{sim.reason}\"")
                 turns.append({"kind": "sim_done", "step": step.key, "reason": sim.reason})
                 break
 
+            auth_label = "AUTH" if sim.authorize_lock else "no-lock"
+            print(f"[turn {turn_num}] sim -> \"{sim.message[:120]}...\" ({auth_label}, reason=\"{sim.reason}\")")
+            t0 = time.monotonic()
             run_id, agent_text, plan_after, duration_s = await _send(
                 client, session_id, sim.message, args.timeout
             )
+            print(f"[turn {turn_num}] agent replied in {duration_s}s, reply_tail=\"{agent_text[-200:]}\"")
             events = await _fetch_trace_events(client, run_id) if run_id else []
+            cache_report = _cache_report_from_events(events)
             audit = audit_events(events, forbidden_prefixes=step.forbidden_prefixes)
             consent = lock_consent_violations(
                 audit.tool_calls, authorized=sim.authorize_lock
             )
-            grades = await _grade_run(client, run_id) if run_id else []
-            grade_fails = [g.get("rubric_id") for g in grades if g.get("status") == "fail"]
+            grader_ran, grades = await _grade_run(client, run_id) if run_id else (False, [])
+            grade_report = _grade_report(grader_ran, grades)
+
+            turn_violations = list(audit.violations) + consent
+            turn_warnings = list(audit.warnings)
+            turn_grade_fails = grade_report.get("grade_fails", [])
+            phase_after = plan_after.get("phase")
+            p2s_after = plan_after.get("phase2_step")
+            has_deliv = bool(plan_after.get("deliverables"))
+            print(
+                f"[turn {turn_num}] phase={phase_after} step={p2s_after} "
+                f"tools={audit.tool_count} violations={turn_violations} "
+                f"warnings={turn_warnings} grade_fails={turn_grade_fails} "
+                f"has_deliverables={has_deliv}"
+            )
+            cache_text = _format_cache_report(cache_report)
+            if cache_text:
+                print(f"[turn {turn_num}] cache: {cache_text}")
 
             turns.append(
                 {
@@ -311,6 +452,7 @@ async def drive(args: argparse.Namespace, provider) -> dict[str, Any]:
                     "sim_reason": sim.reason,
                     "run_id": run_id,
                     "duration_s": duration_s,
+                    "cache": cache_report,
                     "trace_tool_count": audit.tool_count,
                     "tool_calls": audit.tool_calls,
                     "error_stats": [
@@ -318,7 +460,7 @@ async def drive(args: argparse.Namespace, provider) -> dict[str, Any]:
                          "codes": list(s.error_codes)}
                         for s in audit.error_stats
                     ],
-                    "grade_fails": grade_fails,
+                    **grade_report,
                     "phase_after": plan_after.get("phase"),
                     "phase2_step_after": plan_after.get("phase2_step"),
                     "has_deliverables_after": bool(plan_after.get("deliverables")),
@@ -338,6 +480,7 @@ async def drive(args: argparse.Namespace, provider) -> dict[str, Any]:
             "session_id": session_id,
             "persona": {"summary": PERSONA.summary, "policy": PERSONA.policy},
             "turns": turns,
+            "cache": _cache_report_from_turns(turns),
             "final": {
                 "phase": final_plan.get("phase"),
                 "phase2_step": final_plan.get("phase2_step"),
@@ -413,6 +556,9 @@ def main() -> int:
     print(f"session_id={report['session_id']}")
     print(f"report={output}")
     print(f"final={json.dumps(report['final'], ensure_ascii=False)}")
+    cache_text = _format_cache_report(report.get("cache") or {})
+    if cache_text:
+        print(cache_text)
     for turn in report["turns"]:
         if turn.get("kind") == "sim_done":
             print(f"[sim_done@{turn['step']}] {turn['reason']}")
@@ -426,6 +572,9 @@ def main() -> int:
             extras.append(f"grade_fails={turn['grade_fails']}")
         if turn["error_stats"]:
             extras.append(f"errors={turn['error_stats']}")
+        cache_text = _format_cache_report(turn.get("cache") or {})
+        if cache_text:
+            extras.append(cache_text)
         extra_text = (" " + " ".join(extras)) if extras else ""
         print(
             f"{turn['step']}: {turn['duration_s']}s "

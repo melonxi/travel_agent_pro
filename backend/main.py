@@ -156,6 +156,11 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         await db.initialize()
         await _probe_context_window()
         await _run_v3_memory_cutover_cleanup_once()
+        stale_count = await trace_store.cleanup_stale_running_runs()
+        if stale_count:
+            logging.getLogger("travel-agent-pro").info(
+                "Cleaned up %d stale running trace(s)", stale_count
+            )
         yield
         for runtime in memory_scheduler_runtimes.values():
             task = runtime.scheduler.running_task

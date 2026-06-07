@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
+from datetime import date as dt_date, timedelta
 
 from agent.compaction import (
     compact_messages_for_prompt,
@@ -37,6 +39,21 @@ logger = logging.getLogger(__name__)
 _REFERENCE_ONLY_WEATHER_NOTE = "精确日期预报不可用"
 _REQUIRED_WEATHER_CONFIRMATION = "临近出发前再确认"
 _FUTURE_WEATHER_ERROR_CODE = "FUTURE_WEATHER_NOT_TREATED_AS_EXACT"
+_DELIVERABLE_CONSISTENCY_ERROR_CODE = "DELIVERABLE_FACTS_CONFLICT_WITH_PLAN"
+_DELIVERABLE_ESTIMATION_ERROR_CODE = "DELIVERABLE_ESTIMATION_NOT_VISIBLE"
+_ESTIMATION_VISIBILITY_MARKERS = ("估算", "未验证", "未返回可用", "⚠️")
+_ISO_DATE_RE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
+_TRANSPORT_CODE_RE = re.compile(
+    r"(?<![A-Z0-9])(?:[A-Z]{2}\d{2,4}|[GDKCTZ]\d{1,5})(?![A-Z0-9])"
+)
+_BUDGET_AMOUNT_RE = re.compile(
+    r"(?:[¥￥]\s*)?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(万|千|元|块|CNY|RMB)?",
+    re.IGNORECASE,
+)
+_WEATHER_CONTEXT_RE = re.compile(
+    r"天气|气温|温度|降雨|下雨|小雨|中雨|大雨|阵雨|雷阵雨|晴|多云|阴|湿热|带伞"
+)
+_TEMPERATURE_RE = re.compile(r"(-?\d+(?:\.\d+)?)\s*(?:°\s*C|°C|℃|摄氏度|度)")
 
 
 def _has_reference_only_weather(messages: list[Message] | None) -> bool:
@@ -56,13 +73,289 @@ def _has_reference_only_weather(messages: list[Message] | None) -> bool:
 
 
 def _combined_deliverable_markdown(result_data: dict, arguments: dict) -> str:
-    parts = [
-        result_data.get("travel_plan_markdown"),
-        result_data.get("checklist_markdown"),
-        arguments.get("travel_plan_markdown"),
-        arguments.get("checklist_markdown"),
+    parts: list[str] = []
+    for key in ("travel_plan_markdown", "checklist_markdown"):
+        val = result_data.get(key)
+        if val is not None:
+            parts.append(str(val))
+    daily_sections = arguments.get("daily_sections")
+    if daily_sections and isinstance(daily_sections, list):
+        day_parts: list[str] = []
+        for section in daily_sections:
+            if isinstance(section, dict):
+                day = section.get("day", "?")
+                title = section.get("title", "")
+                content = section.get("content", "")
+                heading = f"## 第 {day} 天"
+                if title:
+                    heading += f"  {title}"
+                day_parts.append(heading)
+                day_parts.append(content)
+        if day_parts:
+            parts.append("\n".join(day_parts))
+    checklist_categories = arguments.get("checklist_categories")
+    if checklist_categories and isinstance(checklist_categories, list):
+        cat_parts: list[str] = []
+        for cat in checklist_categories:
+            if isinstance(cat, dict):
+                category = cat.get("category", "")
+                items = cat.get("items", [])
+                if category:
+                    cat_parts.append(f"### {category}")
+                for item in items:
+                    cat_parts.append(f"- {item}")
+        if cat_parts:
+            parts.append("\n".join(cat_parts))
+    for key in ("travel_plan_markdown", "checklist_markdown"):
+        val = arguments.get(key)
+        if val is not None and key not in result_data:
+            parts.append(str(val))
+    return "\n\n".join(parts)
+
+
+def _iter_text_values(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        texts: list[str] = []
+        for item in value.values():
+            texts.extend(_iter_text_values(item))
+        return texts
+    if isinstance(value, (list, tuple)):
+        texts = []
+        for item in value:
+            texts.extend(_iter_text_values(item))
+        return texts
+    return []
+
+
+def _trip_date_set(plan) -> set[str]:
+    dates = getattr(plan, "dates", None)
+    if dates is None:
+        return set()
+    try:
+        start = dt_date.fromisoformat(dates.start)
+        end = dt_date.fromisoformat(dates.end)
+    except (TypeError, ValueError):
+        return {str(getattr(dates, "start", "")), str(getattr(dates, "end", ""))}
+    if end < start or (end - start).days > 366:
+        return {dates.start, dates.end}
+    return {
+        (start + timedelta(days=offset)).isoformat()
+        for offset in range((end - start).days + 1)
+    }
+
+
+def _transport_codes(value) -> set[str]:
+    codes: set[str] = set()
+    for text in _iter_text_values(value):
+        codes.update(_TRANSPORT_CODE_RE.findall(text.upper().replace(" ", "")))
+    return codes
+
+
+def _known_other_accommodation_names(plan) -> set[str]:
+    accommodation = getattr(plan, "accommodation", None)
+    locked_hotel = str(getattr(accommodation, "hotel", "") or "").strip()
+    names: set[str] = set()
+    for option in getattr(plan, "accommodation_options", []) or []:
+        if not isinstance(option, dict):
+            continue
+        name = str(option.get("name") or option.get("hotel") or "").strip()
+        if name and name != locked_hotel:
+            names.add(name)
+    return names
+
+
+def _parse_budget_amount(raw: str, unit: str | None) -> float | None:
+    try:
+        amount = float(raw.replace(",", ""))
+    except ValueError:
+        return None
+    normalized_unit = (unit or "").lower()
+    if normalized_unit == "万":
+        amount *= 10_000
+    elif normalized_unit == "千":
+        amount *= 1_000
+    return amount
+
+
+def _budget_amounts_from_total_lines(markdown: str) -> list[float]:
+    amounts: list[float] = []
+    for line in markdown.splitlines():
+        if "总预算" not in line and "预算上限" not in line:
+            continue
+        for raw, unit in _BUDGET_AMOUNT_RE.findall(line):
+            amount = _parse_budget_amount(raw, unit)
+            if amount is not None:
+                amounts.append(amount)
+    return amounts
+
+
+def _weather_state_text(plan) -> str:
+    parts: list[str] = []
+    for day in getattr(plan, "daily_plans", []) or []:
+        tips = str(getattr(day, "tips", "") or "")
+        if _WEATHER_CONTEXT_RE.search(tips):
+            parts.append(tips)
+        for activity in getattr(day, "activities", []) or []:
+            activity_notes = str(getattr(activity, "notes", "") or "")
+            if _WEATHER_CONTEXT_RE.search(activity_notes):
+                parts.append(activity_notes)
+    return "\n".join(parts)
+
+
+def _temperatures(text: str) -> list[float]:
+    values: list[float] = []
+    for raw in _TEMPERATURE_RE.findall(text):
+        try:
+            values.append(float(raw))
+        except ValueError:
+            continue
+    return values
+
+
+def build_deliverable_consistency_errors(
+    plan,
+    result_data: dict | None,
+    arguments: dict | None,
+) -> list[str]:
+    result_data = result_data if isinstance(result_data, dict) else {}
+    arguments = arguments if isinstance(arguments, dict) else {}
+    if any(
+        result_data.get(key) is not None
+        for key in ("travel_plan_markdown", "checklist_markdown")
+    ):
+        markdown = _combined_deliverable_markdown(result_data, {})
+    else:
+        markdown = _combined_deliverable_markdown({}, arguments)
+    errors: list[str] = []
+
+    allowed_dates = _trip_date_set(plan)
+    mentioned_dates = set(_ISO_DATE_RE.findall(markdown))
+    unexpected_dates = sorted(mentioned_dates - allowed_dates)
+    if allowed_dates and unexpected_dates:
+        errors.append(
+            "日期与状态不一致：交付物出现 "
+            + "、".join(unexpected_dates[:3])
+            + f"，但当前行程日期是 {min(allowed_dates)} 至 {max(allowed_dates)}"
+        )
+
+    selected_transport = getattr(plan, "selected_transport", None)
+    locked_codes = _transport_codes(selected_transport)
+    mentioned_codes = _transport_codes(markdown)
+    unexpected_codes = sorted(mentioned_codes - locked_codes)
+    if locked_codes and unexpected_codes:
+        errors.append(
+            "锁定交通不一致：交付物出现 "
+            + "、".join(unexpected_codes[:3])
+            + "，但当前锁定交通是 "
+            + "、".join(sorted(locked_codes))
+        )
+
+    other_hotels = sorted(
+        name for name in _known_other_accommodation_names(plan) if name in markdown
+    )
+    accommodation = getattr(plan, "accommodation", None)
+    locked_hotel = str(getattr(accommodation, "hotel", "") or "").strip()
+    if locked_hotel and other_hotels:
+        errors.append(
+            "锁定住宿不一致：交付物出现 "
+            + "、".join(other_hotels[:3])
+            + f"，但当前锁定住宿是 {locked_hotel}"
+        )
+
+    budget = getattr(plan, "budget", None)
+    budget_total = float(getattr(budget, "total", 0) or 0)
+    if budget_total > 0:
+        total_amounts = _budget_amounts_from_total_lines(markdown)
+        close_amounts = [
+            amount
+            for amount in total_amounts
+            if abs(amount - budget_total) <= max(1.0, budget_total * 0.02)
+        ]
+        if total_amounts and not close_amounts:
+            errors.append(
+                "总预算与状态不一致：交付物写 "
+                + "、".join(f"{amount:g}" for amount in total_amounts[:3])
+                + f"，但当前总预算是 {budget_total:g}"
+            )
+
+    state_weather = _weather_state_text(plan)
+    state_temps = _temperatures(state_weather)
+    markdown_temps = _temperatures(markdown)
+    if state_temps and markdown_temps:
+        has_matching_temp = any(
+            abs(markdown_temp - state_temp) <= 3.0
+            for markdown_temp in markdown_temps
+            for state_temp in state_temps
+        )
+        if not has_matching_temp:
+            errors.append(
+                "天气温度与逐日行程不一致：状态记录约 "
+                + "、".join(f"{temp:g}°C" for temp in sorted(set(state_temps))[:3])
+                + "，交付物写约 "
+                + "、".join(f"{temp:g}°C" for temp in sorted(set(markdown_temps))[:3])
+            )
+
+    return errors
+
+
+def _has_estimated_transport(plan) -> bool:
+    for day in getattr(plan, "daily_plans", []) or []:
+        for activity in getattr(day, "activities", []) or []:
+            if getattr(activity, "transport_estimated", False):
+                return True
+    return False
+
+
+def build_estimation_visibility_errors(
+    plan,
+    result_data: dict | None,
+    arguments: dict | None,
+) -> list[str]:
+    if not _has_estimated_transport(plan):
+        return []
+    result_data = result_data if isinstance(result_data, dict) else {}
+    arguments = arguments if isinstance(arguments, dict) else {}
+    if any(
+        result_data.get(key) is not None
+        for key in ("travel_plan_markdown", "checklist_markdown")
+    ):
+        markdown = _combined_deliverable_markdown(result_data, {})
+    else:
+        markdown = _combined_deliverable_markdown({}, arguments)
+    if any(marker in markdown for marker in _ESTIMATION_VISIBILITY_MARKERS):
+        return []
+    daily_sections = arguments.get("daily_sections")
+    if daily_sections and isinstance(daily_sections, list):
+        for section in daily_sections:
+            content = str(section.get("content", ""))
+            if any(marker in content for marker in _ESTIMATION_VISIBILITY_MARKERS):
+                return []
+    return [
+        "逐日行程含未经路线工具验证的估算通勤，但交付物未对用户标注"
+        "（缺少「估算」等可见提示）"
     ]
-    return "\n\n".join(str(part) for part in parts if part is not None)
+
+
+def evaluate_deliverable_gate(
+    plan,
+    result_data: dict | None,
+    arguments: dict | None,
+) -> tuple[str, list[str]] | None:
+    consistency_errors = build_deliverable_consistency_errors(
+        plan, result_data, arguments
+    )
+    if consistency_errors:
+        return (_DELIVERABLE_CONSISTENCY_ERROR_CODE, consistency_errors)
+    estimation_errors = build_estimation_visibility_errors(
+        plan, result_data, arguments
+    )
+    if estimation_errors:
+        return (_DELIVERABLE_ESTIMATION_ERROR_CODE, estimation_errors)
+    return None
 
 
 def _mark_future_weather_delivery_error(result) -> None:
@@ -76,6 +369,29 @@ def _mark_future_weather_delivery_error(result) -> None:
     result.suggestion = (
         f"把天气表述改为参考信息，并在 travel_plan_markdown 或 "
         f"checklist_markdown 中明确写「{_REQUIRED_WEATHER_CONFIRMATION}」。"
+    )
+
+
+def _mark_deliverable_consistency_error(result, errors: list[str]) -> None:
+    result.status = "error"
+    result.data = None
+    result.error_code = _DELIVERABLE_CONSISTENCY_ERROR_CODE
+    result.error = "交付物与已锁定的行程状态不一致：" + "；".join(errors[:5])
+    result.suggestion = (
+        "请按 TravelPlanState 的权威字段重写 generate_summary；"
+        "不要改写已锁定交通、住宿、日期、预算或逐日天气事实。"
+    )
+
+
+def _mark_deliverable_estimation_error(result, errors: list[str]) -> None:
+    result.status = "error"
+    result.data = None
+    result.error_code = _DELIVERABLE_ESTIMATION_ERROR_CODE
+    result.error = "交付物未标注估算通勤：" + "；".join(errors[:5])
+    result.suggestion = (
+        "逐日行程存在未经 calculate_route 验证的估算通勤，"
+        "系统应自动在 travel_plan_markdown 中标注；"
+        "如未自动标注，请在 daily_sections 的 content 中手动添加「估算」或「⚠️」标记后重新提交。"
     )
 
 
@@ -121,11 +437,27 @@ def build_agent_hooks(
             ):
                 return
             messages = kwargs.get("messages")
+
+            def _apply_gate() -> None:
+                gate = evaluate_deliverable_gate(
+                    plan, result.data, tc.arguments or {}
+                )
+                if gate is None:
+                    return
+                code, errors = gate
+                if code == _DELIVERABLE_CONSISTENCY_ERROR_CODE:
+                    _mark_deliverable_consistency_error(result, errors)
+                else:
+                    _mark_deliverable_estimation_error(result, errors)
+
             if not _has_reference_only_weather(messages):
+                _apply_gate()
                 return
             markdown = _combined_deliverable_markdown(result.data, tc.arguments or {})
             if _REQUIRED_WEATHER_CONFIRMATION not in markdown:
                 _mark_future_weather_delivery_error(result)
+                return
+            _apply_gate()
             return
 
         if tool_name in PLAN_WRITER_TOOL_NAMES:

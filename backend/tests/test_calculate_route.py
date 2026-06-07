@@ -1,4 +1,6 @@
 # backend/tests/test_calculate_route.py
+from datetime import datetime
+
 import pytest
 import respx
 from httpx import Response
@@ -51,8 +53,82 @@ async def test_calculate_route(tool_fn):
     assert len(result["steps"]) == 1
     assert result["steps"][0]["duration_min"] == 2
     assert result["mode"] == "transit"
+    assert result["requested_mode"] == "transit"
+    assert result["fallback_used"] is False
     assert result["google_status"] == "OK"
     assert result["route_available"] is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_calculate_route_sends_departure_time(tool_fn):
+    respx.get("https://maps.googleapis.com/maps/api/directions/json").mock(
+        return_value=Response(
+            200,
+            json={
+                "status": "OK",
+                "routes": [
+                    {
+                        "legs": [
+                            {
+                                "distance": {"text": "5.2 km", "value": 5200},
+                                "duration": {"text": "18 mins", "value": 1080},
+                                "steps": [],
+                            }
+                        ]
+                    }
+                ],
+            },
+        )
+    )
+
+    await tool_fn(
+        origin_lat=35.01,
+        origin_lng=135.76,
+        dest_lat=35.04,
+        dest_lng=135.73,
+        departure_time=1_800_000_000,
+    )
+
+    params = respx.calls[0].request.url.params
+    assert params["departure_time"] == "1800000000"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_calculate_route_accepts_iso_departure_time(tool_fn):
+    respx.get("https://maps.googleapis.com/maps/api/directions/json").mock(
+        return_value=Response(
+            200,
+            json={
+                "status": "OK",
+                "routes": [
+                    {
+                        "legs": [
+                            {
+                                "distance": {"text": "5.2 km", "value": 5200},
+                                "duration": {"text": "18 mins", "value": 1080},
+                                "steps": [],
+                            }
+                        ]
+                    }
+                ],
+            },
+        )
+    )
+
+    iso_time = "2026-05-01T09:00:00+09:00"
+    await tool_fn(
+        origin_lat=35.01,
+        origin_lng=135.76,
+        dest_lat=35.04,
+        dest_lng=135.73,
+        departure_time=iso_time,
+    )
+
+    expected = str(int(datetime.fromisoformat(iso_time).timestamp()))
+    params = respx.calls[0].request.url.params
+    assert params["departure_time"] == expected
 
 
 @respx.mock
@@ -71,7 +147,70 @@ async def test_calculate_route_zero_results_is_not_success(tool_fn):
         )
 
     assert exc_info.value.error_code == "NO_ROUTE"
-    assert "walking/driving" in exc_info.value.suggestion
+    assert "已自动尝试" in exc_info.value.suggestion
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_calculate_route_zero_results_short_distance_falls_back_to_walking(tool_fn):
+    respx.get("https://maps.googleapis.com/maps/api/directions/json").mock(
+        side_effect=[
+            Response(200, json={"status": "ZERO_RESULTS", "routes": []}),
+            Response(
+                200,
+                json={
+                    "status": "OK",
+                    "routes": [
+                        {
+                            "legs": [
+                                {
+                                    "distance": {"text": "120 m", "value": 120},
+                                    "duration": {"text": "2 mins", "value": 120},
+                                    "steps": [],
+                                }
+                            ]
+                        }
+                    ],
+                },
+            ),
+        ]
+    )
+
+    result = await tool_fn(
+        origin_lat=35.0000,
+        origin_lng=139.0000,
+        dest_lat=35.0005,
+        dest_lng=139.0005,
+        mode="transit",
+    )
+
+    assert len(respx.calls) == 2
+    assert respx.calls[0].request.url.params["mode"] == "transit"
+    assert respx.calls[1].request.url.params["mode"] == "walking"
+    assert result["mode"] == "walking"
+    assert result["requested_mode"] == "transit"
+    assert result["fallback_used"] is True
+    assert result["fallback_reason"] == "transit_zero_results_short_distance"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_calculate_route_zero_results_long_distance_does_not_fallback(tool_fn):
+    respx.get("https://maps.googleapis.com/maps/api/directions/json").mock(
+        return_value=Response(200, json={"status": "ZERO_RESULTS", "routes": []})
+    )
+
+    with pytest.raises(ToolError) as exc_info:
+        await tool_fn(
+            origin_lat=35.01,
+            origin_lng=135.76,
+            dest_lat=35.40,
+            dest_lng=139.73,
+            mode="transit",
+        )
+
+    assert len(respx.calls) == 1
+    assert exc_info.value.error_code == "NO_ROUTE"
 
 
 @respx.mock

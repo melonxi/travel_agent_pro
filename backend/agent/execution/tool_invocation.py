@@ -13,7 +13,6 @@ SEARCH_TOOLS = {
     "quick_travel_search",
 }
 
-
 @dataclass
 class SearchHistoryTracker:
     max_size: int = 20

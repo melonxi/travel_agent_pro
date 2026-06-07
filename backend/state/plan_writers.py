@@ -24,6 +24,7 @@ from state.models import (
     DayPlan,
     Preference,
     TravelPlanState,
+    normalize_pace_value,
 )
 
 
@@ -145,7 +146,12 @@ def write_alternatives(plan: TravelPlanState, alternatives: list[dict]) -> None:
 def write_trip_brief(plan: TravelPlanState, fields: dict) -> None:
     """Merge fields into existing trip_brief (incremental update)."""
     assert isinstance(fields, dict), f"Expected dict, got {type(fields).__name__}"
-    plan.trip_brief.update(fields)
+    normalized_fields = dict(fields)
+    if "pace" in normalized_fields:
+        normalized_pace = normalize_pace_value(normalized_fields["pace"])
+        if normalized_pace is not None:
+            normalized_fields["pace"] = normalized_pace
+    plan.trip_brief.update(normalized_fields)
 
 
 # ---------------------------------------------------------------------------
@@ -321,5 +327,8 @@ def execute_backtrack(
         "from_phase": from_phase,
         "to_phase": to_phase,
         "reason": reason,
-        "next_action": "请向用户确认回退结果，不要继续调用其他工具",
+        "next_action": (
+            "已回退并重建上下文。若用户本轮已明确授权修复，请继续在目标阶段调用工具完成修复；"
+            "若只是提出修改意向，再向用户确认。"
+        ),
     }

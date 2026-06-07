@@ -33,6 +33,39 @@ def _make_plan() -> TravelPlanState:
     return plan
 
 
+def _locked_transport() -> dict:
+    return {
+        "id": "option_a",
+        "label": "方案A",
+        "price": 3200,
+        "currency": "CNY",
+        "segments": [
+            {
+                "direction": "outbound",
+                "type": "flight",
+                "airline": "东方航空",
+                "flight_number": "MU523",
+                "departure_airport": "PVG",
+                "arrival_airport": "HND",
+                "departure_time": "09:05",
+                "arrival_time": "12:50",
+                "price": 1800,
+            },
+            {
+                "direction": "return",
+                "type": "flight",
+                "airline": "春秋航空日本",
+                "flight_number": "IJ005",
+                "departure_airport": "NRT",
+                "arrival_airport": "PVG",
+                "departure_time": "19:20",
+                "arrival_time": "21:55",
+                "price": 1400,
+            },
+        ],
+    }
+
+
 def test_build_shared_prefix_contains_destination():
     plan = _make_plan()
     prefix = build_shared_prefix(plan)
@@ -68,6 +101,30 @@ def test_build_shared_prefix_prefers_submit_tool_handoff():
     assert "不要在自然语言正文中输出完整 DayPlan JSON" in prefix
     assert "不会直接写入最终行程状态" in prefix
     assert "最后一条消息" not in prefix
+
+
+def test_build_shared_prefix_contains_time_conflict_formula():
+    plan = _make_plan()
+    prefix = build_shared_prefix(plan)
+
+    assert "transport_duration_min <= 下一活动 start_time" in prefix
+
+
+def test_build_shared_prefix_contains_locked_transport_fact_block():
+    plan = _make_plan()
+    plan.selected_transport = _locked_transport()
+
+    prefix = build_shared_prefix(plan)
+
+    assert "已锁定大交通" in prefix
+    assert "只读" in prefix
+    assert "MU523" in prefix
+    assert "IJ005" in prefix
+    assert "PVG" in prefix
+    assert "HND" in prefix
+    assert "3200 CNY" in prefix
+    assert "禁止" in prefix
+    assert "重新查航班" in prefix
 
 
 def test_build_day_suffix():
@@ -156,6 +213,11 @@ class TestDayTaskConstraints:
         assert task.fallback_slots == []
         assert task.date_role == "full_day"
         assert task.repair_hints == []
+        assert task.arrival_transport is None
+        assert task.departure_transport is None
+        assert task.max_core_activities is None
+        assert task.candidate_activity_slots is None
+        assert task.demoted_locked_pois == []
 
     def test_suffix_contains_constraint_block(self):
         task = DayTask(
@@ -174,6 +236,40 @@ class TestDayTaskConstraints:
         assert "禁止" in suffix
         assert "候选" in suffix or "允许" in suffix
         assert "35" in suffix
+
+    def test_suffix_limits_candidates_to_remaining_activity_slots(self):
+        task = DayTask(
+            day=2,
+            date="2026-05-02",
+            skeleton_slice={},
+            pace="relaxed",
+            locked_pois=["昆明老街", "米轨麻园站", "西南联大旧址"],
+            candidate_pois=["景星花鸟市场", "南屏步行街", "金殿"],
+            max_core_activities=3,
+            candidate_activity_slots=0,
+        )
+        suffix = build_day_suffix(task)
+
+        assert "最多 3 个核心活动" in suffix
+        assert "可新增名额 0 个" in suffix
+        assert "不得追加为新活动" in suffix
+
+    def test_suffix_explains_demoted_locked_pois(self):
+        task = DayTask(
+            day=1,
+            date="2026-05-01",
+            skeleton_slice={},
+            pace="relaxed",
+            locked_pois=["A", "B", "C"],
+            candidate_pois=["D"],
+            max_core_activities=3,
+            candidate_activity_slots=0,
+            demoted_locked_pois=["D"],
+        )
+        suffix = build_day_suffix(task)
+
+        assert "降级为候选替换备选" in suffix
+        assert "D" in suffix
 
     def test_suffix_contains_repair_hints(self):
         task = DayTask(
@@ -199,6 +295,38 @@ class TestDayTaskConstraints:
         )
         suffix = build_day_suffix(task)
         assert "离开日" in suffix
+
+    def test_suffix_contains_arrival_transport_identity(self):
+        task = DayTask(
+            day=1,
+            date="2026-05-01",
+            skeleton_slice={},
+            pace="balanced",
+            date_role="arrival_day",
+            arrival_time="12:50",
+            arrival_transport=_locked_transport()["segments"][0],
+        )
+        suffix = build_day_suffix(task)
+        assert "到港交通" in suffix
+        assert "MU523" in suffix
+        assert "PVG" in suffix
+        assert "HND" in suffix
+
+    def test_suffix_contains_departure_transport_identity(self):
+        task = DayTask(
+            day=3,
+            date="2026-05-03",
+            skeleton_slice={},
+            pace="balanced",
+            date_role="departure_day",
+            departure_time="19:20",
+            departure_transport=_locked_transport()["segments"][1],
+        )
+        suffix = build_day_suffix(task)
+        assert "离港交通" in suffix
+        assert "IJ005" in suffix
+        assert "NRT" in suffix
+        assert "PVG" in suffix
 
 
 class TestSplitExtractsNewFields:
@@ -276,6 +404,58 @@ def test_build_shared_prefix_stable_ordering():
     assert build_shared_prefix(plan1) == build_shared_prefix(plan2)
 
 
+def test_build_shared_prefix_accepts_outbound_return_transport_shape():
+    plan = _make_plan()
+    plan.selected_transport = {
+        "outbound": {
+            "airline": "东航",
+            "flight_no": "MU523",
+            "departure": "上海 09:05",
+            "arrival": "东京 12:50",
+        },
+        "return": {
+            "airline": "春秋日本航空",
+            "flight_no": "IJ003",
+            "departure": "东京 13:55",
+            "arrival": "上海 16:20",
+        },
+    }
+
+    prefix = build_shared_prefix(plan)
+
+    assert "MU523" in prefix
+    assert "IJ003" in prefix
+    assert "上海 09:05" in prefix
+    assert "东京 13:55" in prefix
+
+
+def test_build_shared_prefix_accepts_dep_time_arr_time_transport_shape():
+    plan = _make_plan()
+    plan.selected_transport = {
+        "outbound": {
+            "airline": "东航",
+            "flight_no": "MU727",
+            "departure": "上海浦东→东京",
+            "dep_time": "2026-07-10 07:55",
+            "arr_time": "2026-07-10 12:00",
+        },
+        "return": {
+            "airline": "春秋日本航空",
+            "flight_no": "IJ005",
+            "departure": "东京成田→上海浦东",
+            "dep_time": "2026-07-12 19:20",
+            "arr_time": "2026-07-12 21:45",
+        },
+    }
+
+    prefix = build_shared_prefix(plan)
+
+    assert "MU727" in prefix
+    assert "IJ005" in prefix
+    assert "上海浦东→东京" in prefix
+    assert "2026-07-12 19:20" in prefix
+
+
 def test_build_shared_prefix_excludes_soft_constraints():
     plan = _make_plan()
     plan.constraints = [
@@ -326,3 +506,16 @@ def test_forbidden_pois_explains_why():
     )
     suffix = build_day_suffix(task)
     assert "跨天 POI 重复" in suffix or "已被其他天锁定" in suffix
+
+
+def test_dayplan_schema_documents_transport_estimated():
+    from agent.phase3.worker_prompt import _DAYPLAN_SCHEMA
+
+    assert "transport_estimated" in _DAYPLAN_SCHEMA
+    assert "保守估算" in _DAYPLAN_SCHEMA
+
+
+def test_route_unavailable_prompt_uses_structured_flag():
+    from agent.phase3.day_worker import _ROUTE_UNAVAILABLE_PROMPT
+
+    assert "transport_estimated" in _ROUTE_UNAVAILABLE_PROMPT

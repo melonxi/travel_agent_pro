@@ -12,6 +12,15 @@ from llm.errors import LLMError
 from llm.types import ChunkType
 from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
 
+from api.orchestration.chat.backtrack_fallback import maybe_apply_backtrack_fallback
+from api.orchestration.chat.deliverables import (
+    finalize_pending_phase4_deliverables,
+    has_frozen_phase4_deliverables,
+)
+from api.orchestration.chat.errors import (
+    agent_stream_error_event,
+    is_retryable_stream_error,
+)
 from api.orchestration.chat.events import (
     apply_pending_tool_stats,
     chunk_event_data,
@@ -22,7 +31,6 @@ from api.orchestration.chat.events import (
 from api.orchestration.chat.finalization import (
     finalize_agent_run,
     persist_run_safely,
-    persist_unflushed_messages,
 )
 from api.orchestration.chat.trace_persistence import persist_trace_run_safely
 from api.orchestration.common.telemetry_helpers import (
@@ -32,6 +40,7 @@ from api.orchestration.common.telemetry_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+_has_frozen_phase4_deliverables = has_frozen_phase4_deliverables
 
 
 @asynccontextmanager
@@ -76,16 +85,7 @@ async def run_agent_stream(
     *,
     user_message: str | None = None,
 ):
-    """Shared agent streaming logic for chat and continue endpoints.
-
-    Parameters
-    ----------
-    user_message : str | None
-        The original user message text. Used for fallback backtrack
-        detection and ``apply_message_fallbacks``. Pass ``None`` in the
-        continue endpoint where no new user message exists — backtrack
-        detection will be skipped.
-    """
+    """Shared agent streaming logic for chat and continue endpoints."""
     from run import IterationProgress
 
     keepalive_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -103,54 +103,6 @@ async def run_agent_stream(
 
     keepalive_task = asyncio.create_task(_keepalive_loop())
     session["_soft_judge_repair_feedback_count"] = 0
-
-    async def _finalize_pending_phase4_deliverables(
-        *,
-        force: bool = False,
-    ) -> bool:
-        pending = session.get("_pending_phase4_deliverables")
-        if not isinstance(pending, dict):
-            return False
-
-        decision = session.get("_phase4_deliverables_quality")
-        if isinstance(decision, dict):
-            if (
-                decision.get("tool_call_id")
-                and decision.get("tool_call_id") != pending.get("tool_call_id")
-            ):
-                return False
-            if decision.get("status") == "blocked":
-                session.pop("_pending_phase4_deliverables", None)
-                session.pop("_phase4_deliverables_quality", None)
-                return False
-            if decision.get("status") != "approved" and not force:
-                return False
-        elif not force:
-            return False
-
-        result_data = pending.get("result_data")
-        if not isinstance(result_data, dict):
-            session.pop("_pending_phase4_deliverables", None)
-            session.pop("_phase4_deliverables_quality", None)
-            return False
-
-        await deps.persist_phase4_deliverables(plan, result_data)
-        session.pop("_pending_phase4_deliverables", None)
-        session.pop("_phase4_deliverables_quality", None)
-        await deps.state_mgr.save(plan)
-        try:
-            await deps.session_store.update(
-                plan.session_id,
-                phase=plan.phase,
-                title=deps.generate_title(plan),
-            )
-        except Exception:
-            logger.warning(
-                "Phase 4 交付物 session meta 更新失败 session=%s",
-                plan.session_id,
-                exc_info=True,
-            )
-        return True
 
     try:
         accum_text = ""  # 追踪本轮 LLM 输出的文本，供中断恢复使用
@@ -183,7 +135,11 @@ async def run_agent_stream(
                     if passthrough_event is not None:
                         yield passthrough_event
                         if chunk.type == ChunkType.INTERNAL_TASK:
-                            if await _finalize_pending_phase4_deliverables():
+                            if await finalize_pending_phase4_deliverables(
+                                deps=deps,
+                                session=session,
+                                plan=plan,
+                            ):
                                 yield event_json(
                                     {"type": "state_update", "plan": plan.to_dict()}
                                 )
@@ -287,29 +243,45 @@ async def run_agent_stream(
                             yield event_json(
                                 {"type": "phase_transition", **_pending_step}
                             )
-                if await _finalize_pending_phase4_deliverables(force=True):
+                if await finalize_pending_phase4_deliverables(
+                    deps=deps,
+                    session=session,
+                    plan=plan,
+                    force=True,
+                ):
                     yield event_json({"type": "state_update", "plan": plan.to_dict()})
         except TimeoutError:
-            run.status = "failed"
-            run.error_code = "RUN_TIMEOUT"
-            run.finished_at = time.time()
-            timeout_seconds = getattr(deps.config, "run_timeout_seconds", None)
-            logger.warning(
-                "Agent run timed out session=%s run=%s timeout_seconds=%s",
-                plan.session_id,
-                run.run_id,
-                timeout_seconds,
-            )
-            yield event_json(
-                {
-                    "type": "error",
-                    "error_code": "RUN_TIMEOUT",
-                    "retryable": True,
-                    "can_continue": False,
-                    "message": f"本轮执行超过 {timeout_seconds} 秒，已停止。",
-                    "error": "run_timeout",
-                }
-            )
+            if has_frozen_phase4_deliverables(plan):
+                run.status = "completed"
+                run.error_code = None
+                run.finished_at = time.time()
+                logger.warning(
+                    "Agent run hit timeout after Phase 4 deliverables were frozen; "
+                    "marking completed session=%s run=%s",
+                    plan.session_id,
+                    run.run_id,
+                )
+            else:
+                run.status = "failed"
+                run.error_code = "RUN_TIMEOUT"
+                run.finished_at = time.time()
+                timeout_seconds = getattr(deps.config, "run_timeout_seconds", None)
+                logger.warning(
+                    "Agent run timed out session=%s run=%s timeout_seconds=%s",
+                    plan.session_id,
+                    run.run_id,
+                    timeout_seconds,
+                )
+                yield event_json(
+                    {
+                        "type": "error",
+                        "error_code": "RUN_TIMEOUT",
+                        "retryable": True,
+                        "can_continue": False,
+                        "message": f"本轮执行超过 {timeout_seconds} 秒，已停止。",
+                        "error": "run_timeout",
+                    }
+                )
         except LLMError as exc:
             if exc.failure_phase == "cancelled":
                 run.status = "cancelled"
@@ -365,99 +337,23 @@ async def run_agent_stream(
                     }
                 )
         except Exception as exc:
+            is_retryable = is_retryable_stream_error(exc)
             run.status = "failed"
             run.error_code = "AGENT_STREAM_ERROR"
             run.finished_at = time.time()
             logger.exception("Agent stream failed for session %s", plan.session_id)
-            yield event_json(
-                {
-                    "type": "error",
-                    "error_code": "AGENT_STREAM_ERROR",
-                    "retryable": False,
-                    "can_continue": False,
-                    "message": "系统内部错误，请稍后重试。",
-                    "error": str(exc),
-                }
-            )
+            yield agent_stream_error_event(exc, retryable=is_retryable)
 
-        # Fallback：如果本轮 agent 没触发 backtrack，检查关键词 fallback
-        # 仅在有用户消息时进行（continue 场景无新用户消息，跳过）
-        if user_message is not None and plan.phase == phase_before_run:
-            backtrack_target = deps.detect_backtrack(user_message, plan)
-            if backtrack_target is not None:
-                reason = f"fallback回退：{user_message[:50]}"
-                tool_call_id = f"fallback.request_backtrack:{plan.version}"
-                yield event_json(
-                    {
-                        "type": "tool_call",
-                        "tool_call": {
-                            "id": tool_call_id,
-                            "name": "request_backtrack",
-                            "arguments": {
-                                "to_phase": backtrack_target,
-                                "reason": reason,
-                            },
-                            "human_label": "回退到之前阶段",
-                        },
-                    }
-                )
-                snapshot_path = await deps.state_mgr.save_snapshot(plan)
-                from_phase = plan.phase
-                await persist_unflushed_messages(
-                    deps=deps,
-                    session=session,
-                    plan=plan,
-                    messages=messages,
-                    phase=from_phase,
-                    phase2_step=getattr(plan, "phase2_step", None),
-                    run_id=run.run_id,
-                    trip_id=getattr(plan, "trip_id", None),
-                )
-                deps.phase_router.prepare_backtrack(
-                    plan,
-                    backtrack_target,
-                    reason,
-                    snapshot_path,
-                )
-                await deps.state_mgr.clear_deliverables(plan.session_id)
-                await deps.rotate_trip_on_reset_backtrack(
-                    user_id=session["user_id"],
-                    plan=plan,
-                    to_phase=backtrack_target,
-                    reason_text=user_message,
-                )
-                session["needs_rebuild"] = True
-                yield event_json(
-                    {
-                        "type": "tool_result",
-                        "tool_result": {
-                            "tool_call_id": tool_call_id,
-                            "status": "success",
-                            "data": {
-                                "backtracked": True,
-                                "from_phase": from_phase,
-                                "to_phase": backtrack_target,
-                                "reason": reason,
-                                "next_action": "请向用户确认回退结果，不要继续调用其他工具",
-                            },
-                            "error": None,
-                            "error_code": None,
-                            "suggestion": None,
-                        },
-                    }
-                )
-                deps.schedule_memory_event(
-                    user_id=session["user_id"],
-                    session_id=plan.session_id,
-                    event_type="reject",
-                    object_type="phase_output",
-                    object_payload={
-                        "from_phase": from_phase,
-                        "to_phase": backtrack_target,
-                        "reason": reason,
-                    },
-                    reason_text=reason,
-                )
+        async for event in maybe_apply_backtrack_fallback(
+            deps=deps,
+            session=session,
+            plan=plan,
+            messages=messages,
+            run=run,
+            user_message=user_message,
+            phase_before_run=phase_before_run,
+        ):
+            yield event
 
         if user_message is not None and plan.phase < phase_before_run:
             await deps.apply_message_fallbacks(plan, user_message, deps.phase_router)

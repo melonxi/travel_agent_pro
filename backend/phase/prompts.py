@@ -226,6 +226,13 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
   - `budget_level`：预算等级（`low` / `medium` / `high`）
 - `tradeoffs`：保留了什么、放弃了什么
 
+**活动数量预算**（字段契约）：必须按 `trip_brief.pace` 控制每一天的骨架密度：
+- `relaxed`：每天 2-3 个核心活动，`locked_pois` 最多 3 个
+- `balanced`：每天 3-4 个核心活动，`locked_pois` 最多 4 个
+- `intensive`：每天 4-5 个核心活动，`locked_pois` 最多 5 个
+
+`candidate_pois` 是补位 / 替换备选，不代表都会进入最终日程。如果 `locked_pois` 已达到当天上限，`candidate_pois` 只能作为替换备选，不得暗示 Phase 3 继续追加。`core_activities` 数量也不得超过对应 pace 上限；普通用餐、入住、交通接驳应并入核心活动描述，不要拆成额外核心活动。
+
 **POI 跨天唯一性**（字段契约）：同一套 skeleton 内，一个 POI 只能出现在一天的 `locked_pois` 或 `candidate_pois` 中一次。如果只是弱备选也只归属给最合适的一天；写入前自查不要让同一 POI 出现在两天的 `candidate_pois` 中。
 
 可选字段（有则更好）：`excluded_pois` / `date_role`（`arrival_day` / `departure_day` / `full_day`）/ `mobility_envelope` / `fallback_slots`。
@@ -269,6 +276,14 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 - 基于动线推荐 2-3 个住宿区域，再搜具体酒店。
 - 大交通在 dates 和骨架已确认后再查；给 2-3 个差异化方案，不替用户拍板。
 - 对预算、开放时间、移动时耗做初步可行性检查。
+
+## 锁定授权边界
+
+- 用户说"倾向 / 偏向 / 选 A / 先看看 / 帮我搜一下 / 看看房价 / 可以接受"只代表候选偏好，不是锁定授权。
+- 这类消息只能调用 `set_transport_options` / `set_accommodation_options` 或搜索工具，回复中请用户二次确认。
+- 只有用户明确说"锁定 / 确认锁定 / 帮我定这个 / 按这个方案推进 / 可以定交通"时，才调用 `select_transport` 或 `set_accommodation`。
+- 如果用户只选择交通并要求继续看住宿（如"交通选A，接着推荐住宿"），只把它当作交通倾向，不调用 `select_transport`；等住宿也确认或用户明确说锁交通再写入。
+- 如果同一轮用户同时明确锁定交通和住宿，可以分别调用 `select_transport` 与 `set_accommodation`，然后推进到 Phase 3。
 
 ## 状态写入分工
 
@@ -323,7 +338,8 @@ PHASE3_PROMPT = """## 硬法则（执行级）
 
 ### 动作 2 — assemble（逐天组装）
 把每天落成结构化 DayPlan：
-- 每天 2-5 个核心活动（根据节奏偏好调整）
+- 按节奏上限控制核心活动数：relaxed 2-3、balanced 3-4、intensive 4-5
+- 普通用餐、入住、交通接驳并入相邻核心活动，不要拆成额外核心活动
 - 每个活动包含：start_time、end_time、location、category、cost、transport_from_prev、transport_duration_min
 - 用 optimize_day_route 优化同一天内部活动顺序；注意它只是路线辅助，不写 daily_plans
 - 用 get_poi_info 补齐缺失的坐标、票价、基础属性
@@ -350,7 +366,7 @@ PHASE3_PROMPT = """## 硬法则（执行级）
 {
   "day": 1,
   "date": "2026-05-01",
-  "notes": "可选说明",
+  "tips": "小贴士：建议带伞，穿轻便衣物",
   "activities": [
     {
       "name": "明治神宫",
@@ -368,7 +384,8 @@ PHASE3_PROMPT = """## 硬法则（执行级）
 ```
 
 硬约束：
-- `activities` 必须是 list，每个元素必须是 dict
+- `activities` 必须是 list，每个元素必须是 dict — **行程内容只能写在 activities 中，不能塞进 notes**
+- `notes` 仅用于小贴士（天气提醒、穿着建议），不是行程内容的替代容器
 - `location` 必须是 dict（至少含 name），不能是字符串
 - `start_time` / `end_time` 必须是 `"HH:MM"` 格式
 - `category` 必须提供（`shrine` / `museum` / `food` / `transport` / `activity` 等）
@@ -458,6 +475,7 @@ PHASE4_PROMPT = """## 输入 Gate
 - `check_weather`：获取出行日期的目的地天气预报
 - `search_travel_services`：搜签证办理、旅行保险、电话卡、WiFi、接送机等实用服务
 - 回顾 `daily_plans` 中的活动类型，识别需要特别准备的项目（寺庙着装、温泉纹身政策、远郊交通卡等）
+- 如果用户在本阶段明确改选已锁定大交通，先调用 `select_transport` 写入新的权威交通；如果影响到达/离开日安排，再调用 `request_backtrack(to_phase=3, reason="...")` 让 Phase 3 基于新交通重排。
 
 ### 步骤 2 — 生成个性化清单
 
@@ -473,9 +491,24 @@ PHASE4_PROMPT = """## 输入 Gate
 
 ### 步骤 3 — 提交正式交付物
 
-调用 `generate_summary` 一次提交两个字段：
-- `travel_plan_markdown`：基于 `destination` / `dates` / `daily_plans` / `accommodation` / `selected_transport` 整理出的正式行程 markdown
-- `checklist_markdown`：基于天气、服务搜索结果和 Phase 4 风险提醒整理出的出发前清单 markdown
+调用 `generate_summary` 提交结构化交付数据。代码会自动生成 H1 标题、逐日章节标题、清单分类标题，你只需提供内容。
+
+**必须提供的字段：**
+- `title`：行程计划标题，如「东京5日旅行计划」
+- `overview`：行程总体概述（2-3句话）
+- `daily_sections`：逐日行程列表，每天一个对象 `{ day, date, title, content }`
+  - `day`：第几天（整数）
+  - `date`：日期字符串（可选）
+  - `title`：当天标题（可选）
+  - `content`：当天行程详情（markdown 片段，无需写 `## 第 N 天` 标题，代码自动生成）
+- `checklist_title`：出发前清单标题，如「东京出发前清单」
+- `checklist_categories`：清单分类列表，每类 `{ category, items }`
+  - `category`：类别名（如「证件与文件」）
+  - `items`：该类别的清单项字符串数组
+
+**注意：**
+- 如果某天交通时长未经 `calculate_route` 验证（使用了估算通勤），系统会在该天行程末尾自动标注「⚠️ 交通时长为估算」，你无需手动添加
+- `plan_data` 仍需传入，至少包含 `destination`
 
 天气表述规则：
 - 如果 `check_weather` 返回 `note` 包含“精确日期预报不可用”，这只是最近预报参考，不是出行日确定天气。
@@ -487,9 +520,10 @@ PHASE4_PROMPT = """## 输入 Gate
 必用工具：
 - `check_weather`：获取目的地出行期间的天气预报
 - `search_travel_services`：搜签证、保险、电话卡、租车、接送机等服务（附预订链接）
-- `generate_summary`：提交正式交付物候选，必须同时传 `travel_plan_markdown` 与 `checklist_markdown`；质量检查通过后系统才会冻结文件
+- `generate_summary`：提交正式交付物候选，传 `title` + `daily_sections` + `checklist_title` + `checklist_categories`；代码自动生成 H1 标题和逐日章节；质量检查通过后系统才会冻结文件
 
 辅助工具：
+- `select_transport`：仅当用户在 Phase 4 明确改选已锁定大交通时使用；必须先写入新交通，再回退重排行程。
 - `web_search`：验证签证政策、入境规定、安全预警等高时效性信息
 - xhs 三件套：补充目的地实用贴士、避坑经验
 
@@ -497,8 +531,9 @@ PHASE4_PROMPT = """## 输入 Gate
 
 ## 状态写入契约
 
-- 不修改 `daily_plans` / `accommodation` / `selected_transport`。
-- 最终通过 `generate_summary` 一次提交 `travel_plan_markdown` + `checklist_markdown`；若质量评审反馈需要修订，先修订后再次提交。
+- 不修改 `daily_plans` / `accommodation`。
+- `selected_transport` 只有一个例外：用户明确改选已锁定交通时，必须用 `select_transport` 写入新权威状态；如果还需要修改逐日行程，随后回退到 Phase 3，不要只口头确认。
+- 最终通过 `generate_summary` 提交 `title` + `daily_sections` + `checklist_title` + `checklist_categories`；若质量评审反馈需要修订，先修订后再次提交。
 - 严重问题需要修改上游决策时调 `request_backtrack(to_phase=..., reason="...")`，不擅自修改。"""
 
 

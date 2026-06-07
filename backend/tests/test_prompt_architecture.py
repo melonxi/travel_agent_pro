@@ -238,6 +238,17 @@ class TestPhase2Split:
         """Lock must address transport timing — the fix for Question 2."""
         assert "大交通" in PHASE2_STEP_PROMPTS["lock"]
 
+    def test_lock_distinguishes_preference_from_lock_consent(self):
+        prompt = PHASE2_STEP_PROMPTS["lock"]
+        assert "锁定授权边界" in prompt
+        assert "倾向" in prompt
+        assert "帮我搜一下" in prompt
+        assert "不是锁定授权" in prompt
+        assert "交通选A，接着推荐住宿" in prompt
+        assert "set_transport_options" in prompt
+        assert "只有用户明确说" in prompt
+        assert "select_transport" in prompt
+
 
 class TestBuildPhase2Prompt:
     """build_phase2_prompt() must assemble base + step correctly."""
@@ -433,11 +444,9 @@ class TestPhase4ExecutionRules:
     def test_phase4_mentions_generate_summary(self):
         assert "generate_summary" in PHASE4_PROMPT
 
-    def test_phase4_mentions_travel_plan_markdown(self):
-        assert "travel_plan_markdown" in PHASE4_PROMPT
-
-    def test_phase4_mentions_checklist_markdown(self):
-        assert "checklist_markdown" in PHASE4_PROMPT
+    def test_phase4_mentions_structured_fields(self):
+        assert "daily_sections" in PHASE4_PROMPT
+        assert "checklist_title" in PHASE4_PROMPT
 
     def test_phase4_mentions_frozen_deliverables(self):
         assert "冻结" in PHASE4_PROMPT or "先回退" in PHASE4_PROMPT

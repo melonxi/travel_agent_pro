@@ -1,6 +1,7 @@
 import pytest
 import time
 from telemetry.stats import (
+    estimate_llm_cost_usd,
     MemoryHitRecord,
     RecallTelemetryRecord,
     SessionStats,
@@ -59,6 +60,41 @@ def test_cost_calculation_claude():
     )
     # claude-sonnet-4: $3.00/1M input + $15.00/1M output = $18.00
     assert abs(stats.estimated_cost_usd - 18.00) < 0.01
+
+
+def test_cost_calculation_deepseek_v4_flash_uses_cache_buckets():
+    stats = SessionStats()
+    stats.record_llm_call(
+        provider="openai",
+        model="deepseek-v4-flash",
+        input_tokens=2_000_000,
+        output_tokens=1_000_000,
+        duration_ms=5000.0,
+        phase=1,
+        iteration=0,
+        metadata={
+            "prompt_cache_hit_tokens": 1_000_000,
+            "prompt_cache_miss_tokens": 1_000_000,
+        },
+    )
+
+    assert stats.estimated_cost_usd == pytest.approx(0.4228)
+    model_data = stats.to_dict()["by_model"]["deepseek-v4-flash"]
+    assert model_data["prompt_cache_hit_rate"] == 0.5
+
+
+def test_deepseek_pricing_matches_namespaced_model_ids():
+    cost = estimate_llm_cost_usd(
+        "deepseek/deepseek-v4-pro",
+        input_tokens=2_000_000,
+        output_tokens=1_000_000,
+        metadata={
+            "prompt_cache_hit_tokens": 1_000_000,
+            "prompt_cache_miss_tokens": 1_000_000,
+        },
+    )
+
+    assert cost == pytest.approx(1.308625)
 
 
 def test_to_dict_structure():

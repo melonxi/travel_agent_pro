@@ -112,6 +112,7 @@ class Activity:
     cost: float = 0
     transport_from_prev: str | None = None
     transport_duration_min: int = 0
+    transport_estimated: bool = False
     notes: str = ""
 
     @property
@@ -130,6 +131,7 @@ class Activity:
             "cost": self.cost,
             "transport_from_prev": self.transport_from_prev,
             "transport_duration_min": self.transport_duration_min,
+            "transport_estimated": self.transport_estimated,
             "notes": self.notes,
         }
 
@@ -148,23 +150,41 @@ class Activity:
             cost=d.get("cost", 0) or 0,
             transport_from_prev=d.get("transport_from_prev"),
             transport_duration_min=d.get("transport_duration_min", 0) or 0,
+            transport_estimated=bool(d.get("transport_estimated", False)),
             notes=str(d.get("notes", "") or ""),
         )
 
 
-@dataclass
+@dataclass(init=False)
 class DayPlan:
     day: int
     date: str
     activities: list[Activity] = field(default_factory=list)
-    notes: str = ""
+    tips: str = ""
+
+    def __init__(
+        self,
+        day: int,
+        date: str,
+        activities: list[Activity] | None = None,
+        tips: str = "",
+        notes: str | None = None,
+    ) -> None:
+        self.day = day
+        self.date = date
+        self.activities = list(activities or [])
+        self.tips = tips or notes or ""
+
+    @property
+    def notes(self) -> str:
+        return self.tips
 
     def to_dict(self) -> dict:
         return {
             "day": self.day,
             "date": self.date,
             "activities": [a.to_dict() for a in self.activities],
-            "notes": self.notes,
+            "tips": self.tips,
         }
 
     @classmethod
@@ -179,7 +199,7 @@ class DayPlan:
             day=day_value,
             date=str(d.get("date", "")),
             activities=[Activity.from_dict(a) for a in d.get("activities", []) or []],
-            notes=str(d.get("notes", "") or ""),
+            tips=str(d.get("tips", "") or d.get("notes", "") or ""),
         )
 
 
@@ -250,6 +270,61 @@ class Preference:
             value=d.get("value", ""),
             source=d.get("source", ""),
         )
+
+
+def normalize_pace_value(value: Any) -> str | None:
+    """Map common user/LLM pace phrasing to the canonical enum."""
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip().lower()
+    if text in {"relaxed", "balanced", "intensive"}:
+        return text
+
+    compact = "".join(text.split())
+    balanced_markers = (
+        "balanced",
+        "平衡",
+        "均衡",
+        "适中",
+        "中等",
+        "3-4",
+        "3到4",
+        "三到四",
+        "三四",
+        "不要太赶",
+        "别太赶",
+        "不太赶",
+    )
+    relaxed_markers = (
+        "relaxed",
+        "轻松",
+        "慢",
+        "休闲",
+        "松弛",
+        "2-3",
+        "2到3",
+        "两到三",
+        "二到三",
+        "不赶路",
+    )
+    intensive_markers = (
+        "intensive",
+        "紧凑",
+        "高密",
+        "尽量多",
+        "多玩",
+        "打卡",
+        "5个",
+        "五个",
+    )
+    if any(marker in compact for marker in balanced_markers):
+        return "balanced"
+    if any(marker in compact for marker in relaxed_markers):
+        return "relaxed"
+    if any(marker in compact for marker in intensive_markers):
+        return "intensive"
+    return None
 
 
 @dataclass

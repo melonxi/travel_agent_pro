@@ -1,10 +1,12 @@
 from __future__ import annotations
 from telemetry.stats import (
+    LLM_CACHE_USAGE_KEYS,
     SessionStats,
     ToolCallRecord,
     MemoryHitRecord,
     RecallTelemetryRecord,
     LLMCallRecord,
+    estimate_llm_cost_usd,
     lookup_pricing,
 )
 from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
@@ -100,6 +102,10 @@ def _serialize_recall_telemetry(hit: RecallTelemetryRecord) -> dict:
     }
 
 
+def _llm_cache_payload(metadata: dict) -> dict:
+    return {key: metadata[key] for key in LLM_CACHE_USAGE_KEYS if key in metadata}
+
+
 def _classify_significance(iteration: dict) -> str:
     """Classify iteration significance for frontend display priority.
 
@@ -144,9 +150,15 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
     for model_name, model_data in summary.get("by_model", {}).items():
         pricing = lookup_pricing(model_name)
         if pricing:
-            cost = (model_data["input_tokens"] / 1_000_000) * pricing["input"]
-            cost += (model_data["output_tokens"] / 1_000_000) * pricing["output"]
-            model_data["cost_usd"] = round(cost, 6)
+            model_data["cost_usd"] = round(
+                estimate_llm_cost_usd(
+                    model_name,
+                    model_data["input_tokens"],
+                    model_data["output_tokens"],
+                    model_data,
+                ),
+                6,
+            )
         else:
             model_data["cost_usd"] = 0.0
         model_data.pop("duration_ms", None)
@@ -198,11 +210,12 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
             )
             tool_idx += 1
 
-        pricing = lookup_pricing(llm.model)
-        cost = 0.0
-        if pricing:
-            cost = (llm.input_tokens / 1_000_000) * pricing["input"]
-            cost += (llm.output_tokens / 1_000_000) * pricing["output"]
+        cost = estimate_llm_cost_usd(
+            llm.model,
+            llm.input_tokens,
+            llm.output_tokens,
+            llm.metadata,
+        )
 
         memory_hit = None
         if memory_idx < len(memory_hits):
@@ -228,6 +241,7 @@ def build_trace(session_id: str, session: dict, *, tool_engine=None) -> dict:
                 "output_tokens": llm.output_tokens,
                 "duration_ms": round(llm.duration_ms, 1),
                 "cost_usd": round(cost, 6),
+                **_llm_cache_payload(dict(llm.metadata or {})),
             },
             "tool_calls": iter_tool_dicts,
             "state_changes": _collect_state_changes(iter_tools),

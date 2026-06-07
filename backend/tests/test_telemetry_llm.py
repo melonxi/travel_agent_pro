@@ -10,6 +10,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agent.types import Message, Role
+from llm.types import ChunkType
 from telemetry.attributes import LLM_PROVIDER, LLM_MODEL
 
 
@@ -31,6 +32,24 @@ def _openai_stream_chunk(*, content: str | None = None, finish_reason=None):
     delta = SimpleNamespace(content=content, tool_calls=None)
     choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
     return SimpleNamespace(choices=[choice])
+
+
+def _openai_usage_chunk(
+    *,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    prompt_cache_hit_tokens: int | None = None,
+    prompt_cache_miss_tokens: int | None = None,
+):
+    usage = SimpleNamespace(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+    if prompt_cache_hit_tokens is not None:
+        usage.prompt_cache_hit_tokens = prompt_cache_hit_tokens
+    if prompt_cache_miss_tokens is not None:
+        usage.prompt_cache_miss_tokens = prompt_cache_miss_tokens
+    return SimpleNamespace(choices=[], usage=usage)
 
 
 def _reset_tracer_provider():
@@ -166,6 +185,74 @@ async def test_openai_stream_can_close_from_different_task_without_otel_context_
 
     spans = otel_exporter.get_finished_spans()
     assert any(span.name == "llm.chat" for span in spans)
+
+
+async def test_openai_stream_preserves_final_usage_after_finish_reason(otel_exporter):
+    stream = _AsyncChunkStream(
+        [
+            _openai_stream_chunk(content="hello"),
+            _openai_stream_chunk(finish_reason="stop"),
+            _openai_usage_chunk(
+                prompt_tokens=100,
+                completion_tokens=5,
+                prompt_cache_hit_tokens=80,
+                prompt_cache_miss_tokens=20,
+            ),
+        ]
+    )
+
+    with patch("llm.openai_provider.AsyncOpenAI") as MockClient:
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(return_value=stream)
+
+        from llm.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(model="deepseek-v4-flash")
+        chunks = [
+            chunk
+            async for chunk in provider.chat([Message(role=Role.USER, content="hello")])
+        ]
+
+    usage_chunk = next(chunk for chunk in chunks if chunk.type == ChunkType.USAGE)
+    assert usage_chunk.usage_info == {
+        "input_tokens": 100,
+        "output_tokens": 5,
+        "prompt_cache_hit_tokens": 80,
+        "prompt_cache_miss_tokens": 20,
+    }
+    assert chunks[-1].type == ChunkType.DONE
+
+
+async def test_openai_non_stream_usage_includes_deepseek_cache_tokens(otel_exporter):
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = "hi"
+    mock_choice.message.tool_calls = None
+    mock_response.choices = [mock_choice]
+    mock_response.usage = SimpleNamespace(
+        prompt_tokens=120,
+        completion_tokens=8,
+        prompt_cache_hit_tokens=90,
+        prompt_cache_miss_tokens=30,
+    )
+
+    with patch("llm.openai_provider.AsyncOpenAI") as MockClient:
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        from llm.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(model="deepseek-v4-flash")
+        chunks = [
+            chunk
+            async for chunk in provider.chat(
+                [Message(role=Role.USER, content="hello")], stream=False
+            )
+        ]
+
+    usage_chunk = next(chunk for chunk in chunks if chunk.type == ChunkType.USAGE)
+    assert usage_chunk.usage_info["prompt_cache_hit_tokens"] == 90
+    assert usage_chunk.usage_info["prompt_cache_miss_tokens"] == 30
 
 
 async def test_anthropic_chat_has_request_event(otel_exporter):

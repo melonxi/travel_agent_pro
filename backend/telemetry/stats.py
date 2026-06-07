@@ -4,9 +4,17 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import Any
 
 
 # Per-1M-token pricing (USD)
+_DEEPSEEK_V4_FLASH_PRICING = {
+    "input": 0.14,
+    "output": 0.28,
+    "cache_hit_input": 0.0028,
+    "cache_miss_input": 0.14,
+}
+
 _PRICING: dict[str, dict[str, float]] = {
     "gpt-4o": {"input": 2.50, "output": 10.00},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
@@ -20,22 +28,115 @@ _PRICING: dict[str, dict[str, float]] = {
     "claude-haiku-4": {"input": 0.80, "output": 4.00},
     "claude-3-5-sonnet": {"input": 3.00, "output": 15.00},
     "claude-3-5-haiku": {"input": 0.80, "output": 4.00},
-    "deepseek-chat": {"input": 0.14, "output": 0.28},
+    "deepseek-v4-flash": _DEEPSEEK_V4_FLASH_PRICING,
+    "deepseek-chat": _DEEPSEEK_V4_FLASH_PRICING,
+    "deepseek-reasoner": _DEEPSEEK_V4_FLASH_PRICING,
+    "deepseek-v4-pro": {
+        "input": 0.435,
+        "output": 0.87,
+        "cache_hit_input": 0.003625,
+        "cache_miss_input": 0.435,
+    },
     "deepseek-r1": {"input": 0.55, "output": 2.19},
 }
 
 
-def _lookup_pricing(model: str) -> dict[str, float] | None:
+def _model_candidates(model: str) -> list[str]:
     model_lower = model.lower()
+    candidates = [model_lower]
+    if "/" in model_lower:
+        candidates.append(model_lower.rsplit("/", 1)[-1])
+    return candidates
+
+
+def _lookup_pricing(model: str) -> dict[str, float] | None:
+    candidates = _model_candidates(model)
     for prefix, pricing in _PRICING.items():
-        if model_lower.startswith(prefix):
-            return pricing
+        for candidate in candidates:
+            if candidate.startswith(prefix):
+                return pricing
     return None
 
 
 def lookup_pricing(model: str) -> dict[str, float] | None:
     """Public API for model pricing lookup."""
     return _lookup_pricing(model)
+
+
+def _metadata_int(metadata: dict[str, Any] | None, key: str) -> int | None:
+    if not metadata:
+        return None
+    value = metadata.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def estimate_llm_cost_usd(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    metadata: dict[str, Any] | None = None,
+) -> float:
+    pricing = _lookup_pricing(model)
+    if not pricing:
+        return 0.0
+
+    cache_hit = _metadata_int(metadata, "prompt_cache_hit_tokens")
+    cache_miss = _metadata_int(metadata, "prompt_cache_miss_tokens")
+    has_cache_pricing = "cache_hit_input" in pricing and "cache_miss_input" in pricing
+    if has_cache_pricing and (cache_hit is not None or cache_miss is not None):
+        hit_tokens = cache_hit or 0
+        miss_tokens = cache_miss or 0
+        priced_input_tokens = hit_tokens + miss_tokens
+        unbucketed_tokens = max(input_tokens - priced_input_tokens, 0)
+        input_cost = (hit_tokens / 1_000_000) * pricing["cache_hit_input"]
+        input_cost += (miss_tokens / 1_000_000) * pricing["cache_miss_input"]
+        input_cost += (unbucketed_tokens / 1_000_000) * pricing["input"]
+    else:
+        input_cost = (input_tokens / 1_000_000) * pricing["input"]
+
+    output_cost = (output_tokens / 1_000_000) * pricing["output"]
+    return input_cost + output_cost
+
+
+LLM_CACHE_USAGE_KEYS = (
+    "prompt_cache_hit_tokens",
+    "prompt_cache_miss_tokens",
+    "prompt_cache_hit_rate",
+)
+
+
+def llm_cache_usage_metadata(usage_info: dict[str, Any] | None) -> dict[str, Any]:
+    if not usage_info:
+        return {}
+
+    metadata: dict[str, Any] = {}
+    for key in ("prompt_cache_hit_tokens", "prompt_cache_miss_tokens"):
+        value = usage_info.get(key)
+        if value is None:
+            continue
+        try:
+            metadata[key] = int(value)
+        except (TypeError, ValueError):
+            continue
+
+    rate = usage_info.get("prompt_cache_hit_rate")
+    if rate is not None:
+        try:
+            metadata["prompt_cache_hit_rate"] = float(rate)
+        except (TypeError, ValueError):
+            pass
+    else:
+        hit = metadata.get("prompt_cache_hit_tokens")
+        miss = metadata.get("prompt_cache_miss_tokens")
+        if hit is not None and miss is not None and hit + miss > 0:
+            metadata["prompt_cache_hit_rate"] = hit / (hit + miss)
+
+    return metadata
 
 
 @dataclass
@@ -257,10 +358,12 @@ class SessionStats:
     def estimated_cost_usd(self) -> float:
         total = 0.0
         for r in self.llm_calls:
-            pricing = _lookup_pricing(r.model)
-            if pricing:
-                total += (r.input_tokens / 1_000_000) * pricing["input"]
-                total += (r.output_tokens / 1_000_000) * pricing["output"]
+            total += estimate_llm_cost_usd(
+                r.model,
+                r.input_tokens,
+                r.output_tokens,
+                r.metadata,
+            )
         return total
 
     def to_dict(self) -> dict:
@@ -278,6 +381,15 @@ class SessionStats:
             entry["output_tokens"] += r.output_tokens
             entry["calls"] += 1
             entry["duration_ms"] += r.duration_ms
+            for key in ("prompt_cache_hit_tokens", "prompt_cache_miss_tokens"):
+                if key in r.metadata:
+                    entry[key] = entry.get(key, 0) + int(r.metadata.get(key) or 0)
+
+        for entry in by_model.values():
+            hit = entry.get("prompt_cache_hit_tokens")
+            miss = entry.get("prompt_cache_miss_tokens")
+            if hit is not None and miss is not None and hit + miss > 0:
+                entry["prompt_cache_hit_rate"] = hit / (hit + miss)
 
         by_tool: dict[str, dict] = defaultdict(
             lambda: {"calls": 0, "duration_ms": 0.0, "errors": 0}

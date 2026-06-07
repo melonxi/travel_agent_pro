@@ -28,6 +28,7 @@ from agent.phase3.worker_prompt import DayTask, build_day_suffix, build_shared_p
 from llm.base import LLMProvider
 from llm.types import ChunkType
 from state.models import TravelPlanState
+from telemetry.stats import llm_cache_usage_metadata
 from tools.engine import ToolEngine
 
 logger = logging.getLogger(__name__)
@@ -84,9 +85,17 @@ def _record_worker_llm_call(
     input_tokens: int,
     output_tokens: int,
     duration_ms: float,
+    usage_metadata: dict[str, Any] | None = None,
 ) -> None:
     if stats is None or not hasattr(stats, "record_llm_call"):
         return
+    metadata = _worker_metadata(
+        task=task,
+        run_id=run_id,
+        attempt=attempt,
+        iteration=iteration,
+    )
+    metadata.update(usage_metadata or {})
     stats.record_llm_call(
         provider=getattr(llm, "provider_name", "unknown"),
         model=getattr(llm, "model", "unknown"),
@@ -95,12 +104,7 @@ def _record_worker_llm_call(
         duration_ms=duration_ms,
         phase=3,
         iteration=iteration,
-        metadata=_worker_metadata(
-            task=task,
-            run_id=run_id,
-            attempt=attempt,
-            iteration=iteration,
-        ),
+        metadata=metadata,
     )
 
 
@@ -174,7 +178,8 @@ _ROUTE_UNAVAILABLE_PROMPT = (
     "不要围绕同一组起终点和 mode 重复调用 calculate_route。"
     "允许用 web_search 兜底一次查询该路线的大致交通方式/时长；如果仍不可确认，"
     "请改用保守交通估算：同一区域步行/地铁 10-20 分钟，跨区地铁 25-45 分钟，"
-    "并在活动 notes 标注「路线工具未返回可用结果，交通时长为保守估算」。"
+    "并在该活动上设 transport_estimated=true（结构化标记），可另在 notes 补一句"
+    "「路线工具未返回可用结果，交通时长为保守估算」。"
     "时间表必须满足：上一活动 end_time + transport_duration_min <= 下一活动 start_time。"
 )
 
@@ -300,6 +305,10 @@ _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA = {
                                     "type": "integer",
                                     "minimum": 0,
                                     "description": "上一活动到本活动的交通时长（分钟）。优先使用 calculate_route 返回值。",
+                                },
+                                "transport_estimated": {
+                                    "type": "boolean",
+                                    "description": "可选。true 表示该交通时长是未经 calculate_route 验证的保守估算；实算时省略或 false。",
                                 },
                                 "notes": {
                                     "type": "string",
@@ -647,6 +656,9 @@ async def run_day_worker(
                                     0.0,
                                     (time.monotonic() - llm_started_at) * 1000,
                                 ),
+                                usage_metadata=llm_cache_usage_metadata(
+                                    chunk.usage_info
+                                ),
                             )
                     if not usage_recorded:
                         _record_worker_llm_call(
@@ -835,7 +847,8 @@ async def run_day_worker(
                                     error_code="NO_ROUTE",
                                     suggestion=(
                                         "Do not retry the same origin/destination/mode. "
-                                        "Use a conservative transport estimate and mark it in notes."
+                                        "Use a conservative transport estimate and set "
+                                        "transport_estimated=true on the affected activity."
                                     ),
                                     metadata={
                                         "degraded": True,

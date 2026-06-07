@@ -140,6 +140,38 @@ def test_build_trace_events_includes_record_metadata():
     assert events[1].payload["metadata"]["attempt"] == 1
 
 
+def test_build_trace_events_promotes_llm_cache_metadata():
+    stats = SessionStats()
+    stats.record_llm_call(
+        provider="openai",
+        model="deepseek-v4-flash",
+        input_tokens=2_000_000,
+        output_tokens=1_000_000,
+        duration_ms=12.0,
+        phase=2,
+        iteration=1,
+        metadata={
+            "prompt_cache_hit_tokens": 1_000_000,
+            "prompt_cache_miss_tokens": 1_000_000,
+            "prompt_cache_hit_rate": 0.5,
+        },
+    )
+
+    events = build_trace_events_from_stats(
+        run_id="run-1",
+        stats=stats,
+        phase2_step="brief",
+        tool_side_effects={},
+    )
+
+    payload = events[0].payload
+    assert events[0].cost_usd == 0.4228
+    assert payload["cost_usd"] == 0.4228
+    assert payload["prompt_cache_hit_tokens"] == 1_000_000
+    assert payload["prompt_cache_miss_tokens"] == 1_000_000
+    assert payload["prompt_cache_hit_rate"] == 0.5
+
+
 @pytest.mark.asyncio
 async def test_persist_trace_run_safely_replaces_events(trace_store: TraceStore):
     stats = SessionStats()

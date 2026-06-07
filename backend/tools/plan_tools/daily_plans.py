@@ -32,11 +32,11 @@ _SAVE_DAY_PLAN_PARAMETERS = {
         },
         "day": {"type": "integer", "description": "第几天（从1开始）"},
         "date": {"type": "string", "description": "日期，格式 YYYY-MM-DD"},
-        "notes": {"type": "string", "description": "当天的补充说明，可选"},
+        "tips": {"type": "string", "description": "当天的小贴士（如天气提醒、穿着建议、注意事项），不用于行程安排，行程安排必须写在 activities 中，可选"},
         "activities": {
             "type": "array",
             "items": {"type": "object"},
-            "description": "活动列表，每个必须包含 name, location, start_time, end_time, category, cost",
+            "description": "活动列表（必填），每个必须包含 name, location, start_time, end_time, category, cost；可选 transport_estimated（true=该段交通时长为未验证的保守估算）",
         },
     },
     "required": ["mode", "day", "date", "activities"],
@@ -52,7 +52,7 @@ _REPLACE_ALL_DAY_PLANS_PARAMETERS = {
                 "properties": {
                     "day": {"type": "integer"},
                     "date": {"type": "string", "description": "格式 YYYY-MM-DD"},
-                    "notes": {"type": "string", "description": "当天的补充说明，可选"},
+                    "tips": {"type": "string", "description": "当天的小贴士（如天气提醒、穿着建议、注意事项），不用于行程安排，行程安排必须写在 activities 中，可选"},
                     "activities": {"type": "array", "items": {"type": "object"}},
                 },
                 "required": ["day", "date", "activities"],
@@ -180,6 +180,17 @@ def _validate_activities(activities: Any) -> None:
                 error_code="INVALID_VALUE",
                 suggestion="cost 应为数字，如 60 或 60.0",
             )
+        if "transport_estimated" in activity and not isinstance(
+            activity["transport_estimated"], bool
+        ):
+            raise ToolError(
+                f"activities[{index}].transport_estimated 必须是布尔值",
+                error_code="INVALID_VALUE",
+                suggestion=(
+                    "transport_estimated 为 true 表示该段交通时长是未经 "
+                    "calculate_route 验证的保守估算"
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +266,7 @@ def make_save_day_plan_tool(plan: TravelPlanState):
             'Use when: 新增一天用 mode="create"；修改已有某天或修复该天冲突用 mode="replace_existing"。'
             "Don't use when: 需要一次性替换所有天，改用 replace_all_day_plans。"
             "写入后会返回 covered_days/missing_days/conflicts，严重冲突必须先修复。"
+            "⚠️ activities 是必填参数，行程内容必须写在 activities 中；notes 仅用于小贴士（如天气提醒、穿着建议），不是行程的替代容器。"
         ),
         phases=[3],
         parameters=_SAVE_DAY_PLAN_PARAMETERS,
@@ -266,7 +278,7 @@ def make_save_day_plan_tool(plan: TravelPlanState):
         day: int,
         date: str,
         activities: list,
-        notes: str = "",
+        tips: str = "",
     ) -> dict:
         mode = _validate_mode(mode)
         _validate_day(day, "day")
@@ -292,7 +304,7 @@ def make_save_day_plan_tool(plan: TravelPlanState):
         payload = {
             "day": day,
             "date": date,
-            "notes": str(notes or ""),
+            "tips": str(tips or ""),
             "activities": activities,
         }
         if mode == "create":
@@ -325,6 +337,7 @@ def make_replace_all_day_plans_tool(plan: TravelPlanState):
             "Use when: 用户要求一次性完整版、全局重排、或跨多天结构需要整体替换。"
             "Don't use when: 只新增或修改一天，改用 save_day_plan。"
             "days 必须覆盖完整 1..total_days。"
+            "⚠️ 每天的 activities 是必填参数，行程内容必须写在 activities 中；tips 仅用于小贴士，不是行程的替代容器。"
         ),
         phases=[3],
         parameters=_REPLACE_ALL_DAY_PLANS_PARAMETERS,
@@ -394,7 +407,7 @@ def make_append_day_plan_tool(plan: TravelPlanState):
         day: int,
         date: str,
         activities: list,
-        notes: str = "",
+        tips: str = "",
         **kwargs: Any,
     ) -> dict:
         return await make_save_day_plan_tool(plan)._fn(
@@ -402,7 +415,7 @@ def make_append_day_plan_tool(plan: TravelPlanState):
             day=day,
             date=date,
             activities=activities,
-            notes=notes,
+            tips=tips,
         )
 
     return append_day_plan

@@ -5,6 +5,8 @@ from typing import Any
 
 from storage.database import Database
 
+_UNSET = object()
+
 
 class SessionStore:
     def __init__(self, db: Database):
@@ -47,7 +49,7 @@ class SessionStore:
         status: str | None = None,
         last_run_id: str | None = None,
         last_run_status: str | None = None,
-        last_run_error: str | None = None,
+        last_run_error: str | None | object = _UNSET,
     ) -> None:
         updates: list[str] = []
         params: list[Any] = []
@@ -67,7 +69,7 @@ class SessionStore:
         if last_run_status is not None:
             updates.append("last_run_status = ?")
             params.append(last_run_status)
-        if last_run_error is not None:
+        if last_run_error is not _UNSET:
             updates.append("last_run_error = ?")
             params.append(last_run_error)
         if not updates:

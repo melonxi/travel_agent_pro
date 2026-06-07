@@ -173,3 +173,34 @@ class TraceStore:
             "SELECT * FROM trace_grades WHERE run_id = ? ORDER BY rubric_id ASC",
             (run_id,),
         )
+
+    async def cleanup_stale_running_runs(self, max_age_seconds: int = 86400) -> int:
+        """Mark stale 'running' traces as 'crashed'.
+
+        Processes crash without properly closing trace runs, leaving them
+        stuck in 'running' status with zero tokens/cost/duration. This
+        method finds runs that have been running longer than
+        *max_age_seconds* and marks them as 'crashed'.
+        """
+        from datetime import datetime, timezone
+
+        cutoff = datetime.now(timezone.utc) - __import__("datetime").timedelta(
+            seconds=max_age_seconds
+        )
+        cutoff_iso = cutoff.isoformat()
+        await self._db.execute(
+            """
+            UPDATE trace_runs
+            SET status = 'crashed',
+                ended_at = ?,
+                updated_at = ?
+            WHERE status = 'running'
+              AND started_at < ?
+            """,
+            (cutoff_iso, cutoff_iso, cutoff_iso),
+        )
+        cursor = await self._db.conn.execute(
+            "SELECT changes()"
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0

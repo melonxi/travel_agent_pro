@@ -846,8 +846,10 @@ telemetry:
                     name="generate_summary",
                     arguments={
                         "plan_data": {"destination": "东京"},
-                        "travel_plan_markdown": "# 东京旅行计划\n\n## 第 1 天\n- 浅草寺\n",
-                        "checklist_markdown": "# 东京出发前清单\n\n- [ ] 护照\n",
+                        "title": "东京旅行计划",
+                        "daily_sections": [{"day": 1, "content": "- 浅草寺"}],
+                        "checklist_title": "东京出发前清单",
+                        "checklist_categories": [{"category": "证件", "items": ["护照有效期确认", "签证", "机票确认单"]}],
                     },
                 ),
             )
@@ -968,8 +970,10 @@ telemetry:
                     name="generate_summary",
                     arguments={
                         "plan_data": {"destination": "东京"},
-                        "travel_plan_markdown": "# 东京旅行计划\n\n## 第 1 天\n- 浅草寺\n",
-                        "checklist_markdown": "# 东京出发前清单\n\n- [ ] 20°C 中雨，带伞\n",
+                        "title": "东京旅行计划",
+                        "daily_sections": [{"day": 1, "content": "- 浅草寺"}],
+                        "checklist_title": "东京出发前清单",
+                        "checklist_categories": [{"category": "天气", "items": ["20°C 中雨，带伞", "查看临近出发天气预报", "雨衣"]}],
                     },
                 ),
             )
@@ -1008,6 +1012,119 @@ telemetry:
     assert resp.status_code == 200
     assert "FUTURE_WEATHER_NOT_TREATED_AS_EXACT" in resp.text
     assert "临近出发前再确认" in resp.text
+    assert plan.deliverables is None
+    assert download.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_rejects_locked_transport_conflict(
+    monkeypatch,
+    tmp_path,
+):
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path / "data"
+    config_file.write_text(
+        f"""
+llm:
+  provider: openai
+  model: gpt-4o
+data_dir: "{data_dir}"
+flyai:
+  enabled: false
+quality_gate:
+  threshold: 4.0
+  max_retries: 2
+memory_extraction:
+  enabled: false
+telemetry:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    class HighScoreProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None, **kwargs):
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_judge",
+                    name="emit_soft_judge_score",
+                    arguments={
+                        "pace": 5,
+                        "geography": 5,
+                        "coherence": 5,
+                        "personalization": 5,
+                        "suggestions": [],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: HighScoreProvider())
+    app = create_app(str(config_file))
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+
+    session = _get_sessions(app)[session_id]
+    plan = session["plan"]
+    plan.phase = 4
+    plan.destination = "东京"
+    plan.dates = DateRange(start="2026-07-10", end="2026-07-10")
+    plan.selected_transport = {"segments": [{"flight_no": "MU523"}]}
+    plan.daily_plans = [DayPlan(day=1, date="2026-07-10")]
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, **kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_summary_transport",
+                    name="generate_summary",
+                    arguments={
+                        "plan_data": {"destination": "东京"},
+                        "title": "东京旅行计划",
+                        "daily_sections": [{"day": 1, "content": "- 搭乘 NH972 抵达东京，随后前往酒店。"}],
+                        "checklist_title": "东京出发前清单",
+                        "checklist_categories": [{"category": "证件", "items": ["护照有效期确认", "签证", "机票确认单"]}],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="收到事实一致性反馈，准备修订。")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    session["agent"].llm.chat = fake_chat
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "生成最终交付物"},
+        )
+        download = await client.get(
+            f"/api/sessions/{session_id}/deliverables/travel_plan.md"
+        )
+
+    assert resp.status_code == 200
+    assert "DELIVERABLE_FACTS_CONFLICT_WITH_PLAN" in resp.text
+    assert "锁定交通不一致" in resp.text
     assert plan.deliverables is None
     assert download.status_code == 404
 

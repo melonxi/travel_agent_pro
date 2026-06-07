@@ -19,6 +19,17 @@ _PARAMETERS = {
 }
 
 
+def _forecast_entry_payload(entry: dict) -> dict:
+    return {
+        "temp": entry.get("main", {}).get("temp"),
+        "temp_min": entry.get("main", {}).get("temp_min"),
+        "temp_max": entry.get("main", {}).get("temp_max"),
+        "description": entry.get("weather", [{}])[0].get("description", ""),
+        "humidity": entry.get("main", {}).get("humidity"),
+        "wind_speed": entry.get("wind", {}).get("speed"),
+    }
+
+
 def make_check_weather_tool(api_keys: ApiKeysConfig):
     @tool(
         name="check_weather",
@@ -62,21 +73,25 @@ Important: city 参数必须使用英文名称（如 Tokyo 而非 东京），Op
 
         if matched:
             forecast = {
-                "temp": matched.get("main", {}).get("temp"),
-                "temp_min": matched.get("main", {}).get("temp_min"),
-                "temp_max": matched.get("main", {}).get("temp_max"),
-                "description": matched.get("weather", [{}])[0].get("description", ""),
-                "humidity": matched.get("main", {}).get("humidity"),
-                "wind_speed": matched.get("wind", {}).get("speed"),
+                **_forecast_entry_payload(matched),
+                "source": "openweather_forecast",
+                "exact_date_available": True,
+                "requested_date": date,
+                "reference_date": matched.get("dt_txt"),
             }
         else:
-            # Return first available entry as general reference
+            # Keep nearest forecast as reference only. Do not expose its temp as
+            # target-date weather; OpenWeather forecast is only a short window.
             first = forecast_list[0] if forecast_list else {}
             forecast = {
-                "temp": first.get("main", {}).get("temp"),
-                "description": first.get("weather", [{}])[0].get("description", ""),
-                "note": "精确日期预报不可用，返回最近预报作为参考",
+                "source": "openweather_nearest_reference",
+                "exact_date_available": False,
+                "requested_date": date,
+                "reference_date": first.get("dt_txt") if first else None,
+                "note": "精确日期预报不可用，近期预报仅作参考；请临近出发前再确认",
             }
+            if first:
+                forecast["reference"] = _forecast_entry_payload(first)
 
         return {"city": city, "date": date, "forecast": forecast}
 

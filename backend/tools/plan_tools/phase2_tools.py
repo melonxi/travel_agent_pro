@@ -483,7 +483,7 @@ def make_set_shortlist_tool(plan: TravelPlanState):
             "触发条件：完成候选筛选后必须立即调用，通常与 set_candidate_pool 在同一轮使用。\n"
             "前置条件：应先写入 candidate_pool，再写入 shortlist。\n"
             "禁止行为：不要把未筛选的全集写入 shortlist——全集用 set_candidate_pool。\n"
-            "写入后效果：shortlist 写入后，系统会自动推进到 skeleton 子阶段。"
+            "写入后效果：shortlist 写入后完成 candidate 产物；本轮不要继续写 skeleton_plans，等待系统切换上下文或用户确认后再推进。"
         ),
         phases=[2],
         parameters=_SET_SHORTLIST_PARAMS,
@@ -591,13 +591,15 @@ def make_select_transport_tool(plan: TravelPlanState):
     @tool(
         name="select_transport",
         description=(
-            "锁定交通方案。传入选中的交通对象。\n"
-            "触发条件：用户明确选择了某个交通方案后必须立即调用。\n"
+            "锁定或修正交通方案。传入选中的交通对象。\n"
+            "触发条件：用户明确说“锁定/确认锁定/帮我定这个/按这个推进/可以定交通”等最终选择后必须立即调用；"
+            "Phase 4 中仅用于用户明确改选已锁定交通。\n"
             "前置条件：transport_options 应已写入。\n"
-            "禁止行为：不要在用户未明确确认时擅自调用此工具。\n"
+            "禁止行为：用户只说“倾向/偏向/选A/先看看/帮我搜/可以接受”时不要调用此工具；"
+            "用户选择交通但还要求继续看住宿时，也不要调用此工具；这类消息只能继续搜索或写候选 options，并请用户确认。\n"
             "写入后效果：selected_transport 写入，锁定大交通选择。"
         ),
-        phases=[2],
+        phases=[2, 4],
         parameters=_SELECT_TRANSPORT_PARAMS,
         side_effect="write",
         human_label="锁定交通方案",

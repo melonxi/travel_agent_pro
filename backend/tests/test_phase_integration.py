@@ -634,8 +634,10 @@ async def test_phase4_summary_generation(app):
                     "destination": "京都",
                     "total_days": 5,
                 },
-                "travel_plan_markdown": "# 京都 5 日旅行计划\n\n## 第 1 天\n- 景点1\n",
-                "checklist_markdown": "# 京都出发前清单\n\n- [ ] 护照\n",
+                "title": "京都 5 日旅行计划",
+                "daily_sections": [{"day": 1, "content": "- 景点1"}],
+                "checklist_title": "京都出发前清单",
+                "checklist_categories": [{"category": "证件", "items": ["护照", "签证", "机票确认单"]}],
             },
         )
         yield LLMChunk(type=ChunkType.TOOL_CALL_START, tool_call=tc_summary)

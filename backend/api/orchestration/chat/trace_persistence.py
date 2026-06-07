@@ -11,11 +11,12 @@ from run import RunRecord
 from state.models import TravelPlanState
 from storage.trace_store import TraceStore
 from telemetry.stats import (
+    LLM_CACHE_USAGE_KEYS,
     MemoryHitRecord,
     RecallTelemetryRecord,
     SessionStats,
     ToolCallRecord,
-    lookup_pricing,
+    estimate_llm_cost_usd,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,13 +90,16 @@ def _ensure_run_offsets(session: dict, run_id: str, stats: SessionStats) -> None
         all_offsets[run_id] = _capture_stats_offsets(stats)
 
 
-def _llm_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    pricing = lookup_pricing(model)
-    if not pricing:
-        return 0.0
-    cost = (input_tokens / 1_000_000) * pricing["input"]
-    cost += (output_tokens / 1_000_000) * pricing["output"]
-    return round(cost, 6)
+def _llm_cost_usd(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    metadata: dict[str, Any] | None = None,
+) -> float:
+    return round(
+        estimate_llm_cost_usd(model, input_tokens, output_tokens, metadata),
+        6,
+    )
 
 
 def _memory_hit_payload(hit: MemoryHitRecord) -> dict[str, Any]:
@@ -121,6 +125,10 @@ def _tool_payload(record: ToolCallRecord, side_effect: str) -> dict[str, Any]:
         "side_effect": side_effect,
         "metadata": dict(record.metadata or {}),
     }
+
+
+def _llm_cache_payload(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {key: metadata[key] for key in LLM_CACHE_USAGE_KEYS if key in metadata}
 
 
 def build_trace_events_from_stats(
@@ -161,7 +169,13 @@ def build_trace_events_from_stats(
         )
 
     for record in llm_records:
-        cost = _llm_cost_usd(record.model, record.input_tokens, record.output_tokens)
+        metadata = dict(record.metadata or {})
+        cost = _llm_cost_usd(
+            record.model,
+            record.input_tokens,
+            record.output_tokens,
+            metadata,
+        )
         raw_records.append(
             _RawTraceRecord(
                 timestamp=record.timestamp,
@@ -183,7 +197,8 @@ def build_trace_events_from_stats(
                     "cost_usd": cost,
                     "phase": record.phase,
                     "iteration": record.iteration,
-                    "metadata": dict(record.metadata or {}),
+                    "metadata": metadata,
+                    **_llm_cache_payload(metadata),
                 },
             )
         )

@@ -82,7 +82,7 @@ def plan():
             "锁定交通方案",
             ["choice"],
             {"choice"},
-            [2],
+            [2, 4],
         ),
         (
             make_set_accommodation_options_tool,
@@ -772,6 +772,12 @@ async def test_set_shortlist_replaces_existing_items(plan):
     assert plan.shortlist == [{"name": "A"}]
 
 
+def test_set_shortlist_description_does_not_claim_auto_skeleton_advance(plan):
+    tool_fn = make_set_shortlist_tool(plan)
+    assert "自动推进到 skeleton 子阶段" not in tool_fn.description
+    assert "本轮不要继续写 skeleton_plans" in tool_fn.description
+
+
 @pytest.mark.asyncio
 async def test_set_shortlist_rejects_non_list(plan):
     tool_fn = make_set_shortlist_tool(plan)
@@ -840,6 +846,17 @@ async def test_select_transport_writes_choice_and_previous_value(plan):
         "previous_value": {"type": "train", "price": 800},
     }
     assert plan.selected_transport == {"type": "flight", "price": 1200}
+
+
+def test_select_transport_description_requires_explicit_lock_consent(plan):
+    tool_fn = make_select_transport_tool(plan)
+
+    assert "明确说" in tool_fn.description
+    assert "锁定" in tool_fn.description
+    assert "倾向" in tool_fn.description
+    assert "选A" in tool_fn.description
+    assert "继续看住宿" in tool_fn.description
+    assert "不要调用此工具" in tool_fn.description
 
 
 @pytest.mark.asyncio
@@ -1007,6 +1024,16 @@ async def test_set_trip_brief_merges_fields_and_returns_previous_value(plan):
         "previous_value": {"goal": "old"},
     }
     assert plan.trip_brief == {"goal": "old", "pace": "relaxed"}
+
+
+@pytest.mark.asyncio
+async def test_set_trip_brief_normalizes_natural_pace(plan):
+    tool_fn = make_set_trip_brief_tool(plan)
+
+    result = await tool_fn(fields={"pace": "不要太赶，每天 3-4 个活动"})
+
+    assert result["new_value"]["pace"] == "balanced"
+    assert plan.trip_brief["pace"] == "balanced"
 
 
 @pytest.mark.asyncio

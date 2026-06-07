@@ -8,6 +8,95 @@ from llm.types import ChunkType, LLMChunk
 from state.models import Accommodation, Budget, DateRange, DayPlan, TravelPlanState
 
 
+def test_build_deliverable_consistency_errors_detects_plan_fact_conflicts():
+    from api.orchestration.agent.hooks import build_deliverable_consistency_errors
+
+    plan = TravelPlanState(session_id="s-consistency", phase=4)
+    plan.dates = DateRange(start="2026-07-10", end="2026-07-12")
+    plan.budget = Budget(total=10_000)
+    plan.selected_transport = {
+        "segments": [
+            {"flight_no": "MU523"},
+            {"flight_no": "IJ005"},
+        ]
+    }
+    plan.accommodation = Accommodation(area="新宿", hotel="Hotel Locked")
+    plan.accommodation_options = [
+        {"name": "Hotel Locked"},
+        {"name": "Hotel Other"},
+    ]
+    plan.daily_plans = [
+        DayPlan.from_dict(
+            {
+                "day": 1,
+                "date": "2026-07-10",
+                "notes": "天气参考：小雨 / 18°C，建议带伞",
+                "activities": [],
+            }
+        )
+    ]
+
+    errors = build_deliverable_consistency_errors(
+        plan,
+        {
+            "travel_plan_markdown": (
+                "# 东京旅行计划\n\n"
+                "总预算：12000 元\n\n"
+                "## 第 1 天 2026-07-15\n"
+                "- 搭乘 NH972 抵达东京，入住 Hotel Other。\n"
+                "- 7月东京平均 28.7°C，体感湿热。\n"
+            ),
+            "checklist_markdown": "# 清单\n\n- [ ] 护照\n",
+        },
+        {},
+    )
+
+    joined = "\n".join(errors)
+    assert "日期与状态不一致" in joined
+    assert "锁定交通不一致" in joined
+    assert "锁定住宿不一致" in joined
+    assert "总预算与状态不一致" in joined
+    assert "天气温度与逐日行程不一致" in joined
+
+
+def test_build_deliverable_consistency_errors_allows_matching_plan_facts():
+    from api.orchestration.agent.hooks import build_deliverable_consistency_errors
+
+    plan = TravelPlanState(session_id="s-consistency-ok", phase=4)
+    plan.dates = DateRange(start="2026-07-10", end="2026-07-12")
+    plan.budget = Budget(total=10_000)
+    plan.selected_transport = {"segments": [{"flight_no": "MU523"}]}
+    plan.accommodation = Accommodation(area="新宿", hotel="Hotel Locked")
+    plan.accommodation_options = [{"name": "Hotel Locked"}, {"name": "Hotel Other"}]
+    plan.daily_plans = [
+        DayPlan.from_dict(
+            {
+                "day": 1,
+                "date": "2026-07-10",
+                "notes": "天气参考：小雨 / 18°C，建议带伞",
+                "activities": [],
+            }
+        )
+    ]
+
+    errors = build_deliverable_consistency_errors(
+        plan,
+        {
+            "travel_plan_markdown": (
+                "# 东京旅行计划\n\n"
+                "总预算：10000 元\n\n"
+                "## 第 1 天 2026-07-10\n"
+                "- 搭乘 MU523 抵达东京，入住 Hotel Locked。\n"
+                "- 天气参考：18°C，小雨，建议带伞。\n"
+            ),
+            "checklist_markdown": "# 清单\n\n- [ ] 护照\n",
+        },
+        {},
+    )
+
+    assert errors == []
+
+
 @pytest.fixture(autouse=True)
 def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -291,3 +380,108 @@ async def test_save_day_plan_replace_existing_shows_soft_judge_after_tool_result
     assert '"label": "行程质量评审"' in resp.text
     assert '"status": "pending"' in resp.text
     assert '"status": "success"' in resp.text
+
+
+def _plan_with_estimated_transport() -> TravelPlanState:
+    plan = TravelPlanState(session_id="s-est", phase=4)
+    plan.daily_plans = [
+        DayPlan.from_dict(
+            {
+                "day": 1,
+                "date": "2026-07-10",
+                "activities": [
+                    {
+                        "name": "浅草寺",
+                        "location": {"name": "浅草寺", "lat": 35.7148, "lng": 139.7967},
+                        "start_time": "09:00",
+                        "end_time": "10:00",
+                        "category": "shrine",
+                        "cost": 0,
+                        "transport_duration_min": 25,
+                        "transport_estimated": True,
+                    }
+                ],
+            }
+        )
+    ]
+    return plan
+
+
+def test_estimation_visibility_flags_unmarked_estimate():
+    from api.orchestration.agent.hooks import build_estimation_visibility_errors
+
+    errors = build_estimation_visibility_errors(
+        _plan_with_estimated_transport(),
+        {
+            "travel_plan_markdown": "# 计划\n\n## 第 1 天 2026-07-10\n- 浅草寺，交通约 25 分钟。\n",
+            "checklist_markdown": "# 清单\n- [ ] 护照\n",
+        },
+        {},
+    )
+    assert errors
+
+
+def test_estimation_visibility_allows_marked_estimate():
+    from api.orchestration.agent.hooks import build_estimation_visibility_errors
+
+    errors = build_estimation_visibility_errors(
+        _plan_with_estimated_transport(),
+        {
+            "travel_plan_markdown": (
+                "# 计划\n\n## 第 1 天 2026-07-10\n"
+                "- 浅草寺，交通约 25 分钟（估算，未经路线工具验证）。\n"
+            ),
+            "checklist_markdown": "# 清单\n- [ ] 护照\n",
+        },
+        {},
+    )
+    assert errors == []
+
+
+def test_estimation_visibility_ignores_when_no_estimate():
+    from api.orchestration.agent.hooks import build_estimation_visibility_errors
+
+    plan = TravelPlanState(session_id="s-noest", phase=4)
+    plan.daily_plans = [
+        DayPlan.from_dict(
+            {
+                "day": 1,
+                "date": "2026-07-10",
+                "activities": [
+                    {
+                        "name": "浅草寺",
+                        "location": {"name": "浅草寺", "lat": 35.7148, "lng": 139.7967},
+                        "start_time": "09:00",
+                        "end_time": "10:00",
+                        "category": "shrine",
+                        "cost": 0,
+                    }
+                ],
+            }
+        )
+    ]
+    errors = build_estimation_visibility_errors(
+        plan,
+        {"travel_plan_markdown": "# 计划\n\n## 第 1 天\n- 浅草寺。\n", "checklist_markdown": "# 清单\n- [ ] 护照\n"},
+        {},
+    )
+    assert errors == []
+
+
+def test_deliverable_gate_prioritizes_consistency_over_estimation():
+    from api.orchestration.agent.hooks import evaluate_deliverable_gate
+
+    plan = _plan_with_estimated_transport()
+    plan.dates = DateRange(start="2026-07-10", end="2026-07-10")
+    plan.budget = Budget(total=10_000)
+
+    code, errors = evaluate_deliverable_gate(
+        plan,
+        {
+            "travel_plan_markdown": "# 计划\n\n总预算：99999 元\n\n## 第 1 天 2099-01-01\n- 浅草寺，交通约 25 分钟。\n",
+            "checklist_markdown": "# 清单\n- [ ] 护照\n",
+        },
+        {},
+    )
+    assert code == "DELIVERABLE_FACTS_CONFLICT_WITH_PLAN"
+    assert errors

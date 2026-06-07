@@ -151,3 +151,30 @@ def test_record_llm_usage_stats_records_elapsed_duration():
     assert stats.total_output_tokens == 25
     assert stats.total_llm_duration_ms == 250.0
     assert stats.to_dict()["by_model"]["gpt-4o"]["duration_ms"] == 250.0
+
+
+def test_record_llm_usage_stats_preserves_cache_metadata():
+    from main import _record_llm_usage_stats
+
+    stats = SessionStats()
+
+    _record_llm_usage_stats(
+        stats=stats,
+        provider="openai",
+        model="deepseek-v4-flash",
+        usage_info={
+            "input_tokens": 100,
+            "output_tokens": 25,
+            "prompt_cache_hit_tokens": 75,
+            "prompt_cache_miss_tokens": 25,
+        },
+        started_at=10.0,
+        now=10.25,
+        phase=2,
+        iteration=2,
+    )
+
+    metadata = stats.llm_calls[0].metadata
+    assert metadata["prompt_cache_hit_tokens"] == 75
+    assert metadata["prompt_cache_miss_tokens"] == 25
+    assert metadata["prompt_cache_hit_rate"] == 0.75

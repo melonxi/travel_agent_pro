@@ -309,6 +309,15 @@ class AgentLoop:
             yield LLMChunk(type=ChunkType.DONE)
             return
 
+        from agent.phase3.orchestrator import build_unresolved_constraint_notice
+
+        unresolved_notice = build_unresolved_constraint_notice(list(_handoff.issues))
+        if unresolved_notice:
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content=f"\n\n{unresolved_notice}",
+            )
+
         transition_detection = await detect_phase_transition(
             plan=self.plan,
             phase_router=self.phase_router,

@@ -407,6 +407,82 @@ async def test_parallel_phase3_handoff_commits_via_standard_tool_and_transitions
 
 
 @pytest.mark.asyncio
+async def test_parallel_phase3_handoff_commits_and_surfaces_unresolved_constraint_notice(monkeypatch):
+    from agent.phase3.orchestrator import GlobalValidationIssue
+    from phase.router import PhaseRouter
+    from state.models import Accommodation, DateRange, TravelPlanState
+    from tests.helpers.register_plan_tools import register_all_plan_tools
+
+    plan = TravelPlanState(session_id="s-parallel-unresolved", phase=3)
+    plan.destination = "東京"
+    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.selected_skeleton_id = "plan_A"
+    plan.skeleton_plans = [{"id": "plan_A", "days": [{}]}]
+    plan.accommodation = Accommodation(area="新宿")
+
+    final_dayplans = [{
+        "day": 1,
+        "date": "2026-05-01",
+        "notes": "并行生成",
+        "activities": [{
+            "name": "测试活动",
+            "location": {"name": "测试活动", "lat": 35.0, "lng": 139.0},
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "category": "activity",
+            "cost": 0,
+        }],
+    }]
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs):
+            self.final_dayplans = final_dayplans
+            self.final_issues = [
+                GlobalValidationIssue(
+                    issue_type="pace_mismatch",
+                    description="Day 1: 5 个活动超出 balanced 节奏上限 4",
+                    affected_days=[1],
+                    severity="error",
+                )
+            ]
+
+        async def run(self):
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="并行摘要")
+
+    monkeypatch.setattr("agent.phase3.orchestrator.Phase3Orchestrator", FakeOrchestrator)
+
+    engine = ToolEngine()
+    register_all_plan_tools(engine, plan)
+
+    agent = AgentLoop(
+        llm=MagicMock(),
+        tool_engine=engine,
+        hooks=HookManager(),
+        phase_router=PhaseRouter(),
+        context_manager=_StubContextManager(),
+        plan=plan,
+        memory_mgr=_StubMemoryManager(),
+        user_id="u",
+        phase3_parallel_config=Phase3ParallelConfig(enabled=True),
+    )
+
+    chunks = [
+        chunk
+        async for chunk in agent.run(
+            [Message(role=Role.USER, content="继续")],
+            phase=3,
+        )
+    ]
+
+    visible_text = "".join(c.content or "" for c in chunks if c.type == ChunkType.TEXT_DELTA)
+
+    assert plan.phase == 4
+    assert len(plan.daily_plans) == 1
+    assert "自动重排后仍未完全满足" in visible_text
+    assert "Day 1: 5 个活动超出 balanced 节奏上限 4" in visible_text
+
+
+@pytest.mark.asyncio
 async def test_parallel_phase3_handoff_commit_failure_is_reported(monkeypatch):
     from phase.router import PhaseRouter
     from state.models import Accommodation, DateRange, TravelPlanState

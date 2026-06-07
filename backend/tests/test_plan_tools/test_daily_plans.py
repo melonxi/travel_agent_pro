@@ -52,7 +52,7 @@ def _activity(name: str, start: str, end: str, cost: float = 0) -> dict:
             "save_day_plan",
             "保存单日行程",
             ["mode", "day", "date", "activities"],
-            {"mode", "day", "date", "activities", "notes"},
+            {"mode", "day", "date", "activities", "tips"},
         ),
         (
             make_replace_all_day_plans_tool,
@@ -114,7 +114,7 @@ class TestSaveDayPlan:
         assert len(plan.daily_plans[0].activities) == 1
 
     @pytest.mark.asyncio
-    async def test_save_day_plan_create_accepts_optional_notes(self):
+    async def test_save_day_plan_create_accepts_optional_tips(self):
         plan = _make_plan()
         tool_fn = make_save_day_plan_tool(plan)
 
@@ -122,11 +122,11 @@ class TestSaveDayPlan:
             mode="create",
             day=1,
             date="2026-05-01",
-            notes="第一天以城市漫步和美食为主",
+            tips="第一天以城市漫步和美食为主",
             activities=[_sample_activity()],
         )
 
-        assert plan.daily_plans[0].notes == "第一天以城市漫步和美食为主"
+        assert plan.daily_plans[0].tips == "第一天以城市漫步和美食为主"
 
     @pytest.mark.asyncio
     async def test_save_day_plan_create_rejects_existing_day(self):
@@ -522,6 +522,36 @@ class TestReplaceAllDayPlans:
             )
 
         assert exc_info.value.error_code == "INVALID_VALUE"
+
+
+@pytest.mark.asyncio
+async def test_save_day_plan_accepts_transport_estimated_flag():
+    plan = _make_plan(phase=3)
+    plan.dates = DateRange(start="2026-07-01", end="2026-07-01")
+    tool_fn = make_save_day_plan_tool(plan)
+    activity = _sample_activity()
+    activity["transport_estimated"] = True
+
+    result = await tool_fn(
+        mode="create", day=1, date="2026-07-01", activities=[activity]
+    )
+
+    assert result["activity_count"] == 1
+    assert plan.daily_plans[0].activities[0].transport_estimated is True
+
+
+@pytest.mark.asyncio
+async def test_save_day_plan_rejects_non_bool_transport_estimated():
+    plan = _make_plan(phase=3)
+    plan.dates = DateRange(start="2026-07-01", end="2026-07-01")
+    tool_fn = make_save_day_plan_tool(plan)
+    activity = _sample_activity()
+    activity["transport_estimated"] = "yes"
+
+    with pytest.raises(ToolError, match="transport_estimated"):
+        await tool_fn(
+            mode="create", day=1, date="2026-07-01", activities=[activity]
+        )
 
 
 class TestConflictDetection:

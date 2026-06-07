@@ -2,19 +2,36 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from harness.feasibility import check_feasibility
-from state.models import Budget, DateRange, TravelPlanState
+from state.models import (
+    Budget,
+    DateRange,
+    TravelPlanState,
+    normalize_pace_value,
+)
 
 logger = logging.getLogger(__name__)
 
 _LOCK_BUDGET_RATIO = 0.8
+_AIRPORT_GROUPS = {
+    "haneda": {"羽田", "haneda", "hnd"},
+    "narita": {"成田", "narita", "nrt"},
+    "kansai": {"关西", "関西", "kansai", "kix"},
+    "itami": {"伊丹", "itami", "itm"},
+}
+_FLIGHT_NO_RE = re.compile(r"\b[A-Z]{1,3}\s?\d{2,4}\b", re.IGNORECASE)
 
 
 def _time_to_minutes(t: str) -> int | None:
     """Convert 'HH:MM' to minutes since midnight. Returns None on bad format."""
     try:
+        if isinstance(t, str):
+            match = re.search(r"(?:[01]\d|2[0-3]):[0-5]\d", t)
+            if match:
+                t = match.group(0)
         h, m = map(int, t.split(":"))
         return h * 60 + m
     except (ValueError, AttributeError):
@@ -155,6 +172,183 @@ def _validate_time_conflicts(plan: TravelPlanState) -> list[str]:
     return errors
 
 
+def _activity_text(day: Any) -> str:
+    parts = [getattr(day, "tips", "") or ""]
+    for activity in getattr(day, "activities", []) or []:
+        parts.extend(
+            [
+                getattr(activity, "name", "") or "",
+                getattr(getattr(activity, "location", None), "name", "") or "",
+                getattr(activity, "transport_from_prev", "") or "",
+                getattr(activity, "notes", "") or "",
+            ]
+        )
+    return " ".join(str(part) for part in parts if part)
+
+
+def _transport_direction_payloads(
+    transport: dict[str, Any],
+    direction: str,
+) -> list[dict[str, Any]]:
+    keys = ("outbound", "going") if direction == "outbound" else ("return", "inbound")
+    for key in keys:
+        nested = transport.get(key)
+        if isinstance(nested, dict):
+            return [nested]
+    segments = transport.get("segments")
+    if isinstance(segments, list):
+        return [
+            segment
+            for segment in segments
+            if isinstance(segment, dict) and segment.get("direction") == direction
+        ]
+    return [transport]
+
+
+def _flatten_text(value: Any) -> str:
+    if isinstance(value, dict):
+        return " ".join(_flatten_text(item) for item in value.values())
+    if isinstance(value, list):
+        return " ".join(_flatten_text(item) for item in value)
+    return str(value or "")
+
+
+def _airport_groups_in_text(text: str) -> set[str]:
+    lowered = text.lower()
+    groups: set[str] = set()
+    for group, aliases in _AIRPORT_GROUPS.items():
+        if any(alias.lower() in lowered for alias in aliases):
+            groups.add(group)
+    return groups
+
+
+def _flight_numbers_in_text(text: str) -> set[str]:
+    return {
+        match.group(0).replace(" ", "").upper()
+        for match in _FLIGHT_NO_RE.finditer(text)
+    }
+
+
+def _validate_transport_day_alignment(plan: TravelPlanState) -> list[str]:
+    transport = plan.selected_transport
+    if not isinstance(transport, dict) or not plan.daily_plans:
+        return []
+
+    errors: list[str] = []
+    sorted_days = sorted(plan.daily_plans, key=lambda day: day.day)
+    checks = [
+        ("outbound", sorted_days[0], "到达日"),
+        ("return", sorted_days[-1], "离开日"),
+    ]
+    for direction, day, label in checks:
+        payload_text = _flatten_text(
+            _transport_direction_payloads(transport, direction)
+        )
+        expected_airports = _airport_groups_in_text(payload_text)
+        expected_flights = _flight_numbers_in_text(payload_text)
+        if not expected_airports and not expected_flights:
+            continue
+
+        day_text = _activity_text(day)
+        actual_airports = _airport_groups_in_text(day_text)
+        actual_flights = _flight_numbers_in_text(day_text)
+        conflicting_airports = actual_airports - expected_airports
+        conflicting_flights = actual_flights - expected_flights
+        if expected_airports and conflicting_airports:
+            errors.append(
+                f"{label}机场与已锁定交通不一致：锁定交通指向 "
+                f"{sorted(expected_airports)}，但 Day {day.day} 写了 "
+                f"{sorted(actual_airports)}"
+            )
+        if expected_flights and conflicting_flights:
+            errors.append(
+                f"{label}航班号与已锁定交通不一致：锁定交通为 "
+                f"{sorted(expected_flights)}，但 Day {day.day} 写了 "
+                f"{sorted(actual_flights)}"
+            )
+    return errors
+
+
+def _transport_time(transport: dict[str, Any], direction: str) -> int | None:
+    payloads = _transport_direction_payloads(transport, direction)
+    if not payloads:
+        return None
+    payload = payloads[0]
+    if direction == "outbound":
+        return _time_to_minutes(
+            payload.get("arrival_time", "")
+            or payload.get("arr_time", "")
+            or payload.get("arrival", "")
+        )
+    return _time_to_minutes(
+        payload.get("departure_time", "")
+        or payload.get("dep_time", "")
+        or payload.get("departure", "")
+    )
+
+
+def _validate_transport_time_buffers(plan: TravelPlanState) -> list[str]:
+    transport = plan.selected_transport
+    if not isinstance(transport, dict) or not plan.daily_plans:
+        return []
+
+    errors: list[str] = []
+    sorted_days = sorted(plan.daily_plans, key=lambda day: day.day)
+    arrival_min = _transport_time(transport, "outbound")
+    if arrival_min is not None:
+        first_day = sorted_days[0]
+        if first_day.activities:
+            first_start = _time_to_minutes(first_day.activities[0].start_time)
+            if first_start is not None and first_start < arrival_min + 120:
+                errors.append(
+                    f"Day {first_day.day}: 首活动开始时间过早，距到达不足 2 小时"
+                )
+
+    departure_min = _transport_time(transport, "return")
+    if departure_min is not None:
+        last_day = sorted_days[-1]
+        if last_day.activities:
+            last_end = _time_to_minutes(last_day.activities[-1].end_time)
+            if last_end is not None and last_end > departure_min - 180:
+                errors.append(
+                    f"Day {last_day.day}: 末活动结束过晚，距离开不足 3 小时"
+                )
+    return errors
+
+
+def _explicit_pace(plan: TravelPlanState) -> str | None:
+    brief_pace = normalize_pace_value((plan.trip_brief or {}).get("pace"))
+    if brief_pace:
+        return brief_pace
+    for preference in plan.preferences:
+        if preference.key == "pace":
+            normalized = normalize_pace_value(preference.value)
+            if normalized:
+                return normalized
+    for constraint in plan.constraints:
+        normalized = normalize_pace_value(constraint.description)
+        if normalized:
+            return normalized
+    return None
+
+
+def _validate_pace_constraints(plan: TravelPlanState) -> list[str]:
+    pace = _explicit_pace(plan)
+    if not pace:
+        return []
+    limits = {"relaxed": 3, "balanced": 4, "intensive": 5}
+    max_activities = limits[pace]
+    errors: list[str] = []
+    for day in plan.daily_plans:
+        activity_count = len(day.activities)
+        if activity_count > max_activities:
+            errors.append(
+                f"Day {day.day}: {activity_count} 个活动超出 "
+                f"{pace} 节奏上限 {max_activities}"
+            )
+    return errors
+
+
 def validate_hard_constraints(plan: TravelPlanState) -> list[str]:
     errors: list[str] = []
 
@@ -175,6 +369,20 @@ def validate_hard_constraints(plan: TravelPlanState) -> list[str]:
             errors.append(
                 f"天数超限：规划了 {actual_days} 天行程，但只有 {allowed_days} 天可用"
             )
+        expected_days = set(range(1, allowed_days + 1))
+        actual_day_numbers = {day.day for day in plan.daily_plans}
+        if actual_days >= allowed_days and (
+            len(actual_day_numbers) != actual_days
+            or actual_day_numbers != expected_days
+        ):
+            errors.append(
+                "天数覆盖不完整：daily_plans 必须唯一覆盖 "
+                f"1 到 {allowed_days}，当前为 {sorted(actual_day_numbers)}"
+            )
+
+    errors.extend(_validate_transport_day_alignment(plan))
+    errors.extend(_validate_transport_time_buffers(plan))
+    errors.extend(_validate_pace_constraints(plan))
 
     return errors
 

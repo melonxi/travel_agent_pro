@@ -19,6 +19,61 @@ from telemetry.attributes import (
 )
 
 
+def _usage_field(usage: Any, name: str) -> Any:
+    if usage is None:
+        return None
+    if isinstance(usage, dict):
+        return usage.get(name)
+    value = getattr(usage, name, None)
+    if value is not None:
+        return value
+    model_extra = getattr(usage, "model_extra", None)
+    if isinstance(model_extra, dict):
+        value = model_extra.get(name)
+        if value is not None:
+            return value
+    model_dump = getattr(usage, "model_dump", None)
+    if callable(model_dump):
+        data = model_dump()
+        if isinstance(data, dict):
+            return data.get(name)
+    return None
+
+
+def _usage_int(usage: Any, name: str) -> int | None:
+    value = _usage_field(usage, name)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _usage_info(usage: Any) -> dict[str, Any]:
+    prompt_tokens = _usage_int(usage, "prompt_tokens") or 0
+    completion_tokens = _usage_int(usage, "completion_tokens") or 0
+    info: dict[str, Any] = {
+        "input_tokens": prompt_tokens,
+        "output_tokens": completion_tokens,
+    }
+
+    cache_hit = _usage_int(usage, "prompt_cache_hit_tokens")
+    cache_miss = _usage_int(usage, "prompt_cache_miss_tokens")
+    prompt_details = _usage_field(usage, "prompt_tokens_details")
+    cached_tokens = _usage_int(prompt_details, "cached_tokens")
+    if cache_hit is None and cached_tokens is not None:
+        cache_hit = cached_tokens
+    if cache_miss is None and cache_hit is not None:
+        cache_miss = max(prompt_tokens - cache_hit, 0)
+
+    if cache_hit is not None:
+        info["prompt_cache_hit_tokens"] = cache_hit
+    if cache_miss is not None:
+        info["prompt_cache_miss_tokens"] = cache_miss
+    return info
+
+
 class OpenAIProvider:
     _RETRY_DELAYS = (1.0, 3.0)
 
@@ -203,6 +258,8 @@ class OpenAIProvider:
                 kwargs["tools"] = self._convert_tools(tools)
             if tools and tool_choice is not None:
                 kwargs["tool_choice"] = tool_choice
+                if self._uses_deepseek_reasoning_content():
+                    kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
             if stream:
                 kwargs["stream_options"] = {"include_usage": True}
 
@@ -269,10 +326,7 @@ class OpenAIProvider:
                         if hasattr(response, "usage") and response.usage:
                             yield LLMChunk(
                                 type=ChunkType.USAGE,
-                                usage_info={
-                                    "input_tokens": response.usage.prompt_tokens,
-                                    "output_tokens": response.usage.completion_tokens,
-                                },
+                                usage_info=_usage_info(response.usage),
                             )
                         yield LLMChunk(type=ChunkType.DONE)
                         return
@@ -280,16 +334,15 @@ class OpenAIProvider:
                     response = await self.client.chat.completions.create(**kwargs)
                     current_tool_calls: dict[int, dict] = {}
                     collected_text = ""
+                    emitted_tool_calls = False
+                    emitted_response_event = False
 
                     async for chunk in response:
                         # Check for usage data (final chunk in stream)
                         if hasattr(chunk, "usage") and chunk.usage:
                             yield LLMChunk(
                                 type=ChunkType.USAGE,
-                                usage_info={
-                                    "input_tokens": chunk.usage.prompt_tokens,
-                                    "output_tokens": chunk.usage.completion_tokens,
-                                },
+                                usage_info=_usage_info(chunk.usage),
                             )
 
                         choice = chunk.choices[0] if chunk.choices else None
@@ -347,53 +400,58 @@ class OpenAIProvider:
                                             )
 
                         if choice.finish_reason:
-                            for entry in current_tool_calls.values():
-                                yield LLMChunk(
-                                    type=ChunkType.TOOL_CALL_START,
-                                    tool_call=ToolCall(
-                                        id=entry["id"],
-                                        name=entry["name"],
-                                        arguments=json.loads(entry["arguments"])
-                                        if entry["arguments"]
-                                        else {},
-                                    ),
-                                )
+                            if not emitted_tool_calls:
+                                for entry in current_tool_calls.values():
+                                    yield LLMChunk(
+                                        type=ChunkType.TOOL_CALL_START,
+                                        tool_call=ToolCall(
+                                            id=entry["id"],
+                                            name=entry["name"],
+                                            arguments=json.loads(entry["arguments"])
+                                            if entry["arguments"]
+                                            else {},
+                                        ),
+                                    )
+                                emitted_tool_calls = True
                             tool_call_names = [
                                 entry["name"] for entry in current_tool_calls.values()
                             ]
-                            span.add_event(
-                                EVENT_LLM_RESPONSE,
-                                {
-                                    "text_preview": truncate(
-                                        collected_text, max_len=200
-                                    ),
-                                    "tool_calls": json.dumps(tool_call_names),
-                                },
-                            )
-                            yield LLMChunk(type=ChunkType.DONE)
-                            return
+                            if not emitted_response_event:
+                                span.add_event(
+                                    EVENT_LLM_RESPONSE,
+                                    {
+                                        "text_preview": truncate(
+                                            collected_text, max_len=200
+                                        ),
+                                        "tool_calls": json.dumps(tool_call_names),
+                                    },
+                                )
+                                emitted_response_event = True
+                            continue
 
                     tool_call_names = [
                         entry["name"] for entry in current_tool_calls.values()
                     ]
-                    span.add_event(
-                        EVENT_LLM_RESPONSE,
-                        {
-                            "text_preview": truncate(collected_text, max_len=200),
-                            "tool_calls": json.dumps(tool_call_names),
-                        },
-                    )
-                    for entry in current_tool_calls.values():
-                        yield LLMChunk(
-                            type=ChunkType.TOOL_CALL_START,
-                            tool_call=ToolCall(
-                                id=entry["id"],
-                                name=entry["name"],
-                                arguments=json.loads(entry["arguments"])
-                                if entry["arguments"]
-                                else {},
-                            ),
+                    if not emitted_response_event:
+                        span.add_event(
+                            EVENT_LLM_RESPONSE,
+                            {
+                                "text_preview": truncate(collected_text, max_len=200),
+                                "tool_calls": json.dumps(tool_call_names),
+                            },
                         )
+                    if not emitted_tool_calls:
+                        for entry in current_tool_calls.values():
+                            yield LLMChunk(
+                                type=ChunkType.TOOL_CALL_START,
+                                tool_call=ToolCall(
+                                    id=entry["id"],
+                                    name=entry["name"],
+                                    arguments=json.loads(entry["arguments"])
+                                    if entry["arguments"]
+                                    else {},
+                                ),
+                            )
                     yield LLMChunk(type=ChunkType.DONE)
                     return
                 except LLMError:

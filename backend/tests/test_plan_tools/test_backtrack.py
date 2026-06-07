@@ -36,7 +36,7 @@ def test_request_backtrack_tool_metadata():
         tool_fn.description
         == "请求回退到更早的规划阶段。当用户想推翻之前的阶段决策时使用。目标阶段必须小于当前阶段。"
     )
-    assert tool_fn.phases == [1, 2, 3, 4]
+    assert tool_fn.phases == [2, 3, 4]
     assert tool_fn.side_effect == "write"
     assert tool_fn.human_label == "请求回退阶段"
     assert tool_fn.parameters == {
@@ -67,7 +67,10 @@ async def test_request_backtrack_success_clears_downstream_and_records_history()
         "from_phase": 3,
         "to_phase": 2,
         "reason": "用户想换日期",
-        "next_action": "请向用户确认回退结果，不要继续调用其他工具",
+        "next_action": (
+            "已回退并重建上下文。若用户本轮已明确授权修复，请继续在目标阶段调用工具完成修复；"
+            "若只是提出修改意向，再向用户确认。"
+        ),
     }
     assert plan.phase == 2
     assert len(plan.backtrack_history) == 1

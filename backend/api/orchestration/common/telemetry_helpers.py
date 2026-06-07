@@ -6,7 +6,7 @@ from typing import Any
 
 from agent.types import ToolResult
 from memory.formatter import MemoryRecallTelemetry
-from telemetry.stats import SessionStats
+from telemetry.stats import SessionStats, llm_cache_usage_metadata
 
 
 def _days_count_from_dates(dates: Any | None) -> int | None:
@@ -255,4 +255,5 @@ def _record_llm_usage_stats(
         duration_ms=duration_ms,
         phase=phase,
         iteration=iteration,
+        metadata=llm_cache_usage_metadata(usage_info),
     )

@@ -29,6 +29,11 @@ _PARAMETERS = {
 
 
 def make_get_poi_info_tool(api_keys: ApiKeysConfig, flyai_client=None):
+    # Session-scoped cache: build_tool_engine() runs once per session, so this
+    # dict is shared across all phases of one session and avoids re-querying the
+    # same POI (a major Phase 3 cost + a source of cross-phase fact drift).
+    _session_cache: dict[tuple[str, str | None], dict] = {}
+
     @tool(
         name="get_poi_info",
         description="""获取景点/兴趣点详细信息。
@@ -40,6 +45,11 @@ Don't use when: 已有该景点的完整信息。
         human_label="查 POI 详情",
     )
     async def get_poi_info(query: str, location: str | None = None) -> dict:
+        cache_key = (query, location)
+        cached = _session_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         tasks = []
 
         # Branch 1: Google Places
@@ -128,6 +138,8 @@ Don't use when: 已有该景点的完整信息。
 
         merged = merge_pois(google_results, flyai_results)
 
-        return {"pois": [p.to_dict() for p in merged], "query": query}
+        result = {"pois": [p.to_dict() for p in merged], "query": query}
+        _session_cache[cache_key] = result
+        return result
 
     return get_poi_info

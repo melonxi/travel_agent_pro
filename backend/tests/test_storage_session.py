@@ -100,3 +100,27 @@ async def test_update_run_error(store: SessionStore):
     assert meta is not None
     assert meta["last_run_status"] == "failed"
     assert meta["last_run_error"] == "LLM_TRANSIENT_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_update_run_error_can_clear_previous_error(store: SessionStore):
+    await store.create("sess_run_clear12345", "user1", "错误清空会话")
+    await store.update(
+        "sess_run_clear12345",
+        last_run_id="run_failed",
+        last_run_status="failed",
+        last_run_error="LLM_PROTOCOL_ERROR",
+    )
+
+    await store.update(
+        "sess_run_clear12345",
+        last_run_id="run_ok",
+        last_run_status="completed",
+        last_run_error=None,
+    )
+
+    meta = await store.load("sess_run_clear12345")
+    assert meta is not None
+    assert meta["last_run_id"] == "run_ok"
+    assert meta["last_run_status"] == "completed"
+    assert meta["last_run_error"] is None

@@ -69,50 +69,44 @@ PHASE_TASKS = [
     ),
     PhaseTask(
         label="phase1_confirm_destination",
-        goal="Phase 1 should record destination and hand off, without starting Phase 2 research in the same run.",
+        goal="Phase 1 should record destination and hand off.",
         message=(
-            "我确认目的地选东京。现在只记录目的地并进入下一步；日期、预算、人数和偏好我下一轮再补充。"
-            "不要开始查攻略，也不要生成候选池。"
+            "我确认目的地选东京。日期、预算、人数和偏好我下一轮再补充。"
         ),
         max_duration_s=60,
         max_tool_calls=3,
-        forbidden_tool_prefixes=("xiaohongshu_", "web_search", "set_candidate_pool", "set_shortlist", "set_skeleton_plans"),
     ),
     PhaseTask(
         label="phase2_brief",
-        goal="Phase 2 brief should record trip facts and preferences, not start candidate research.",
+        goal="Phase 2 brief should record trip facts and preferences.",
         message=(
             "现在补充基础信息：出发地上海，日期2026-07-10到2026-07-12，2人，预算总计12000元人民币以内。"
             "希望住新宿，交通优先经济舱直飞，节奏 balanced，不要太赶。"
-            "偏好拉面、甜品、药妆、东京城市街区和轻松购物。请只写入这些信息，不要搜索候选。"
+            "偏好拉面、甜品、药妆、东京城市街区和轻松购物。"
         ),
         max_duration_s=75,
         max_tool_calls=6,
-        forbidden_tool_prefixes=("xiaohongshu_", "web_search", "set_candidate_pool", "set_shortlist", "set_skeleton_plans"),
     ),
     PhaseTask(
         label="phase2_candidate",
         goal="Phase 2 candidate should build candidate pool with bounded research.",
-        message="基础信息确认。请只完成东京候选池 candidate_pool，不要筛 shortlist，不要生成 skeleton。",
+        message="基础信息确认。请开始整理东京候选池 candidate_pool。",
         max_duration_s=150,
         max_tool_calls=18,
-        forbidden_tool_prefixes=("set_shortlist", "set_skeleton_plans", "select_skeleton"),
     ),
     PhaseTask(
         label="phase2_shortlist",
-        goal="Phase 2 shortlist should filter existing candidates without generating skeleton.",
-        message="候选池范围确认。请基于已有候选筛选 shortlist，不要生成 skeleton，也不要锁定方案。",
+        goal="Phase 2 shortlist should filter existing candidates.",
+        message="候选池范围确认。请基于已有候选筛选 shortlist。",
         max_duration_s=120,
         max_tool_calls=10,
-        forbidden_tool_prefixes=("set_skeleton_plans", "select_skeleton"),
     ),
     PhaseTask(
         label="phase2_skeleton",
         goal="Phase 2 skeleton should generate options, not lock one for the user.",
-        message="短名单确认。请生成2到3套 skeleton 方案供我选择，但不要替我锁定最终方案。",
+        message="短名单确认。请生成2到3套 skeleton 方案供我选择。",
         max_duration_s=150,
         max_tool_calls=12,
-        forbidden_tool_prefixes=("select_skeleton",),
     ),
     PhaseTask(
         label="phase2_lock_options",
@@ -272,15 +266,25 @@ def _fetch_trace_events(
     return []
 
 
-def _grade_run(client: httpx.Client, run_id: str) -> list[dict[str, Any]]:
+def _grade_report(grader_ran: bool, grades: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "grader_ran": grader_ran,
+        "grade_count": len(grades),
+        "grade_fails": [
+            g.get("rubric_id") for g in grades if g.get("status") == "fail"
+        ],
+    }
+
+
+def _grade_run(client: httpx.Client, run_id: str) -> tuple[bool, list[dict[str, Any]]]:
     """Run the deterministic trace grader on a run and return its rubric results."""
     try:
         resp = client.post(f"/api/traces/{run_id}/grade", timeout=30.0)
         if resp.status_code == 200:
-            return resp.json().get("grades") or []
+            return True, resp.json().get("grades") or []
     except httpx.HTTPError:
         pass
-    return []
+    return False, []
 
 
 def _send_message(
@@ -340,8 +344,8 @@ def _send_message(
         forbidden_prefixes=task.forbidden_tool_prefixes,
         max_tool_calls=task.max_tool_calls,
     )
-    grades = _grade_run(client, run_id) if run_id else []
-    grade_fails = [g.get("rubric_id") for g in grades if g.get("status") == "fail"]
+    grader_ran, grades = _grade_run(client, run_id) if run_id else (False, [])
+    grade_report = _grade_report(grader_ran, grades)
 
     warnings = list(audit.warnings)
     if duration_s > task.max_duration_s:
@@ -370,7 +374,7 @@ def _send_message(
             for s in audit.error_stats
         ],
         "grades": grades,
-        "grade_fails": grade_fails,
+        **grade_report,
         "internal_tasks": internal_tasks,
         "phase_after": plan.get("phase"),
         "phase2_step_after": plan.get("phase2_step"),

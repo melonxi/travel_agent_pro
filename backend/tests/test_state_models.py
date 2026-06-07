@@ -40,6 +40,37 @@ def test_activity():
     assert act.duration_minutes == 90
 
 
+def test_activity_preserves_transport_estimated_flag():
+    act = Activity.from_dict(
+        {
+            "name": "浅草寺",
+            "location": {"name": "浅草寺", "lat": 35.7148, "lng": 139.7967},
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "category": "shrine",
+            "cost": 0,
+            "transport_estimated": True,
+        }
+    )
+    assert act.transport_estimated is True
+    assert act.to_dict()["transport_estimated"] is True
+
+
+def test_activity_defaults_transport_estimated_false():
+    act = Activity.from_dict(
+        {
+            "name": "上野公园",
+            "location": {"name": "上野公园", "lat": 35.7156, "lng": 139.7745},
+            "start_time": "10:30",
+            "end_time": "11:30",
+            "category": "park",
+            "cost": 0,
+        }
+    )
+    assert act.transport_estimated is False
+    assert act.to_dict()["transport_estimated"] is False
+
+
 def test_plan_serialization():
     plan = TravelPlanState(
         session_id="sess_001",

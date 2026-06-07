@@ -2,7 +2,9 @@ import asyncio
 
 import pytest
 
-from api.orchestration.chat.stream import _run_timeout
+from types import SimpleNamespace
+
+from api.orchestration.chat.stream import _has_frozen_phase4_deliverables, _run_timeout
 
 
 @pytest.mark.asyncio
@@ -16,3 +18,15 @@ async def test_run_timeout_raises_after_budget():
 async def test_run_timeout_can_be_disabled():
     async with _run_timeout(None):
         await asyncio.sleep(0)
+
+
+def test_has_frozen_phase4_deliverables_requires_phase4_and_deliverables():
+    assert _has_frozen_phase4_deliverables(
+        SimpleNamespace(phase=4, deliverables={"travel_plan_md": "travel_plan.md"})
+    )
+    assert not _has_frozen_phase4_deliverables(
+        SimpleNamespace(phase=3, deliverables={"travel_plan_md": "travel_plan.md"})
+    )
+    assert not _has_frozen_phase4_deliverables(
+        SimpleNamespace(phase=4, deliverables=None)
+    )

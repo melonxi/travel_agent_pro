@@ -230,7 +230,7 @@ class AppConfig:
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     data_dir: str = "./data"
     max_retries: int = 60
-    run_timeout_seconds: int | None = 300
+    run_timeout_seconds: int | None = 600
     context_compression_threshold: float = 0.5
     flyai: FlyAIConfig = field(default_factory=FlyAIConfig)
     xhs: XhsConfig = field(default_factory=XhsConfig)
@@ -652,7 +652,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         telemetry=telemetry,
         data_dir=raw.get("data_dir", "./data"),
         max_retries=raw.get("max_retries", 60),
-        run_timeout_seconds=raw.get("run_timeout_seconds", 300),
+        run_timeout_seconds=raw.get("run_timeout_seconds", 600),
         context_compression_threshold=raw.get("context_compression_threshold", 0.5),
         flyai=flyai,
         xhs=xhs,

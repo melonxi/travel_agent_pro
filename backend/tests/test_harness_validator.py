@@ -105,6 +105,126 @@ def test_too_many_days():
     assert any("天数" in e for e in errors)
 
 
+def test_duplicate_day_numbers_block_phase4_readiness():
+    plan = TravelPlanState(
+        session_id="s1",
+        dates=DateRange(start="2026-04-10", end="2026-04-12"),
+        daily_plans=[
+            DayPlan(day=1, date="2026-04-10"),
+            DayPlan(day=2, date="2026-04-11"),
+            DayPlan(day=2, date="2026-04-12"),
+        ],
+    )
+
+    errors = validate_hard_constraints(plan)
+
+    assert any("天数覆盖不完整" in e for e in errors)
+
+
+def test_transport_airport_mismatch_is_hard_error():
+    plan = TravelPlanState(
+        session_id="s1",
+        selected_transport={
+            "return": {
+                "airline": "JAL JL085",
+                "route": "东京羽田→上海浦东",
+                "departure": "14:25",
+                "arrival": "17:05",
+            }
+        },
+        daily_plans=[
+            DayPlan(day=1, date="2026-07-10"),
+            DayPlan(
+                day=2,
+                date="2026-07-11",
+                notes="前往成田机场，乘 Narita Express。",
+            ),
+        ],
+    )
+
+    errors = validate_hard_constraints(plan)
+
+    assert any("机场与已锁定交通不一致" in e for e in errors)
+
+
+def test_transport_departure_buffer_violation_is_hard_error():
+    plan = TravelPlanState(
+        session_id="s1",
+        selected_transport={
+            "inbound": {
+                "airline": "春秋航空",
+                "flight_no": "9C6218",
+                "origin": "东京成田",
+                "destination": "上海浦东",
+                "dep_time": "2026-07-12 20:00",
+            }
+        },
+        daily_plans=[
+            DayPlan(day=1, date="2026-07-10"),
+            DayPlan(
+                day=2,
+                date="2026-07-12",
+                activities=[
+                    _make_activity("涩谷SKY", "15:00", "18:30"),
+                ],
+            ),
+        ],
+    )
+
+    errors = validate_hard_constraints(plan)
+
+    assert any("距离开不足 3 小时" in e for e in errors)
+
+
+def test_transport_arrival_buffer_violation_is_hard_error():
+    plan = TravelPlanState(
+        session_id="s1",
+        selected_transport={
+            "outbound": {
+                "airline": "东航",
+                "flight_no": "MU523",
+                "origin": "上海浦东",
+                "destination": "东京成田",
+                "arr_time": "2026-07-10 12:50",
+            }
+        },
+        daily_plans=[
+            DayPlan(
+                day=1,
+                date="2026-07-10",
+                activities=[
+                    _make_activity("浅草寺", "14:00", "15:30"),
+                ],
+            )
+        ],
+    )
+
+    errors = validate_hard_constraints(plan)
+
+    assert any("距到达不足 2 小时" in e for e in errors)
+
+
+def test_explicit_natural_pace_over_limit_is_hard_error():
+    plan = TravelPlanState(
+        session_id="s1",
+        trip_brief={"pace": "不要太赶，每天 3-4 个活动"},
+        daily_plans=[
+            DayPlan(
+                day=1,
+                date="2026-07-10",
+                activities=[
+                    _make_activity(f"A{i}", "09:00", "10:00")
+                    for i in range(5)
+                ],
+            )
+        ],
+    )
+
+    errors = validate_hard_constraints(plan)
+
+    assert any("超出 balanced 节奏上限 4" in e for e in errors)
+
+
 def test_no_errors_on_empty_plan():
     plan = TravelPlanState(session_id="s1")
     errors = validate_hard_constraints(plan)

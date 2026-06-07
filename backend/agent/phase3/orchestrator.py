@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from math import radians, sin, cos, sqrt, atan2
@@ -26,15 +27,20 @@ from agent.phase3.day_worker import DayWorkerResult, run_day_worker
 from agent.phase3.worker_prompt import (
     DayTask,
     build_shared_prefix,
+    max_core_activities_for_pace,
     split_skeleton_to_day_tasks,
 )
 from config import Phase3ParallelConfig
 from llm.base import LLMProvider
 from llm.types import ChunkType, LLMChunk
-from state.models import TravelPlanState
+from state.models import TravelPlanState, normalize_pace_value
 from tools.engine import ToolEngine
 
 logger = logging.getLogger(__name__)
+
+_LOCAL_REPAIR_ISSUE_TYPES = frozenset(
+    {"pace_mismatch", "time_conflict", "transport_connection"}
+)
 
 
 def _derive_theme(slice_: dict) -> str | None:
@@ -62,19 +68,63 @@ class GlobalValidationIssue:
     severity: str = "warning"  # "error" | "warning"
 
 
+def build_unresolved_constraint_notice(
+    issues: list[GlobalValidationIssue],
+) -> str | None:
+    """Render a user-facing notice for error-severity issues that survived
+    re-dispatch.
+
+    Phase 3 still ships the best available plan (we deliberately do not block the
+    deliverable on a soft preference like pace), but the user must be *told* that
+    an explicit constraint was not fully met — instead of the previous silent
+    pass that only emitted a log line.
+    """
+    blocking = [issue for issue in issues if issue.severity == "error"]
+    if not blocking:
+        return None
+    lines = [
+        "⚠️ 你明确要求的以下约束，自动重排后仍未完全满足，已按当前最优方案交付："
+    ]
+    for issue in blocking:
+        lines.append(f"- {issue.description}")
+    lines.append("如需我进一步调整（例如删减某天的活动），告诉我即可。")
+    return "\n".join(lines)
+
+
 def _time_to_minutes(t: str) -> int | None:
     try:
+        if isinstance(t, str):
+            match = re.search(r"(?:[01]\d|2[0-3]):[0-5]\d", t)
+            if match:
+                t = match.group(0)
         h, m = map(int, t.split(":"))
         return h * 60 + m
     except (ValueError, AttributeError):
         return None
 
 
+def _transport_payload_for_direction(
+    transport: dict[str, Any],
+    direction: str,
+) -> dict[str, Any] | None:
+    keys = ("outbound", "going") if direction == "outbound" else ("return", "inbound")
+    for key in keys:
+        value = transport.get(key)
+        if isinstance(value, dict):
+            payload = dict(value)
+            payload.setdefault("direction", direction)
+            return payload
+    return None
+
+
 def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     R = 6_371_000
     dlat = radians(lat2 - lat1)
     dlng = radians(lng2 - lng1)
-    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    a = (
+        sin(dlat / 2) ** 2
+        + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    )
     return R * 2 * atan2(sqrt(a), sqrt(1 - a))
 
 
@@ -108,6 +158,20 @@ def _extract_transport_time(transport: dict[str, Any], direction: str) -> int | 
     direction: 'outbound' → last segment arrival_time (final destination),
                'return'   → first segment departure_time (earliest departure)
     """
+    nested = _transport_payload_for_direction(transport, direction)
+    if isinstance(nested, dict):
+        if direction == "outbound":
+            return _time_to_minutes(
+                nested.get("arrival_time", "")
+                or nested.get("arr_time", "")
+                or nested.get("arrival", "")
+            )
+        return _time_to_minutes(
+            nested.get("departure_time", "")
+            or nested.get("dep_time", "")
+            or nested.get("departure", "")
+        )
+
     segments = transport.get("segments")
     if isinstance(segments, list):
         result: int | None = None
@@ -132,6 +196,31 @@ def _extract_transport_time(transport: dict[str, Any], direction: str) -> int | 
     if direction == "outbound":
         return _time_to_minutes(transport.get("arrival_time", ""))
     return _time_to_minutes(transport.get("departure_time", ""))
+
+
+def _extract_transport_segment(
+    transport: dict[str, Any],
+    direction: str,
+) -> dict[str, Any] | None:
+    nested = _transport_payload_for_direction(transport, direction)
+    if isinstance(nested, dict):
+        return nested
+
+    segments = transport.get("segments")
+    if isinstance(segments, list):
+        matches = [
+            seg for seg in segments
+            if isinstance(seg, dict) and seg.get("direction") == direction
+        ]
+        if matches:
+            if direction == "outbound":
+                return dict(matches[-1])
+            return dict(matches[0])
+    if direction == "outbound" and transport.get("arrival_time"):
+        return dict(transport)
+    if direction == "return" and transport.get("departure_time"):
+        return dict(transport)
+    return None
 
 
 class Phase3Orchestrator:
@@ -175,6 +264,32 @@ class Phase3Orchestrator:
     def _compile_day_tasks(self, tasks: list[DayTask]) -> list[DayTask]:
         """Enrich DayTasks with cross-day constraints derived from skeleton."""
 
+        # 0. Make POI constraints fit the activity budget before dispatching.
+        # Otherwise a relaxed day with too many locked POIs is impossible for
+        # the worker to satisfy and will trigger a slow global re-dispatch.
+        for t in tasks:
+            max_core = max_core_activities_for_pace(t.pace)
+            t.max_core_activities = max_core
+            if len(t.locked_pois) > max_core:
+                demoted = t.locked_pois[max_core:]
+                logger.warning(
+                    "Day %d has %d locked POIs over %s pace limit %d; "
+                    "demoting extras to candidate_pois: %s",
+                    t.day,
+                    len(t.locked_pois),
+                    t.pace,
+                    max_core,
+                    demoted,
+                )
+                t.locked_pois = t.locked_pois[:max_core]
+                t.demoted_locked_pois = list(demoted)
+                existing_candidates = set(t.candidate_pois)
+                t.candidate_pois = [
+                    *[poi for poi in demoted if poi not in existing_candidates],
+                    *t.candidate_pois,
+                ]
+            t.candidate_activity_slots = max(max_core - len(t.locked_pois), 0)
+
         # 1. Build global POI ownership map (locked only)
         poi_owner: dict[str, int] = {}
         for t in tasks:
@@ -195,8 +310,8 @@ class Phase3Orchestrator:
 
         # 3. Fill mobility_envelope defaults (only if skeleton didn't provide)
         pace_defaults = {
-            "relaxed":   {"max_cross_area_hops": 1, "max_transit_leg_min": 30},
-            "balanced":  {"max_cross_area_hops": 2, "max_transit_leg_min": 40},
+            "relaxed": {"max_cross_area_hops": 1, "max_transit_leg_min": 30},
+            "balanced": {"max_cross_area_hops": 2, "max_transit_leg_min": 40},
             "intensive": {"max_cross_area_hops": 3, "max_transit_leg_min": 50},
         }
         for t in tasks:
@@ -241,21 +356,36 @@ class Phase3Orchestrator:
         if isinstance(transport, dict) and tasks:
             arrival_min = _extract_transport_time(transport, "outbound")
             departure_min = _extract_transport_time(transport, "return")
+            arrival_segment = _extract_transport_segment(transport, "outbound")
+            departure_segment = _extract_transport_segment(transport, "return")
             sorted_tasks = sorted(tasks, key=lambda x: x.day)
-            if arrival_min is not None and sorted_tasks[0].date_role == "arrival_day":
+            if (
+                arrival_min is not None
+                and sorted_tasks[0].date_role == "arrival_day"
+            ):
                 hh, mm = divmod(arrival_min, 60)
                 sorted_tasks[0].arrival_time = f"{hh:02d}:{mm:02d}"
-            if departure_min is not None and sorted_tasks[-1].date_role == "departure_day":
+                sorted_tasks[0].arrival_transport = arrival_segment
+            if (
+                departure_min is not None
+                and sorted_tasks[-1].date_role == "departure_day"
+            ):
                 hh, mm = divmod(departure_min, 60)
                 sorted_tasks[-1].departure_time = f"{hh:02d}:{mm:02d}"
+                sorted_tasks[-1].departure_transport = departure_segment
             # Handle arrival_departure_day (single-day trips)
-            if len(sorted_tasks) == 1 and sorted_tasks[0].date_role == "arrival_departure_day":
+            if (
+                len(sorted_tasks) == 1
+                and sorted_tasks[0].date_role == "arrival_departure_day"
+            ):
                 if arrival_min is not None:
                     hh, mm = divmod(arrival_min, 60)
                     sorted_tasks[0].arrival_time = f"{hh:02d}:{mm:02d}"
+                    sorted_tasks[0].arrival_transport = arrival_segment
                 if departure_min is not None:
                     hh, mm = divmod(departure_min, 60)
                     sorted_tasks[0].departure_time = f"{hh:02d}:{mm:02d}"
+                    sorted_tasks[0].departure_transport = departure_segment
 
         return tasks
 
@@ -457,8 +587,12 @@ class Phase3Orchestrator:
 
     def _validate_pace(self, dayplans: list[dict[str, Any]]) -> list[GlobalValidationIssue]:
         issues: list[GlobalValidationIssue] = []
-        pace = (self.plan.trip_brief or {}).get("pace", "balanced")
-        max_activities = {"relaxed": 3, "balanced": 4, "intensive": 5}.get(pace, 4)
+        raw_pace = (self.plan.trip_brief or {}).get("pace")
+        normalized_pace = normalize_pace_value(raw_pace)
+        explicit_pace = normalized_pace is not None
+        pace = normalized_pace or "balanced"
+        max_activities = max_core_activities_for_pace(pace)
+        severity = "error" if explicit_pace else "warning"
 
         for dp in dayplans:
             day = dp.get("day", 0)
@@ -470,7 +604,7 @@ class Phase3Orchestrator:
                         f"Day {day}: {act_count} 个活动超出 {pace} 节奏上限 {max_activities}"
                     ),
                     affected_days=[day],
-                    severity="warning",
+                    severity=severity,
                 ))
         return issues
 
@@ -794,46 +928,30 @@ class Phase3Orchestrator:
             # 8b. Re-dispatch for error-severity issues (max 1 round)
             error_issues = [i for i in issues if i.severity == "error"]
             if error_issues:
-                redispatch_days = set()
-                for ei in error_issues:
-                    redispatch_days.update(ei.affected_days)
-
                 task_by_day = {t.day: t for t in tasks}
-                for rd_day in sorted(redispatch_days):
-                    rd_task = task_by_day.get(rd_day)
-                    if rd_task is None:
-                        continue
-                    # Inject repair hints
-                    rd_task.repair_hints = [
-                        ei.description for ei in error_issues if rd_day in ei.affected_days
+
+                def _affected_days(issue_list: list[GlobalValidationIssue]) -> set[int]:
+                    days: set[int] = set()
+                    for issue in issue_list:
+                        days.update(issue.affected_days)
+                    return days
+
+                def _repair_hints_for_day(
+                    issue_list: list[GlobalValidationIssue],
+                    day: int,
+                ) -> list[str]:
+                    return [
+                        issue.description
+                        for issue in issue_list
+                        if day in issue.affected_days
                     ]
+
+                def _apply_repair_result(
+                    *,
+                    rd_day: int,
+                    rd_result: DayWorkerResult,
+                ) -> None:
                     idx = _find_worker_idx(rd_day)
-                    worker_statuses[idx].update({
-                        "status": "redispatch",
-                        "iteration": None,
-                        "current_tool": None,
-                        "error": None,
-                        "error_code": None,
-                    })
-                    yield self._build_progress_chunk(
-                        worker_statuses, total_days,
-                        f"校验发现问题，重新规划第 {rd_day} 天...",
-                    )
-                    # Re-run with updated suffix (includes repair_hints)
-                    rd_result = await run_day_worker(
-                        llm=self.llm,
-                        tool_engine=self.tool_engine,
-                        plan=self.plan,
-                        task=rd_task,
-                        shared_prefix=shared_prefix,
-                        max_iterations=self.config.worker_max_iterations,
-                        timeout_seconds=self.config.worker_timeout_seconds,
-                        on_progress=_make_progress_cb(idx),
-                        candidate_store=candidate_store,
-                        run_id=run_id,
-                        attempt=3,
-                        stats=self.stats,
-                    )
                     if rd_result.success and rd_result.dayplan:
                         latest_by_day = {
                             c["day"]: c["dayplan"]
@@ -845,19 +963,178 @@ class Phase3Orchestrator:
                         replacement_dayplan = latest_by_day.get(
                             rd_day, rd_result.dayplan
                         )
-                        # Replace in dayplans list
-                        dayplans = [
+                        dayplans[:] = [
                             dp for dp in dayplans if dp.get("day") != rd_day
                         ]
                         dayplans.append(replacement_dayplan)
                         dayplans.sort(key=lambda dp: dp.get("day", 0))
                         worker_statuses[idx]["status"] = "done"
+                        worker_statuses[idx]["current_tool"] = None
+                        worker_statuses[idx]["error"] = None
+                        worker_statuses[idx]["error_code"] = None
                         worker_statuses[idx]["activity_count"] = len(
                             replacement_dayplan.get("activities", [])
                         )
                     else:
                         worker_statuses[idx]["status"] = "failed"
-                        worker_statuses[idx]["error"] = _format_error(rd_result.error)
+                        worker_statuses[idx]["current_tool"] = None
+                        worker_statuses[idx]["error"] = _format_error(
+                            rd_result.error
+                        )
+                        worker_statuses[idx]["error_code"] = rd_result.error_code
+
+                async def _run_repair_worker(
+                    *,
+                    rd_day: int,
+                    repair_issues: list[GlobalValidationIssue],
+                ) -> tuple[int, DayWorkerResult]:
+                    rd_task = task_by_day.get(rd_day)
+                    if rd_task is None:
+                        return (
+                            rd_day,
+                            DayWorkerResult(
+                                day=rd_day,
+                                date="",
+                                success=False,
+                                dayplan=None,
+                                error=f"No task found for day {rd_day}",
+                                error_code="MISSING_DAY_TASK",
+                            ),
+                        )
+                    rd_task.repair_hints = _repair_hints_for_day(
+                        repair_issues, rd_day
+                    )
+                    idx = _find_worker_idx(rd_day)
+                    worker_statuses[idx].update({
+                        "status": "redispatch",
+                        "iteration": None,
+                        "current_tool": None,
+                        "error": None,
+                        "error_code": None,
+                        "activity_count": None,
+                    })
+                    try:
+                        rd_result = await run_day_worker(
+                            llm=self.llm,
+                            tool_engine=self.tool_engine,
+                            plan=self.plan,
+                            task=rd_task,
+                            shared_prefix=shared_prefix,
+                            max_iterations=self.config.worker_max_iterations,
+                            timeout_seconds=self.config.worker_timeout_seconds,
+                            on_progress=_make_progress_cb(idx),
+                            candidate_store=candidate_store,
+                            run_id=run_id,
+                            attempt=3,
+                            stats=self.stats,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "re-dispatch failed day=%s",
+                            rd_day,
+                            exc_info=True,
+                        )
+                        rd_result = DayWorkerResult(
+                            day=rd_day,
+                            date=rd_task.date,
+                            success=False,
+                            dayplan=None,
+                            error=str(exc),
+                            error_code="EXCEPTION",
+                        )
+                    return rd_day, rd_result
+
+                local_issues = [
+                    issue
+                    for issue in error_issues
+                    if issue.issue_type in _LOCAL_REPAIR_ISSUE_TYPES
+                ]
+                cross_day_issues = [
+                    issue
+                    for issue in error_issues
+                    if issue.issue_type not in _LOCAL_REPAIR_ISSUE_TYPES
+                ]
+                cross_day_days = _affected_days(cross_day_issues)
+                local_days = sorted(_affected_days(local_issues) - cross_day_days)
+                repaired_days: set[int] = set()
+
+                if local_days:
+                    for rd_day in local_days:
+                        idx = _find_worker_idx(rd_day)
+                        worker_statuses[idx].update({
+                            "status": "redispatch",
+                            "iteration": None,
+                            "current_tool": None,
+                            "error": None,
+                            "error_code": None,
+                            "activity_count": None,
+                        })
+                    yield self._build_progress_chunk(
+                        worker_statuses,
+                        total_days,
+                        "校验发现局部问题，正在并行重新规划第 "
+                        f"{', '.join(str(day) for day in local_days)} 天...",
+                    )
+                    parallel_results = await asyncio.gather(
+                        *[
+                            _run_repair_worker(
+                                rd_day=rd_day,
+                                repair_issues=local_issues,
+                            )
+                            for rd_day in local_days
+                        ],
+                        return_exceptions=True,
+                    )
+                    for result in parallel_results:
+                        if isinstance(result, Exception):
+                            logger.warning(
+                                "parallel local re-dispatch failed: %s",
+                                result,
+                            )
+                            continue
+                        rd_day, rd_result = result
+                        _apply_repair_result(rd_day=rd_day, rd_result=rd_result)
+                        repaired_days.add(rd_day)
+                    yield self._build_progress_chunk(
+                        worker_statuses,
+                        total_days,
+                        "局部问题并行重排完成",
+                    )
+
+                # Cross-day issues need conservative ownership semantics. Re-run
+                # them one by one after local repairs, using the latest validation
+                # result so resolved conflicts are not repaired unnecessarily.
+                issues = self._global_validate(dayplans)
+                remaining_errors = [
+                    issue for issue in issues if issue.severity == "error"
+                ]
+                serial_issues = [
+                    issue
+                    for issue in remaining_errors
+                    if issue.issue_type not in _LOCAL_REPAIR_ISSUE_TYPES
+                ]
+                serial_days = sorted(_affected_days(serial_issues) - repaired_days)
+
+                for rd_day in serial_days:
+                    idx = _find_worker_idx(rd_day)
+                    worker_statuses[idx].update({
+                        "status": "redispatch",
+                        "iteration": None,
+                        "current_tool": None,
+                        "error": None,
+                        "error_code": None,
+                        "activity_count": None,
+                    })
+                    yield self._build_progress_chunk(
+                        worker_statuses, total_days,
+                        f"校验发现跨天冲突，保守重排第 {rd_day} 天...",
+                    )
+                    _, rd_result = await _run_repair_worker(
+                        rd_day=rd_day,
+                        repair_issues=remaining_errors,
+                    )
+                    _apply_repair_result(rd_day=rd_day, rd_result=rd_result)
+                    repaired_days.add(rd_day)
 
                     yield self._build_progress_chunk(
                         worker_statuses, total_days,
@@ -885,11 +1162,11 @@ class Phase3Orchestrator:
             summary_lines = [f"已完成 {len(dayplans)}/{len(tasks)} 天的行程规划。\n"]
             for dp in dayplans:
                 day_num = dp.get("day", "?")
-                notes = dp.get("notes", "")
+                tips = dp.get("tips", "") or dp.get("notes", "")
                 acts = dp.get("activities", [])
                 act_names = [a.get("name", "") for a in acts[:5]]
                 summary_lines.append(
-                    f"**第 {day_num} 天**：{notes or ''}  \n{'→'.join(act_names)}\n"
+                    f"**第 {day_num} 天**：{tips or ''}  \n{'→'.join(act_names)}\n"
                 )
             if issues:
                 summary_lines.append("\n⚠️ 发现以下问题需要关注：")

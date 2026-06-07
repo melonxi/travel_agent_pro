@@ -1,4 +1,6 @@
 # backend/tests/test_orchestrator.py
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, patch
 
@@ -739,7 +741,46 @@ class TestPaceValidation:
         issues = orch._global_validate(dayplans)
         pace_issues = [i for i in issues if i.issue_type == "pace_mismatch"]
         assert len(pace_issues) >= 1
+        assert pace_issues[0].severity == "error"
+
+    def test_balanced_pace_over_limit_is_error(self):
+        plan = _make_plan_with_skeleton()
+        plan.trip_brief = {"pace": "balanced"}
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_activity(f"Act{i}") for i in range(5)
+            ]),
+        ]
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        pace_issues = [i for i in issues if i.issue_type == "pace_mismatch"]
+        assert pace_issues[0].severity == "error"
+
+    def test_unknown_pace_over_limit_stays_warning(self):
+        plan = _make_plan_with_skeleton()
+        plan.trip_brief = {"pace": "custom"}
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_activity(f"Act{i}") for i in range(5)
+            ]),
+        ]
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        pace_issues = [i for i in issues if i.issue_type == "pace_mismatch"]
         assert pace_issues[0].severity == "warning"
+
+    def test_natural_balanced_pace_over_limit_is_error(self):
+        plan = _make_plan_with_skeleton()
+        plan.trip_brief = {"pace": "不要太赶，每天 3-4 个活动"}
+        dayplans = [
+            self._make_dayplan_dict(1, "2026-05-01", [
+                self._make_activity(f"Act{i}") for i in range(5)
+            ]),
+        ]
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        issues = orch._global_validate(dayplans)
+        pace_issues = [i for i in issues if i.issue_type == "pace_mismatch"]
+        assert pace_issues[0].severity == "error"
 
     def test_balanced_pace_within_limit(self):
         plan = _make_plan_with_skeleton()
@@ -813,6 +854,58 @@ class TestCompileDayTasks:
         compiled = orch._compile_day_tasks(tasks)
         assert compiled[0].mobility_envelope["max_cross_area_hops"] == 1
         assert compiled[0].mobility_envelope["max_transit_leg_min"] == 30
+
+    def test_candidate_slots_derived_from_pace_budget(self):
+        plan = _make_plan_with_skeleton()
+        plan.trip_brief = {"pace": "relaxed"}
+        plan.skeleton_plans = [{
+            "id": "plan_A", "name": "轻松版",
+            "days": [
+                {
+                    "area_cluster": ["市中心"],
+                    "locked_pois": ["篆新农贸市场", "翠湖公园"],
+                    "candidate_pois": ["黄公东街", "橡皮书店", "纸布屋书店"],
+                },
+                {
+                    "area_cluster": ["城西"],
+                    "locked_pois": ["昆明老街", "米轨麻园站", "西南联大旧址"],
+                    "candidate_pois": ["景星花鸟市场", "南屏步行街", "金殿"],
+                },
+                {"area_cluster": ["滇池"], "locked_pois": [], "candidate_pois": ["海晏村"]},
+            ],
+        }]
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        compiled = orch._compile_day_tasks(orch._split_tasks())
+
+        assert compiled[0].max_core_activities == 3
+        assert compiled[0].candidate_activity_slots == 1
+        assert compiled[1].max_core_activities == 3
+        assert compiled[1].candidate_activity_slots == 0
+
+    def test_locked_pois_over_pace_limit_are_demoted_to_candidates(self):
+        plan = _make_plan_with_skeleton()
+        plan.trip_brief = {"pace": "relaxed"}
+        plan.skeleton_plans = [{
+            "id": "plan_A", "name": "轻松版",
+            "days": [
+                {
+                    "area_cluster": ["市中心"],
+                    "locked_pois": ["A", "B", "C", "D"],
+                    "candidate_pois": ["E"],
+                },
+                {"area_cluster": ["B"], "locked_pois": [], "candidate_pois": ["x"]},
+                {"area_cluster": ["C"], "locked_pois": [], "candidate_pois": ["y"]},
+            ],
+        }]
+        orch = Phase3Orchestrator(plan=plan, llm=None, tool_engine=None, config=None)
+        compiled = orch._compile_day_tasks(orch._split_tasks())
+
+        assert compiled[0].locked_pois == ["A", "B", "C"]
+        assert compiled[0].demoted_locked_pois == ["D"]
+        assert compiled[0].candidate_pois[:2] == ["D", "E"]
+        assert compiled[0].candidate_activity_slots == 0
+        assert "D" not in compiled[1].forbidden_pois
+        assert "A" in compiled[1].forbidden_pois
 
     def test_skeleton_provided_envelope_preserved(self):
         plan = _make_plan_with_skeleton()
@@ -1031,6 +1124,97 @@ class TestWorkerArtifactHandoff:
         assert any(dp["notes"] == "artifact repair result" for dp in orch.final_dayplans)
         assert not any(dp["notes"] == "memory repair result" for dp in orch.final_dayplans)
 
+    @pytest.mark.asyncio
+    async def test_local_redispatch_runs_affected_days_in_parallel(self, tmp_path):
+        plan = _make_plan_with_skeleton()
+        plan.trip_brief = {"pace": "balanced"}
+        plan.skeleton_plans = [
+            {
+                "id": "plan_A",
+                "name": "平衡版",
+                "days": [
+                    {"area": "A", "theme": "A"},
+                    {"area": "B", "theme": "B"},
+                    {"area": "C", "theme": "C"},
+                ],
+            }
+        ]
+        active_repairs: set[int] = set()
+        max_parallel_repairs = 0
+        repair_days: list[int] = []
+
+        def _activity(day: int, idx: int) -> dict:
+            return {
+                "name": f"Day {day} Act {idx}",
+                "location": {
+                    "name": f"Day {day} Act {idx}",
+                    "lat": 35.0 + day,
+                    "lng": 139.0 + idx,
+                },
+                "start_time": "09:00",
+                "end_time": "10:00",
+                "category": "activity",
+                "cost": 0,
+            }
+
+        async def fake_worker(**kwargs):
+            nonlocal max_parallel_repairs
+            task = kwargs["task"]
+            candidate_store = kwargs["candidate_store"]
+            run_id = kwargs["run_id"]
+            attempt = kwargs["attempt"]
+            if attempt == 3:
+                active_repairs.add(task.day)
+                repair_days.append(task.day)
+                max_parallel_repairs = max(
+                    max_parallel_repairs,
+                    len(active_repairs),
+                )
+                await asyncio.sleep(0.01)
+                active_repairs.remove(task.day)
+
+            activity_count = 5 if attempt == 1 and task.day in (1, 2) else 1
+            dayplan = {
+                "day": task.day,
+                "date": task.date,
+                "notes": f"attempt {attempt} day {task.day}",
+                "activities": [
+                    _activity(task.day, idx) for idx in range(activity_count)
+                ],
+            }
+            candidate_store.submit_candidate(
+                session_id=plan.session_id,
+                run_id=run_id,
+                worker_id=f"day_{task.day}_attempt_{attempt}",
+                expected_day=task.day,
+                attempt=attempt,
+                dayplan=dayplan,
+            )
+            return DayWorkerResult(
+                day=task.day,
+                date=task.date,
+                success=True,
+                dayplan=dayplan,
+            )
+
+        with patch("agent.phase3.orchestrator.run_day_worker", side_effect=fake_worker):
+            orch = Phase3Orchestrator(
+                plan=plan,
+                llm=AsyncMock(),
+                tool_engine=AsyncMock(),
+                config=Phase3ParallelConfig(
+                    max_workers=3,
+                    fallback_to_serial=False,
+                    artifact_root=str(tmp_path),
+                ),
+            )
+            async for _ in orch.run():
+                pass
+
+        assert sorted(repair_days) == [1, 2]
+        assert max_parallel_repairs >= 2
+        assert all(len(dp["activities"]) <= 4 for dp in orch.final_dayplans)
+
 
 class TestCompileDayTasksInjection:
     def _make_orch(self, plan):
@@ -1076,6 +1260,91 @@ class TestCompileDayTasksInjection:
         tasks = orch._compile_day_tasks(base_tasks)
         for t in tasks:
             assert t.day_constraints == []
+
+    def test_compile_day_tasks_injects_transport_identity(self):
+        plan = _make_plan_with_skeleton()
+        plan.selected_transport = {
+            "segments": [
+                {
+                    "direction": "outbound",
+                    "type": "flight",
+                    "airline": "东方航空",
+                    "flight_number": "MU523",
+                    "departure_airport": "PVG",
+                    "arrival_airport": "HND",
+                    "departure_time": "09:05",
+                    "arrival_time": "12:50",
+                },
+                {
+                    "direction": "return",
+                    "type": "flight",
+                    "airline": "春秋航空日本",
+                    "flight_number": "IJ005",
+                    "departure_airport": "NRT",
+                    "arrival_airport": "PVG",
+                    "departure_time": "19:20",
+                    "arrival_time": "21:55",
+                },
+            ],
+        }
+        orch = self._make_orch(plan)
+        tasks = orch._compile_day_tasks(orch._split_tasks())
+        assert tasks[0].arrival_transport["flight_number"] == "MU523"
+        assert tasks[0].arrival_transport["arrival_airport"] == "HND"
+        assert tasks[-1].departure_transport["flight_number"] == "IJ005"
+        assert tasks[-1].departure_transport["departure_airport"] == "NRT"
+
+    def test_compile_day_tasks_accepts_outbound_return_transport_shape(self):
+        plan = _make_plan_with_skeleton()
+        plan.selected_transport = {
+            "outbound": {
+                "airline": "东航",
+                "flight_no": "MU523",
+                "departure": "上海 09:05",
+                "arrival": "东京 12:50",
+            },
+            "return": {
+                "airline": "春秋日本航空",
+                "flight_no": "IJ003",
+                "departure": "东京 13:55",
+                "arrival": "上海 16:20",
+            },
+        }
+
+        orch = self._make_orch(plan)
+        tasks = orch._compile_day_tasks(orch._split_tasks())
+
+        assert tasks[0].arrival_time == "12:50"
+        assert tasks[0].arrival_transport["flight_no"] == "MU523"
+        assert tasks[-1].departure_time == "13:55"
+        assert tasks[-1].departure_transport["flight_no"] == "IJ003"
+
+    def test_compile_day_tasks_accepts_dep_time_arr_time_transport_shape(self):
+        plan = _make_plan_with_skeleton()
+        plan.selected_transport = {
+            "outbound": {
+                "airline": "东航",
+                "flight_no": "MU727",
+                "departure": "上海浦东→东京",
+                "dep_time": "2026-07-10 07:55",
+                "arr_time": "2026-07-10 12:00",
+            },
+            "return": {
+                "airline": "春秋日本航空",
+                "flight_no": "IJ005",
+                "departure": "东京成田→上海浦东",
+                "dep_time": "2026-07-12 19:20",
+                "arr_time": "2026-07-12 21:45",
+            },
+        }
+
+        orch = self._make_orch(plan)
+        tasks = orch._compile_day_tasks(orch._split_tasks())
+
+        assert tasks[0].arrival_time == "12:00"
+        assert tasks[0].arrival_transport["flight_no"] == "MU727"
+        assert tasks[-1].departure_time == "19:20"
+        assert tasks[-1].departure_transport["flight_no"] == "IJ005"
 
 
 @pytest.mark.asyncio
@@ -1128,3 +1397,49 @@ async def test_orchestrator_exposes_final_dayplans_without_writing_plan(monkeypa
         for c in chunks
     )
     assert not any(c.type == ChunkType.DONE for c in chunks)
+
+
+def test_unresolved_constraint_notice_lists_error_issues():
+    from agent.phase3.orchestrator import (
+        GlobalValidationIssue,
+        build_unresolved_constraint_notice,
+    )
+
+    issues = [
+        GlobalValidationIssue(
+            issue_type="pace_mismatch",
+            description="Day 3: 5 个活动超出 balanced 节奏上限 4",
+            affected_days=[3],
+            severity="error",
+        ),
+    ]
+
+    notice = build_unresolved_constraint_notice(issues)
+
+    assert notice is not None
+    assert "Day 3" in notice
+    assert "balanced" in notice
+
+
+def test_unresolved_constraint_notice_ignores_warnings():
+    from agent.phase3.orchestrator import (
+        GlobalValidationIssue,
+        build_unresolved_constraint_notice,
+    )
+
+    issues = [
+        GlobalValidationIssue(
+            issue_type="pace_mismatch",
+            description="Day 3: 5 个活动超出 balanced 节奏上限 4",
+            affected_days=[3],
+            severity="warning",
+        ),
+    ]
+
+    assert build_unresolved_constraint_notice(issues) is None
+
+
+def test_unresolved_constraint_notice_empty_when_no_issues():
+    from agent.phase3.orchestrator import build_unresolved_constraint_notice
+
+    assert build_unresolved_constraint_notice([]) is None
