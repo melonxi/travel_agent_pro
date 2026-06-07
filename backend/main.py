@@ -288,6 +288,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         ensure_storage_ready=_ensure_storage_ready,
         session_store=session_store,
         state_mgr=state_mgr,
+        trace_store=trace_store,
     )
 
     app.state.memory_scheduler_runtimes = memory_scheduler_runtimes
