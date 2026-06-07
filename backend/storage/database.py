@@ -56,9 +56,72 @@ CREATE TABLE IF NOT EXISTS archives (
     created_at   TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS trace_runs (
+    run_id              TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    trip_id             TEXT,
+    context_epoch       INTEGER,
+    started_at          TEXT NOT NULL,
+    ended_at            TEXT,
+    status              TEXT NOT NULL,
+    final_phase         INTEGER,
+    final_phase2_step   TEXT,
+    total_input_tokens  INTEGER NOT NULL DEFAULT 0,
+    total_output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd      REAL NOT NULL DEFAULT 0,
+    total_duration_ms   REAL NOT NULL DEFAULT 0,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trace_events (
+    event_id     TEXT PRIMARY KEY,
+    run_id       TEXT NOT NULL REFERENCES trace_runs(run_id) ON DELETE CASCADE,
+    sequence     INTEGER NOT NULL,
+    event_type   TEXT NOT NULL,
+    phase        INTEGER,
+    phase2_step  TEXT,
+    iteration    INTEGER,
+    tool_name    TEXT,
+    llm_provider TEXT,
+    llm_model    TEXT,
+    status       TEXT,
+    duration_ms  REAL,
+    cost_usd     REAL,
+    payload_json TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    UNIQUE(run_id, sequence)
+);
+
+CREATE TABLE IF NOT EXISTS trace_grades (
+    grade_id                TEXT PRIMARY KEY,
+    run_id                  TEXT NOT NULL REFERENCES trace_runs(run_id) ON DELETE CASCADE,
+    rubric_id               TEXT NOT NULL,
+    status                  TEXT NOT NULL,
+    score                   INTEGER NOT NULL,
+    reason                  TEXT NOT NULL,
+    evidence_event_ids_json TEXT NOT NULL,
+    created_at              TEXT NOT NULL,
+    UNIQUE(run_id, rubric_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
 CREATE INDEX IF NOT EXISTS idx_snapshots_session ON plan_snapshots(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_archives_session ON archives(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_trace_runs_session_created
+ON trace_runs(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_trace_runs_trip
+ON trace_runs(session_id, trip_id);
+CREATE INDEX IF NOT EXISTS idx_trace_events_run_sequence
+ON trace_events(run_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_trace_events_type
+ON trace_events(run_id, event_type);
+CREATE INDEX IF NOT EXISTS idx_trace_events_tool
+ON trace_events(run_id, tool_name);
+CREATE INDEX IF NOT EXISTS idx_trace_grades_run
+ON trace_grades(run_id);
+CREATE INDEX IF NOT EXISTS idx_trace_grades_status
+ON trace_grades(status);
 """
 
 
@@ -77,6 +140,7 @@ class Database:
         await self._conn.executescript(_SCHEMA)
         await self._migrate_sessions_table()
         await self._migrate_messages_table()
+        await self._migrate_trace_tables()
         await self._conn.commit()
 
     async def _migrate_sessions_table(self) -> None:
@@ -137,6 +201,72 @@ class Database:
         await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_trip_epoch "
             "ON messages(session_id, trip_id, context_epoch)"
+        )
+
+    async def _migrate_trace_tables(self) -> None:
+        await self.conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS trace_runs (
+                run_id              TEXT PRIMARY KEY,
+                session_id          TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+                trip_id             TEXT,
+                context_epoch       INTEGER,
+                started_at          TEXT NOT NULL,
+                ended_at            TEXT,
+                status              TEXT NOT NULL,
+                final_phase         INTEGER,
+                final_phase2_step   TEXT,
+                total_input_tokens  INTEGER NOT NULL DEFAULT 0,
+                total_output_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd      REAL NOT NULL DEFAULT 0,
+                total_duration_ms   REAL NOT NULL DEFAULT 0,
+                created_at          TEXT NOT NULL,
+                updated_at          TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS trace_events (
+                event_id     TEXT PRIMARY KEY,
+                run_id       TEXT NOT NULL REFERENCES trace_runs(run_id) ON DELETE CASCADE,
+                sequence     INTEGER NOT NULL,
+                event_type   TEXT NOT NULL,
+                phase        INTEGER,
+                phase2_step  TEXT,
+                iteration    INTEGER,
+                tool_name    TEXT,
+                llm_provider TEXT,
+                llm_model    TEXT,
+                status       TEXT,
+                duration_ms  REAL,
+                cost_usd     REAL,
+                payload_json TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                UNIQUE(run_id, sequence)
+            );
+            CREATE TABLE IF NOT EXISTS trace_grades (
+                grade_id                TEXT PRIMARY KEY,
+                run_id                  TEXT NOT NULL REFERENCES trace_runs(run_id) ON DELETE CASCADE,
+                rubric_id               TEXT NOT NULL,
+                status                  TEXT NOT NULL,
+                score                   INTEGER NOT NULL,
+                reason                  TEXT NOT NULL,
+                evidence_event_ids_json TEXT NOT NULL,
+                created_at              TEXT NOT NULL,
+                UNIQUE(run_id, rubric_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_trace_runs_session_created
+            ON trace_runs(session_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_trace_runs_trip
+            ON trace_runs(session_id, trip_id);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_run_sequence
+            ON trace_events(run_id, sequence);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_type
+            ON trace_events(run_id, event_type);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_tool
+            ON trace_events(run_id, tool_name);
+            CREATE INDEX IF NOT EXISTS idx_trace_grades_run
+            ON trace_grades(run_id);
+            CREATE INDEX IF NOT EXISTS idx_trace_grades_status
+            ON trace_grades(status);
+            """
         )
 
     async def close(self) -> None:
