@@ -465,7 +465,7 @@ PHASE4_PROMPT = """## 输入 Gate
 
 - 📄 **证件与文件**：护照 / 身份证有效期、签证、机票确认单、酒店预订单、保险单
 - 💰 **财务准备**：货币兑换、信用卡境外支付、当地支付方式（IC 卡、移动支付）
-- 👕 **穿着与装备**：基于天气预报推荐衣物、特殊场景着装（寺庙、高端餐厅、徒步）
+- **穿着与装备**：基于天气预报推荐衣物、特殊场景着装（寺庙、高端餐厅、徒步）
 - 📱 **通讯与导航**：电话卡 / WiFi、离线地图、翻译工具、常用 App
 - ⚠️ **行程注意事项**：已规划活动的预约提醒、开放时间确认、排队预期
 - 🏥 **安全与健康**：常备药品、紧急联系方式、旅行保险
@@ -477,12 +477,17 @@ PHASE4_PROMPT = """## 输入 Gate
 - `travel_plan_markdown`：基于 `destination` / `dates` / `daily_plans` / `accommodation` / `selected_transport` 整理出的正式行程 markdown
 - `checklist_markdown`：基于天气、服务搜索结果和 Phase 4 风险提醒整理出的出发前清单 markdown
 
+天气表述规则：
+- 如果 `check_weather` 返回 `note` 包含“精确日期预报不可用”，这只是最近预报参考，不是出行日确定天气。
+- 交付物不得写成“20°C 中雨”这类确定结论；必须写明“临近出发前再确认”。
+- 只有工具返回目标日期精确预报时，才可以把温度和天气作为确定预报写入清单。
+
 ## 工具契约
 
 必用工具：
 - `check_weather`：获取目的地出行期间的天气预报
 - `search_travel_services`：搜签证、保险、电话卡、租车、接送机等服务（附预订链接）
-- `generate_summary`：提交并冻结正式交付物，必须同时传 `travel_plan_markdown` 与 `checklist_markdown`
+- `generate_summary`：提交正式交付物候选，必须同时传 `travel_plan_markdown` 与 `checklist_markdown`；质量检查通过后系统才会冻结文件
 
 辅助工具：
 - `web_search`：验证签证政策、入境规定、安全预警等高时效性信息
@@ -493,7 +498,7 @@ PHASE4_PROMPT = """## 输入 Gate
 ## 状态写入契约
 
 - 不修改 `daily_plans` / `accommodation` / `selected_transport`。
-- 最终通过 `generate_summary` 一次提交 `travel_plan_markdown` + `checklist_markdown`。
+- 最终通过 `generate_summary` 一次提交 `travel_plan_markdown` + `checklist_markdown`；若质量评审反馈需要修订，先修订后再次提交。
 - 严重问题需要修改上游决策时调 `request_backtrack(to_phase=..., reason="...")`，不擅自修改。"""
 
 

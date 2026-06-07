@@ -122,6 +122,7 @@ async def execute_tool_batch(
                     tool_name=batch_tc.name,
                     tool_call=batch_tc,
                     result=result,
+                    messages=messages,
                 )
 
                 yield LLMChunk(
@@ -174,6 +175,7 @@ async def execute_tool_batch(
             tool_name=tc.name,
             tool_call=tc,
             result=result,
+            messages=messages,
         )
 
         yield LLMChunk(

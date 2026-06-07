@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -21,6 +22,17 @@ from telemetry.stats import SessionStats
 
 
 logger = logging.getLogger(__name__)
+
+
+def _supports_keyword(func: Callable[..., object], keyword: str) -> bool:
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return True
+    return keyword in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
 
 
 def generate_title(plan: TravelPlanState) -> str:
@@ -346,10 +358,20 @@ class SessionPersistence:
         next_history_seq = max(seq_values) + 1 if seq_values else len(history_rows)
         self.phase_router.sync_phase_state(plan)
         compression_events: list[dict] = []
+        stats = SessionStats()
+        restore_session_stub = {
+            "plan": plan,
+            "user_id": meta["user_id"],
+            "compression_events": compression_events,
+            "stats": stats,
+        }
+        build_agent_kwargs = {"compression_events": compression_events}
+        if _supports_keyword(self.build_agent, "session"):
+            build_agent_kwargs["session"] = restore_session_stub
         agent = self.build_agent(
             plan,
             meta["user_id"],
-            compression_events=compression_events,
+            **build_agent_kwargs,
         )
         runtime_view = await build_runtime_view_for_restore(
             history_view=history_view,
@@ -371,6 +393,6 @@ class SessionPersistence:
             "needs_rebuild": False,
             "user_id": meta["user_id"],
             "compression_events": compression_events,
-            "stats": SessionStats(),
+            "stats": stats,
             "_pending_system_notes": [],
         }

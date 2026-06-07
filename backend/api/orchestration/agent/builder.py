@@ -26,6 +26,7 @@ def build_agent(
     create_llm_provider_func,
     collect_forced_tool_call_arguments,
     compression_events: list[dict] | None = None,
+    session: dict | None = None,
     on_before_message_rebuild=None,
     on_context_rebuild=None,
 ):
@@ -56,6 +57,11 @@ def build_agent(
         if config.guardrails.enabled
         else None
     )
+    session_stats = None
+    if session is not None:
+        session_stats = session.get("stats")
+    elif plan.session_id in sessions:
+        session_stats = sessions[plan.session_id].get("stats")
 
     return AgentLoop(
         llm=llm,
@@ -76,6 +82,7 @@ def build_agent(
         parallel_tool_execution=config.parallel_tool_execution,
         phase3_parallel_config=config.phase3_parallel,
         internal_task_events=internal_task_events,
+        session_stats=session_stats,
         on_before_message_rebuild=on_before_message_rebuild,
         on_context_rebuild=on_context_rebuild,
     )

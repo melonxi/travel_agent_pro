@@ -114,7 +114,7 @@ async def finalize_agent_run(
             plan.phase,
             event_json(plan.to_dict()),
         )
-    if plan.phase == 4:
+    if plan.phase == 4 and plan.deliverables:
         await deps.archive_store.save(
             plan.session_id,
             event_json(plan.to_dict()),

@@ -153,6 +153,46 @@ def test_compact_messages_for_prompt_trims_web_search_and_caps_results():
     assert len(messages[1].tool_result.data["results"]) == 10
 
 
+def test_compact_messages_for_prompt_preserves_persistence_metadata():
+    long_answer = "答" * 1200
+    messages = [
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=[ToolCall(id="tc1", name="web_search", arguments={"query": "京都"})],
+            history_persisted=True,
+            history_seq=10,
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc1",
+                status="success",
+                data={
+                    "answer": long_answer,
+                    "results": [
+                        {
+                            "title": "title",
+                            "url": "https://example.com",
+                            "content": "s" * 1200,
+                        }
+                    ],
+                },
+            ),
+            history_persisted=True,
+            history_seq=11,
+        ),
+    ]
+
+    outcome = compact_messages_for_prompt(messages, prompt_budget=1000, tools=[])
+
+    assert outcome.changed
+    compacted_tool_message = outcome.messages[1]
+    assert compacted_tool_message is not messages[1]
+    assert compacted_tool_message.history_persisted is True
+    assert compacted_tool_message.history_seq == 11
+    assert compacted_tool_message.transient is False
+
+
 def test_compact_messages_for_prompt_trims_xiaohongshu_search_notes_handles():
     items = [
         {

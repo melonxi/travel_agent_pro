@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent.compaction import compact_messages_for_prompt
 from agent.types import Message, Role, ToolCall, ToolResult
 from api.orchestration.session.context_segments import ContextSegment
 from api.orchestration.session.persistence import (
@@ -195,6 +196,78 @@ async def test_persist_messages_skips_already_persisted_messages_without_len_cur
     assert rows[0]["history_seq"] == 4
     assert already_flushed.history_seq == 3
     assert new_reply.history_persisted is True
+
+
+@pytest.mark.asyncio
+async def test_persist_messages_does_not_reappend_compacted_persisted_tool_results():
+    rows: list[dict[str, object]] = []
+
+    class _MessageStore:
+        async def append_batch(self, session_id, payload):
+            rows.extend(payload)
+
+    persistence = SessionPersistence(
+        ensure_storage_ready=lambda: _noop(),
+        db=SimpleNamespace(execute=_noop),
+        session_store=None,
+        message_store=_MessageStore(),
+        archive_store=None,
+        state_mgr=None,
+        phase_router=None,
+        build_agent=lambda *args, **kwargs: None,
+    )
+    persisted_history = [
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=[ToolCall(id="tc_1", name="web_search", arguments={})],
+            history_persisted=True,
+            history_seq=10,
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="tc_1",
+                status="success",
+                data={
+                    "answer": "答" * 1200,
+                    "results": [
+                        {
+                            "title": "title",
+                            "url": "https://example.com",
+                            "content": "s" * 1200,
+                        }
+                    ],
+                },
+            ),
+            history_persisted=True,
+            history_seq=11,
+        ),
+        Message(role=Role.USER, content="继续", history_persisted=False),
+    ]
+
+    outcome = compact_messages_for_prompt(
+        persisted_history,
+        prompt_budget=1000,
+        tools=[],
+    )
+
+    assert outcome.changed
+    assert outcome.messages[1].history_persisted is True
+
+    next_seq = await persistence.persist_messages(
+        "sess_1",
+        outcome.messages,
+        phase=3,
+        phase2_step="lock",
+        run_id="run_2",
+        trip_id="trip_1",
+        next_history_seq=12,
+    )
+
+    assert next_seq == 13
+    assert len(rows) == 1
+    assert rows[0]["role"] == "user"
+    assert rows[0]["content"] == "继续"
 
 
 @pytest.mark.asyncio
@@ -488,14 +561,13 @@ async def test_restore_session_returns_short_runtime_and_internal_history():
 
     assert restored is not None
     assert len(restored["history_messages"]) == 3
-    assert len(restored["messages"]) == 3
+    assert len(restored["messages"]) == 2
     assert restored["next_history_seq"] == 10
     assert all(message.role != Role.SYSTEM for message in restored["messages"])
     assert restored["messages"][0].role == Role.USER
     assert restored["messages"][0].content == "我想去东京"
-    assert restored["messages"][1].role == Role.TOOL
-    assert restored["messages"][2].role == Role.USER
-    assert restored["messages"][2].content == "继续细化每天路线"
+    assert restored["messages"][1].role == Role.USER
+    assert restored["messages"][1].content == "继续细化每天路线"
     assert restored["history_messages"][1].message.tool_result.data == {"destination": "东京"}
     assert built_agents[0][2] == "user_restore"
     assert restored["agent"] is built_agents[0][0]
@@ -643,14 +715,14 @@ async def test_restore_session_phase3_substep_keeps_previous_substeps_out_of_run
 
     assert restored is not None
     assert len(restored["history_messages"]) == 3
-    assert len(restored["messages"]) == 3
+    assert len(restored["messages"]) == 2
     rendered = "\n".join(str(message.content) for message in restored["messages"])
     assert "生成骨架" in rendered
     assert "画像输入" in rendered
-    assert any(
-        message.tool_result and message.tool_result.data == {"trip_brief": "old brief"}
-        for message in restored["messages"]
-    )
+    assert all(message.tool_result is None for message in restored["messages"])
+    assert restored["history_messages"][1].message.tool_result.data == {
+        "trip_brief": "old brief"
+    }
 
 
 class _BacktrackToPhase3StateManager:
@@ -756,15 +828,14 @@ async def test_restore_session_after_backtrack_does_not_replay_old_target_phase(
     restored = await persistence.restore_session("sess_backtrack")
 
     assert restored is not None
-    assert len(restored["messages"]) == 4
+    assert len(restored["messages"]) == 2
     rendered = "\n".join(str(message.content) for message in restored["messages"])
     assert "预算太高，回到框架规划" in rendered
     assert "老 Phase 2 输入" in rendered
-    assert any(
-        message.tool_result
-        and message.tool_result.data == {"trip_brief": "old target phase segment"}
-        for message in restored["messages"]
-    )
+    assert all(message.tool_result is None for message in restored["messages"])
+    assert restored["history_messages"][1].message.tool_result.data == {
+        "trip_brief": "old target phase segment"
+    }
 
 
 @pytest.mark.asyncio

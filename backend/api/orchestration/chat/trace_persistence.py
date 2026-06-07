@@ -4,7 +4,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 
 from evals.trace_models import TraceEvent
 from run import RunRecord
@@ -19,6 +19,8 @@ from telemetry.stats import (
 )
 
 logger = logging.getLogger(__name__)
+
+_TRACE_RUN_OFFSETS_KEY = "_trace_run_stats_offsets"
 
 
 def _timestamp_iso(timestamp: float) -> str:
@@ -40,6 +42,51 @@ class _RawTraceRecord:
     status: str | None = None
     duration_ms: float | None = None
     cost_usd: float | None = None
+
+
+@dataclass(frozen=True)
+class _StatsOffsets:
+    recall_telemetry: int = 0
+    llm_calls: int = 0
+    tool_calls: int = 0
+    memory_hits: int = 0
+
+
+def _capture_stats_offsets(stats: SessionStats) -> _StatsOffsets:
+    return _StatsOffsets(
+        recall_telemetry=len(stats.recall_telemetry),
+        llm_calls=len(stats.llm_calls),
+        tool_calls=len(stats.tool_calls),
+        memory_hits=len(stats.memory_hits),
+    )
+
+
+def _coerce_offset(offsets: Mapping[str, Any] | _StatsOffsets | None, key: str) -> int:
+    if offsets is None:
+        return 0
+    if isinstance(offsets, _StatsOffsets):
+        value = getattr(offsets, key)
+    else:
+        value = offsets.get(key, 0)
+    return value if isinstance(value, int) and value > 0 else 0
+
+
+def _slice_from_offset(records: list[Any], offset: int) -> list[Any]:
+    return records[min(offset, len(records)) :]
+
+
+def _get_run_offsets(session: dict, run_id: str) -> _StatsOffsets | None:
+    all_offsets = session.get(_TRACE_RUN_OFFSETS_KEY)
+    if not isinstance(all_offsets, dict):
+        return None
+    offsets = all_offsets.get(run_id)
+    return offsets if isinstance(offsets, _StatsOffsets) else None
+
+
+def _ensure_run_offsets(session: dict, run_id: str, stats: SessionStats) -> None:
+    all_offsets = session.setdefault(_TRACE_RUN_OFFSETS_KEY, {})
+    if isinstance(all_offsets, dict) and run_id not in all_offsets:
+        all_offsets[run_id] = _capture_stats_offsets(stats)
 
 
 def _llm_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -72,6 +119,7 @@ def _tool_payload(record: ToolCallRecord, side_effect: str) -> dict[str, Any]:
         "validation_errors": record.validation_errors,
         "judge_scores": record.judge_scores,
         "side_effect": side_effect,
+        "metadata": dict(record.metadata or {}),
     }
 
 
@@ -81,10 +129,28 @@ def build_trace_events_from_stats(
     stats: SessionStats,
     phase2_step: str | None,
     tool_side_effects: dict[str, str],
+    offsets: Mapping[str, Any] | _StatsOffsets | None = None,
 ) -> list[TraceEvent]:
     raw_records: list[_RawTraceRecord] = []
 
-    for record in stats.recall_telemetry:
+    recall_records = _slice_from_offset(
+        stats.recall_telemetry,
+        _coerce_offset(offsets, "recall_telemetry"),
+    )
+    llm_records = _slice_from_offset(
+        stats.llm_calls,
+        _coerce_offset(offsets, "llm_calls"),
+    )
+    tool_records = _slice_from_offset(
+        stats.tool_calls,
+        _coerce_offset(offsets, "tool_calls"),
+    )
+    memory_records = _slice_from_offset(
+        stats.memory_hits,
+        _coerce_offset(offsets, "memory_hits"),
+    )
+
+    for record in recall_records:
         raw_records.append(
             _RawTraceRecord(
                 timestamp=record.timestamp,
@@ -94,7 +160,7 @@ def build_trace_events_from_stats(
             )
         )
 
-    for record in stats.llm_calls:
+    for record in llm_records:
         cost = _llm_cost_usd(record.model, record.input_tokens, record.output_tokens)
         raw_records.append(
             _RawTraceRecord(
@@ -117,11 +183,12 @@ def build_trace_events_from_stats(
                     "cost_usd": cost,
                     "phase": record.phase,
                     "iteration": record.iteration,
+                    "metadata": dict(record.metadata or {}),
                 },
             )
         )
 
-    for record in stats.tool_calls:
+    for record in tool_records:
         side_effect = tool_side_effects.get(record.tool_name, "read")
         raw_records.append(
             _RawTraceRecord(
@@ -137,7 +204,7 @@ def build_trace_events_from_stats(
             )
         )
 
-    for record in stats.memory_hits:
+    for record in memory_records:
         raw_records.append(
             _RawTraceRecord(
                 timestamp=record.timestamp,
@@ -179,7 +246,11 @@ async def ensure_trace_run_started(
     session: dict,
     plan: TravelPlanState,
     run: RunRecord,
+    capture_stats_offset: bool = True,
 ) -> None:
+    stats = session.get("stats")
+    if capture_stats_offset and isinstance(stats, SessionStats):
+        _ensure_run_offsets(session, run.run_id, stats)
     if trace_store is None:
         return
     try:
@@ -219,24 +290,37 @@ async def persist_trace_run_safely(
             session=session,
             plan=plan,
             run=run,
+            capture_stats_offset=False,
         )
+        offsets = _get_run_offsets(session, run.run_id)
         events = build_trace_events_from_stats(
             run_id=run.run_id,
             stats=stats,
             phase2_step=getattr(plan, "phase2_step", None),
             tool_side_effects=tool_side_effects,
+            offsets=offsets,
         )
         await trace_store.replace_events(run.run_id, events)
         total_cost_usd = round(sum(event.cost_usd or 0.0 for event in events), 6)
         total_duration_ms = sum(event.duration_ms or 0.0 for event in events)
+        total_input_tokens = sum(
+            int(event.payload.get("input_tokens", 0) or 0)
+            for event in events
+            if event.event_type == "llm_call"
+        )
+        total_output_tokens = sum(
+            int(event.payload.get("output_tokens", 0) or 0)
+            for event in events
+            if event.event_type == "llm_call"
+        )
         await trace_store.update_run_summary(
             run_id=run.run_id,
             ended_at=_timestamp_iso(run.finished_at or time.time()),
             status=run.status,
             final_phase=plan.phase,
             final_phase2_step=getattr(plan, "phase2_step", None),
-            total_input_tokens=stats.total_input_tokens,
-            total_output_tokens=stats.total_output_tokens,
+            total_input_tokens=total_input_tokens,
+            total_output_tokens=total_output_tokens,
             total_cost_usd=total_cost_usd,
             total_duration_ms=total_duration_ms,
         )

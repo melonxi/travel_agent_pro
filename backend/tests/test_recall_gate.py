@@ -35,6 +35,26 @@ def test_short_circuit_forces_preference_arrangement_with_style_signal():
     assert decision.reason == "explicit_profile_history_query"
 
 
+def test_process_only_phase_instruction_skips_recall_gate():
+    decision = apply_recall_short_circuit(
+        "请不要继续询问选项，直接按推荐项锁定，完成 Phase 2 并推进 Phase 3。"
+    )
+
+    assert decision.decision == "skip_recall"
+    assert decision.reason == "process_instruction_only"
+    assert decision.matched_rule == "P4P"
+
+
+def test_process_instruction_with_state_fields_skips_recall_gate():
+    decision = apply_recall_short_circuit(
+        "确认：目的地东京，日期2026-07-10到2026-07-12。请直接完成候选池、shortlist 和 skeleton，不需要再问我选择。"
+    )
+
+    assert decision.decision == "skip_recall"
+    assert decision.reason == "process_instruction_only"
+    assert decision.matched_rule == "P4P"
+
+
 def test_parse_recall_gate_tool_arguments_honors_schema_fields():
     decision = parse_recall_gate_tool_arguments(
         {

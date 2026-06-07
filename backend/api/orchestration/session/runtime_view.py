@@ -37,8 +37,55 @@ def build_cache_first_history_for_restore(
             continue
         restored.append(copy_message(message))
     if max_messages > 0 and len(restored) > max_messages:
-        return restored[-max_messages:]
-    return restored
+        restored = restored[-max_messages:]
+    return _drop_invalid_tool_protocol_messages(restored)
+
+
+def _content_only_assistant(message: Message) -> Message | None:
+    if not message.content:
+        return None
+    return Message(
+        role=message.role,
+        content=message.content,
+        name=message.name,
+        provider_state=message.provider_state,
+        incomplete=message.incomplete,
+        history_persisted=message.history_persisted,
+        history_seq=message.history_seq,
+        transient=message.transient,
+    )
+
+
+def _drop_invalid_tool_protocol_messages(messages: list[Message]) -> list[Message]:
+    sanitized: list[Message] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if message.role != Role.ASSISTANT or not message.tool_calls:
+            if message.role != Role.TOOL:
+                sanitized.append(message)
+            index += 1
+            continue
+
+        pending_ids = [tool_call.id for tool_call in message.tool_calls]
+        group = [message]
+        scan = index + 1
+        while scan < len(messages) and messages[scan].role == Role.TOOL:
+            result = messages[scan].tool_result
+            if result is None or result.tool_call_id not in pending_ids:
+                break
+            group.append(messages[scan])
+            pending_ids.remove(result.tool_call_id)
+            scan += 1
+
+        if not pending_ids:
+            sanitized.extend(group)
+        else:
+            content_only = _content_only_assistant(message)
+            if content_only is not None:
+                sanitized.append(content_only)
+        index = scan
+    return sanitized
 
 
 def _is_backtrack_result(history_message: HistoryMessage) -> bool:

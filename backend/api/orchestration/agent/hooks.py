@@ -34,6 +34,50 @@ from api.orchestration.common.telemetry_helpers import (
 
 logger = logging.getLogger(__name__)
 
+_REFERENCE_ONLY_WEATHER_NOTE = "精确日期预报不可用"
+_REQUIRED_WEATHER_CONFIRMATION = "临近出发前再确认"
+_FUTURE_WEATHER_ERROR_CODE = "FUTURE_WEATHER_NOT_TREATED_AS_EXACT"
+
+
+def _has_reference_only_weather(messages: list[Message] | None) -> bool:
+    for message in messages or []:
+        result = message.tool_result
+        if message.role != Role.TOOL or result is None:
+            continue
+        if result.status != "success" or not isinstance(result.data, dict):
+            continue
+        forecast = result.data.get("forecast")
+        if not isinstance(forecast, dict):
+            continue
+        note = str(forecast.get("note") or "")
+        if _REFERENCE_ONLY_WEATHER_NOTE in note:
+            return True
+    return False
+
+
+def _combined_deliverable_markdown(result_data: dict, arguments: dict) -> str:
+    parts = [
+        result_data.get("travel_plan_markdown"),
+        result_data.get("checklist_markdown"),
+        arguments.get("travel_plan_markdown"),
+        arguments.get("checklist_markdown"),
+    ]
+    return "\n\n".join(str(part) for part in parts if part is not None)
+
+
+def _mark_future_weather_delivery_error(result) -> None:
+    result.status = "error"
+    result.data = None
+    result.error_code = _FUTURE_WEATHER_ERROR_CODE
+    result.error = (
+        "check_weather 返回的是近似参考天气，不是出行日精确预报；"
+        "交付物不能写成确定天气。"
+    )
+    result.suggestion = (
+        f"把天气表述改为参考信息，并在 travel_plan_markdown 或 "
+        f"checklist_markdown 中明确写「{_REQUIRED_WEATHER_CONFIRMATION}」。"
+    )
+
 
 def build_agent_hooks(
     *,
@@ -66,6 +110,24 @@ def build_agent_hooks(
 
     async def on_validate(**kwargs):
         tool_name = kwargs.get("tool_name")
+        if tool_name == "generate_summary":
+            tc = kwargs.get("tool_call")
+            result = kwargs.get("result")
+            if not (
+                tc
+                and result
+                and result.status == "success"
+                and isinstance(result.data, dict)
+            ):
+                return
+            messages = kwargs.get("messages")
+            if not _has_reference_only_weather(messages):
+                return
+            markdown = _combined_deliverable_markdown(result.data, tc.arguments or {})
+            if _REQUIRED_WEATHER_CONFIRMATION not in markdown:
+                _mark_future_weather_delivery_error(result)
+            return
+
         if tool_name in PLAN_WRITER_TOOL_NAMES:
             tc = kwargs.get("tool_call")
             result = kwargs.get("result")
@@ -233,6 +295,10 @@ def build_agent_hooks(
         ):
             return
         tool_call = kwargs.get("tool_call")
+        result = kwargs.get("result")
+        session = sessions.get(plan.session_id)
+        if not (result and result.status == "success"):
+            return
         task_id = f"soft_judge:{getattr(tool_call, 'id', tool_name)}"
         started_at = time.time()
         internal_task_events.append(
@@ -247,6 +313,12 @@ def build_agent_hooks(
             )
         )
         if not plan.daily_plans:
+            if tool_name == "generate_summary" and session:
+                session["_phase4_deliverables_quality"] = {
+                    "tool_call_id": getattr(tool_call, "id", tool_name),
+                    "status": "approved",
+                    "reason": "soft_judge_skipped_no_daily_plans",
+                }
             internal_task_events.append(
                 InternalTask(
                     id=task_id,
@@ -260,7 +332,6 @@ def build_agent_hooks(
                 )
             )
             return
-        session = sessions.get(plan.session_id)
         if not session:
             internal_task_events.append(
                 InternalTask(
@@ -291,6 +362,12 @@ def build_agent_hooks(
             score = parse_judge_tool_arguments(score_args)
         except Exception as exc:
             logger.warning("soft judge failed", exc_info=True)
+            if tool_name == "generate_summary" and session:
+                session["_phase4_deliverables_quality"] = {
+                    "tool_call_id": getattr(tool_call, "id", tool_name),
+                    "status": "approved",
+                    "reason": "soft_judge_error_allows_freeze",
+                }
             internal_task_events.append(
                 InternalTask(
                     id=task_id,
@@ -320,18 +397,40 @@ def build_agent_hooks(
             latest = stats.tool_calls[-1]
             if latest.tool_name == tool_name and latest.judge_scores is None:
                 latest.judge_scores = judge_scores
-        if score.suggestions:
-            suggestion_text = "\n".join(f"- {s}" for s in score.suggestions)
+        should_inject_feedback = (
+            score.overall < config.quality_gate.threshold
+        )
+        suggestions = score.suggestions or [
+            "请根据质量评估结果先修订交付物，再重新提交 generate_summary。"
+        ]
+        if should_inject_feedback:
+            feedback_count = int(session.get("_soft_judge_repair_feedback_count", 0))
+            feedback_limit = max(1, int(config.quality_gate.max_retries))
+            should_inject_feedback = feedback_count < feedback_limit
+            session["_soft_judge_repair_feedback_count"] = feedback_count + 1
+        if tool_name == "generate_summary":
+            session["_phase4_deliverables_quality"] = {
+                "tool_call_id": getattr(tool_call, "id", tool_name),
+                "status": "blocked" if should_inject_feedback else "approved",
+                "overall": score.overall,
+                "threshold": config.quality_gate.threshold,
+            }
+        if should_inject_feedback:
+            suggestion_text = "\n".join(f"- {s}" for s in suggestions)
             active_runtime_messages(session).append(
                 app_event_message(
                     "soft_judge",
                     f"行程质量评估（{score.overall:.1f}/5）：\n{suggestion_text}",
                 )
             )
-        final_status = "warning" if score.suggestions else "success"
+        final_status = (
+            "warning"
+            if score.suggestions or score.overall < config.quality_gate.threshold
+            else "success"
+        )
         final_message = (
             f"评分 {score.overall:.1f}/5，发现 {len(score.suggestions)} 条改进建议。"
-            if score.suggestions
+            if score.suggestions or score.overall < config.quality_gate.threshold
             else f"评分 {score.overall:.1f}/5，未发现需要立即处理的问题。"
         )
         internal_task_events.append(

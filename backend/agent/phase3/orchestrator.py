@@ -142,11 +142,13 @@ class Phase3Orchestrator:
         llm: LLMProvider | None,
         tool_engine: ToolEngine | None,
         config: Phase3ParallelConfig | None,
+        stats: Any | None = None,
     ):
         self.plan = plan
         self.llm = llm
         self.tool_engine = tool_engine
         self.config = config or Phase3ParallelConfig()
+        self.stats = stats
         self.final_dayplans: list[dict[str, Any]] = []
         self.final_issues: list[GlobalValidationIssue] = []
 
@@ -577,6 +579,7 @@ class Phase3Orchestrator:
                         candidate_store=candidate_store,
                         run_id=run_id,
                         attempt=1,
+                        stats=self.stats,
                     )
 
             pending: dict[asyncio.Task, DayTask] = {}
@@ -713,6 +716,7 @@ class Phase3Orchestrator:
                     candidate_store=candidate_store,
                     run_id=run_id,
                     attempt=2,
+                    stats=self.stats,
                 )
                 if retry_result.success:
                     successes.append(retry_result)
@@ -828,6 +832,7 @@ class Phase3Orchestrator:
                         candidate_store=candidate_store,
                         run_id=run_id,
                         attempt=3,
+                        stats=self.stats,
                     )
                     if rd_result.success and rd_result.dayplan:
                         latest_by_day = {

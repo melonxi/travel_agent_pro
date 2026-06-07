@@ -47,6 +47,7 @@ class LLMCallRecord:
     duration_ms: float
     phase: int
     iteration: int
+    metadata: dict = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
 
@@ -65,6 +66,7 @@ class ToolCallRecord:
     validation_errors: list[str] | None = None
     judge_scores: dict | None = None
     suggestion: str | None = None
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -191,6 +193,7 @@ class SessionStats:
         duration_ms: float,
         phase: int,
         iteration: int,
+        metadata: dict | None = None,
     ) -> None:
         self.llm_calls.append(
             LLMCallRecord(
@@ -201,6 +204,7 @@ class SessionStats:
                 duration_ms=duration_ms,
                 phase=phase,
                 iteration=iteration,
+                metadata=dict(metadata or {}),
             )
         )
 
@@ -216,6 +220,7 @@ class SessionStats:
         arguments_preview: str = "",
         result_preview: str = "",
         suggestion: str | None = None,
+        metadata: dict | None = None,
     ) -> None:
         self.tool_calls.append(
             ToolCallRecord(
@@ -228,6 +233,7 @@ class SessionStats:
                 result_preview=result_preview,
                 parallel_group=parallel_group,
                 suggestion=suggestion,
+                metadata=dict(metadata or {}),
             )
         )
 

@@ -95,6 +95,7 @@ class AgentLoop:
         cancel_event: asyncio.Event | None = None,
         phase3_parallel_config: Phase3ParallelConfig | None = None,
         internal_task_events: list[InternalTask] | None = None,
+        session_stats: Any | None = None,
         on_before_message_rebuild: Callable[..., Awaitable[None]] | None = None,
         on_context_rebuild: ContextRebuildCallback | None = None,
     ):
@@ -153,6 +154,7 @@ class AgentLoop:
         self._prev_phase2_step: str | None = None
         self.cancel_event = cancel_event
         self.phase3_parallel_config = phase3_parallel_config
+        self.session_stats = session_stats
         self.internal_task_events = (
             internal_task_events if internal_task_events is not None else []
         )
@@ -238,6 +240,7 @@ class AgentLoop:
             tool_engine=self.tool_engine,
             config=self.phase3_parallel_config,
             on_handoff=_capture_handoff,
+            stats=self.session_stats,
         ):
             yield chunk
 

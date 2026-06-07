@@ -58,16 +58,37 @@ from storage.trace_store import TraceStore
 from state.manager import StateManager
 
 KEEPALIVE_INTERVAL_S = 8
+_APP_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _resolve_config_base_dir(config_path: str | Path) -> Path:
+    path = Path(config_path)
+    if path.is_absolute():
+        return path.parent
+    if path.exists():
+        return path.resolve().parent
+    repo_relative = _APP_ROOT / path
+    if repo_relative.exists():
+        return repo_relative.parent
+    return _APP_ROOT
+
+
+def _resolve_app_data_dir(config_path: str | Path, data_dir: str) -> str:
+    path = Path(data_dir)
+    if path.is_absolute():
+        return str(path)
+    return str((_resolve_config_base_dir(config_path) / path).resolve())
+
+
 def create_app(config_path: str = "config.yaml") -> FastAPI:
     config = load_config(config_path)
-    state_mgr = StateManager(data_dir=config.data_dir)
-    memory_mgr = MemoryManager(data_dir=config.data_dir)
+    data_dir = _resolve_app_data_dir(config_path, config.data_dir)
+    state_mgr = StateManager(data_dir=data_dir)
+    memory_mgr = MemoryManager(data_dir=data_dir)
     phase_router = PhaseRouter()
     context_mgr = ContextManager()
 
@@ -76,7 +97,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     sessions: dict[str, dict] = {}  # session_id → {plan, messages, agent}
     reflection_cache: dict[str, ReflectionInjector] = {}
     quality_gate_retries: dict[tuple[str, int, int], int] = {}
-    db = Database(db_path=str(Path(config.data_dir) / "sessions.db"))
+    db = Database(db_path=str(Path(data_dir) / "sessions.db"))
     session_store = SessionStore(db)
     message_store = MessageStore(db)
     archive_store = ArchiveStore(db)
@@ -177,6 +198,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 )
             ),
             compression_events=compression_events,
+            session=session,
         )
 
     def _tool_side_effects() -> dict[str, str]:

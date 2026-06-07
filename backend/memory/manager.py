@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+from pathlib import Path
+from typing import Callable
 
 from config import MemoryRetrievalConfig
 from memory.destination_normalization import match_destination
@@ -47,11 +49,14 @@ class MemoryManager:
         self.v3_store = FileMemoryV3Store(data_dir)
         self.retrieval_config = retrieval_config or MemoryRetrievalConfig()
         self._embedding_provider = None
+        self._embedding_provider_unavailable = False
         self._sidecar_store = None
 
     def _get_stage3_embedding_provider(self):
         semantic_config = self.retrieval_config.stage3.semantic
         if not semantic_config.enabled:
+            return None
+        if self._embedding_provider_unavailable:
             return None
         if self._embedding_provider is not None:
             return self._embedding_provider
@@ -59,17 +64,42 @@ class MemoryManager:
             self._embedding_provider = NullEmbeddingProvider()
             return self._embedding_provider
         try:
-            self._embedding_provider = CachedEmbeddingProvider(
-                FastEmbedProvider(
-                    model_name=semantic_config.model_name,
-                    cache_dir=semantic_config.cache_dir,
-                    local_files_only=semantic_config.local_files_only,
+            fastembed_provider = FastEmbedProvider(
+                model_name=semantic_config.model_name,
+                cache_dir=self._resolve_embedding_cache_dir(
+                    semantic_config.cache_dir
                 ),
-                max_items=semantic_config.cache_max_items,
+                local_files_only=semantic_config.local_files_only,
+            )
+            self._embedding_provider = _DisablingEmbeddingProvider(
+                CachedEmbeddingProvider(
+                    fastembed_provider,
+                    max_items=semantic_config.cache_max_items,
+                ),
+                on_failure=self._mark_embedding_provider_unavailable,
             )
         except Exception:
+            self._mark_embedding_provider_unavailable()
             return None
         return self._embedding_provider
+
+    def _mark_embedding_provider_unavailable(self) -> None:
+        self._embedding_provider_unavailable = True
+        self._embedding_provider = None
+
+    def _resolve_embedding_cache_dir(self, cache_dir: str) -> str:
+        path = Path(cache_dir)
+        if path.is_absolute():
+            return str(path)
+        repo_root = Path(__file__).resolve().parents[2]
+        candidates = [
+            repo_root / path,
+            Path.cwd() / path,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+        return str(repo_root / path)
 
     def _get_sidecar_store(self):
         index_cfg = self.retrieval_config.stage3.semantic.embedding_index
@@ -540,3 +570,21 @@ class MemoryManager:
                 continue
             normalized[name] = [hit for hit in hits if isinstance(hit, str)]
         return normalized
+
+
+class _DisablingEmbeddingProvider:
+    def __init__(
+        self,
+        provider,
+        *,
+        on_failure: Callable[[], None],
+    ) -> None:
+        self._provider = provider
+        self._on_failure = on_failure
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        try:
+            return self._provider.embed(texts)
+        except Exception:
+            self._on_failure()
+            raise

@@ -153,8 +153,40 @@ def test_restore_cache_first_caps_long_history_to_recent_messages():
     assert runtime[-1].content == "message-129"
 
 
+def test_restore_cache_first_drops_tool_results_cut_off_from_tool_calls():
+    history = [
+        hm(
+            Role.ASSISTANT,
+            "读取攻略",
+            history_seq=1,
+            tool_calls=[
+                ToolCall(id="tc1", name="web_search", arguments={}),
+                ToolCall(id="tc2", name="web_search", arguments={}),
+            ],
+        ),
+        hm(
+            Role.TOOL,
+            None,
+            history_seq=2,
+            tool_result=ToolResult(tool_call_id="tc1", status="success", data={"a": 1}),
+        ),
+        hm(
+            Role.TOOL,
+            None,
+            history_seq=3,
+            tool_result=ToolResult(tool_call_id="tc2", status="success", data={"b": 2}),
+        ),
+        hm(Role.USER, "继续", history_seq=4),
+    ]
+
+    runtime = build_cache_first_history_for_restore(history, max_messages=3)
+
+    assert [message.role for message in runtime] == [Role.USER]
+    assert runtime[0].content == "继续"
+
+
 @pytest.mark.asyncio
-async def test_restore_phase3_skeleton_replays_append_only_non_system_history():
+async def test_restore_phase3_skeleton_drops_orphan_tool_results():
     plan = TravelPlanState(
         session_id="sess_2",
         phase=2,
@@ -202,24 +234,15 @@ async def test_restore_phase3_skeleton_replays_append_only_non_system_history():
         tool_engine=FakeToolEngine(),
     )
 
-    assert [message.role for message in runtime] == [
-        Role.USER,
-        Role.TOOL,
-        Role.USER,
-        Role.TOOL,
-        Role.USER,
-    ]
+    assert [message.role for message in runtime] == [Role.USER, Role.USER, Role.USER]
     assert runtime[-1].content == "从短名单生成两个骨架"
     rendered = "\n".join(str(message.content) for message in runtime)
-    tool_data = [message.tool_result.data for message in runtime if message.tool_result]
-    assert {"trip_brief": "brief old result"} in tool_data
-    assert {"candidate_pool": ["old candidate"]} in tool_data
     assert "先确定画像" in rendered
     assert "给我候选池" in rendered
 
 
 @pytest.mark.asyncio
-async def test_restore_after_backtrack_keeps_append_only_non_system_history():
+async def test_restore_after_backtrack_drops_orphan_tool_results():
     plan = TravelPlanState(
         session_id="sess_3",
         phase=2,
@@ -265,21 +288,14 @@ async def test_restore_after_backtrack_keeps_append_only_non_system_history():
         tool_engine=FakeToolEngine(),
     )
 
-    assert [message.role for message in runtime] == [
-        Role.USER,
-        Role.TOOL,
-        Role.USER,
-        Role.TOOL,
-    ]
-    assert runtime[2].content == "Phase 3 发现预算不合适，回到框架规划"
+    assert [message.role for message in runtime] == [Role.USER, Role.USER]
+    assert runtime[1].content == "Phase 3 发现预算不合适，回到框架规划"
     rendered = "\n".join(str(message.content) for message in runtime)
     assert "旧的 Phase 2 画像输入" in rendered
-    tool_data = [message.tool_result.data for message in runtime if message.tool_result]
-    assert {"trip_brief": "old phase3 brief"} in tool_data
 
 
 @pytest.mark.asyncio
-async def test_restore_with_legacy_rows_keeps_non_system_history():
+async def test_restore_with_legacy_rows_drops_orphan_tool_results():
     plan = TravelPlanState(session_id="sess_4", phase=3, destination="首尔")
     history = [
         hm(Role.SYSTEM, "legacy system", history_seq=None),
@@ -308,13 +324,13 @@ async def test_restore_with_legacy_rows_keeps_non_system_history():
         tool_engine=FakeToolEngine(),
     )
 
-    assert [message.role for message in runtime] == [Role.USER, Role.TOOL, Role.USER]
+    assert [message.role for message in runtime] == [Role.USER, Role.USER]
     assert runtime[-1].content == "最新用户消息"
     assert all(message.role != Role.SYSTEM for message in runtime)
 
 
 @pytest.mark.asyncio
-async def test_runtime_view_keeps_old_epoch_tool_body_in_append_only_history():
+async def test_runtime_view_drops_old_epoch_orphan_tool_body():
     plan = TravelPlanState(
         session_id="sess_epoch_backtrack",
         phase=2,
@@ -361,17 +377,13 @@ async def test_runtime_view_keeps_old_epoch_tool_body_in_append_only_history():
 
     prompt_text = "\n".join(str(message.content) for message in runtime if message.content)
     assert "OLD_EPOCH_TOOL_BODY" not in prompt_text
-    assert any(
-        message.tool_result
-        and message.tool_result.data == {"secret_body": "OLD_EPOCH_TOOL_BODY"}
-        for message in runtime
-    )
+    assert all(message.tool_result is None for message in runtime)
     assert "重做框架，少走路" in prompt_text
     assert all(message.role != Role.SYSTEM for message in runtime)
 
 
 @pytest.mark.asyncio
-async def test_runtime_view_keeps_earlier_phase2_step_tool_body_in_append_only_history():
+async def test_runtime_view_drops_earlier_phase2_step_orphan_tool_body():
     plan = TravelPlanState(
         session_id="sess_epoch_step",
         phase=2,
@@ -417,9 +429,5 @@ async def test_runtime_view_keeps_earlier_phase2_step_tool_body_in_append_only_h
 
     prompt_text = "\n".join(str(message.content) for message in runtime if message.content)
     assert "BRIEF_EPOCH_TOOL_BODY" not in prompt_text
-    assert any(
-        message.tool_result
-        and message.tool_result.data == {"brief_tool": "BRIEF_EPOCH_TOOL_BODY"}
-        for message in runtime
-    )
+    assert all(message.tool_result is None for message in runtime)
     assert "现在定骨架" in prompt_text

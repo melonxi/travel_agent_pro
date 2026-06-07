@@ -4,6 +4,7 @@ from config import AppConfig, load_config
 def test_app_config_has_intelligence_defaults():
     cfg = AppConfig()
     assert cfg.max_retries == 60
+    assert cfg.run_timeout_seconds == 300
     assert cfg.quality_gate.threshold == 3.5
     assert cfg.quality_gate.max_retries == 2
     assert cfg.parallel_tool_execution is True
@@ -23,6 +24,7 @@ quality_gate:
   threshold: 4.0
   max_retries: 3
 parallel_tool_execution: false
+run_timeout_seconds: 120
 memory_extraction:
   enabled: false
   model: gpt-4o-mini
@@ -38,6 +40,7 @@ guardrails:
 
     assert cfg.quality_gate.threshold == 4.0
     assert cfg.quality_gate.max_retries == 3
+    assert cfg.run_timeout_seconds == 120
     assert cfg.parallel_tool_execution is False
     assert cfg.memory_extraction.enabled is False
     assert cfg.memory_extraction.model == "gpt-4o-mini"

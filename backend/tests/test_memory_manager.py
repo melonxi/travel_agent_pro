@@ -971,4 +971,72 @@ async def test_generate_context_reports_semantic_lane_error_when_embedding_provi
 
         assert recall.stage3["lane_errors"]["semantic"] == "embedding_provider_missing"
 
-    assert attempts["count"] == 2
+    assert attempts["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_context_disables_semantic_provider_after_embed_failure(
+    tmp_path: Path,
+    monkeypatch,
+):
+    retrieval_config = MemoryRetrievalConfig(
+        stage3=replace(
+            Stage3RecallConfig(),
+            symbolic=Stage3LaneConfig(enabled=False),
+            semantic=Stage3SemanticConfig(enabled=True, min_score=0.7, top_k=5),
+        )
+    )
+    manager = MemoryManager(data_dir=str(tmp_path), retrieval_config=retrieval_config)
+    await manager.v3_store.upsert_profile_item(
+        "u1",
+        "stable_preferences",
+        MemoryProfileItem(
+            id="stable_preferences:hotel:preferred_area",
+            domain="hotel",
+            key="preferred_area",
+            value="新宿站附近",
+            polarity="prefer",
+            stability="stable",
+            confidence=0.9,
+            status="active",
+            context={},
+            applicability="适用于住宿选择。",
+            recall_hints={"domains": ["hotel"], "keywords": ["住宿"]},
+            source_refs=[],
+            created_at="2026-04-19T00:00:00",
+            updated_at="2026-04-19T00:00:00",
+        ),
+    )
+    embed_attempts = {"count": 0}
+
+    class FailingFastEmbedProvider:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def embed(self, texts):
+            del texts
+            embed_attempts["count"] += 1
+            raise RuntimeError("embed boom")
+
+    monkeypatch.setattr("memory.manager.FastEmbedProvider", FailingFastEmbedProvider)
+
+    for expected_error in ("embedding_error:RuntimeError", "embedding_provider_missing"):
+        _, recall = await manager.generate_context(
+            "u1",
+            TravelPlanState(session_id="s1", trip_id="trip_now"),
+            user_message="住宿按我习惯",
+            recall_gate=True,
+            retrieval_plan=RecallRetrievalPlan(
+                source="profile",
+                buckets=["stable_preferences"],
+                domains=["hotel"],
+                destination="",
+                keywords=["住宿"],
+                top_k=5,
+                reason="test",
+            ),
+        )
+
+        assert recall.stage3["lane_errors"]["semantic"] == expected_error
+
+    assert embed_attempts["count"] == 1

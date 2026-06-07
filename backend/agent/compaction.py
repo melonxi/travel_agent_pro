@@ -173,6 +173,11 @@ def compact_tool_message(
         tool_calls=message.tool_calls,
         tool_result=compacted_result,
         name=message.name,
+        provider_state=message.provider_state,
+        incomplete=message.incomplete,
+        history_persisted=message.history_persisted,
+        history_seq=message.history_seq,
+        transient=message.transient,
     )
 
 

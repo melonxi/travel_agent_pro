@@ -7,6 +7,7 @@ from agent.phase3.day_worker import (
     DayWorkerResult,
     _MAX_POI_RECOVERY,
     _MAX_SAME_QUERY,
+    _dayplan_time_conflicts,
     _should_force_emit,
     _tool_query_fingerprint,
     _tool_recovery_key,
@@ -17,6 +18,7 @@ from agent.types import ToolCall, ToolResult
 from agent.phase3.worker_prompt import DayTask
 from llm.types import ChunkType, LLMChunk
 from state.models import DateRange, TravelPlanState
+from telemetry.stats import SessionStats
 
 
 def _stub_plan() -> TravelPlanState:
@@ -41,9 +43,13 @@ class _LLMStub:
     def __init__(self, chunk_batches: list[list[LLMChunk]]):
         self._chunk_batches = list(chunk_batches)
         self.calls: list[list] = []
+        self.tool_schemas: list[list[dict] | None] = []
+        self.provider_name = "test-provider"
+        self.model = "test-model"
 
     async def chat(self, messages, tools=None, stream=True):
         self.calls.append(list(messages))
+        self.tool_schemas.append(list(tools) if tools is not None else None)
         batch = self._chunk_batches.pop(0)
         for chunk in batch:
             yield chunk
@@ -69,14 +75,35 @@ class _ToolResultHelper:
 
 
 class _ToolEngineWithResults:
-    def __init__(self, results=None):
+    def __init__(self, results=None, tool_names=None):
         self._results = list(results) if results else []
+        self.executed_batches: list[list[ToolCall]] = []
+        self._tool_names = set(tool_names or [])
 
     def get_tool(self, name):
-        return None
+        if name not in self._tool_names:
+            return None
+        return _ToolDefStub(name)
 
     async def execute_batch(self, tool_calls):
-        return self._results
+        self.executed_batches.append(list(tool_calls))
+        count = len(tool_calls)
+        results = self._results[:count]
+        self._results = self._results[count:]
+        return results
+
+
+class _ToolDefStub:
+    def __init__(self, name):
+        self.name = name
+        self.human_label = name
+
+    def to_schema(self):
+        return {
+            "name": self.name,
+            "description": f"{self.name} test tool",
+            "parameters": {"type": "object", "properties": {}},
+        }
 
 
 def _tc(name: str, call_id: str = "call_1", **kwargs) -> ToolCall:
@@ -157,6 +184,60 @@ async def test_run_day_worker_accepts_submit_day_plan_candidate_tool(tmp_path):
     loaded = store.load_latest_candidates("s-day-worker", "run_1")
     assert len(loaded) == 1
     assert loaded[0]["dayplan"] == dayplan
+
+
+@pytest.mark.asyncio
+async def test_run_day_worker_records_worker_stats(tmp_path):
+    dayplan = {"day": 1, "date": "2026-05-01", "notes": "submitted", "activities": []}
+    llm = _LLMStub(
+        [
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc(
+                        "submit_day_plan_candidate",
+                        call_id="submit_1",
+                        dayplan=dayplan,
+                    ),
+                ),
+                LLMChunk(
+                    type=ChunkType.USAGE,
+                    usage_info={"input_tokens": 12, "output_tokens": 4},
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(type=ChunkType.TEXT_DELTA, content="已提交第 1 天计划。"),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+        ]
+    )
+    store = Phase3CandidateStore(tmp_path)
+    stats = SessionStats()
+
+    result = await run_day_worker(
+        llm=llm,
+        tool_engine=_ToolEngineStub(),
+        plan=_stub_plan(),
+        task=_task(),
+        shared_prefix="",
+        timeout_seconds=5,
+        candidate_store=store,
+        run_id="phase3_run_1",
+        attempt=1,
+        stats=stats,
+    )
+
+    assert result.success is True
+    assert len(stats.llm_calls) == 2
+    assert stats.llm_calls[0].provider == "test-provider"
+    assert stats.llm_calls[0].model == "test-model"
+    assert stats.llm_calls[0].input_tokens == 12
+    assert stats.llm_calls[0].metadata["scope"] == "phase3_worker"
+    assert stats.llm_calls[0].metadata["worker_run_id"] == "phase3_run_1"
+    assert stats.tool_calls[0].tool_name == "submit_day_plan_candidate"
+    assert stats.tool_calls[0].metadata["day"] == 1
+    assert stats.tool_calls[0].metadata["tool_call_id"] == "submit_1"
 
 
 def test_extract_dayplan_json_from_code_block():
@@ -314,8 +395,21 @@ def test_tool_query_fingerprint():
     gpi_n = ToolCall(id="3", name="get_poi_info", arguments={"name": "天空树"})
     assert _tool_query_fingerprint(gpi_n) == "get_poi_info:天空树"
 
-    other = ToolCall(id="5", name="calculate_route", arguments={"from": "A", "to": "B"})
-    assert _tool_query_fingerprint(other) is None
+    route = ToolCall(
+        id="5",
+        name="calculate_route",
+        arguments={
+            "origin_lat": 35.7147651,
+            "origin_lng": 139.7966553,
+            "dest_lat": 35.7147557,
+            "dest_lng": 139.7734312,
+            "mode": "transit",
+        },
+    )
+    assert (
+        _tool_query_fingerprint(route)
+        == "calculate_route:transit:35.71477,139.79666->35.71476,139.77343"
+    )
 
 
 def test_tool_recovery_key():
@@ -325,8 +419,415 @@ def test_tool_recovery_key():
     ws = ToolCall(id="3", name="web_search", arguments={"query": "东京塔门票"})
     assert _tool_recovery_key(ws) == "东京塔门票"
 
-    other = ToolCall(id="4", name="calculate_route", arguments={})
-    assert _tool_recovery_key(other) is None
+    route = ToolCall(
+        id="4",
+        name="calculate_route",
+        arguments={
+            "origin_lat": 1,
+            "origin_lng": 2,
+            "dest_lat": 3,
+            "dest_lng": 4,
+        },
+    )
+    assert _tool_recovery_key(route) == "calculate_route:transit:1.0,2.0->3.0,4.0"
+
+
+def test_dayplan_time_conflicts_detects_transport_gap():
+    dayplan = {
+        "day": 1,
+        "date": "2026-05-01",
+        "activities": [
+            {"name": "浅草寺", "start_time": "10:00", "end_time": "11:00"},
+            {
+                "name": "上野公园",
+                "start_time": "11:00",
+                "end_time": "12:00",
+                "transport_duration_min": 15,
+            },
+        ],
+    }
+
+    issues = _dayplan_time_conflicts(dayplan)
+
+    assert len(issues) == 1
+    assert "浅草寺 11:00 结束 + 交通 15min > 上野公园 11:00 开始" in issues[0]
+
+
+@pytest.mark.asyncio
+async def test_submit_day_plan_candidate_rejects_time_conflict_then_repairs(tmp_path):
+    bad_dayplan = {
+        "day": 1,
+        "date": "2026-05-01",
+        "activities": [
+            {
+                "name": "A",
+                "location": {"name": "A", "lat": 1, "lng": 2},
+                "start_time": "10:00",
+                "end_time": "11:00",
+                "category": "activity",
+                "cost": 0,
+            },
+            {
+                "name": "B",
+                "location": {"name": "B", "lat": 3, "lng": 4},
+                "start_time": "11:00",
+                "end_time": "12:00",
+                "category": "activity",
+                "cost": 0,
+                "transport_duration_min": 20,
+            },
+        ],
+    }
+    repaired_dayplan = {
+        **bad_dayplan,
+        "activities": [
+            bad_dayplan["activities"][0],
+            {**bad_dayplan["activities"][1], "start_time": "11:25"},
+        ],
+    }
+    llm = _LLMStub(
+        [
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc(
+                        "submit_day_plan_candidate",
+                        call_id="submit_bad",
+                        dayplan=bad_dayplan,
+                    ),
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc(
+                        "submit_day_plan_candidate",
+                        call_id="submit_fixed",
+                        dayplan=repaired_dayplan,
+                    ),
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(type=ChunkType.TEXT_DELTA, content="已提交第 1 天计划。"),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+        ]
+    )
+    store = Phase3CandidateStore(tmp_path)
+
+    result = await run_day_worker(
+        llm=llm,
+        tool_engine=_ToolEngineStub(),
+        plan=_stub_plan(),
+        task=_task(),
+        shared_prefix="",
+        timeout_seconds=5,
+        candidate_store=store,
+        run_id="run_time_repair",
+        attempt=1,
+    )
+
+    assert result.success is True
+    assert result.dayplan == repaired_dayplan
+    loaded = store.load_latest_candidates("s-day-worker", "run_time_repair")
+    assert loaded[0]["dayplan"] == repaired_dayplan
+
+
+@pytest.mark.asyncio
+async def test_no_route_duplicate_calculate_route_is_short_circuited():
+    route_args = {
+        "origin_lat": 35.7147651,
+        "origin_lng": 139.7966553,
+        "dest_lat": 35.7147557,
+        "dest_lng": 139.7734312,
+        "mode": "transit",
+    }
+    llm = _LLMStub(
+        [
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc("calculate_route", call_id="r1", **route_args),
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc("calculate_route", call_id="r2", **route_args),
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(
+                    type=ChunkType.TEXT_DELTA,
+                    content='{"day": 1, "date": "2026-05-01", "activities": []}',
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+        ]
+    )
+    first_error = ToolResult(
+        tool_call_id="r1",
+        status="error",
+        error="Google Directions API returned ZERO_RESULTS",
+        error_code="NO_ROUTE",
+        suggestion="Use a conservative estimate.",
+    )
+    tool_engine = _ToolEngineWithResults([first_error])
+
+    result = await run_day_worker(
+        llm=llm,
+        tool_engine=tool_engine,
+        plan=_stub_plan(),
+        task=_task(),
+        shared_prefix="",
+        timeout_seconds=5,
+    )
+
+    assert result.success is True
+    assert len(tool_engine.executed_batches) == 1
+    assert tool_engine.executed_batches[0][0].id == "r1"
+    route_hint_found = False
+    for call_msgs in llm.calls:
+        for msg in call_msgs:
+            if msg.role.value == "system" and "web_search 兜底一次" in msg.content:
+                route_hint_found = True
+    assert route_hint_found
+
+
+@pytest.mark.asyncio
+async def test_followup_prompts_are_appended_after_all_tool_results():
+    route_args = {
+        "origin_lat": 35.7147651,
+        "origin_lng": 139.7966553,
+        "dest_lat": 35.7147557,
+        "dest_lng": 139.7734312,
+        "mode": "transit",
+    }
+    llm = _LLMStub(
+        [
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc("calculate_route", call_id="route1", **route_args),
+                ),
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc("get_poi_info", call_id="poi1", query="浅草寺"),
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(
+                    type=ChunkType.TEXT_DELTA,
+                    content='{"day": 1, "date": "2026-05-01", "activities": []}',
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+        ]
+    )
+    route_error = ToolResult(
+        tool_call_id="route1",
+        status="error",
+        error="Google Directions API returned ZERO_RESULTS",
+        error_code="NO_ROUTE",
+    )
+    poi_result = ToolResult(
+        tool_call_id="poi1",
+        status="success",
+        data={"pois": [{"name": "浅草寺"}]},
+    )
+    tool_engine = _ToolEngineWithResults([route_error, poi_result])
+
+    result = await run_day_worker(
+        llm=llm,
+        tool_engine=tool_engine,
+        plan=_stub_plan(),
+        task=_task(),
+        shared_prefix="",
+        timeout_seconds=5,
+    )
+
+    assert result.success is True
+    second_call_messages = llm.calls[1]
+    assistant_idx = max(
+        index
+        for index, msg in enumerate(second_call_messages)
+        if msg.role.value == "assistant" and msg.tool_calls
+    )
+    roles_after_assistant = [
+        msg.role.value for msg in second_call_messages[assistant_idx + 1:]
+    ]
+    assert roles_after_assistant[:2] == ["tool", "tool"]
+    assert roles_after_assistant[2:] == ["system"]
+
+
+@pytest.mark.asyncio
+async def test_get_poi_info_failure_adds_single_web_search_fallback_hint():
+    llm = _LLMStub(
+        [
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc("get_poi_info", call_id="poi1", query="浅草寺"),
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(
+                    type=ChunkType.TEXT_DELTA,
+                    content='{"day": 1, "date": "2026-05-01", "activities": []}',
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+        ]
+    )
+    poi_error = ToolResult(
+        tool_call_id="poi1",
+        status="error",
+        error="No POI results from any source",
+        error_code="NO_RESULTS",
+        suggestion="Try a different search query",
+    )
+    tool_engine = _ToolEngineWithResults([poi_error])
+    stats = SessionStats()
+
+    result = await run_day_worker(
+        llm=llm,
+        tool_engine=tool_engine,
+        plan=_stub_plan(),
+        task=_task(),
+        shared_prefix="",
+        timeout_seconds=5,
+        stats=stats,
+    )
+
+    assert result.success is True
+    fallback_hint_found = False
+    for msg in llm.calls[1]:
+        if (
+            msg.role.value == "system"
+            and "浅草寺" in msg.content
+            and "web_search 兜底一次" in msg.content
+        ):
+            fallback_hint_found = True
+    assert fallback_hint_found
+    assert stats.tool_calls[0].metadata["fallback_source"] == "web_search_once"
+    assert stats.tool_calls[0].metadata["fallback_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_web_search_failure_adds_degrade_hint():
+    llm = _LLMStub(
+        [
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc("web_search", call_id="web1", query="东京路线"),
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(
+                    type=ChunkType.TEXT_DELTA,
+                    content='{"day": 1, "date": "2026-05-01", "activities": []}',
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+        ]
+    )
+    web_error = ToolResult(
+        tool_call_id="web1",
+        status="error",
+        error="Tavily API error: 500",
+        error_code="API_ERROR",
+    )
+    tool_engine = _ToolEngineWithResults([web_error])
+
+    result = await run_day_worker(
+        llm=llm,
+        tool_engine=tool_engine,
+        plan=_stub_plan(),
+        task=_task(),
+        shared_prefix="",
+        timeout_seconds=5,
+    )
+
+    assert result.success is True
+    assert any(
+        msg.role.value == "system" and "不要再围绕同一查询追加兜底工具" in msg.content
+        for msg in llm.calls[1]
+    )
+
+
+@pytest.mark.asyncio
+async def test_xiaohongshu_auth_failure_disables_future_xhs_tools():
+    llm = _LLMStub(
+        [
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc(
+                        "xiaohongshu_search_notes",
+                        call_id="xhs1",
+                        query="东京甜品",
+                    ),
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc(
+                        "xiaohongshu_search_notes",
+                        call_id="xhs2",
+                        query="东京甜品",
+                    ),
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(
+                    type=ChunkType.TEXT_DELTA,
+                    content='{"day": 1, "date": "2026-05-01", "activities": []}',
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+        ]
+    )
+    xhs_auth_error = ToolResult(
+        tool_call_id="xhs1",
+        status="error",
+        error="login required",
+        error_code="NOT_AUTHENTICATED",
+    )
+    tool_engine = _ToolEngineWithResults(
+        [xhs_auth_error],
+        tool_names=["xiaohongshu_search_notes", "web_search"],
+    )
+
+    result = await run_day_worker(
+        llm=llm,
+        tool_engine=tool_engine,
+        plan=_stub_plan(),
+        task=_task(),
+        shared_prefix="",
+        timeout_seconds=5,
+    )
+
+    assert result.success is True
+    assert len(tool_engine.executed_batches) == 1
+    assert tool_engine.executed_batches[0][0].id == "xhs1"
+    second_call_tool_names = {schema["name"] for schema in llm.tool_schemas[1]}
+    assert "xiaohongshu_search_notes" not in second_call_tool_names
+    assert "web_search" in second_call_tool_names
+    assert any(
+        msg.role.value == "system" and "小红书工具当前不可用" in msg.content
+        for msg in llm.calls[1]
+    )
 
 
 def test_max_constants():
@@ -407,6 +908,17 @@ async def test_late_emit_hint_added_when_past_60_percent():
             if msg.role.value == "system" and "工具调用预算" in msg.content:
                 late_emit_found = True
     assert late_emit_found
+    third_call_messages = llm.calls[2]
+    assistant_idx = max(
+        index
+        for index, msg in enumerate(third_call_messages)
+        if msg.role.value == "assistant" and msg.tool_calls
+    )
+    roles_after_assistant = [
+        msg.role.value for msg in third_call_messages[assistant_idx + 1:]
+    ]
+    assert roles_after_assistant[:1] == ["tool"]
+    assert roles_after_assistant[1:] == ["system"]
 
 
 @pytest.mark.asyncio
@@ -460,6 +972,17 @@ async def test_repeated_query_triggers_forced_emit():
 
     assert result.success is True
     assert result.dayplan == {"day": 1, "date": "2026-05-01", "activities": []}
+    forced_call_messages = llm.calls[3]
+    assistant_idx = max(
+        index
+        for index, msg in enumerate(forced_call_messages)
+        if msg.role.value == "assistant" and msg.tool_calls
+    )
+    roles_after_assistant = [
+        msg.role.value for msg in forced_call_messages[assistant_idx + 1:]
+    ]
+    assert roles_after_assistant[:1] == ["tool"]
+    assert roles_after_assistant[1:] == ["system"]
 
 
 @pytest.mark.asyncio

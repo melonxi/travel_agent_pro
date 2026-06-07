@@ -4,7 +4,8 @@ import json
 import pytest
 from datetime import date
 from unittest.mock import patch
-from httpx import AsyncClient, ASGITransport
+import respx
+from httpx import AsyncClient, ASGITransport, Response
 
 from agent.types import Message, Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
@@ -223,11 +224,11 @@ telemetry:
     plan = session["plan"]
     plan.phase = 3
     plan.destination = "京都"
-    plan.dates = DateRange(start="2026-06-01", end="2026-06-01")
+    plan.dates = DateRange(start="2026-07-01", end="2026-07-01")
     plan.selected_skeleton_id = "s1"
     plan.skeleton_plans = [{"id": "s1", "days": [{"day": 1}]}]
     plan.accommodation = Accommodation(area="河原町", hotel="A")
-    plan.daily_plans = [DayPlan(day=1, date="2026-06-01")]
+    plan.daily_plans = [DayPlan(day=1, date="2026-07-01")]
 
     agent = session["agent"]
     call_count = 0
@@ -244,7 +245,7 @@ telemetry:
                     arguments={
                         "mode": "replace_existing",
                         "day": 1,
-                            "date": "2026-06-01",
+                        "date": "2026-07-01",
                         "activities": [
                             {
                                 "name": "清水寺",
@@ -255,7 +256,7 @@ telemetry:
                                 },
                                 "start_time": "09:00",
                                 "end_time": "11:00",
-                                "category": "景点",
+                                "category": "activity",
                                 "cost": 0,
                             }
                         ],
@@ -635,11 +636,11 @@ telemetry:
     plan = session["plan"]
     plan.phase = 3
     plan.destination = "京都"
-    plan.dates = DateRange(start="2026-05-01", end="2026-05-01")
+    plan.dates = DateRange(start="2026-07-01", end="2026-07-01")
     plan.selected_skeleton_id = "s1"
     plan.skeleton_plans = [{"id": "s1", "days": [{"day": 1}]}]
     plan.accommodation = Accommodation(area="河原町", hotel="A")
-    plan.daily_plans = [DayPlan(day=1, date="2026-05-01")]
+    plan.daily_plans = [DayPlan(day=1, date="2026-07-01")]
 
     agent = session["agent"]
     call_count = 0
@@ -656,14 +657,14 @@ telemetry:
                     arguments={
                         "mode": "replace_existing",
                         "day": 1,
-                        "date": "2026-05-01",
+                        "date": "2026-07-01",
                         "activities": [
                             {
                                 "name": "清水寺",
                                 "location": {"name": "清水寺", "lat": 34.9949, "lng": 135.7850},
                                 "start_time": "09:00",
                                 "end_time": "11:00",
-                                "category": "景点",
+                                "category": "activity",
                                 "cost": 0,
                             }
                         ],
@@ -763,6 +764,252 @@ telemetry:
 
     assert changed is True
     assert plan.phase == 3
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_low_soft_judge_does_not_freeze_deliverables(
+    monkeypatch,
+    tmp_path,
+):
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path / "data"
+    config_file.write_text(
+        f"""
+llm:
+  provider: openai
+  model: gpt-4o
+data_dir: "{data_dir}"
+flyai:
+  enabled: false
+quality_gate:
+  threshold: 4.0
+  max_retries: 2
+memory_extraction:
+  enabled: false
+telemetry:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    class LowScoreProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None, **kwargs):
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_judge",
+                    name="emit_soft_judge_score",
+                    arguments={
+                        "pace": 2,
+                        "geography": 2,
+                        "coherence": 2,
+                        "personalization": 2,
+                        "suggestions": ["Day 1 太紧，先修订再交付"],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: LowScoreProvider())
+    app = create_app(str(config_file))
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+
+    session = _get_sessions(app)[session_id]
+    plan = session["plan"]
+    plan.phase = 4
+    plan.destination = "东京"
+    plan.dates = DateRange(start="2026-07-10", end="2026-07-10")
+    plan.daily_plans = [DayPlan(day=1, date="2026-07-10")]
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, **kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_summary_low",
+                    name="generate_summary",
+                    arguments={
+                        "plan_data": {"destination": "东京"},
+                        "travel_plan_markdown": "# 东京旅行计划\n\n## 第 1 天\n- 浅草寺\n",
+                        "checklist_markdown": "# 东京出发前清单\n\n- [ ] 护照\n",
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="收到质量反馈，准备修订。")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    session["agent"].llm.chat = fake_chat
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            f"/api/chat/{session_id}",
+            json={"message": "生成最终交付物"},
+        )
+        download = await client.get(
+            f"/api/sessions/{session_id}/deliverables/travel_plan.md"
+        )
+
+    assert resp.status_code == 200
+    assert '"kind": "soft_judge"' in resp.text
+    assert '"status": "warning"' in resp.text
+    assert plan.deliverables is None
+    assert download.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_rejects_exact_weather_when_forecast_is_reference_only(
+    monkeypatch,
+    tmp_path,
+):
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path / "data"
+    config_file.write_text(
+        f"""
+llm:
+  provider: openai
+  model: gpt-4o
+data_dir: "{data_dir}"
+flyai:
+  enabled: false
+quality_gate:
+  threshold: 4.0
+  max_retries: 2
+memory_extraction:
+  enabled: false
+telemetry:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENWEATHER_API_KEY", "test-weather-key")
+
+    class HighScoreProvider:
+        async def chat(self, messages, tools=None, stream=True, tool_choice=None, **kwargs):
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_judge",
+                    name="emit_soft_judge_score",
+                    arguments={
+                        "pace": 5,
+                        "geography": 5,
+                        "coherence": 5,
+                        "personalization": 5,
+                        "suggestions": [],
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+
+        async def count_tokens(self, messages):
+            return 0
+
+        async def get_context_window(self):
+            return 200000
+
+    monkeypatch.setattr("main.create_llm_provider", lambda _config: HighScoreProvider())
+    app = create_app(str(config_file))
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/sessions")
+        session_id = session_resp.json()["session_id"]
+
+    session = _get_sessions(app)[session_id]
+    plan = session["plan"]
+    plan.phase = 4
+    plan.destination = "东京"
+    plan.dates = DateRange(start="2026-07-10", end="2026-07-12")
+    plan.daily_plans = [DayPlan(day=1, date="2026-07-10")]
+
+    call_count = 0
+
+    async def fake_chat(messages, tools=None, stream=True, **kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_weather_far",
+                    name="check_weather",
+                    arguments={"city": "Tokyo", "date": "2026-07-10"},
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        if call_count == 2:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_summary_weather",
+                    name="generate_summary",
+                    arguments={
+                        "plan_data": {"destination": "东京"},
+                        "travel_plan_markdown": "# 东京旅行计划\n\n## 第 1 天\n- 浅草寺\n",
+                        "checklist_markdown": "# 东京出发前清单\n\n- [ ] 20°C 中雨，带伞\n",
+                    },
+                ),
+            )
+            yield LLMChunk(type=ChunkType.DONE)
+            return
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="收到天气文案反馈，准备修订。")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    session["agent"].llm.chat = fake_chat
+
+    weather_payload = {
+        "list": [
+            {
+                "dt_txt": "2026-06-01 12:00:00",
+                "main": {"temp": 20.0, "temp_min": 18.0, "temp_max": 22.0},
+                "weather": [{"description": "moderate rain"}],
+                "wind": {"speed": 3.0},
+            }
+        ]
+    }
+    with respx.mock(assert_all_called=False) as mock_http:
+        mock_http.get("https://api.openweathermap.org/data/2.5/forecast").mock(
+            return_value=Response(200, json=weather_payload),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "生成最终交付物"},
+            )
+            download = await client.get(
+                f"/api/sessions/{session_id}/deliverables/checklist.md"
+            )
+
+    assert resp.status_code == 200
+    assert "FUTURE_WEATHER_NOT_TREATED_AS_EXACT" in resp.text
+    assert "临近出发前再确认" in resp.text
+    assert plan.deliverables is None
+    assert download.status_code == 404
 
 
 @pytest.mark.asyncio

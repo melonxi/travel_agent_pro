@@ -103,6 +103,14 @@ def apply_recall_short_circuit(message: str) -> RecallShortCircuitDecision:
             signals=signals_tuple,
         )
 
+    if _is_process_only_instruction(text, signals):
+        return RecallShortCircuitDecision(
+            decision="skip_recall",
+            reason="process_instruction_only",
+            matched_rule="P4P",
+            signals=signals_tuple,
+        )
+
     if signals["recommend"]:
         return RecallShortCircuitDecision(
             decision="undecided",
@@ -135,6 +143,40 @@ def apply_recall_short_circuit(message: str) -> RecallShortCircuitDecision:
         matched_rule="P6",
         signals=signals_tuple,
     )
+
+
+def _is_process_only_instruction(
+    message: str,
+    signals: dict[str, tuple[str, ...]],
+) -> bool:
+    """Detect turn-control messages that should not spend a recall-gate LLM call."""
+    if signals["history"] or signals["style"]:
+        return False
+    process_tokens = (
+        "继续",
+        "推进",
+        "完成",
+        "锁定",
+        "直接",
+        "不要继续询问",
+        "不需要再问",
+        "不用再问",
+        "按推荐项",
+    )
+    has_process_token = any(token in message for token in process_tokens)
+    if not has_process_token:
+        return False
+    planning_tokens = (
+        "phase",
+        "Phase",
+        "候选池",
+        "shortlist",
+        "skeleton",
+        "骨架",
+        "交付物",
+        "写入",
+    )
+    return any(token in message for token in planning_tokens)
 
 
 def _has_negated_profile_signal(

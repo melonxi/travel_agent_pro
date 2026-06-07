@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -36,6 +37,113 @@ OnProgress = Callable[[int, str, dict], None] | None
 _MAX_SAME_QUERY = 2
 _MAX_POI_RECOVERY = 3
 ERROR_NEEDS_PHASE3_REPLAN = "NEEDS_PHASE3_REPLAN"
+_XIAOHONGSHU_TOOL_PREFIX = "xiaohongshu_"
+_XIAOHONGSHU_DISABLE_ERROR_CODES = {
+    "AUTH_REQUIRED",
+    "CAPTCHA_REQUIRED",
+    "FORBIDDEN",
+    "LOGIN_REQUIRED",
+    "NOT_AUTHENTICATED",
+    "PERMISSION_DENIED",
+    "VERIFICATION_REQUIRED",
+}
+
+
+def _truncate_preview(value: Any, max_len: int = 120) -> str:
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    return text[:max_len] + "..." if len(text) > max_len else text
+
+
+def _worker_metadata(
+    *,
+    task: DayTask,
+    run_id: str | None,
+    attempt: int,
+    iteration: int,
+) -> dict[str, Any]:
+    return {
+        "scope": "phase3_worker",
+        "day": task.day,
+        "date": task.date,
+        "attempt": attempt,
+        "iteration": iteration,
+        "worker_run_id": run_id,
+    }
+
+
+def _record_worker_llm_call(
+    *,
+    stats: Any | None,
+    llm: LLMProvider,
+    task: DayTask,
+    run_id: str | None,
+    attempt: int,
+    iteration: int,
+    input_tokens: int,
+    output_tokens: int,
+    duration_ms: float,
+) -> None:
+    if stats is None or not hasattr(stats, "record_llm_call"):
+        return
+    stats.record_llm_call(
+        provider=getattr(llm, "provider_name", "unknown"),
+        model=getattr(llm, "model", "unknown"),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        duration_ms=duration_ms,
+        phase=3,
+        iteration=iteration,
+        metadata=_worker_metadata(
+            task=task,
+            run_id=run_id,
+            attempt=attempt,
+            iteration=iteration,
+        ),
+    )
+
+
+def _record_worker_tool_call(
+    *,
+    stats: Any | None,
+    task: DayTask,
+    run_id: str | None,
+    attempt: int,
+    iteration: int,
+    tool_call: ToolCall,
+    result: ToolResult,
+) -> None:
+    if stats is None or not hasattr(stats, "record_tool_call"):
+        return
+    result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+    duration = result_metadata.get("duration_ms", 0.0)
+    if not isinstance(duration, (int, float)):
+        duration = 0.0
+    stats.record_tool_call(
+        tool_name=tool_call.name,
+        duration_ms=float(duration),
+        status=result.status,
+        error_code=result.error_code,
+        phase=3,
+        arguments_preview=_truncate_preview(tool_call.arguments),
+        result_preview=(
+            _truncate_preview(f"ERROR: {result.error}")
+            if result.error
+            else _truncate_preview(result.data)
+        ),
+        suggestion=result.suggestion,
+        metadata={
+            **result_metadata,
+            **_worker_metadata(
+                task=task,
+                run_id=run_id,
+                attempt=attempt,
+                iteration=iteration,
+            ),
+            "tool_call_id": tool_call.id,
+        },
+    )
 
 _JSON_REPAIR_PROMPT = (
     "你刚才的回复没有触发 submit_day_plan_candidate，也未输出可解析的 DayPlan JSON。\n"
@@ -59,6 +167,26 @@ _LATE_EMIT_PROMPT = (
     "你已使用大部分工具调用预算。"
     "请在下一轮提交 DayPlan；如还需 1-2 个工具补齐核心信息可继续，但不要超过 2 个调用就必须提交。"
     "无法确认的事实写入 notes 字段。"
+)
+
+_ROUTE_UNAVAILABLE_PROMPT = (
+    "刚才的 calculate_route 返回 NO_ROUTE，表示该路线模式没有可用结构化结果。"
+    "不要围绕同一组起终点和 mode 重复调用 calculate_route。"
+    "允许用 web_search 兜底一次查询该路线的大致交通方式/时长；如果仍不可确认，"
+    "请改用保守交通估算：同一区域步行/地铁 10-20 分钟，跨区地铁 25-45 分钟，"
+    "并在活动 notes 标注「路线工具未返回可用结果，交通时长为保守估算」。"
+    "时间表必须满足：上一活动 end_time + transport_duration_min <= 下一活动 start_time。"
+)
+
+_WEB_SEARCH_DEGRADE_PROMPT = (
+    "刚才 web_search 没有返回可用结果。不要再围绕同一查询追加兜底工具。"
+    "如果该信息不是核心 POI 坐标或不可替代事实，请降级处理："
+    "在 notes 标注「公开网页未确认，出行前复核」，然后继续提交 DayPlan。"
+)
+
+_XIAOHONGSHU_DISABLED_PROMPT = (
+    "小红书工具当前不可用或需要登录验证，本 worker 后续不要再调用小红书工具。"
+    "体验类信息可用 web_search 兜底一次；若仍不可确认，写入 notes，不要阻塞 DayPlan 提交。"
 )
 
 _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA = {
@@ -198,6 +326,8 @@ def _tool_query_fingerprint(call: ToolCall) -> str | None:
     if call.name == "get_poi_info":
         q = call.arguments.get("query") or call.arguments.get("name") or ""
         return f"get_poi_info:{q}"
+    if call.name == "calculate_route":
+        return _route_fingerprint(call)
     return None
 
 
@@ -206,7 +336,128 @@ def _tool_recovery_key(call: ToolCall) -> str | None:
         return call.arguments.get("query") or call.arguments.get("name")
     if call.name == "web_search":
         return call.arguments.get("query")
+    if call.name == "calculate_route":
+        return _route_fingerprint(call)
     return None
+
+
+def _route_fingerprint(call: ToolCall) -> str | None:
+    required = ("origin_lat", "origin_lng", "dest_lat", "dest_lng")
+    if any(key not in call.arguments for key in required):
+        return None
+    try:
+        origin_lat = round(float(call.arguments["origin_lat"]), 5)
+        origin_lng = round(float(call.arguments["origin_lng"]), 5)
+        dest_lat = round(float(call.arguments["dest_lat"]), 5)
+        dest_lng = round(float(call.arguments["dest_lng"]), 5)
+    except (TypeError, ValueError):
+        return None
+    mode = call.arguments.get("mode") or "transit"
+    return f"calculate_route:{mode}:{origin_lat},{origin_lng}->{dest_lat},{dest_lng}"
+
+
+def _poi_fingerprint(call: ToolCall) -> str | None:
+    if call.name != "get_poi_info":
+        return None
+    value = call.arguments.get("query") or call.arguments.get("name")
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    location = call.arguments.get("location")
+    if isinstance(location, str) and location.strip():
+        return f"{value} in {location.strip()}"
+    return value
+
+
+def _is_xiaohongshu_tool(name: str) -> bool:
+    return name.startswith(_XIAOHONGSHU_TOOL_PREFIX)
+
+
+def _without_xiaohongshu_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        schema
+        for schema in tools
+        if not _is_xiaohongshu_tool(str(schema.get("name", "")))
+    ]
+
+
+def _is_xiaohongshu_disable_result(result: ToolResult) -> bool:
+    return (
+        result.status == "error"
+        and result.error_code in _XIAOHONGSHU_DISABLE_ERROR_CODES
+    )
+
+
+def _poi_result_needs_fallback(result: ToolResult) -> bool:
+    if result.status == "error":
+        return True
+    if result.status != "success":
+        return False
+    if not isinstance(result.data, dict):
+        return False
+    pois = result.data.get("pois")
+    return isinstance(pois, list) and len(pois) == 0
+
+
+def _annotate_result(result: ToolResult, **metadata: Any) -> None:
+    existing = result.metadata if isinstance(result.metadata, dict) else {}
+    result.metadata = {**existing, **metadata}
+
+
+def _build_poi_fallback_prompt(poi_key: str) -> str:
+    return (
+        f"get_poi_info 未返回「{poi_key}」的可用结构化 POI。"
+        "允许用 web_search 兜底一次查询官方/公开网页信息。"
+        "小红书只可用于体验类参考，不可作为坐标、营业时间、票价的唯一依据。"
+        "如果 web_search 也不可用：不要继续换词反复查，把该信息写入 notes，"
+        "坐标未知的 POI 不要纳入正式活动。"
+    )
+
+
+def _time_to_minutes(value: Any) -> int | None:
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"(\d{2}):(\d{2})", value.strip())
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if hour > 23 or minute > 59:
+        return None
+    return hour * 60 + minute
+
+
+def _dayplan_time_conflicts(dayplan: dict[str, Any]) -> list[str]:
+    activities = dayplan.get("activities")
+    if not isinstance(activities, list):
+        return []
+    issues: list[str] = []
+    for index in range(1, len(activities)):
+        prev = activities[index - 1]
+        curr = activities[index]
+        if not isinstance(prev, dict) or not isinstance(curr, dict):
+            continue
+        prev_end = _time_to_minutes(prev.get("end_time"))
+        curr_start = _time_to_minutes(curr.get("start_time"))
+        travel = curr.get("transport_duration_min", 0) or 0
+        try:
+            travel_min = int(travel)
+        except (TypeError, ValueError):
+            travel_min = 0
+        if prev_end is None or curr_start is None:
+            continue
+        effective_start = curr_start
+        if prev_end - curr_start > 720:
+            effective_start = curr_start + 1440
+        if prev_end + travel_min > effective_start:
+            issues.append(
+                f"{prev.get('name', '上一活动')} {prev.get('end_time')} 结束 + "
+                f"交通 {travel_min}min > {curr.get('name', '下一活动')} "
+                f"{curr.get('start_time')} 开始"
+            )
+    return issues
 
 
 @dataclass
@@ -275,6 +526,7 @@ async def run_day_worker(
     candidate_store: Phase3CandidateStore | None = None,
     run_id: str | None = None,
     attempt: int = 1,
+    stats: Any | None = None,
 ) -> DayWorkerResult:
     """Run a single Day Worker agent loop.
 
@@ -315,6 +567,12 @@ async def run_day_worker(
     late_emit_hinted = False
     repeated_query_counts: dict[str, int] = {}
     poi_recovery_counts: dict[str, int] = {}
+    failed_route_fingerprints: set[str] = set()
+    route_fallback_hinted: set[str] = set()
+    poi_fallback_hinted: set[str] = set()
+    web_search_failure_hinted: set[str] = set()
+    xiaohongshu_disabled = False
+    xiaohongshu_disabled_reason: str | None = None
 
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -345,6 +603,8 @@ async def run_day_worker(
                     tool_calls: list[ToolCall] = []
                     text_chunks: list[str] = []
                     provider_state: dict[str, object] = {}
+                    llm_started_at = time.monotonic()
+                    usage_recorded = False
 
                     async for chunk in llm.chat(
                         messages, tools=worker_tools, stream=True
@@ -368,6 +628,41 @@ async def run_day_worker(
                             chunk.type == ChunkType.TOOL_CALL_START and chunk.tool_call
                         ):
                             tool_calls.append(chunk.tool_call)
+                        elif chunk.type == ChunkType.USAGE and chunk.usage_info:
+                            usage_recorded = True
+                            _record_worker_llm_call(
+                                stats=stats,
+                                llm=llm,
+                                task=task,
+                                run_id=run_id,
+                                attempt=attempt,
+                                iteration=iterations,
+                                input_tokens=int(
+                                    chunk.usage_info.get("input_tokens", 0) or 0
+                                ),
+                                output_tokens=int(
+                                    chunk.usage_info.get("output_tokens", 0) or 0
+                                ),
+                                duration_ms=max(
+                                    0.0,
+                                    (time.monotonic() - llm_started_at) * 1000,
+                                ),
+                            )
+                    if not usage_recorded:
+                        _record_worker_llm_call(
+                            stats=stats,
+                            llm=llm,
+                            task=task,
+                            run_id=run_id,
+                            attempt=attempt,
+                            iteration=iterations,
+                            input_tokens=0,
+                            output_tokens=0,
+                            duration_ms=max(
+                                0.0,
+                                (time.monotonic() - llm_started_at) * 1000,
+                            ),
+                        )
 
                     assistant_text = "".join(text_chunks)
 
@@ -445,20 +740,49 @@ async def run_day_worker(
                                 break
 
                     if forced_emit_mode:
+                        skip_code = forced_emit_reason or "FORCED_EMIT"
+                        for tc in tool_calls:
+                            skipped = ToolResult(
+                                tool_call_id=tc.id,
+                                status="skipped",
+                                error=(
+                                    "Tool execution skipped because the worker "
+                                    "entered forced emit mode."
+                                ),
+                                error_code=skip_code,
+                                suggestion=(
+                                    "Stop calling tools and submit a conservative "
+                                    "DayPlan from existing evidence."
+                                ),
+                                metadata={
+                                    "degraded": True,
+                                    "fallback_reason": skip_code,
+                                    "fallback_source": "existing_evidence",
+                                },
+                            )
+                            _record_worker_tool_call(
+                                stats=stats,
+                                task=task,
+                                run_id=run_id,
+                                attempt=attempt,
+                                iteration=iterations,
+                                tool_call=tc,
+                                result=skipped,
+                            )
+                            messages.append(Message(role=Role.TOOL, tool_result=skipped))
                         messages.append(
                             Message(role=Role.SYSTEM, content=_FORCED_EMIT_PROMPT)
                         )
                         continue
 
+                    late_emit_prompt: str | None = None
                     if (
                         not late_emit_hinted
                         and _should_force_emit(iterations, max_iterations)
                         and tool_calls
                     ):
                         late_emit_hinted = True
-                        messages.append(
-                            Message(role=Role.SYSTEM, content=_LATE_EMIT_PROMPT)
-                        )
+                        late_emit_prompt = _LATE_EMIT_PROMPT
 
                     if tool_calls:
                         first = tool_calls[0]
@@ -495,6 +819,53 @@ async def run_day_worker(
                             if result.status == "success":
                                 submitted_dayplan = result.data["dayplan"]
                             results.append(result)
+                        elif (
+                            call.name == "calculate_route"
+                            and (route_fp := _route_fingerprint(call))
+                            in failed_route_fingerprints
+                        ):
+                            results.append(
+                                ToolResult(
+                                    tool_call_id=call.id,
+                                    status="error",
+                                    error=(
+                                        "Same route already returned NO_ROUTE in this "
+                                        "worker run; skipped duplicate route lookup."
+                                    ),
+                                    error_code="NO_ROUTE",
+                                    suggestion=(
+                                        "Do not retry the same origin/destination/mode. "
+                                        "Use a conservative transport estimate and mark it in notes."
+                                    ),
+                                    metadata={
+                                        "degraded": True,
+                                        "fallback_reason": "duplicate_no_route",
+                                        "fallback_source": "conservative_estimate",
+                                    },
+                                )
+                            )
+                        elif _is_xiaohongshu_tool(call.name) and xiaohongshu_disabled:
+                            results.append(
+                                ToolResult(
+                                    tool_call_id=call.id,
+                                    status="error",
+                                    error=(
+                                        "Xiaohongshu tools are disabled for this "
+                                        "worker run after an auth/verification failure."
+                                    ),
+                                    error_code="XIAOHONGSHU_DISABLED",
+                                    suggestion=(
+                                        "Use web_search once for public evidence, "
+                                        "or write the uncertainty into notes."
+                                    ),
+                                    metadata={
+                                        "degraded": True,
+                                        "fallback_reason": xiaohongshu_disabled_reason
+                                        or "xiaohongshu_unavailable",
+                                        "fallback_source": "web_search_or_notes",
+                                    },
+                                )
+                            )
                         else:
                             results.append(
                                 ToolResult(tool_call_id=call.id, status="skipped")
@@ -509,8 +880,90 @@ async def run_day_worker(
                         for pos, result in zip(external_positions, external_results):
                             results[pos] = result
 
+                    followup_prompts: list[str] = []
                     for tc, result in zip(tool_calls, results):
+                        followup_prompt: str | None = None
+                        if (
+                            tc.name == "get_poi_info"
+                            and _poi_result_needs_fallback(result)
+                            and (poi_key := _poi_fingerprint(tc)) is not None
+                            and poi_key not in poi_fallback_hinted
+                        ):
+                            poi_fallback_hinted.add(poi_key)
+                            _annotate_result(
+                                result,
+                                degraded=True,
+                                fallback_reason=result.error_code or "empty_poi_result",
+                                fallback_source="web_search_once",
+                                fallback_count=1,
+                            )
+                            followup_prompt = _build_poi_fallback_prompt(poi_key)
+                        elif (
+                            tc.name == "web_search"
+                            and result.status == "error"
+                            and (query := tc.arguments.get("query"))
+                            and str(query) not in web_search_failure_hinted
+                        ):
+                            web_search_failure_hinted.add(str(query))
+                            _annotate_result(
+                                result,
+                                degraded=True,
+                                fallback_reason=result.error_code or "web_search_error",
+                                fallback_source="notes",
+                            )
+                            followup_prompt = _WEB_SEARCH_DEGRADE_PROMPT
+                        elif _is_xiaohongshu_tool(tc.name) and _is_xiaohongshu_disable_result(
+                            result
+                        ):
+                            if not xiaohongshu_disabled:
+                                xiaohongshu_disabled = True
+                                xiaohongshu_disabled_reason = (
+                                    result.error_code or "xiaohongshu_unavailable"
+                                )
+                                worker_tools = _without_xiaohongshu_tools(worker_tools)
+                                _annotate_result(
+                                    result,
+                                    degraded=True,
+                                    fallback_reason=xiaohongshu_disabled_reason,
+                                    fallback_source="web_search_or_notes",
+                                )
+                                followup_prompt = _XIAOHONGSHU_DISABLED_PROMPT
+                        elif (
+                            tc.name == "calculate_route"
+                            and result.error_code == "NO_ROUTE"
+                            and (route_fp := _route_fingerprint(tc)) is not None
+                        ):
+                            failed_route_fingerprints.add(route_fp)
+                            if route_fp not in route_fallback_hinted:
+                                route_fallback_hinted.add(route_fp)
+                                _annotate_result(
+                                    result,
+                                    degraded=True,
+                                    fallback_reason="NO_ROUTE",
+                                    fallback_source="web_search_once_then_estimate",
+                                    fallback_count=1,
+                                )
+                                followup_prompt = _ROUTE_UNAVAILABLE_PROMPT
+
+                        _record_worker_tool_call(
+                            stats=stats,
+                            task=task,
+                            run_id=run_id,
+                            attempt=attempt,
+                            iteration=iterations,
+                            tool_call=tc,
+                            result=result,
+                        )
                         messages.append(Message(role=Role.TOOL, tool_result=result))
+                        if followup_prompt:
+                            followup_prompts.append(followup_prompt)
+
+                    for prompt in followup_prompts:
+                        messages.append(Message(role=Role.SYSTEM, content=prompt))
+                    if late_emit_prompt:
+                        messages.append(
+                            Message(role=Role.SYSTEM, content=late_emit_prompt)
+                        )
 
                 # Exhausted iterations
                 last_text = ""
@@ -611,6 +1064,21 @@ def _submit_day_plan_candidate(
             error="dayplan must be an object",
             error_code="INVALID_DAYPLAN",
             suggestion="Call submit_day_plan_candidate with a complete dayplan object.",
+        )
+
+    time_conflicts = _dayplan_time_conflicts(dayplan)
+    if time_conflicts:
+        preview = "；".join(time_conflicts[:3])
+        return ToolResult(
+            tool_call_id=call.id,
+            status="error",
+            error=f"DayPlan has time conflicts: {preview}",
+            error_code="INVALID_DAYPLAN_TIME_CONFLICT",
+            suggestion=(
+                "修正时间表后再提交：每个活动必须满足上一活动 end_time + "
+                "transport_duration_min <= 下一活动 start_time。可以减少活动数，"
+                "或把下一活动 start_time 后移。"
+            ),
         )
 
     try:

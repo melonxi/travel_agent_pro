@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>上下文工程三元组 — 可视化地图</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232733;
+    --border: #2e3344;
+    --text: #e4e7ef;
+    --text2: #9ba3b8;
+    --accent-system: #f59e0b;
+    --accent-user: #3b82f6;
+    --accent-assistant: #10b981;
+    --accent-tool: #8b5cf6;
+    --accent-transient: #ef4444;
+    --accent-persistent: #22c55e;
+    --accent-tag-tc: #06b6d4;
+    --accent-tag-rn: #f97316;
+    --accent-tag-ae: #a855f7;
+    --accent-soul: #ec4899;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 2rem;
+  }
+
+  .hero {
+    text-align: center;
+    padding: 3rem 1rem;
+    margin-bottom: 2rem;
+    background: linear-gradient(135deg, rgba(245,158,11,0.08), rgba(59,130,246,0.08), rgba(16,185,129,0.08));
+    border-radius: 1.5rem;
+    border: 1px solid var(--border);
+  }
+  .hero h1 {
+    font-size: 2.2rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+  }
+  .hero h1 span.dim { color: var(--text2); font-weight: 400; }
+  .hero p { color: var(--text2); font-size: 1.05rem; max-width: 720px; margin: 0 auto; }
+
+  .section { margin-bottom: 2.5rem; }
+  .section-title {
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .section-title .icon { font-size: 1.5rem; }
+
+  /* 三维矩阵表 */
+  .matrix-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--surface);
+    border-radius: 1rem;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .matrix-table th {
+    background: var(--surface2);
+    padding: 0.85rem 1rem;
+    text-align: left;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+  }
+  .matrix-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.92rem;
+  }
+  .matrix-table tr:last-child td { border-bottom: none; }
+  .matrix-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .tag-pill {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-family: "SF Mono", "Fira Code", monospace;
+    letter-spacing: 0.02em;
+  }
+  .tag-system { background: rgba(245,158,11,0.15); color: var(--accent-system); border: 1px solid rgba(245,158,11,0.3); }
+  .tag-user { background: rgba(59,130,246,0.15); color: var(--accent-user); border: 1px solid rgba(59,130,246,0.3); }
+  .tag-assistant { background: rgba(16,185,129,0.15); color: var(--accent-assistant); border: 1px solid rgba(16,185,129,0.3); }
+  .tag-tool { background: rgba(139,92,246,0.15); color: var(--accent-tool); border: 1px solid rgba(139,92,246,0.3); }
+
+  .transient-yes { color: var(--accent-transient); font-weight: 700; }
+  .transient-no { color: var(--accent-persistent); font-weight: 700; }
+
+  .xml-tag-tc { background: rgba(6,182,212,0.12); color: var(--accent-tag-tc); border: 1px solid rgba(6,182,212,0.3); }
+  .xml-tag-rn { background: rgba(249,115,22,0.12); color: var(--accent-tag-rn); border: 1px solid rgba(249,115,22,0.3); }
+  .xml-tag-ae { background: rgba(168,85,247,0.12); color: var(--accent-tag-ae); border: 1px solid rgba(168,85,247,0.3); }
+  .xml-tag-soul { background: rgba(236,72,153,0.12); color: var(--accent-soul); border: 1px solid rgba(236,72,153,0.3); }
+  .xml-tag-none { background: rgba(255,255,255,0.05); color: var(--text2); border: 1px solid var(--border); }
+
+  .lifecycle-badge {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    font-size: 0.8rem; font-weight: 600;
+  }
+  .lifecycle-rebuild { color: #f59e0b; }
+  .lifecycle-persist { color: #22c55e; }
+
+  /* 流程图 */
+  .flow-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    overflow-x: auto;
+  }
+  .flow-row {
+    display: flex;
+    align-items: stretch;
+    margin-bottom: 0.5rem;
+    gap: 0.5rem;
+  }
+  .flow-row:last-child { margin-bottom: 0; }
+  .flow-step {
+    flex: 1;
+    padding: 0.8rem 1rem;
+    border-radius: 0.6rem;
+    font-size: 0.85rem;
+    position: relative;
+  }
+  .flow-arrow {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text2); font-size: 1.2rem; min-width: 2rem;
+  }
+  .flow-group-label {
+    font-size: 0.75rem;
+    color: var(--text2);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.3rem;
+    padding-left: 0.2rem;
+  }
+
+  .step-system { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.25); }
+  .step-user { background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.25); }
+  .step-assistant { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.25); }
+  .step-tool { background: rgba(139,92,246,0.1); border: 1px solid rgba(139,92,246,0.25); }
+
+  .step-label { font-weight: 700; font-size: 0.82rem; margin-bottom: 0.2rem; }
+  .step-detail { font-size: 0.78rem; color: var(--text2); }
+  .step-tag { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.72rem; }
+
+  /* 维度卡片 */
+  .dim-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.2rem;
+  }
+  @media (max-width: 768px) { .dim-grid { grid-template-columns: 1fr; } }
+  .dim-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .dim-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+  .dim-card h3 { font-size: 1.15rem; margin-bottom: 0.6rem; }
+  .dim-card .dim-icon { font-size: 2rem; margin-bottom: 0.5rem; }
+  .dim-card p { color: var(--text2); font-size: 0.88rem; }
+  .dim-card .consequence { margin-top: 0.8rem; padding: 0.7rem; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: 0.5rem; font-size: 0.82rem; color: #fca5a5; }
+
+  /* authority ladder */
+  .ladder {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    counter-reset: authority;
+  }
+  .ladder-item {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    counter-increment: authority;
+  }
+  .ladder-item:last-child { border-bottom: none; }
+  .ladder-rank {
+    min-width: 2rem; height: 2rem;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface2); border-radius: 50%;
+    font-size: 0.8rem; font-weight: 700; color: var(--text2);
+  }
+  .ladder-rank::before { content: counter(authority); }
+  .ladder-content { flex: 1; }
+  .ladder-label { font-weight: 600; font-size: 0.92rem; }
+  .ladder-desc { font-size: 0.8rem; color: var(--text2); }
+  .ladder-bar {
+    min-width: 120px; height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--accent-system), var(--accent-user));
+  }
+
+  /* soul sections map */
+  .soul-map {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    padding: 1.5rem;
+  }
+  .soul-section {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 0.6rem;
+    align-items: flex-start;
+  }
+  .soul-section:last-child { margin-bottom: 0; }
+  .soul-key {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 0.5rem;
+    white-space: nowrap;
+  }
+  .soul-desc { font-size: 0.88rem; }
+
+  /* kind table */
+  .kind-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.8rem;
+  }
+  .kind-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.8rem;
+    padding: 1rem 1.2rem;
+  }
+  .kind-card .kind-name {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-weight: 700;
+    font-size: 0.9rem;
+    margin-bottom: 0.4rem;
+  }
+  .kind-card .kind-meta { font-size: 0.8rem; color: var(--text2); }
+  .kind-card .kind-meta code {
+    background: rgba(255,255,255,0.06);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+  }
+
+  /* code link */
+  code.src {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.78rem;
+    background: rgba(255,255,255,0.06);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    color: var(--accent-system);
+  }
+
+  /* footer */
+  .footer {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    color: var(--text2);
+    font-size: 0.82rem;
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== HERO ===== -->
+<div class="hero">
+  <h1>role <span class="dim">×</span> transient <span class="dim">×</span> XML-like tag</h1>
+  <p>Travel Agent Pro 的上下文工程不再只靠 LLM 原生 role 分类，而是用三维共同表达——role 负责 provider 通道，transient 负责生命周期，tag 负责告诉模型这段 user-role 内容到底是用户输入、运行时上下文，还是应用事件。</p>
+</div>
+
+<!-- ===== THREE DIMENSIONS ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">🧊</span> 三维定义</div>
+  <div class="dim-grid">
+    <div class="dim-card">
+      <div class="dim-icon">🛤️</div>
+      <h3>role — 通道</h3>
+      <p>解决 <strong>"模型用什么通道解读"</strong> 的问题。SYSTEM = 规则层，USER = 内容层，ASSISTANT = 对话层，TOOL = 工具层。</p>
+      <p style="margin-top:0.5rem;">
+        <span class="tag-pill tag-system">SYSTEM</span>
+        <span class="tag-pill tag-user">USER</span>
+        <span class="tag-pill tag-assistant">ASSISTANT</span>
+        <span class="tag-pill tag-tool">TOOL</span>
+      </p>
+      <div class="consequence">⚠️ 只靠 role：无法区分"用户说了什么"和"应用注入了什么"</div>
+    </div>
+    <div class="dim-card">
+      <div class="dim-icon">⏳</div>
+      <h3>transient — 生命周期</h3>
+      <p>解决 <strong>"这条消息活多久"</strong> 的问题。True = 每轮重建、不落盘；False = 写入 append-only 历史永久保留。</p>
+      <p style="margin-top:0.5rem;">
+        <span class="lifecycle-badge transient-yes">🔄 transient=True — 每轮重建</span><br>
+        <span class="lifecycle-badge transient-no">💾 transient=False — 持久化</span>
+      </p>
+      <div class="consequence">⚠️ 只靠 transient：无法传递跨轮事实（如压缩后的历史摘要）</div>
+    </div>
+    <div class="dim-card">
+      <div class="dim-icon">🏷️</div>
+      <h3>XML-like tag — 语义边界</h3>
+      <p>解决 <strong>"这段 user-role 内容到底是什么"</strong> 的问题。同一个 USER 通道里，tag 二次区分真实输入 vs 运行时状态 vs 应用事件。</p>
+      <p style="margin-top:0.5rem;">
+        <span class="tag-pill xml-tag-tc">&lt;turn_context&gt;</span>
+        <span class="tag-pill xml-tag-rn">&lt;runtime_notice&gt;</span>
+        <span class="tag-pill xml-tag-ae">&lt;app_event&gt;</span>
+        <span class="tag-pill xml-tag-soul">&lt;!-- soul:xxx --&gt;</span>
+      </p>
+      <div class="consequence">⚠️ 只靠 tag：没有 provider 通道语义就无法被正确路由</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== FULL MATRIX TABLE ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">🧮</span> 三维组合矩阵</div>
+  <table class="matrix-table">
+    <thead>
+      <tr>
+        <th>上下文组件</th>
+        <th>role</th>
+        <th>transient</th>
+        <th>XML tag</th>
+        <th>持久化</th>
+        <th>每轮重建</th>
+        <th>源文件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>静态系统消息</strong><br><span style="font-size:0.8rem;color:var(--text2)">soul + 规则 + 阶段指引</span></td>
+        <td><span class="tag-pill tag-system">SYSTEM</span></td>
+        <td><span class="transient-yes">True</span></td>
+        <td><span class="tag-pill xml-tag-soul">&lt;!-- soul:xxx --&gt;</span></td>
+        <td>✗</td>
+        <td>✓</td>
+        <td><code class="src">context/manager.py:132</code></td>
+      </tr>
+      <tr>
+        <td><strong>Turn Context</strong><br><span style="font-size:0.8rem;color:var(--text2)">当前状态 + 时间 + 工具 + 记忆</span></td>
+        <td><span class="tag-pill tag-user">USER</span></td>
+        <td><span class="transient-yes">True</span></td>
+        <td><span class="tag-pill xml-tag-tc">&lt;turn_context&gt;</span></td>
+        <td>✗</td>
+        <td>✓</td>
+        <td><code class="src">context/manager.py:155</code></td>
+      </tr>
+      <tr>
+        <td><strong>Runtime Notice</strong><br><span style="font-size:0.8rem;color:var(--text2)">验证反馈/修复提示/反思注入</span></td>
+        <td><span class="tag-pill tag-user">USER</span></td>
+        <td><span class="transient-yes">True</span></td>
+        <td><span class="tag-pill xml-tag-rn">&lt;runtime_notice&gt;</span></td>
+        <td>✗</td>
+        <td>✓</td>
+        <td><code class="src">agent/tagged_context.py:15</code></td>
+      </tr>
+      <tr>
+        <td><strong>App Event</strong><br><span style="font-size:0.8rem;color:var(--text2)">历史摘要/质量门控/回退通知</span></td>
+        <td><span class="tag-pill tag-user">USER</span></td>
+        <td><span class="transient-no">False</span></td>
+        <td><span class="tag-pill xml-tag-ae">&lt;app_event&gt;</span></td>
+        <td>✓</td>
+        <td>✗</td>
+        <td><code class="src">agent/tagged_context.py:28</code></td>
+      </tr>
+      <tr>
+        <td><strong>App Event (legacy)</strong><br><span style="font-size:0.8rem;color:var(--text2)">旧 system 消息迁移</span></td>
+        <td><span class="tag-pill tag-user">USER</span></td>
+        <td><span class="transient-no">False</span></td>
+        <td><span class="tag-pill xml-tag-ae">&lt;app_event&gt;</span></td>
+        <td>✓</td>
+        <td>✗</td>
+        <td><code class="src">agent/tagged_context.py:41</code></td>
+      </tr>
+      <tr>
+        <td><strong>阶段交接说明</strong><br><span style="font-size:0.8rem;color:var(--text2)">Phase 切换承上启下</span></td>
+        <td><span class="tag-pill tag-assistant">ASSISTANT</span></td>
+        <td><span class="transient-no">False</span></td>
+        <td><span class="tag-pill xml-tag-none">无</span></td>
+        <td>✓</td>
+        <td>✗</td>
+        <td><code class="src">message_rebuild.py:109</code></td>
+      </tr>
+      <tr>
+        <td><strong>真实用户消息</strong></td>
+        <td><span class="tag-pill tag-user">USER</span></td>
+        <td><span class="transient-no">False</span></td>
+        <td><span class="tag-pill xml-tag-none">无</span></td>
+        <td>✓</td>
+        <td>✗</td>
+        <td><code class="src">chat_routes.py:143</code></td>
+      </tr>
+      <tr>
+        <td><strong>助手回复</strong></td>
+        <td><span class="tag-pill tag-assistant">ASSISTANT</span></td>
+        <td><span class="transient-no">False</span></td>
+        <td><span class="tag-pill xml-tag-none">无</span></td>
+        <td>✓</td>
+        <td>✗</td>
+        <td><code class="src">agent/loop.py:447</code></td>
+      </tr>
+      <tr>
+        <td><strong>工具调用结果</strong></td>
+        <td><span class="tag-pill tag-tool">TOOL</span></td>
+        <td><span class="transient-no">False</span></td>
+        <td><span class="tag-pill xml-tag-none">无</span></td>
+        <td>✓</td>
+        <td>✗</td>
+        <td><code class="src">agent/loop.py</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ===== TAG KIND CATALOG ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">🏷️</span> Tag Kind 目录</div>
+
+  <h3 style="margin-bottom:0.8rem;font-size:1rem;"><span class="tag-pill xml-tag-rn" style="margin-right:0.5rem;">&lt;runtime_notice&gt;</span> kind 实例</h3>
+  <div class="kind-grid" style="margin-bottom:2rem;">
+    <div class="kind-card">
+      <div class="kind-name" style="color:var(--accent-tag-rn);">reflection</div>
+      <div class="kind-meta">关键阶段自省提示<br><code>agent/execution/llm_turn.py:135</code></div>
+    </div>
+    <div class="kind-card">
+      <div class="kind-name" style="color:var(--accent-tag-rn);">repair</div>
+      <div class="kind-meta">Phase 2/3 状态修复提示<br><code>agent/loop.py:436</code></div>
+    </div>
+    <div class="kind-card">
+      <div class="kind-name" style="color:var(--accent-tag-rn);">validation</div>
+      <div class="kind-meta">实时约束验证反馈<br><code>api/orchestration/session/pending_notes.py:22</code></div>
+    </div>
+    <div class="kind-card">
+      <div class="kind-name" style="color:var(--accent-tag-rn);">continue</div>
+      <div class="kind-meta">续写中断恢复提示<br><code>api/routes/chat_routes.py:263</code></div>
+    </div>
+  </div>
+
+  <h3 style="margin-bottom:0.8rem;font-size:1rem;"><span class="tag-pill xml-tag-ae" style="margin-right:0.5rem;">&lt;app_event&gt;</span> kind 实例</h3>
+  <div class="kind-grid">
+    <div class="kind-card">
+      <div class="kind-name" style="color:var(--accent-tag-ae);">history_summary</div>
+      <div class="kind-meta">上下文压缩后生成的对话摘要<br><code>api/orchestration/agent/hooks.py:180</code></div>
+    </div>
+    <div class="kind-card">
+      <div class="kind-name" style="color:var(--accent-tag-ae);">soft_judge</div>
+      <div class="kind-meta">行程质量评估建议<br><code>api/orchestration/agent/hooks.py:326</code></div>
+    </div>
+    <div class="kind-card">
+      <div class="kind-name" style="color:var(--accent-tag-ae);">feasibility</div>
+      <div class="kind-meta">可行性检查未通过反馈<br><code>api/orchestration/agent/hooks.py:395</code></div>
+    </div>
+    <div class="kind-card">
+      <div class="kind-name" style="color:var(--accent-tag-ae);">hard_constraint</div>
+      <div class="kind-meta">硬约束冲突反馈<br><code>api/orchestration/agent/hooks.py:420</code></div>
+    </div>
+    <div class="kind-card">
+      <div class="kind-name" style="color:var(--accent-tag-ae);">quality_gate</div>
+      <div class="kind-meta">质量门控未通过反馈<br><code>api/orchestration/agent/hooks.py:528</code></div>
+    </div>
+    <div class="kind-card">
+      <div class="kind-name" style="color:var(--accent-tag-ae);">backtrack</div>
+      <div class="kind-meta">阶段回退通知<br><code>agent/execution/message_rebuild.py:97</code></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SOUL MAP ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">🧬</span> Soul 分段映射</div>
+  <div class="soul-map">
+    <div class="soul-section">
+      <span class="tag-pill xml-tag-soul soul-key">core</span>
+      <span class="soul-desc">长期身份 + 全局行为底线 <code class="src">soul.md:3-23</code></span>
+    </div>
+    <div class="soul-section">
+      <span class="tag-pill xml-tag-soul soul-key">phase:1</span>
+      <span class="soul-desc">目的地收敛 <code class="src">soul.md:25-40</code></span>
+    </div>
+    <div class="soul-section">
+      <span class="tag-pill xml-tag-soul soul-key">phase:2</span>
+      <span class="soul-desc">行程框架规划总纲 <code class="src">soul.md:42-59</code></span>
+    </div>
+    <div class="soul-section">
+      <span class="tag-pill xml-tag-soul soul-key">phase:2:brief</span>
+      <span class="soul-desc">旅行画像子阶段 <code class="src">soul.md:61-81</code></span>
+    </div>
+    <div class="soul-section">
+      <span class="tag-pill xml-tag-soul soul-key">phase:2:candidate</span>
+      <span class="soul-desc">候选池子阶段 <code class="src">soul.md:83-102</code></span>
+    </div>
+    <div class="soul-section">
+      <span class="tag-pill xml-tag-soul soul-key">phase:2:skeleton</span>
+      <span class="soul-desc">骨架方案子阶段 <code class="src">soul.md:103-123</code></span>
+    </div>
+    <div class="soul-section">
+      <span class="tag-pill xml-tag-soul soul-key">phase:2:lock</span>
+      <span class="soul-desc">锁定子阶段 <code class="src">soul.md:124-143</code></span>
+    </div>
+    <div class="soul-section">
+      <span class="tag-pill xml-tag-soul soul-key">phase:3</span>
+      <span class="soul-desc">逐日行程落地 <code class="src">soul.md:145-163</code></span>
+    </div>
+    <div class="soul-section">
+      <span class="tag-pill xml-tag-soul soul-key">phase:4</span>
+      <span class="soul-desc">出发前查漏交付 <code class="src">soul.md:164-181</code></span>
+    </div>
+    <div style="margin-top:1rem;padding:0.8rem;background:rgba(236,72,153,0.06);border:1px solid rgba(236,72,153,0.2);border-radius:0.5rem;font-size:0.85rem;color:#f9a8d4;">
+      选择逻辑：始终包含 <code>core</code>，再根据 <code>phase</code> 和 <code>phase2_step</code> 追加对应 section。例如 Phase 2 skeleton = core + phase:2 + phase:2:skeleton。
+    </div>
+  </div>
+</div>
+
+<!-- ===== AUTHORITY LADDER ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">📏</span> 权威排序（从高到低）</div>
+  <div class="ladder">
+    <div class="ladder-item">
+      <div class="ladder-rank"></div>
+      <div class="ladder-content">
+        <div class="ladder-label">system 固定规则、工具 schema、阶段规则</div>
+        <div class="ladder-desc"><span class="tag-pill tag-system">SYSTEM</span> <span class="transient-yes">transient</span> — soul + 状态写入规则 + tagged context 规则 + 阶段指引</div>
+      </div>
+    </div>
+    <div class="ladder-item">
+      <div class="ladder-rank"></div>
+      <div class="ladder-content">
+        <div class="ladder-label"><span class="tag-pill xml-tag-tc" style="display:inline;">&lt;turn_context&gt;</span> 中的 TravelPlanState 当前事实</div>
+        <div class="ladder-desc"><span class="tag-pill tag-user">USER</span> <span class="transient-yes">transient</span> — 当前阶段、工具、规划状态、时间</div>
+      </div>
+    </div>
+    <div class="ladder-item">
+      <div class="ladder-rank"></div>
+      <div class="ladder-content">
+        <div class="ladder-label">本轮工具结果</div>
+        <div class="ladder-desc"><span class="tag-pill tag-tool">TOOL</span> <span class="transient-no">persistent</span> — 工具调用返回的结构化数据</div>
+      </div>
+    </div>
+    <div class="ladder-item">
+      <div class="ladder-rank"></div>
+      <div class="ladder-content">
+        <div class="ladder-label">本轮真实用户输入</div>
+        <div class="ladder-desc"><span class="tag-pill tag-user">USER</span> <span class="transient-no">persistent</span> — 用户的自然语言消息</div>
+      </div>
+    </div>
+    <div class="ladder-item">
+      <div class="ladder-rank"></div>
+      <div class="ladder-content">
+        <div class="ladder-label"><span class="tag-pill xml-tag-rn" style="display:inline;">&lt;runtime_notice&gt;</span> / <span class="tag-pill xml-tag-ae" style="display:inline;">&lt;app_event&gt;</span> 中的应用反馈</div>
+        <div class="ladder-desc"><span class="tag-pill tag-user">USER</span> — 验证结果、质量门控、回退通知、历史摘要</div>
+      </div>
+    </div>
+    <div class="ladder-item">
+      <div class="ladder-rank"></div>
+      <div class="ladder-content">
+        <div class="ladder-label"><span class="tag-pill xml-tag-tc" style="display:inline;">&lt;turn_context&gt;</span> 中的相关用户记忆</div>
+        <div class="ladder-desc"><span class="tag-pill tag-user">USER</span> <span class="transient-yes">transient</span> — 历史偏好和事实数据</div>
+      </div>
+    </div>
+    <div class="ladder-item">
+      <div class="ladder-rank"></div>
+      <div class="ladder-content">
+        <div class="ladder-label">历史对话</div>
+        <div class="ladder-desc"><span class="tag-pill tag-user">USER</span> + <span class="tag-pill tag-assistant">ASSISTANT</span> <span class="transient-no">persistent</span> — 压缩后的摘要或原始历史</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MESSAGE ASSEMBLY FLOW ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">🔄</span> 消息组装流程</div>
+  <div class="flow-container">
+    <div class="flow-group-label">新会话首条消息</div>
+    <div class="flow-row">
+      <div class="flow-step step-system">
+        <div class="step-label"><span class="tag-pill tag-system" style="font-size:0.7rem;">SYSTEM</span> <span class="lifecycle-badge transient-yes" style="font-size:0.7rem;">🔄</span></div>
+        <div class="step-detail">build_static_system_message()</div>
+        <div class="step-tag" style="margin-top:0.3rem;"><span class="tag-pill xml-tag-soul" style="font-size:0.65rem;">&lt;!-- soul:xxx --&gt;</span> 选择人格片段</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step step-user">
+        <div class="step-label"><span class="tag-pill tag-user" style="font-size:0.7rem;">USER</span> <span class="lifecycle-badge transient-no" style="font-size:0.7rem;">💾</span></div>
+        <div class="step-detail">*persisted_history</div>
+        <div class="step-tag" style="margin-top:0.3rem;">非 transient 历史（含 <span class="tag-pill xml-tag-ae" style="font-size:0.6rem;">&lt;app_event&gt;</span>）</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step step-user">
+        <div class="step-label"><span class="tag-pill tag-user" style="font-size:0.7rem;">USER</span> <span class="lifecycle-badge transient-no" style="font-size:0.7rem;">💾</span></div>
+        <div class="step-detail">用户自然语言消息</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step step-user" style="border: 1px solid rgba(6,182,212,0.4); background: rgba(6,182,212,0.08);">
+        <div class="step-label"><span class="tag-pill tag-user" style="font-size:0.7rem;">USER</span> <span class="lifecycle-badge transient-yes" style="font-size:0.7rem;">🔄</span></div>
+        <div class="step-detail">build_turn_context_message()</div>
+        <div class="step-tag" style="margin-top:0.3rem;"><span class="tag-pill xml-tag-tc" style="font-size:0.65rem;">&lt;turn_context&gt;</span></div>
+      </div>
+    </div>
+
+    <div class="flow-group-label" style="margin-top:1.5rem;">续写会话</div>
+    <div class="flow-row">
+      <div class="flow-step step-system">
+        <div class="step-label"><span class="tag-pill tag-system" style="font-size:0.7rem;">SYSTEM</span> <span class="lifecycle-badge transient-yes" style="font-size:0.7rem;">🔄</span></div>
+        <div class="step-detail">build_static_system_message()</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step step-user">
+        <div class="step-label"><span class="tag-pill tag-user" style="font-size:0.7rem;">USER</span> <span class="lifecycle-badge transient-no" style="font-size:0.7rem;">💾</span></div>
+        <div class="step-detail">*persisted_history</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step step-user" style="border: 1px solid rgba(249,115,22,0.4); background: rgba(249,115,22,0.08);">
+        <div class="step-label"><span class="tag-pill tag-user" style="font-size:0.7rem;">USER</span> <span class="lifecycle-badge transient-yes" style="font-size:0.7rem;">🔄</span></div>
+        <div class="step-detail">runtime_notice(kind="continue")</div>
+        <div class="step-tag" style="margin-top:0.3rem;"><span class="tag-pill xml-tag-rn" style="font-size:0.65rem;">&lt;runtime_notice kind="continue"&gt;</span></div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step step-user" style="border: 1px solid rgba(6,182,212,0.4); background: rgba(6,182,212,0.08);">
+        <div class="step-label"><span class="tag-pill tag-user" style="font-size:0.7rem;">USER</span> <span class="lifecycle-badge transient-yes" style="font-size:0.7rem;">🔄</span></div>
+        <div class="step-detail">build_turn_context_message()</div>
+        <div class="step-tag" style="margin-top:0.3rem;"><span class="tag-pill xml-tag-tc" style="font-size:0.65rem;">&lt;turn_context&gt;</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== LIFECYCLE FLOW ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">⏳</span> 生命周期流程</div>
+  <div class="flow-container">
+    <pre style="color:var(--text2);font-size:0.82rem;line-height:1.8;font-family:'SF Mono','Fira Code',monospace;">每轮开始
+├── 重建 static_system <span style="color:var(--accent-transient);">🔄 transient</span>  ← 每轮从 plan + phase_prompt + soul 重新生成
+├── 加载 persisted_history <span style="color:var(--accent-persistent);">💾 persistent</span>  ← 从 SQLite messages 表恢复
+├── flush pending_notes → <span style="color:var(--accent-tag-rn);">&lt;runtime_notice&gt;</span> <span style="color:var(--accent-transient);">🔄 transient</span>  ← 验证反馈等
+├── 注入 <span style="color:var(--accent-tag-tc);">&lt;turn_context&gt;</span> <span style="color:var(--accent-transient);">🔄 transient</span>  ← 当前状态+时间+工具+记忆
+│
+├── <strong>[LLM 迭代循环]</strong>
+│     ├── tool 调用 → TOOL <span style="color:var(--accent-persistent);">💾 persistent</span>
+│     ├── 验证反馈 → <span style="color:var(--accent-tag-rn);">&lt;runtime_notice kind="validation"&gt;</span> <span style="color:var(--accent-transient);">🔄 transient</span>
+│     ├── 修复提示 → <span style="color:var(--accent-tag-rn);">&lt;runtime_notice kind="repair"&gt;</span> <span style="color:var(--accent-transient);">🔄 transient</span>
+│     └── 反思注入 → <span style="color:var(--accent-tag-rn);">&lt;runtime_notice kind="reflection"&gt;</span> <span style="color:var(--accent-transient);">🔄 transient</span>
+│
+├── <strong>[阶段转换]</strong>
+│     ├── flush 当前 epoch 持久化消息
+│     ├── context_epoch += 1
+│     ├── 重建 runtime messages（static_system + handoff + turn_context）
+│     └── backtrack → <span style="color:var(--accent-tag-ae);">&lt;app_event kind="backtrack"&gt;</span> <span style="color:var(--accent-persistent);">💾 persistent</span>
+│
+└── <strong>[上下文压缩]</strong>
+      ├── must_keep: 含偏好信号的用户消息
+      ├── compressible: 其余消息
+      └── 压缩结果 → <span style="color:var(--accent-tag-ae);">&lt;app_event kind="history_summary"&gt;</span> <span style="color:var(--accent-persistent);">💾 persistent</span></pre>
+  </div>
+</div>
+
+<!-- ===== DESIGN DECISIONS ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">🎯</span> 关键设计决策</div>
+  <table class="matrix-table">
+    <thead>
+      <tr>
+        <th>决策</th>
+        <th>选择</th>
+        <th>理由</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>turn_context 用 USER 角色</td>
+        <td><span class="tag-pill tag-user">USER</span></td>
+        <td>与真实用户消息在同一个 provider 通道，但 tag 内声明式指令阻止模型当作用户请求</td>
+      </tr>
+      <tr>
+        <td>runtime_notice 用 USER 角色</td>
+        <td><span class="tag-pill tag-user">USER</span></td>
+        <td>运行时提示不能覆盖 system 规则，只是补充信息；tag 声明"不是用户请求"</td>
+      </tr>
+      <tr>
+        <td>app_event 用 USER 角色</td>
+        <td><span class="tag-pill tag-user">USER</span></td>
+        <td>应用生成的历史事件是事实而非规则；tag 声明"不是系统规则"</td>
+      </tr>
+      <tr>
+        <td>static_system 用 transient=True</td>
+        <td><span class="transient-yes">True</span></td>
+        <td>系统 prompt 每轮重建（soul/状态/阶段都可能变化），不需在历史中累积</td>
+      </tr>
+      <tr>
+        <td>turn_context 用 transient=True</td>
+        <td><span class="transient-yes">True</span></td>
+        <td>规划状态每轮刷新，旧状态无保留价值；下次轮从 TravelPlanState 重新生成</td>
+      </tr>
+      <tr>
+        <td>runtime_notice 用 transient=True</td>
+        <td><span class="transient-yes">True</span></td>
+        <td>验证/修复/反思提示只服务于当前 LLM 轮次，下一轮由新的验证结果替代</td>
+      </tr>
+      <tr>
+        <td>app_event 用 transient=False</td>
+        <td><span class="transient-no">False</span></td>
+        <td>历史摘要、回退通知是跨轮事实，需要持久化到 append-only 历史</td>
+      </tr>
+      <tr>
+        <td>阶段交接用 ASSISTANT 角色</td>
+        <td><span class="tag-pill tag-assistant">ASSISTANT</span></td>
+        <td>交接说明是"助手承上启下"而非系统规则，放在对话流中更自然</td>
+      </tr>
+      <tr>
+        <td>tag 内声明式指令</td>
+        <td>内嵌描述</td>
+        <td>让模型在每个 block 内即可理解语义边界，无需外部查找规则</td>
+      </tr>
+      <tr>
+        <td>权威排序显式声明</td>
+        <td>_tagged_context_rules()</td>
+        <td>防止模型被记忆 block 覆盖当前状态</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ===== PERSISTENCE FILTER ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">💾</span> 持久化过滤 & 恢复</div>
+  <div class="flow-container" style="font-family:'SF Mono','Fira Code',monospace;font-size:0.88rem;">
+    <div style="padding:1.2rem;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);border-radius:0.5rem;margin-bottom:1rem;">
+      <div style="color:var(--accent-system);font-weight:700;margin-bottom:0.4rem;">持久化判定</div>
+      <div style="color:var(--text2);">
+        is_persisted_history_message(message) =<br>
+        &nbsp;&nbsp;<span style="color:var(--accent-persistent);">not message.transient</span> AND <span style="color:var(--accent-assistant);">message.role != Role.SYSTEM</span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+      <div style="padding:1rem;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:0.5rem;">
+        <div style="color:var(--accent-persistent);font-weight:700;margin-bottom:0.4rem;">✓ 写入 SQLite</div>
+        <div style="color:var(--text2);font-size:0.82rem;">
+          真实用户消息<br>
+          助手回复<br>
+          工具调用/结果<br>
+          <span class="tag-pill xml-tag-ae" style="font-size:0.7rem;">&lt;app_event&gt;</span> (persistent)<br>
+          阶段交接说明
+        </div>
+      </div>
+      <div style="padding:1rem;background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.2);border-radius:0.5rem;">
+        <div style="color:var(--accent-transient);font-weight:700;margin-bottom:0.4rem;">✗ 不写入 SQLite</div>
+        <div style="color:var(--text2);font-size:0.82rem;">
+          static_system <span style="color:var(--accent-transient);">(transient + SYSTEM)</span><br>
+          <span class="tag-pill xml-tag-tc" style="font-size:0.7rem;">&lt;turn_context&gt;</span> <span style="color:var(--accent-transient);">(transient)</span><br>
+          <span class="tag-pill xml-tag-rn" style="font-size:0.7rem;">&lt;runtime_notice&gt;</span> <span style="color:var(--accent-transient);">(transient)</span><br>
+          所有 SYSTEM 角色（即使未标 transient）
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== CODE INDEX ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">📂</span> 关键代码索引</div>
+  <table class="matrix-table">
+    <thead>
+      <tr>
+        <th>文件</th>
+        <th>关键行</th>
+        <th>说明</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><code class="src">agent/types.py</code></td><td>9-13</td><td>Role 枚举定义</td></tr>
+      <tr><td><code class="src">agent/types.py</code></td><td>36-46</td><td>Message 数据类（含 transient 字段）</td></tr>
+      <tr><td><code class="src">agent/tagged_context.py</code></td><td>6-12</td><td><strong>_tagged_content()</strong> 通用 tag 生成器</td></tr>
+      <tr><td><code class="src">agent/tagged_context.py</code></td><td>15-25</td><td>runtime_notice_message() — USER + transient + &lt;runtime_notice&gt;</td></tr>
+      <tr><td><code class="src">agent/tagged_context.py</code></td><td>28-38</td><td>app_event_message() — USER + persistent + &lt;app_event&gt;</td></tr>
+      <tr><td><code class="src">agent/tagged_context.py</code></td><td>41-50</td><td>legacy_app_event_message() — legacy 转换</td></tr>
+      <tr><td><code class="src">context/soul.py</code></td><td>6-7</td><td>&lt;!-- soul:xxx --&gt; 正则解析</td></tr>
+      <tr><td><code class="src">context/soul.py</code></td><td>46-59</td><td>select_soul_sections() — 按 phase 选择人格片段</td></tr>
+      <tr><td><code class="src">context/manager.py</code></td><td>93-110</td><td>_tagged_context_rules() — tag 权威排序规则</td></tr>
+      <tr><td><code class="src">context/manager.py</code></td><td>112-132</td><td>build_static_system_message() — SYSTEM + transient</td></tr>
+      <tr><td><code class="src">context/manager.py</code></td><td>134-155</td><td>build_turn_context_message() — USER + transient + &lt;turn_context&gt;</td></tr>
+      <tr><td><code class="src">context/manager.py</code></td><td>445-469</td><td>build_phase_handoff_note() — 阶段交接文本</td></tr>
+      <tr><td><code class="src">agent/message_filters.py</code></td><td>7-13</td><td>is_persisted_history_message() — 持久化过滤</td></tr>
+      <tr><td><code class="src">agent/execution/message_rebuild.py</code></td><td>62-170</td><td>阶段/步骤切换重建</td></tr>
+      <tr><td><code class="src">api/routes/chat_routes.py</code></td><td>143,170-178,261-271</td><td>新会话/续写消息组装</td></tr>
+      <tr><td><code class="src">api/orchestration/session/pending_notes.py</code></td><td>6-22</td><td>pending notes → transient &lt;runtime_notice&gt; flush</td></tr>
+      <tr><td><code class="src">api/orchestration/session/persistence.py</code></td><td>145-152,253-264</td><td>legacy 转换 + 持久化过滤</td></tr>
+      <tr><td><code class="src">api/orchestration/session/runtime_view.py</code></td><td>34-37</td><td>恢复时跳过 SYSTEM + transient</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="footer">
+  Travel Agent Pro — 上下文工程三元组可视化地图<br>
+  <span style="font-size:0.75rem;color:var(--text2);">role × transient × XML-like tag 三层共同表达</span>
+</div>
+
+</body>
+</html>

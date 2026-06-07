@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from agent.types import Message, Role
@@ -31,6 +32,15 @@ from api.orchestration.common.telemetry_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _run_timeout(seconds: object):
+    if not isinstance(seconds, (int, float)) or seconds <= 0:
+        yield
+        return
+    async with asyncio.timeout(float(seconds)):
+        yield
 
 
 @dataclass
@@ -92,128 +102,214 @@ async def run_agent_stream(
     tool_call_args: dict[str, dict] = {}
 
     keepalive_task = asyncio.create_task(_keepalive_loop())
+    session["_soft_judge_repair_feedback_count"] = 0
+
+    async def _finalize_pending_phase4_deliverables(
+        *,
+        force: bool = False,
+    ) -> bool:
+        pending = session.get("_pending_phase4_deliverables")
+        if not isinstance(pending, dict):
+            return False
+
+        decision = session.get("_phase4_deliverables_quality")
+        if isinstance(decision, dict):
+            if (
+                decision.get("tool_call_id")
+                and decision.get("tool_call_id") != pending.get("tool_call_id")
+            ):
+                return False
+            if decision.get("status") == "blocked":
+                session.pop("_pending_phase4_deliverables", None)
+                session.pop("_phase4_deliverables_quality", None)
+                return False
+            if decision.get("status") != "approved" and not force:
+                return False
+        elif not force:
+            return False
+
+        result_data = pending.get("result_data")
+        if not isinstance(result_data, dict):
+            session.pop("_pending_phase4_deliverables", None)
+            session.pop("_phase4_deliverables_quality", None)
+            return False
+
+        await deps.persist_phase4_deliverables(plan, result_data)
+        session.pop("_pending_phase4_deliverables", None)
+        session.pop("_phase4_deliverables_quality", None)
+        await deps.state_mgr.save(plan)
+        try:
+            await deps.session_store.update(
+                plan.session_id,
+                phase=plan.phase,
+                title=deps.generate_title(plan),
+            )
+        except Exception:
+            logger.warning(
+                "Phase 4 交付物 session meta 更新失败 session=%s",
+                plan.session_id,
+                exc_info=True,
+            )
+        return True
+
     try:
         accum_text = ""  # 追踪本轮 LLM 输出的文本，供中断恢复使用
         llm_started_at = time.monotonic()
         usage_iteration = 0
         try:
-            async for chunk in agent.run(messages, phase=plan.phase):
-                if chunk.type.value == "keepalive":
+            async with _run_timeout(getattr(deps.config, "run_timeout_seconds", None)):
+                async for chunk in agent.run(messages, phase=plan.phase):
+                    if chunk.type.value == "keepalive":
+                        passthrough_event = passthrough_chunk_event(chunk)
+                        if passthrough_event is not None:
+                            yield passthrough_event
+                            continue
+                    if chunk.type == ChunkType.DONE:
+                        continue
+                    if chunk.type == ChunkType.USAGE and chunk.usage_info:
+                        record_llm_usage_stats(
+                            stats=session.get("stats"),
+                            provider=deps.config.llm.provider,
+                            model=deps.config.llm.model,
+                            usage_info=chunk.usage_info,
+                            started_at=llm_started_at,
+                            phase=plan.phase,
+                            iteration=usage_iteration,
+                        )
+                        usage_iteration += 1
+                        llm_started_at = time.monotonic()
+                        continue
                     passthrough_event = passthrough_chunk_event(chunk)
                     if passthrough_event is not None:
                         yield passthrough_event
+                        if chunk.type == ChunkType.INTERNAL_TASK:
+                            if await _finalize_pending_phase4_deliverables():
+                                yield event_json(
+                                    {"type": "state_update", "plan": plan.to_dict()}
+                                )
                         continue
-                if chunk.type == ChunkType.DONE:
-                    continue
-                if chunk.type == ChunkType.USAGE and chunk.usage_info:
-                    record_llm_usage_stats(
-                        stats=session.get("stats"),
-                        provider=deps.config.llm.provider,
-                        model=deps.config.llm.model,
-                        usage_info=chunk.usage_info,
-                        started_at=llm_started_at,
-                        phase=plan.phase,
-                        iteration=usage_iteration,
+                    event_data, content_delta = chunk_event_data(
+                        chunk,
+                        tool_call_names,
+                        tool_call_args,
                     )
-                    usage_iteration += 1
-                    llm_started_at = time.monotonic()
-                    continue
-                passthrough_event = passthrough_chunk_event(chunk)
-                if passthrough_event is not None:
-                    yield passthrough_event
-                    continue
-                event_data, content_delta = chunk_event_data(
-                    chunk,
-                    tool_call_names,
-                    tool_call_args,
-                )
-                accum_text += content_delta
-                if chunk.tool_result:
-                    record_tool_result_stats(
-                        stats=session.get("stats"),
-                        tool_call_names=tool_call_names,
-                        tool_call_args=tool_call_args,
-                        result=chunk.tool_result,
-                        phase=plan.phase,
-                    )
-                    apply_pending_tool_stats(session)
-                while not keepalive_queue.empty():
-                    yield keepalive_queue.get_nowait()
-                yield event_json(event_data)
-                tool_name = (
-                    tool_call_names.get(chunk.tool_result.tool_call_id)
-                    if chunk.tool_result
-                    else None
-                )
-                if (
-                    chunk.tool_result
-                    and chunk.tool_result.status == "success"
-                    and (
-                        tool_name in PLAN_WRITER_TOOL_NAMES
-                        or tool_name == "generate_summary"
-                    )
-                ):
-                    result_data = (
-                        chunk.tool_result.data
-                        if isinstance(chunk.tool_result.data, dict)
-                        else {}
-                    )
-                    updated_fields = plan_writer_updated_fields(result_data)
-                    if tool_name == "generate_summary":
-                        await deps.persist_phase4_deliverables(plan, result_data)
-                    elif result_data.get("backtracked"):
-                        await deps.state_mgr.clear_deliverables(plan.session_id)
-                        await deps.rotate_trip_on_reset_backtrack(
-                            user_id=session["user_id"],
-                            plan=plan,
-                            to_phase=int(result_data.get("to_phase", plan.phase)),
-                            reason_text=str(result_data.get("reason", "")),
-                        )
-                    elif "selected_skeleton_id" in updated_fields:
-                        deps.schedule_memory_event(
-                            user_id=session["user_id"],
-                            session_id=plan.session_id,
-                            event_type="accept",
-                            object_type="skeleton",
-                            object_payload=chunk.tool_result.data or {},
-                        )
-                    elif "selected_transport" in updated_fields:
-                        deps.schedule_memory_event(
-                            user_id=session["user_id"],
-                            session_id=plan.session_id,
-                            event_type="accept",
-                            object_type="transport",
-                            object_payload=chunk.tool_result.data or {},
-                        )
-                    elif "accommodation" in updated_fields:
-                        deps.schedule_memory_event(
-                            user_id=session["user_id"],
-                            session_id=plan.session_id,
-                            event_type="accept",
-                            object_type="hotel",
-                            object_payload=chunk.tool_result.data or {},
-                        )
-                    # 增量持久化：工具写入成功后立即保存，防止 SSE 中断丢失状态
-                    await deps.state_mgr.save(plan)
-                    # 同步更新 session meta，确保 plan 文件与数据库一致
-                    try:
-                        await deps.session_store.update(
-                            plan.session_id,
+                    accum_text += content_delta
+                    if chunk.tool_result:
+                        record_tool_result_stats(
+                            stats=session.get("stats"),
+                            tool_call_names=tool_call_names,
+                            tool_call_args=tool_call_args,
+                            result=chunk.tool_result,
                             phase=plan.phase,
-                            title=deps.generate_title(plan),
                         )
-                    except Exception:
-                        logger.warning(
-                            "增量 session meta 更新失败 session=%s",
-                            plan.session_id,
-                            exc_info=True,
-                        )
-                    yield event_json({"type": "state_update", "plan": plan.to_dict()})
-                    _pending_step = session.pop(
-                        "_pending_phase_step_transition", None
+                        apply_pending_tool_stats(session)
+                    while not keepalive_queue.empty():
+                        yield keepalive_queue.get_nowait()
+                    yield event_json(event_data)
+                    tool_name = (
+                        tool_call_names.get(chunk.tool_result.tool_call_id)
+                        if chunk.tool_result
+                        else None
                     )
-                    if _pending_step is not None:
-                        yield event_json({"type": "phase_transition", **_pending_step})
+                    if (
+                        chunk.tool_result
+                        and chunk.tool_result.status == "success"
+                        and (
+                            tool_name in PLAN_WRITER_TOOL_NAMES
+                            or tool_name == "generate_summary"
+                        )
+                    ):
+                        result_data = (
+                            chunk.tool_result.data
+                            if isinstance(chunk.tool_result.data, dict)
+                            else {}
+                        )
+                        updated_fields = plan_writer_updated_fields(result_data)
+                        if tool_name == "generate_summary":
+                            session["_pending_phase4_deliverables"] = {
+                                "tool_call_id": chunk.tool_result.tool_call_id,
+                                "result_data": result_data,
+                            }
+                        elif result_data.get("backtracked"):
+                            await deps.state_mgr.clear_deliverables(plan.session_id)
+                            await deps.rotate_trip_on_reset_backtrack(
+                                user_id=session["user_id"],
+                                plan=plan,
+                                to_phase=int(result_data.get("to_phase", plan.phase)),
+                                reason_text=str(result_data.get("reason", "")),
+                            )
+                        elif "selected_skeleton_id" in updated_fields:
+                            deps.schedule_memory_event(
+                                user_id=session["user_id"],
+                                session_id=plan.session_id,
+                                event_type="accept",
+                                object_type="skeleton",
+                                object_payload=chunk.tool_result.data or {},
+                            )
+                        elif "selected_transport" in updated_fields:
+                            deps.schedule_memory_event(
+                                user_id=session["user_id"],
+                                session_id=plan.session_id,
+                                event_type="accept",
+                                object_type="transport",
+                                object_payload=chunk.tool_result.data or {},
+                            )
+                        elif "accommodation" in updated_fields:
+                            deps.schedule_memory_event(
+                                user_id=session["user_id"],
+                                session_id=plan.session_id,
+                                event_type="accept",
+                                object_type="hotel",
+                                object_payload=chunk.tool_result.data or {},
+                            )
+                        # 增量持久化：工具写入成功后立即保存，防止 SSE 中断丢失状态
+                        await deps.state_mgr.save(plan)
+                        # 同步更新 session meta，确保 plan 文件与数据库一致
+                        try:
+                            await deps.session_store.update(
+                                plan.session_id,
+                                phase=plan.phase,
+                                title=deps.generate_title(plan),
+                            )
+                        except Exception:
+                            logger.warning(
+                                "增量 session meta 更新失败 session=%s",
+                                plan.session_id,
+                                exc_info=True,
+                            )
+                        yield event_json(
+                            {"type": "state_update", "plan": plan.to_dict()}
+                        )
+                        _pending_step = session.pop(
+                            "_pending_phase_step_transition", None
+                        )
+                        if _pending_step is not None:
+                            yield event_json(
+                                {"type": "phase_transition", **_pending_step}
+                            )
+                if await _finalize_pending_phase4_deliverables(force=True):
+                    yield event_json({"type": "state_update", "plan": plan.to_dict()})
+        except TimeoutError:
+            run.status = "failed"
+            run.error_code = "RUN_TIMEOUT"
+            run.finished_at = time.time()
+            timeout_seconds = getattr(deps.config, "run_timeout_seconds", None)
+            logger.warning(
+                "Agent run timed out session=%s run=%s timeout_seconds=%s",
+                plan.session_id,
+                run.run_id,
+                timeout_seconds,
+            )
+            yield event_json(
+                {
+                    "type": "error",
+                    "error_code": "RUN_TIMEOUT",
+                    "retryable": True,
+                    "can_continue": False,
+                    "message": f"本轮执行超过 {timeout_seconds} 秒，已停止。",
+                    "error": "run_timeout",
+                }
+            )
         except LLMError as exc:
             if exc.failure_phase == "cancelled":
                 run.status = "cancelled"
