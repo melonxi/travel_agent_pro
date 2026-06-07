@@ -54,6 +54,7 @@ from storage.archive_store import ArchiveStore
 from storage.database import Database
 from storage.message_store import MessageStore
 from storage.session_store import SessionStore
+from storage.trace_store import TraceStore
 from state.manager import StateManager
 
 KEEPALIVE_INTERVAL_S = 8
@@ -79,6 +80,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     session_store = SessionStore(db)
     message_store = MessageStore(db)
     archive_store = ArchiveStore(db)
+    trace_store = TraceStore(db)
 
     memory_orchestration = create_memory_orchestration(
         config=config,
@@ -177,6 +179,17 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
             compression_events=compression_events,
         )
 
+    def _tool_side_effects() -> dict[str, str]:
+        side_effects: dict[str, str] = {}
+        for session in sessions.values():
+            agent = session.get("agent")
+            tool_engine = getattr(agent, "tool_engine", None)
+            if tool_engine is None:
+                continue
+            for name, tool_def in getattr(tool_engine, "_tools", {}).items():
+                side_effects[name] = getattr(tool_def, "side_effect", "read")
+        return side_effects
+
     session_persistence = SessionPersistence(
         ensure_storage_ready=_ensure_storage_ready,
         db=db,
@@ -244,6 +257,8 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         generate_title=generate_title,
         append_archived_trip_episode_once=_append_archived_trip_episode_once,
         user_friendly_message=user_friendly_message,
+        trace_store=trace_store,
+        tool_side_effects=_tool_side_effects,
     )
 
     register_chat_routes(

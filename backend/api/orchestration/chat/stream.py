@@ -23,6 +23,7 @@ from api.orchestration.chat.finalization import (
     persist_run_safely,
     persist_unflushed_messages,
 )
+from api.orchestration.chat.trace_persistence import persist_trace_run_safely
 from api.orchestration.common.telemetry_helpers import (
     _plan_writer_updated_fields as plan_writer_updated_fields,
     _record_llm_usage_stats as record_llm_usage_stats,
@@ -49,6 +50,8 @@ class ChatStreamDeps:
     generate_title: Callable[..., str]
     append_archived_trip_episode_once: Callable[..., object]
     user_friendly_message: Callable[[LLMError], str]
+    trace_store: object | None = None
+    tool_side_effects: Callable[[], dict[str, str]] | None = None
 
 
 async def run_agent_stream(
@@ -380,6 +383,16 @@ async def run_agent_stream(
             plan=plan,
             messages=messages,
             run=run,
+        )
+        tool_side_effects = (
+            deps.tool_side_effects() if deps.tool_side_effects is not None else {}
+        )
+        await persist_trace_run_safely(
+            trace_store=deps.trace_store,
+            session=session,
+            plan=plan,
+            run=run,
+            tool_side_effects=tool_side_effects,
         )
         keepalive_task.cancel()
         session.pop("_cancel_event", None)
