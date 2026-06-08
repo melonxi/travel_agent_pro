@@ -114,6 +114,103 @@ class TestAssertionEvaluation:
 
         assert ok, reason
 
+    def test_daily_plans_count_uses_dates_total_days(self):
+        a = Assertion(type=AssertionType.DAILY_PLANS_COUNT, target="", value=None)
+        ok, reason = evaluate_assertion(
+            a,
+            {
+                "dates": {"total_days": 2},
+                "daily_plans": [{"day": 1}, {"day": 2}],
+            },
+            [],
+            [],
+        )
+
+        assert ok, reason
+
+    def test_daily_plans_count_fails_on_mismatch(self):
+        a = Assertion(type=AssertionType.DAILY_PLANS_COUNT, target="", value=3)
+        ok, reason = evaluate_assertion(
+            a,
+            {"daily_plans": [{"day": 1}, {"day": 2}]},
+            [],
+            [],
+        )
+
+        assert not ok
+        assert "expected 3" in reason
+
+    def test_daily_plans_have_activities_passes(self):
+        a = Assertion(
+            type=AssertionType.DAILY_PLANS_HAVE_ACTIVITIES,
+            target="",
+        )
+        ok, reason = evaluate_assertion(
+            a,
+            {
+                "daily_plans": [
+                    {"day": 1, "activities": [{"name": "清水寺"}]},
+                    {"day": 2, "activities": [{"name": "伏见稻荷"}]},
+                ]
+            },
+            [],
+            [],
+        )
+
+        assert ok, reason
+
+    def test_daily_plans_have_activities_fails(self):
+        a = Assertion(
+            type=AssertionType.DAILY_PLANS_HAVE_ACTIVITIES,
+            target="",
+        )
+        ok, reason = evaluate_assertion(
+            a,
+            {"daily_plans": [{"day": 1, "activities": []}]},
+            [],
+            [],
+        )
+
+        assert not ok
+        assert "no activities" in reason
+
+    def test_deliverable_field_set_passes(self):
+        a = Assertion(
+            type=AssertionType.DELIVERABLE_FIELD_SET,
+            target="travel_plan_md",
+        )
+        ok, reason = evaluate_assertion(
+            a,
+            {"deliverables": {"travel_plan_md": "travel_plan.md"}},
+            [],
+            [],
+        )
+
+        assert ok, reason
+
+    def test_trace_grade_status_reads_stats(self):
+        a = Assertion(
+            type=AssertionType.TRACE_GRADE_STATUS,
+            target="phase3_daily_plans_cover_trip_dates",
+            value="pass",
+        )
+        ok, reason = evaluate_assertion(
+            a,
+            {},
+            [],
+            [],
+            stats={
+                "trace_grades": [
+                    {
+                        "rubric_id": "phase3_daily_plans_cover_trip_dates",
+                        "status": "pass",
+                    }
+                ]
+            },
+        )
+
+        assert ok, reason
+
 
 class TestGoldenCaseLoader:
     def test_load_yaml_cases(self, tmp_path):

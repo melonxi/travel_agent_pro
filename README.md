@@ -62,7 +62,7 @@ Each layer operates independently:
 - **Judge** — LLM-based quality scoring [1-5] with score clamping and parse failure logging
 - **Feasibility Gate** — Rule-based infeasibility detection before expensive planning (30+ destination cost/duration tables)
 - **Cost Tracker** — Per-session token usage extraction (OpenAI + Anthropic), model pricing estimation, tool call duration monitoring
-- **Eval Runner** — YAML golden cases execute through an injectable case executor, then produce state/tool/text assertion results and JSON reports
+- **Eval Runner** — YAML golden cases execute through an injectable case executor, then produce state/tool/text/itinerary/deliverable/trace-grade assertion results and JSON reports
 
 ## Tech Stack
 

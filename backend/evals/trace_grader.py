@@ -226,6 +226,161 @@ def _grade_memory_skip(
     )
 
 
+def _grade_phase3_daily_plan_coverage(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "phase3_daily_plans_cover_trip_dates"
+    if final_plan is None or final_plan.phase < 3:
+        return _result(rubric_id, "skip", "Final plan has not reached Phase 3.")
+    if not final_plan.dates:
+        return _result(rubric_id, "skip", "Final plan lacks trip dates.")
+
+    expected = final_plan.dates.total_days
+    actual = len(final_plan.daily_plans)
+    writer_events = [
+        event.event_id
+        for event in _tool_events(events)
+        if event.tool_name in DAY_PLAN_WRITE_TOOLS
+    ]
+    if actual != expected:
+        return _result(
+            rubric_id,
+            "fail",
+            f"Expected {expected} daily plans, got {actual}.",
+            writer_events,
+        )
+
+    empty_days = [
+        day.day for day in final_plan.daily_plans if len(day.activities) == 0
+    ]
+    if empty_days:
+        return _result(
+            rubric_id,
+            "fail",
+            f"Daily plans with no activities: {empty_days}.",
+            writer_events,
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        f"All {actual} daily plans cover trip dates and contain activities.",
+        writer_events,
+    )
+
+
+def _grade_phase3_parallel_finalized(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "phase3_parallel_candidates_finalized"
+    candidate_events = [
+        event
+        for event in _tool_events(events)
+        if event.tool_name == "submit_day_plan_candidate"
+        and event.status == "success"
+    ]
+    if not candidate_events:
+        return _result(rubric_id, "skip", "No Phase 3 candidate submissions found.")
+
+    replace_events = [
+        event
+        for event in _tool_events(events)
+        if event.tool_name == "replace_all_day_plans"
+        and event.status == "success"
+    ]
+    evidence = [event.event_id for event in [*candidate_events, *replace_events]]
+    if not replace_events:
+        return _result(
+            rubric_id,
+            "fail",
+            "Phase 3 worker candidates were submitted but final daily plans were not replaced.",
+            evidence,
+        )
+    if final_plan is not None and final_plan.phase < 4:
+        return _result(
+            rubric_id,
+            "fail",
+            f"Candidates were finalized but final phase is {final_plan.phase}.",
+            evidence,
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        "Phase 3 worker candidates were finalized through replace_all_day_plans.",
+        evidence,
+    )
+
+
+def _grade_tool_error_rate(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "tool_error_rate_below_half"
+    tools = _tool_events(events)
+    if len(tools) < 3:
+        return _result(rubric_id, "skip", "Fewer than 3 tool calls.")
+
+    errors = [event for event in tools if event.status == "error"]
+    rate = len(errors) / len(tools)
+    if rate >= 0.5:
+        return _result(
+            rubric_id,
+            "fail",
+            f"Tool error rate is {len(errors)}/{len(tools)} ({rate:.0%}).",
+            [event.event_id for event in errors],
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        f"Tool error rate is {len(errors)}/{len(tools)} ({rate:.0%}).",
+        [event.event_id for event in errors],
+    )
+
+
+def _grade_phase4_deliverables(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "phase4_generate_summary_freezes_deliverables"
+    summary_events = [
+        event
+        for event in _tool_events(events)
+        if event.tool_name == "generate_summary"
+    ]
+    if not summary_events and not (
+        final_plan is not None and final_plan.deliverables
+    ):
+        return _result(rubric_id, "skip", "No Phase 4 summary generation found.")
+    if final_plan is None:
+        return _result(rubric_id, "fail", "Final plan is unavailable.")
+
+    deliverables = final_plan.deliverables or {}
+    missing = [
+        key
+        for key in ("travel_plan_md", "checklist_md", "generated_at")
+        if not deliverables.get(key)
+    ]
+    if missing:
+        return _result(
+            rubric_id,
+            "fail",
+            f"Deliverables missing fields: {missing}.",
+            [event.event_id for event in summary_events],
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        "Phase 4 deliverables are frozen with travel plan and checklist files.",
+        [event.event_id for event in summary_events],
+    )
+
+
+def _grade_run_status(run_status: str | None) -> RubricResult:
+    rubric_id = "run_completed_without_timeout"
+    if not run_status:
+        return _result(rubric_id, "skip", "Run status not provided.")
+    if run_status == "completed":
+        return _result(rubric_id, "pass", "Run completed.")
+    return _result(rubric_id, "fail", f"Run ended with status={run_status}.")
+
+
 RUBRICS: tuple[
     Callable[[list[TraceEvent], TravelPlanState | None], RubricResult], ...
 ] = (
@@ -234,6 +389,10 @@ RUBRICS: tuple[
     _grade_state_writer,
     _grade_duplicate_poi,
     _grade_memory_skip,
+    _grade_phase3_daily_plan_coverage,
+    _grade_phase3_parallel_finalized,
+    _grade_tool_error_rate,
+    _grade_phase4_deliverables,
 )
 
 
@@ -242,6 +401,7 @@ def grade_trace_run(
     run_id: str,
     events: list[TraceEvent],
     final_plan: TravelPlanState | None,
+    run_status: str | None = None,
 ) -> list[RubricResult]:
     grades: list[RubricResult] = []
     for rubric in RUBRICS:
@@ -255,4 +415,5 @@ def grade_trace_run(
                     f"Rubric raised {type(exc).__name__}.",
                 )
             )
+    grades.append(_grade_run_status(run_status))
     return grades

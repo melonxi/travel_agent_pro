@@ -75,6 +75,7 @@ def register_artifact_routes(
             run_id=run_id,
             events=events,
             final_plan=final_plan,
+            run_status=run.get("status"),
         )
         await trace_store.save_grades(run_id, grades)
         return {

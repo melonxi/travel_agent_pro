@@ -842,8 +842,15 @@ async def test_grade_persisted_trace(app):
     assert resp.status_code == 200
     data = resp.json()
     assert data["run_id"] == "run-grade-1"
-    assert len(data["grades"]) == 5
-    assert {grade["status"] for grade in data["grades"]} == {"skip"}
+    rubric_ids = {grade["rubric_id"] for grade in data["grades"]}
+    assert {
+        "phase2_candidate_has_search_before_shortlist",
+        "phase3_daily_plans_cover_trip_dates",
+        "phase3_parallel_candidates_finalized",
+        "phase4_generate_summary_freezes_deliverables",
+        "run_completed_without_timeout",
+    } <= rubric_ids
+    assert {grade["status"] for grade in data["grades"]} == {"skip", "pass"}
 
     saved = await trace_store.load_grades("run-grade-1")
-    assert len(saved) == 5
+    assert len(saved) == len(data["grades"])

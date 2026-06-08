@@ -128,6 +128,64 @@ def evaluate_assertion(
             return True, ""
         return False, f"memory_recall.{assertion.target} is not set"
 
+    if t == AssertionType.DAILY_PLANS_COUNT:
+        plans = state.get("daily_plans")
+        if not isinstance(plans, list):
+            return False, "daily_plans is not a list"
+        expected = assertion.value
+        if expected is None:
+            expected = _expected_day_count(state)
+        if expected is None:
+            return False, "expected daily plan count is not available"
+        actual = len(plans)
+        if actual == int(expected):
+            return True, ""
+        return False, f"daily_plans count {actual}, expected {expected}"
+
+    if t == AssertionType.DAILY_PLANS_HAVE_ACTIVITIES:
+        plans = state.get("daily_plans")
+        if not isinstance(plans, list):
+            return False, "daily_plans is not a list"
+        empty_days = [
+            plan.get("day") if isinstance(plan, dict) else None
+            for plan in plans
+            if not _day_plan_has_activities(plan)
+        ]
+        if empty_days:
+            return False, f"daily_plans with no activities: {empty_days}"
+        return True, ""
+
+    if t == AssertionType.DELIVERABLE_FIELD_SET:
+        deliverables = state.get("deliverables")
+        if not isinstance(deliverables, dict):
+            return False, "deliverables is not available"
+        val = _get_nested_value(deliverables, assertion.target)
+        if assertion.value is not None:
+            if str(val) == str(assertion.value):
+                return True, ""
+            return False, f"deliverables.{assertion.target}={val}, expected {assertion.value}"
+        if val:
+            return True, ""
+        return False, f"deliverables.{assertion.target} is not set"
+
+    if t == AssertionType.TRACE_GRADE_STATUS:
+        grades = (stats or {}).get("trace_grades")
+        if not isinstance(grades, list):
+            return False, "trace_grades is not available"
+        expected_status = str(assertion.value or "pass")
+        for grade in grades:
+            if not isinstance(grade, dict):
+                continue
+            if grade.get("rubric_id") == assertion.target:
+                status = str(grade.get("status"))
+                if status == expected_status:
+                    return True, ""
+                return False, (
+                    f"trace grade {assertion.target} status={status}, "
+                    f"expected {expected_status}"
+                )
+        return False, f"trace grade {assertion.target} not found"
+
     return False, f"unknown assertion type: {t}"
 
 
@@ -138,6 +196,23 @@ def _get_nested_value(source: dict[str, Any], path: str) -> Any:
             return None
         value = value.get(part)
     return value
+
+
+def _expected_day_count(state: dict[str, Any]) -> int | None:
+    dates = state.get("dates")
+    if isinstance(dates, dict) and dates.get("total_days") is not None:
+        try:
+            return int(dates["total_days"])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _day_plan_has_activities(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    activities = value.get("activities")
+    return isinstance(activities, list) and len(activities) > 0
 
 
 def run_case_offline(
@@ -203,10 +278,7 @@ def run_case(case: GoldenCase, executor: GoldenCaseExecutor) -> CaseResult:
     return result
 
 
-def run_suite_offline(
-    cases: list[GoldenCase],
-    results_map: dict[str, tuple[dict, list[str], list[str]]],
-) -> SuiteResult:
+def run_suite_offline(cases: list[GoldenCase], results_map: dict[str, tuple]) -> SuiteResult:
     """Run all cases against pre-collected data.
     
     results_map: case_id → (state_dict, tool_calls, responses)
@@ -226,8 +298,10 @@ def run_suite_offline(
                 tags=list(case.tags),
             ))
             continue
-        state, tools, responses = results_map[case.id]
-        result = run_case_offline(case, state, tools, responses)
+        values = results_map[case.id]
+        state, tools, responses = values[:3]
+        stats = values[3] if len(values) >= 4 else None
+        result = run_case_offline(case, state, tools, responses, stats=stats)
         suite.results.append(result)
         if result.passed:
             suite.passed += 1

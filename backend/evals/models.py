@@ -14,6 +14,10 @@ class AssertionType(Enum):
     NOT_CONTAINS_TEXT = "not_contains_text"
     BUDGET_WITHIN = "budget_within"
     MEMORY_RECALL_FIELD = "memory_recall_field"
+    DAILY_PLANS_COUNT = "daily_plans_count"
+    DAILY_PLANS_HAVE_ACTIVITIES = "daily_plans_have_activities"
+    DELIVERABLE_FIELD_SET = "deliverable_field_set"
+    TRACE_GRADE_STATUS = "trace_grade_status"
 
 
 @dataclass
