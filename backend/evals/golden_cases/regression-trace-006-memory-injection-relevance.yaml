@@ -1,0 +1,12 @@
+id: regression-trace-006
+name: 注入上下文的记忆必须来自命中结果
+description: 如果上下文注入用户记忆，注入 id 必须能追溯到 memory_hit selected ids。
+difficulty: medium
+tags: [regression, trace, memory]
+messages:
+  - role: user
+    content: 按我之前偏好的旅行节奏，帮我推荐东京3天的大方向；如果没有相关记忆，不要编造。
+assertions:
+  - type: trace_grade_status
+    target: context_memory_injection_is_relevant
+    value: skip

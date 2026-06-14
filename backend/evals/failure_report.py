@@ -35,11 +35,16 @@ class ScenarioResult:
 
 
 _TAXONOMY = [
-    ("LLM 推理", "模型理解/推理能力不足", "无法识别特殊人群需求"),
-    ("工具数据", "外部 API 返回数据不足或异常", "无航班搜索结果"),
-    ("状态机", "阶段转换/回退逻辑缺陷", "backtrack 未清理下游"),
-    ("约束传递", "用户约束未被传递到下游决策", "饮食约束未进入行程"),
-    ("设计边界", "系统设计本身的合理限制", "不支持多人差异化行程"),
+    ("planning", "规划策略或阶段目标选择错误", "提前做逐日行程"),
+    ("tool selection", "工具选择错误或遗漏必要工具", "未搜索就写候选池"),
+    ("tool args", "工具参数未贴合用户约束", "住宿搜索漏掉区域偏好"),
+    ("tool result quality", "工具结果为空、低置信或外部服务异常", "天气/路线无可用结果"),
+    ("state write", "状态写入错误或缺少 diff 证据", "锁定字段来源不明"),
+    ("phase transition", "阶段推进/阻塞依据错误", "无 gate 证据就跳阶段"),
+    ("memory recall", "记忆跳过、误召回或注入污染", "旧偏好覆盖当前意图"),
+    ("context pollution", "上下文压缩/重建引入污染", "历史摘要混入旧状态"),
+    ("quality gate", "质量门/软评估未阻断问题", "低分交付物被冻结"),
+    ("external service", "第三方 API 不可用或数据缺失", "搜索接口认证失败"),
 ]
 
 
@@ -61,8 +66,8 @@ def generate_failure_report(
     lines.append("- 运行元数据：model、token、cost、latency stats 已记录\n")
 
     lines.append("## 失败模式分类法\n")
-    lines.append("| 失败类别 | 含义 | 示例 |")
-    lines.append("|---------|------|------|")
+    lines.append("| Root Cause | 含义 | 示例 |")
+    lines.append("|-----------|------|------|")
     for category, meaning, example in _TAXONOMY:
         lines.append(f"| {category} | {meaning} | {example} |")
     lines.append("")
@@ -96,14 +101,40 @@ def generate_failure_report(
                 lines.append(f"- {failure}")
             lines.append("")
 
+        trace_failures = scenario.stats.get("trace_grade_failures") or []
+        top_event_ids = scenario.stats.get("top_failing_event_ids") or []
+        top_events = scenario.stats.get("top_failing_events") or []
+        if trace_failures or top_event_ids:
+            lines.append("**Trace Evidence**:\n")
+            if trace_failures:
+                for grade in trace_failures[:8]:
+                    lines.append(
+                        "- "
+                        f"{grade.get('rubric_id')}: {grade.get('reason')} "
+                        f"(events={grade.get('evidence_event_ids') or []})"
+                    )
+            if top_event_ids:
+                lines.append(f"- Top event ids: {', '.join(top_event_ids)}")
+            if top_events:
+                lines.append("- Top event previews:")
+                for event in top_events[:5]:
+                    lines.append(
+                        "  - "
+                        f"{event.get('event_id')} {event.get('event_type')} "
+                        f"{event.get('tool_name') or ''} {event.get('status') or ''}"
+                    )
+            lines.append("")
+
         if scenario.responses:
             preview = scenario.responses[-1][:200]
             lines.append(f"**Agent 回复摘要**: {preview}...\n")
 
         lines.append(
-            "**失败类别**: <!-- 人工填写: LLM推理 / 工具数据 / 状态机 / 约束传递 / 设计边界 -->\n"
+            "**Root Cause**: <!-- planning / tool selection / tool args / "
+            "tool result quality / state write / phase transition / memory recall / "
+            "context pollution / quality gate / external service -->\n"
         )
-        lines.append("**根因分析**: <!-- 人工填写: 指向代码位置 -->\n")
+        lines.append("**根因分析**: <!-- 指向 trace event id 与代码位置 -->\n")
         lines.append("**修复状态**: <!-- 已修复 / 待修复 / 设计权衡 -->\n")
         lines.append("**面试话术**: <!-- 一句话描述这个案例的工程价值 -->\n")
         lines.append("---\n")

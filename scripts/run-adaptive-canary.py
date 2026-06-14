@@ -262,6 +262,14 @@ def _grade_report(grader_ran: bool, grades: list[dict[str, Any]]) -> dict[str, A
     }
 
 
+def _event_family_counts(events: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for event in events:
+        event_type = str(event.get("event_type") or "unknown")
+        counts[event_type] = counts.get(event_type, 0) + 1
+    return counts
+
+
 async def _grade_run(client: httpx.AsyncClient, run_id: str) -> tuple[bool, list[dict[str, Any]]]:
     try:
         resp = await client.post(f"/api/traces/{run_id}/grade", timeout=30.0)
@@ -286,9 +294,14 @@ def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
 
 def _cache_token_value(payload: dict[str, Any], key: str) -> int | None:
     value = payload.get(key)
-    metadata = payload.get("metadata")
-    if value is None and isinstance(metadata, dict):
-        value = metadata.get(key)
+    # Realtime llm_output events nest provider usage under payload["usage"];
+    # legacy reconstructed events expose it on payload/metadata directly.
+    for nested_key in ("usage", "metadata"):
+        if value is not None:
+            break
+        nested = payload.get(nested_key)
+        if isinstance(nested, dict):
+            value = nested.get(key)
     if value is None:
         return None
     try:
@@ -315,9 +328,14 @@ def _cache_report_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     cost_usd = 0.0
     llm_call_count = 0
     calls_with_cache_usage = 0
-    for event in events:
-        if event.get("event_type") != "llm_call":
-            continue
+    # Token/cost/cache usage lives on the post-call llm_output event (realtime
+    # recorder). Fall back to llm_call only for legacy reconstructed traces that
+    # never emit a separate llm_output.
+    output_events = [e for e in events if e.get("event_type") == "llm_output"]
+    source_events = output_events or [
+        e for e in events if e.get("event_type") == "llm_call"
+    ]
+    for event in source_events:
         payload = _event_payload(event)
         llm_call_count += 1
         cost_usd += _event_cost_usd(event, payload)
@@ -420,6 +438,7 @@ async def drive(args: argparse.Namespace, provider) -> dict[str, Any]:
             print(f"[turn {turn_num}] agent replied in {duration_s}s, reply_tail=\"{agent_text[-200:]}\"")
             events = await _fetch_trace_events(client, run_id) if run_id else []
             cache_report = _cache_report_from_events(events)
+            event_families = _event_family_counts(events)
             audit = audit_events(events, forbidden_prefixes=step.forbidden_prefixes)
             consent = lock_consent_violations(
                 audit.tool_calls, authorized=sim.authorize_lock
@@ -453,6 +472,7 @@ async def drive(args: argparse.Namespace, provider) -> dict[str, Any]:
                     "run_id": run_id,
                     "duration_s": duration_s,
                     "cache": cache_report,
+                    "trace_event_families": event_families,
                     "trace_tool_count": audit.tool_count,
                     "tool_calls": audit.tool_calls,
                     "error_stats": [
@@ -572,6 +592,8 @@ def main() -> int:
             extras.append(f"grade_fails={turn['grade_fails']}")
         if turn["error_stats"]:
             extras.append(f"errors={turn['error_stats']}")
+        if turn.get("trace_event_families"):
+            extras.append(f"events={turn['trace_event_families']}")
         cache_text = _format_cache_report(turn.get("cache") or {})
         if cache_text:
             extras.append(cache_text)

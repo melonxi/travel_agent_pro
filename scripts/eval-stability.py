@@ -34,9 +34,14 @@ def create_session(client: httpx.Client) -> str:
     return response.json()["session_id"]
 
 
-def send_message(client: httpx.Client, session_id: str, message: str) -> list[str]:
+def send_message(
+    client: httpx.Client,
+    session_id: str,
+    message: str,
+) -> tuple[list[str], str | None]:
     """Send a chat message over SSE and collect text chunks."""
     responses: list[str] = []
+    run_id: str | None = None
     with client.stream(
         "POST",
         f"/api/chat/{session_id}",
@@ -53,7 +58,9 @@ def send_message(client: httpx.Client, session_id: str, message: str) -> list[st
                 continue
             if event.get("type") in {"text", "text_delta"} and event.get("content"):
                 responses.append(event["content"])
-    return responses
+            elif event.get("type") == "done":
+                run_id = event.get("run_id")
+    return responses, run_id
 
 
 def get_plan_state(client: httpx.Client, session_id: str) -> dict[str, Any]:
@@ -85,15 +92,77 @@ def extract_tool_calls(messages: list[dict[str, Any]]) -> list[str]:
     return tool_names
 
 
+def fetch_persisted_trace(
+    client: httpx.Client,
+    run_id: str,
+    *,
+    attempts: int = 6,
+    delay_s: float = 0.5,
+) -> dict[str, Any] | None:
+    import time
+
+    for _ in range(attempts):
+        try:
+            response = client.get(f"/api/traces/{run_id}", timeout=20.0)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("events") is not None:
+                    return data
+        except httpx.HTTPError:
+            pass
+        time.sleep(delay_s)
+    return None
+
+
+def grade_persisted_trace(
+    client: httpx.Client,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    try:
+        response = client.post(f"/api/traces/{run_id}/grade", timeout=30.0)
+        if response.status_code == 200:
+            return response.json().get("grades") or []
+    except httpx.HTTPError:
+        pass
+    return []
+
+
+def extract_tool_calls_from_trace(events: list[dict[str, Any]]) -> list[str]:
+    tool_names: list[str] = []
+    for event in events:
+        if event.get("event_type") not in {"tool_call", "tool_result"}:
+            continue
+        name = event.get("tool_name")
+        if name and name not in tool_names:
+            tool_names.append(name)
+    return tool_names
+
+
+def event_family_counts(events: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for event in events:
+        event_type = str(event.get("event_type") or "unknown")
+        counts[event_type] = counts.get(event_type, 0) + 1
+    return counts
+
+
 def make_live_executor(client: httpx.Client) -> Callable[[GoldenCase], EvalExecution]:
     """Build an executor that runs one golden case against the live backend."""
 
     def executor(case: GoldenCase) -> EvalExecution:
         session_id = create_session(client)
         responses: list[str] = []
+        run_ids: list[str] = []
         for message in case.messages:
             if message.get("role") == "user":
-                responses.extend(send_message(client, session_id, message["content"]))
+                text_chunks, run_id = send_message(
+                    client,
+                    session_id,
+                    message["content"],
+                )
+                responses.extend(text_chunks)
+                if run_id:
+                    run_ids.append(run_id)
 
         state = get_plan_state(client, session_id)
         try:
@@ -105,10 +174,23 @@ def make_live_executor(client: httpx.Client) -> Callable[[GoldenCase], EvalExecu
         except Exception:
             messages = []
 
+        trace_events: list[dict[str, Any]] = []
+        trace_grades: list[dict[str, Any]] = []
+        for run_id in run_ids:
+            trace = fetch_persisted_trace(client, run_id)
+            if trace:
+                trace_events.extend(trace.get("events") or [])
+            trace_grades.extend(grade_persisted_trace(client, run_id))
+        trace_tool_calls = extract_tool_calls_from_trace(trace_events)
+        stats = dict(stats or {})
+        stats["trace_run_ids"] = run_ids
+        stats["trace_event_families"] = event_family_counts(trace_events)
+        stats["trace_grades"] = trace_grades
+
         full_response = " ".join(responses)
         return EvalExecution(
             state=state,
-            tool_calls=extract_tool_calls(messages),
+            tool_calls=trace_tool_calls or extract_tool_calls(messages),
             responses=[full_response] if full_response else [],
             stats=stats,
         )
@@ -123,6 +205,7 @@ def make_mock_executor() -> Callable[[GoldenCase], EvalExecution]:
         state: dict[str, Any] = {"phase": 4, "budget_total": 1000, "total_cost": 900}
         tool_calls: list[str] = []
         responses: list[str] = []
+        trace_grades: list[dict[str, Any]] = []
 
         for assertion in case.assertions:
             if assertion.type == AssertionType.STATE_FIELD_SET:
@@ -132,6 +215,16 @@ def make_mock_executor() -> Callable[[GoldenCase], EvalExecution]:
                     tool_calls.append(assertion.target)
             elif assertion.type == AssertionType.CONTAINS_TEXT:
                 responses.append(assertion.target)
+            elif assertion.type == AssertionType.TRACE_GRADE_STATUS:
+                trace_grades.append(
+                    {
+                        "rubric_id": assertion.target,
+                        "status": assertion.value or "pass",
+                        "score": 1,
+                        "reason": "mock trace grade",
+                        "evidence_event_ids": ["evt-mock"],
+                    }
+                )
 
         return EvalExecution(
             state=state,
@@ -141,6 +234,7 @@ def make_mock_executor() -> Callable[[GoldenCase], EvalExecution]:
                 "estimated_cost_usd": 0.01,
                 "total_input_tokens": 10,
                 "total_output_tokens": 20,
+                "trace_grades": trace_grades,
             },
         )
 

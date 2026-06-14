@@ -1,0 +1,12 @@
+id: regression-trace-003
+name: 同参数工具失败不得反复重试
+description: 同一工具参数失败后，应换参数、降级或解释不确定性。
+difficulty: medium
+tags: [regression, trace, tool-args]
+messages:
+  - role: user
+    content: 查一下东京到一个很冷门地点的路线。如果同一个查询失败，请不要原样反复重试。
+assertions:
+  - type: trace_grade_status
+    target: repeated_tool_argument_failure
+    value: skip

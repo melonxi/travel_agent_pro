@@ -1,0 +1,12 @@
+id: regression-trace-004
+name: 远期天气必须保留不确定性
+description: 目标日期过远时，天气只能作为参考，最终文案必须保留不确定性。
+difficulty: medium
+tags: [regression, trace, weather]
+messages:
+  - role: user
+    content: 我计划2099年7月去东京，请查天气并生成建议；如果不是精确预报，要写明临近出发前再确认。
+assertions:
+  - type: trace_grade_status
+    target: weather_uncertainty_preserved
+    value: pass

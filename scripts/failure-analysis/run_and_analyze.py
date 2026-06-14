@@ -39,9 +39,14 @@ def create_session(client: httpx.Client) -> str:
     return resp.json()["session_id"]
 
 
-def send_message(client: httpx.Client, session_id: str, message: str) -> list[str]:
+def send_message(
+    client: httpx.Client,
+    session_id: str,
+    message: str,
+) -> tuple[list[str], str | None]:
     """Send a chat message via SSE and collect response chunks."""
     responses: list[str] = []
+    run_id: str | None = None
     with client.stream(
         "POST",
         f"/api/chat/{session_id}",
@@ -59,7 +64,9 @@ def send_message(client: httpx.Client, session_id: str, message: str) -> list[st
             etype = event.get("type", "")
             if etype in {"text", "text_delta"} and event.get("content"):
                 responses.append(event["content"])
-    return responses
+            elif etype == "done":
+                run_id = event.get("run_id")
+    return responses, run_id
 
 
 def get_plan_state(client: httpx.Client, session_id: str) -> dict:
@@ -90,6 +97,84 @@ def extract_tool_calls_from_messages(messages: list[dict]) -> list[str]:
                 if name and name not in tool_names:
                     tool_names.append(name)
     return tool_names
+
+
+def fetch_persisted_trace(
+    client: httpx.Client,
+    run_id: str,
+    *,
+    attempts: int = 6,
+    delay_s: float = 0.5,
+) -> dict[str, Any] | None:
+    for _ in range(attempts):
+        try:
+            resp = client.get(f"/api/traces/{run_id}", timeout=20.0)
+            if resp.status_code == 200:
+                return resp.json()
+        except httpx.HTTPError:
+            pass
+        time.sleep(delay_s)
+    return None
+
+
+def grade_persisted_trace(client: httpx.Client, run_id: str) -> list[dict[str, Any]]:
+    try:
+        resp = client.post(f"/api/traces/{run_id}/grade", timeout=30.0)
+        if resp.status_code == 200:
+            return resp.json().get("grades") or []
+    except httpx.HTTPError:
+        pass
+    return []
+
+
+def extract_tool_calls_from_trace(events: list[dict[str, Any]]) -> list[str]:
+    tool_names: list[str] = []
+    for event in events:
+        if event.get("event_type") not in {"tool_call", "tool_result"}:
+            continue
+        name = event.get("tool_name")
+        if name and name not in tool_names:
+            tool_names.append(name)
+    return tool_names
+
+
+def trace_evidence_summary(
+    traces: list[dict[str, Any]],
+    grades: list[dict[str, Any]],
+) -> dict[str, Any]:
+    events = [
+        event
+        for trace in traces
+        for event in (trace.get("events") or [])
+        if isinstance(event, dict)
+    ]
+    family_counts: dict[str, int] = {}
+    for event in events:
+        event_type = str(event.get("event_type") or "unknown")
+        family_counts[event_type] = family_counts.get(event_type, 0) + 1
+    failing_grades = [grade for grade in grades if grade.get("status") == "fail"]
+    top_event_ids: list[str] = []
+    for grade in failing_grades:
+        for event_id in grade.get("evidence_event_ids") or []:
+            if event_id not in top_event_ids:
+                top_event_ids.append(event_id)
+    top_events = [
+        {
+            "event_id": event.get("event_id"),
+            "event_type": event.get("event_type"),
+            "tool_name": event.get("tool_name"),
+            "status": event.get("status"),
+            "payload": event.get("payload"),
+        }
+        for event in events
+        if event.get("event_id") in set(top_event_ids[:10])
+    ]
+    return {
+        "trace_event_families": family_counts,
+        "trace_grade_failures": failing_grades,
+        "top_failing_event_ids": top_event_ids[:10],
+        "top_failing_events": top_events,
+    }
 
 
 def ensure_backend_ready(client: httpx.Client, base_url: str) -> None:
@@ -163,6 +248,7 @@ def run_scenario(client: httpx.Client, case: GoldenCase) -> ScenarioResult:
     print(f"  Session: {session_id}")
 
     all_responses: list[str] = []
+    run_ids: list[str] = []
     user_input = ""
     for msg in case.messages:
         if msg["role"] == "user":
@@ -170,8 +256,10 @@ def run_scenario(client: httpx.Client, case: GoldenCase) -> ScenarioResult:
                 user_input = msg["content"]
             print(f"  Sending: {msg['content'][:80]}...")
             try:
-                chunks = send_message(client, session_id, msg["content"])
+                chunks, run_id = send_message(client, session_id, msg["content"])
                 all_responses.extend(chunks)
+                if run_id:
+                    run_ids.append(run_id)
                 print(f"  Got {len(chunks)} response chunks")
             except Exception as exc:
                 print(f"  ERROR sending message: {exc}")
@@ -190,6 +278,19 @@ def run_scenario(client: httpx.Client, case: GoldenCase) -> ScenarioResult:
         print(f"  WARN messages fetch failed: {exc}")
         messages = []
     tool_calls = extract_tool_calls_from_messages(messages)
+    traces: list[dict[str, Any]] = []
+    grades: list[dict[str, Any]] = []
+    for run_id in run_ids:
+        trace = fetch_persisted_trace(client, run_id)
+        if trace is not None:
+            traces.append(trace)
+        grades.extend(grade_persisted_trace(client, run_id))
+    trace_events = [
+        event for trace in traces for event in (trace.get("events") or [])
+    ]
+    trace_tool_calls = extract_tool_calls_from_trace(trace_events)
+    if trace_tool_calls:
+        tool_calls = trace_tool_calls
 
     print(f"  Phase: {plan_state.get('phase', '?')}")
     print(f"  Tools called: {tool_calls}")
@@ -203,6 +304,7 @@ def run_scenario(client: httpx.Client, case: GoldenCase) -> ScenarioResult:
             plan_state,
             tool_calls,
             [full_response_text],
+            stats={**stats, "trace_grades": grades},
         )
         if ok:
             passed += 1
@@ -226,8 +328,11 @@ def run_scenario(client: httpx.Client, case: GoldenCase) -> ScenarioResult:
         stats={
             **stats,
             "session_id": session_id,
+            "run_ids": run_ids,
             "plan_state": plan_state,
             "messages": messages,
+            "trace_grades": grades,
+            **trace_evidence_summary(traces, grades),
         },
     )
 

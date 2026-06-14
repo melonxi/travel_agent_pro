@@ -20,6 +20,20 @@ SHORTLIST_WRITE_TOOLS = {"set_shortlist", "set_candidate_pool"}
 STATE_WRITER_TOOLS = set(PLAN_WRITER_TOOL_NAMES) | {"generate_summary"}
 DAY_PLAN_WRITE_TOOLS = {"replace_all_day_plans", "save_day_plan"}
 SKIP_RECALL_VALUES = {"", "skip", "skip_recall", "false", "none"}
+LOCK_DIFF_FIELDS = {
+    "selected_skeleton_id",
+    "selected_transport",
+    "selected_accommodation",
+}
+LOCK_TOOL_NAMES = {
+    "select_skeleton",
+    "lock_skeleton",
+    "set_selected_skeleton",
+    "lock_transport",
+    "select_transport",
+    "lock_accommodation",
+    "select_accommodation",
+}
 
 
 def _result(
@@ -39,6 +53,36 @@ def _result(
 
 def _tool_events(events: list[TraceEvent]) -> list[TraceEvent]:
     return [event for event in events if event.event_type == "tool_call"]
+
+
+def _tool_result_events(events: list[TraceEvent]) -> list[TraceEvent]:
+    return [event for event in events if event.event_type == "tool_result"]
+
+
+def _state_diff_events(events: list[TraceEvent]) -> list[TraceEvent]:
+    return [event for event in events if event.event_type == "state_diff"]
+
+
+def _payload_tool_call_id(event: TraceEvent) -> str | None:
+    value = event.payload.get("tool_call_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _tool_pairs(events: list[TraceEvent]) -> list[tuple[TraceEvent, TraceEvent | None]]:
+    results_by_call_id = {
+        call_id: event
+        for event in _tool_result_events(events)
+        if (call_id := _payload_tool_call_id(event))
+    }
+    return [
+        (event, results_by_call_id.get(_payload_tool_call_id(event)))
+        for event in _tool_events(events)
+    ]
+
+
+def _tool_execution_events(events: list[TraceEvent]) -> list[TraceEvent]:
+    results = _tool_result_events(events)
+    return results if results else _tool_events(events)
 
 
 def _state_changes(event: TraceEvent) -> list[dict]:
@@ -128,6 +172,27 @@ def _grade_state_writer(
     events: list[TraceEvent], final_plan: TravelPlanState | None
 ) -> RubricResult:
     rubric_id = "state_write_uses_plan_writer"
+    diff_events = _state_diff_events(events)
+    if diff_events:
+        bad_diffs = [
+            event
+            for event in diff_events
+            if event.tool_name not in STATE_WRITER_TOOLS
+        ]
+        if bad_diffs:
+            return _result(
+                rubric_id,
+                "fail",
+                "A non-writer tool produced state_diff.",
+                [event.event_id for event in bad_diffs],
+            )
+        return _result(
+            rubric_id,
+            "pass",
+            "All state_diff events came from writer tools.",
+            [event.event_id for event in diff_events],
+        )
+
     changed = [event for event in _tool_events(events) if _state_changes(event)]
     if not changed:
         return _result(rubric_id, "skip", "No state changes found in trace events.")
@@ -274,7 +339,7 @@ def _grade_phase3_parallel_finalized(
     rubric_id = "phase3_parallel_candidates_finalized"
     candidate_events = [
         event
-        for event in _tool_events(events)
+        for event in _tool_execution_events(events)
         if event.tool_name == "submit_day_plan_candidate"
         and event.status == "success"
     ]
@@ -283,7 +348,7 @@ def _grade_phase3_parallel_finalized(
 
     replace_events = [
         event
-        for event in _tool_events(events)
+        for event in _tool_execution_events(events)
         if event.tool_name == "replace_all_day_plans"
         and event.status == "success"
     ]
@@ -314,7 +379,7 @@ def _grade_tool_error_rate(
     events: list[TraceEvent], final_plan: TravelPlanState | None
 ) -> RubricResult:
     rubric_id = "tool_error_rate_below_half"
-    tools = _tool_events(events)
+    tools = _tool_execution_events(events)
     if len(tools) < 3:
         return _result(rubric_id, "skip", "Fewer than 3 tool calls.")
 
@@ -341,7 +406,7 @@ def _grade_phase4_deliverables(
     rubric_id = "phase4_generate_summary_freezes_deliverables"
     summary_events = [
         event
-        for event in _tool_events(events)
+        for event in _tool_execution_events(events)
         if event.tool_name == "generate_summary"
     ]
     if not summary_events and not (
@@ -372,6 +437,391 @@ def _grade_phase4_deliverables(
     )
 
 
+def _grade_tool_args_grounded(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "tool_args_grounded_in_user_constraints"
+    pairs = _tool_pairs(events)
+    if not pairs:
+        return _result(rubric_id, "skip", "No tool_call evidence found.")
+    evaluable = [
+        call
+        for call, _ in pairs
+        if call.tool_name in SEARCH_TOOLS
+        or call.tool_name in STATE_WRITER_TOOLS
+        or call.tool_name in LOCK_TOOL_NAMES
+    ]
+    if not evaluable:
+        return _result(rubric_id, "skip", "No constraint-sensitive tool calls found.")
+    bad = []
+    for call in evaluable:
+        payload = call.payload
+        preview = str(payload.get("arguments_preview") or "").strip()
+        explicit_grounding = payload.get("grounded_in_user_constraints")
+        if explicit_grounding is False or payload.get("ungrounded") is True:
+            bad.append(call)
+            continue
+        if not payload.get("arguments_hash") and not preview:
+            bad.append(call)
+            continue
+        if preview in {"", "{}", "[]", "None", "null"} and call.tool_name in SEARCH_TOOLS:
+            bad.append(call)
+    if bad:
+        return _result(
+            rubric_id,
+            "fail",
+            "Some constraint-sensitive tool calls lack grounded argument evidence.",
+            [event.event_id for event in bad],
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        "Constraint-sensitive tool calls include argument hashes/previews and no ungrounded flags.",
+        [event.event_id for event in evaluable],
+    )
+
+
+def _grade_empty_tool_result_not_used(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "tool_result_empty_not_used_as_evidence"
+    results = _tool_result_events(events)
+    if not results:
+        return _result(rubric_id, "skip", "No tool_result evidence found.")
+    empty_results = [
+        event
+        for event in results
+        if (
+            isinstance(event.payload.get("quality_flags"), dict)
+            and event.payload["quality_flags"].get("empty") is True
+        )
+    ]
+    if not empty_results:
+        return _result(rubric_id, "pass", "No empty successful tool results found.")
+    bad = []
+    for empty in empty_results:
+        later_state_use = [
+            event
+            for event in _state_diff_events(events)
+            if event.sequence > empty.sequence
+            and (
+                event.parent_event_id == empty.event_id
+                or event.payload.get("tool_call_id") == empty.payload.get("tool_call_id")
+            )
+        ]
+        later_finalize = [
+            event
+            for event in events
+            if event.sequence > empty.sequence
+            and event.event_type in {"deliverable_draft", "deliverable_finalize"}
+        ]
+        if later_state_use or later_finalize:
+            bad.append(empty)
+    if bad:
+        return _result(
+            rubric_id,
+            "fail",
+            "Empty tool results were followed by state writes or deliverable finalization.",
+            [event.event_id for event in bad],
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        "Empty tool results were not used as write/finalization evidence.",
+        [event.event_id for event in empty_results],
+    )
+
+
+def _grade_repeated_tool_argument_failure(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "repeated_tool_argument_failure"
+    pairs = [
+        (call, result)
+        for call, result in _tool_pairs(events)
+        if result is not None and result.status == "error"
+    ]
+    if not pairs:
+        return _result(rubric_id, "skip", "No errored tool_result pairs found.")
+    grouped: dict[tuple[str | None, str | None], list[TraceEvent]] = {}
+    for call, result in pairs:
+        key = (call.tool_name, call.payload.get("arguments_hash"))
+        grouped.setdefault(key, []).append(result)
+    repeated = [
+        result
+        for key, group in grouped.items()
+        if key[1] and len(group) >= 2
+        for result in group
+    ]
+    if repeated:
+        return _result(
+            rubric_id,
+            "fail",
+            "Same tool arguments failed repeatedly.",
+            [event.event_id for event in repeated],
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        "Errored tool calls did not repeat the same argument hash.",
+        [result.event_id for _, result in pairs if result is not None],
+    )
+
+
+def _grade_phase_transition_has_gate(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "phase_transition_has_gate_evidence"
+    transitions = [event for event in events if event.event_type == "phase_transition"]
+    if not transitions:
+        return _result(rubric_id, "skip", "No phase_transition events found.")
+    gates = [event for event in events if event.event_type == "phase_gate"]
+    gate_ids = {event.event_id for event in gates}
+    bad = [
+        transition
+        for transition in transitions
+        if transition.parent_event_id not in gate_ids
+        and not any(gate.sequence < transition.sequence for gate in gates)
+    ]
+    if bad:
+        return _result(
+            rubric_id,
+            "fail",
+            "Phase transitions lack linked phase_gate evidence.",
+            [event.event_id for event in bad],
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        "Every phase transition has linked or prior phase_gate evidence.",
+        [event.event_id for event in transitions],
+    )
+
+
+def _grade_state_write_has_diff(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "state_write_has_diff"
+    writer_results = [
+        event
+        for event in _tool_execution_events(events)
+        if event.tool_name in STATE_WRITER_TOOLS and event.status == "success"
+    ]
+    if not writer_results:
+        return _result(rubric_id, "skip", "No successful writer tool_result evidence found.")
+    diffs = _state_diff_events(events)
+    bad = []
+    for result in writer_results:
+        tool_call_id = result.payload.get("tool_call_id")
+        matched = [
+            diff
+            for diff in diffs
+            if diff.parent_event_id == result.event_id
+            or (
+                tool_call_id
+                and diff.payload.get("tool_call_id") == tool_call_id
+            )
+        ]
+        if not matched:
+            bad.append(result)
+    if bad:
+        return _result(
+            rubric_id,
+            "fail",
+            "Successful writer tool results lack linked state_diff events.",
+            [event.event_id for event in bad],
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        "Successful writer tool results have linked state_diff events.",
+        [event.event_id for event in writer_results],
+    )
+
+
+def _grade_weather_uncertainty_preserved(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "weather_uncertainty_preserved"
+    weather_results = [
+        event
+        for event in _tool_execution_events(events)
+        if event.tool_name == "check_weather"
+    ]
+    uncertain = [
+        event
+        for event in weather_results
+        if any(
+            marker in str(event.payload).lower()
+            for marker in ("reference_only", "future_weather", "forecast_reference", "仅供参考", "临近出发")
+        )
+    ]
+    if not uncertain:
+        return _result(rubric_id, "skip", "No uncertain weather evidence found.")
+    preservation_events = [
+        event
+        for event in events
+        if (
+            event.event_type == "validation"
+            and any(
+                marker in str(event.payload)
+                for marker in (
+                    "FUTURE_WEATHER_NOT_TREATED_AS_EXACT",
+                    "weather_uncertainty",
+                    "临近出发",
+                    "仅供参考",
+                )
+            )
+        )
+        or (
+            event.event_type in {"deliverable_draft", "deliverable_finalize"}
+            and any(
+                marker in str(event.payload)
+                for marker in ("weather_uncertainty_preserved", "临近出发", "仅供参考")
+            )
+        )
+    ]
+    if preservation_events:
+        return _result(
+            rubric_id,
+            "pass",
+            "Weather uncertainty was preserved by validation or deliverable evidence.",
+            [uncertain[0].event_id, preservation_events[-1].event_id],
+        )
+    return _result(
+        rubric_id,
+        "fail",
+        "Uncertain weather evidence exists without validation/deliverable preservation evidence.",
+        [event.event_id for event in uncertain],
+    )
+
+
+def _grade_lock_requires_user_authorization(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "lock_requires_user_authorization"
+    lock_diffs = [
+        event
+        for event in _state_diff_events(events)
+        if any(field in event.payload.get("field_diffs", {}) for field in LOCK_DIFF_FIELDS)
+    ]
+    if not lock_diffs:
+        return _result(rubric_id, "skip", "No lock state_diff events found.")
+    bad = []
+    for diff in lock_diffs:
+        payload_text = str(diff.payload).lower()
+        if (
+            diff.payload.get("user_authorized") is True
+            or diff.payload.get("authorization_source") in {"user", "explicit_user"}
+            or "user_authorized" in payload_text
+            or "explicit_user" in payload_text
+        ):
+            continue
+        bad.append(diff)
+    if bad:
+        return _result(
+            rubric_id,
+            "fail",
+            "Lock state diffs lack explicit user authorization evidence.",
+            [event.event_id for event in bad],
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        "Lock state diffs include explicit user authorization evidence.",
+        [event.event_id for event in lock_diffs],
+    )
+
+
+def _grade_context_memory_injection_relevant(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "context_memory_injection_is_relevant"
+    context_events = [
+        event
+        for event in events
+        if event.event_type == "context_build"
+        and event.payload.get("memory_candidate_ids")
+    ]
+    if not context_events:
+        return _result(rubric_id, "skip", "No context_build memory injection evidence found.")
+    memory_hits = [event for event in events if event.event_type == "memory_hit"]
+    selected_ids = {
+        item
+        for hit in memory_hits
+        for item in (
+            hit.payload.get("selected_ids")
+            or hit.payload.get("injected_context_ids")
+            or []
+        )
+    }
+    bad = []
+    for context in context_events:
+        injected = set(context.payload.get("memory_candidate_ids") or [])
+        if not injected:
+            continue
+        if not selected_ids or not injected.issubset(selected_ids):
+            bad.append(context)
+    if bad:
+        return _result(
+            rubric_id,
+            "fail",
+            "Context injected memory ids that are not backed by memory_hit selected ids.",
+            [event.event_id for event in bad],
+        )
+    return _result(
+        rubric_id,
+        "pass",
+        "Context memory ids are backed by memory_hit selected ids.",
+        [event.event_id for event in context_events],
+    )
+
+
+def _grade_deliverable_after_quality_pass(
+    events: list[TraceEvent], final_plan: TravelPlanState | None
+) -> RubricResult:
+    rubric_id = "deliverable_finalized_after_quality_pass"
+    finalize_events = [
+        event for event in events if event.event_type == "deliverable_finalize"
+    ]
+    if not finalize_events:
+        return _result(rubric_id, "skip", "No deliverable_finalize events found.")
+    quality_events = [
+        event
+        for event in events
+        if event.event_type in {"soft_judge", "quality_gate", "validation"}
+        and event.sequence < finalize_events[-1].sequence
+    ]
+    approved_payload = any(
+        isinstance(event.payload.get("quality_decision"), dict)
+        and event.payload["quality_decision"].get("status") == "approved"
+        for event in finalize_events
+    )
+    passing_quality = [
+        event
+        for event in quality_events
+        if event.status in {"success", "pass", "skipped"}
+        or event.payload.get("status") in {"pass", "approved"}
+        or event.payload.get("final_action") == "allow"
+    ]
+    if approved_payload or passing_quality:
+        evidence = [finalize_events[-1].event_id]
+        if passing_quality:
+            evidence.insert(0, passing_quality[-1].event_id)
+        return _result(
+            rubric_id,
+            "pass",
+            "Deliverables finalized after quality pass/approval evidence.",
+            evidence,
+        )
+    return _result(
+        rubric_id,
+        "fail",
+        "Deliverables finalized without prior quality pass/approval evidence.",
+        [event.event_id for event in finalize_events],
+    )
+
+
 def _grade_run_status(run_status: str | None) -> RubricResult:
     rubric_id = "run_completed_without_timeout"
     if not run_status:
@@ -393,6 +843,15 @@ RUBRICS: tuple[
     _grade_phase3_parallel_finalized,
     _grade_tool_error_rate,
     _grade_phase4_deliverables,
+    _grade_tool_args_grounded,
+    _grade_empty_tool_result_not_used,
+    _grade_repeated_tool_argument_failure,
+    _grade_phase_transition_has_gate,
+    _grade_state_write_has_diff,
+    _grade_weather_uncertainty_preserved,
+    _grade_lock_requires_user_authorization,
+    _grade_context_memory_injection_relevant,
+    _grade_deliverable_after_quality_pass,
 )
 
 

@@ -1,6 +1,23 @@
 """Tests for failure_report.py — markdown generation from eval results."""
 
+import importlib.util
+import sys
+from pathlib import Path
+
 from evals.failure_report import ScenarioResult, generate_failure_report
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_failure_analysis_script():
+    path = ROOT / "scripts" / "failure-analysis" / "run_and_analyze.py"
+    spec = importlib.util.spec_from_file_location("failure_analysis_run_and_analyze", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _make_scenario(
@@ -42,9 +59,9 @@ class TestGenerateReport:
     def test_report_has_taxonomy_table(self):
         scenarios = [_make_scenario("failure-001", "预算极紧", "去日本3000块")]
         md = generate_failure_report(scenarios)
-        assert "LLM 推理" in md
-        assert "工具数据" in md
-        assert "状态机" in md
+        assert "tool args" in md
+        assert "state write" in md
+        assert "quality gate" in md
 
     def test_report_has_scenario_section(self):
         scenarios = [_make_scenario("failure-001", "预算极紧", "去日本3000块")]
@@ -108,3 +125,60 @@ class TestGenerateReport:
         ]
         md = generate_failure_report(scenarios)
         assert "search_flights" in md
+
+    def test_report_includes_trace_evidence(self):
+        scenario = _make_scenario(
+            "failure-001",
+            "预算极紧",
+            "去日本3000块",
+            failures=["failed"],
+        )
+        scenario.stats = {
+            "trace_grade_failures": [
+                {
+                    "rubric_id": "state_write_has_diff",
+                    "reason": "missing diff",
+                    "evidence_event_ids": ["evt-1"],
+                }
+            ],
+            "top_failing_event_ids": ["evt-1"],
+            "top_failing_events": [
+                {
+                    "event_id": "evt-1",
+                    "event_type": "tool_result",
+                    "tool_name": "update_trip_basics",
+                    "status": "success",
+                }
+            ],
+        }
+        md = generate_failure_report([scenario])
+        assert "Trace Evidence" in md
+        assert "state_write_has_diff" in md
+        assert "evt-1 tool_result update_trip_basics success" in md
+
+    def test_failure_analysis_json_redacts_sensitive_trace_tokens(self):
+        module = _load_failure_analysis_script()
+        scenario = _make_scenario(
+            "failure-001",
+            "敏感 token",
+            "https://example.test/path?xsec_token=secret123",
+            responses=["结果 https://example.test/path?xsec_token=secret456"],
+        )
+        scenario.stats = {
+            "top_failing_events": [
+                {
+                    "event_id": "evt-1",
+                    "payload": {
+                        "url": "https://example.test/path?a=1&xsec_token=secret789"
+                    },
+                }
+            ]
+        }
+
+        payload = module.result_to_json(scenario)
+        serialized = str(payload)
+
+        assert "secret123" not in serialized
+        assert "secret456" not in serialized
+        assert "secret789" not in serialized
+        assert "xsec_token=<redacted>" in serialized

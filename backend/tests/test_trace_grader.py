@@ -12,6 +12,8 @@ def _event(
     *,
     event_type: str = "tool_call",
     status: str | None = None,
+    parent_event_id: str | None = None,
+    root_event_id: str | None = None,
 ) -> TraceEvent:
     resolved_status = status
     if resolved_status is None and event_type == "tool_call":
@@ -32,6 +34,8 @@ def _event(
         cost_usd=None,
         payload=payload or ({"tool_name": tool_name} if tool_name else {}),
         created_at="2026-06-07T10:00:00+00:00",
+        parent_event_id=parent_event_id,
+        root_event_id=root_event_id,
     )
 
 
@@ -414,6 +418,343 @@ def test_phase4_deliverables_pass_when_frozen():
     grades = _grade_map([_event(1, "generate_summary")], plan)
 
     assert grades["phase4_generate_summary_freezes_deliverables"].status == "pass"
+
+
+def test_tool_args_grounded_pass_fail_skip():
+    assert (
+        _grade_map([])["tool_args_grounded_in_user_constraints"].status == "skip"
+    )
+
+    passed = _grade_map(
+        [
+            _event(
+                1,
+                "web_search",
+                {
+                    "tool_call_id": "call-1",
+                    "arguments_hash": "sha256:abc",
+                    "arguments_preview": "{'query': '东京亲子'}",
+                },
+            )
+        ]
+    )
+    assert passed["tool_args_grounded_in_user_constraints"].status == "pass"
+
+    failed = _grade_map(
+        [
+            _event(
+                1,
+                "web_search",
+                {
+                    "tool_call_id": "call-1",
+                    "arguments_preview": "{}",
+                    "ungrounded": True,
+                },
+            )
+        ]
+    )
+    grade = failed["tool_args_grounded_in_user_constraints"]
+    assert grade.status == "fail"
+    assert grade.evidence_event_ids == ["evt-1"]
+
+
+def test_empty_tool_result_not_used_pass_fail_skip():
+    assert (
+        _grade_map([])["tool_result_empty_not_used_as_evidence"].status == "skip"
+    )
+
+    empty_result = _event(
+        1,
+        "web_search",
+        {
+            "tool_call_id": "call-1",
+            "quality_flags": {"empty": True},
+        },
+        event_type="tool_result",
+        status="success",
+    )
+    passed = _grade_map([empty_result])
+    assert passed["tool_result_empty_not_used_as_evidence"].status == "pass"
+
+    failed = _grade_map(
+        [
+            empty_result,
+            _event(
+                2,
+                "update_trip_basics",
+                {"tool_call_id": "call-1"},
+                event_type="state_diff",
+                status="success",
+                parent_event_id="evt-1",
+            ),
+        ]
+    )
+    grade = failed["tool_result_empty_not_used_as_evidence"]
+    assert grade.status == "fail"
+    assert grade.evidence_event_ids == ["evt-1"]
+
+
+def test_repeated_tool_argument_failure_pass_fail_skip():
+    assert _grade_map([])["repeated_tool_argument_failure"].status == "skip"
+
+    passed = _grade_map(
+        [
+            _event(1, "web_search", {"tool_call_id": "call-1", "arguments_hash": "h1"}),
+            _event(
+                2,
+                "web_search",
+                {"tool_call_id": "call-1"},
+                event_type="tool_result",
+                status="error",
+            ),
+            _event(3, "web_search", {"tool_call_id": "call-2", "arguments_hash": "h2"}),
+            _event(
+                4,
+                "web_search",
+                {"tool_call_id": "call-2"},
+                event_type="tool_result",
+                status="error",
+            ),
+        ]
+    )
+    assert passed["repeated_tool_argument_failure"].status == "pass"
+
+    failed = _grade_map(
+        [
+            _event(1, "web_search", {"tool_call_id": "call-1", "arguments_hash": "h1"}),
+            _event(
+                2,
+                "web_search",
+                {"tool_call_id": "call-1"},
+                event_type="tool_result",
+                status="error",
+            ),
+            _event(3, "web_search", {"tool_call_id": "call-2", "arguments_hash": "h1"}),
+            _event(
+                4,
+                "web_search",
+                {"tool_call_id": "call-2"},
+                event_type="tool_result",
+                status="error",
+            ),
+        ]
+    )
+    grade = failed["repeated_tool_argument_failure"]
+    assert grade.status == "fail"
+    assert grade.evidence_event_ids == ["evt-2", "evt-4"]
+
+
+def test_phase_transition_has_gate_pass_fail_skip():
+    assert _grade_map([])["phase_transition_has_gate_evidence"].status == "skip"
+
+    passed = _grade_map(
+        [
+            _event(1, None, {"allowed": True}, event_type="phase_gate", status="pass"),
+            _event(
+                2,
+                None,
+                {"from_phase": 1, "to_phase": 2},
+                event_type="phase_transition",
+                status="success",
+                parent_event_id="evt-1",
+            ),
+        ]
+    )
+    assert passed["phase_transition_has_gate_evidence"].status == "pass"
+
+    failed = _grade_map(
+        [
+            _event(
+                1,
+                None,
+                {"from_phase": 1, "to_phase": 2},
+                event_type="phase_transition",
+                status="success",
+            )
+        ]
+    )
+    grade = failed["phase_transition_has_gate_evidence"]
+    assert grade.status == "fail"
+    assert grade.evidence_event_ids == ["evt-1"]
+
+
+def test_state_write_has_diff_pass_fail_skip():
+    assert _grade_map([])["state_write_has_diff"].status == "skip"
+
+    writer_result = _event(
+        1,
+        "update_trip_basics",
+        {"tool_call_id": "call-1"},
+        event_type="tool_result",
+        status="success",
+    )
+    passed = _grade_map(
+        [
+            writer_result,
+            _event(
+                2,
+                "update_trip_basics",
+                {"tool_call_id": "call-1", "field_diffs": {"destination": {}}},
+                event_type="state_diff",
+                status="success",
+                parent_event_id="evt-1",
+            ),
+        ]
+    )
+    assert passed["state_write_has_diff"].status == "pass"
+
+    failed = _grade_map([writer_result])
+    grade = failed["state_write_has_diff"]
+    assert grade.status == "fail"
+    assert grade.evidence_event_ids == ["evt-1"]
+
+
+def test_weather_uncertainty_preserved_pass_fail_skip():
+    assert _grade_map([])["weather_uncertainty_preserved"].status == "skip"
+
+    weather = _event(
+        1,
+        "check_weather",
+        {"tool_call_id": "call-weather", "reference_only": True},
+        event_type="tool_result",
+        status="success",
+    )
+    passed = _grade_map(
+        [
+            weather,
+            _event(
+                2,
+                None,
+                {"validation_rule_id": "FUTURE_WEATHER_NOT_TREATED_AS_EXACT"},
+                event_type="validation",
+                status="pass",
+            ),
+        ]
+    )
+    assert passed["weather_uncertainty_preserved"].status == "pass"
+
+    failed = _grade_map([weather])
+    grade = failed["weather_uncertainty_preserved"]
+    assert grade.status == "fail"
+    assert grade.evidence_event_ids == ["evt-1"]
+
+
+def test_lock_requires_user_authorization_pass_fail_skip():
+    assert _grade_map([])["lock_requires_user_authorization"].status == "skip"
+
+    passed = _grade_map(
+        [
+            _event(
+                1,
+                "lock_transport",
+                {
+                    "field_diffs": {"selected_transport": {}},
+                    "user_authorized": True,
+                },
+                event_type="state_diff",
+                status="success",
+            )
+        ]
+    )
+    assert passed["lock_requires_user_authorization"].status == "pass"
+
+    failed = _grade_map(
+        [
+            _event(
+                1,
+                "lock_transport",
+                {"field_diffs": {"selected_transport": {}}},
+                event_type="state_diff",
+                status="success",
+            )
+        ]
+    )
+    grade = failed["lock_requires_user_authorization"]
+    assert grade.status == "fail"
+    assert grade.evidence_event_ids == ["evt-1"]
+
+
+def test_context_memory_injection_relevant_pass_fail_skip():
+    assert (
+        _grade_map([])["context_memory_injection_is_relevant"].status == "skip"
+    )
+
+    passed = _grade_map(
+        [
+            _event(
+                1,
+                None,
+                {"selected_ids": ["mem-1", "mem-2"]},
+                event_type="memory_hit",
+                status="success",
+            ),
+            _event(
+                2,
+                None,
+                {"memory_candidate_ids": ["mem-1"]},
+                event_type="context_build",
+                status="success",
+            ),
+        ]
+    )
+    assert passed["context_memory_injection_is_relevant"].status == "pass"
+
+    failed = _grade_map(
+        [
+            _event(
+                1,
+                None,
+                {"selected_ids": ["mem-1"]},
+                event_type="memory_hit",
+                status="success",
+            ),
+            _event(
+                2,
+                None,
+                {"memory_candidate_ids": ["mem-2"]},
+                event_type="context_build",
+                status="success",
+            ),
+        ]
+    )
+    grade = failed["context_memory_injection_is_relevant"]
+    assert grade.status == "fail"
+    assert grade.evidence_event_ids == ["evt-2"]
+
+
+def test_deliverable_finalized_after_quality_pass_fail_skip():
+    assert (
+        _grade_map([])["deliverable_finalized_after_quality_pass"].status == "skip"
+    )
+
+    passed = _grade_map(
+        [
+            _event(1, None, {"status": "pass"}, event_type="validation", status="pass"),
+            _event(
+                2,
+                "generate_summary",
+                {},
+                event_type="deliverable_finalize",
+                status="success",
+            ),
+        ]
+    )
+    assert passed["deliverable_finalized_after_quality_pass"].status == "pass"
+
+    failed = _grade_map(
+        [
+            _event(
+                1,
+                "generate_summary",
+                {},
+                event_type="deliverable_finalize",
+                status="success",
+            )
+        ]
+    )
+    grade = failed["deliverable_finalized_after_quality_pass"]
+    assert grade.status == "fail"
+    assert grade.evidence_event_ids == ["evt-1"]
 
 
 def test_run_status_fails_non_completed_runs():

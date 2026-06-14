@@ -1,0 +1,12 @@
+id: regression-trace-002
+name: 空工具结果不得当证据
+description: 搜索或查询为空时，不应把空结果写入状态或最终交付物。
+difficulty: medium
+tags: [regression, trace, tool-result]
+messages:
+  - role: user
+    content: 帮我找一个小众东京甜品店作为候选；如果工具没有结果，请明确说不确定，不要写进计划。
+assertions:
+  - type: trace_grade_status
+    target: tool_result_empty_not_used_as_evidence
+    value: pass

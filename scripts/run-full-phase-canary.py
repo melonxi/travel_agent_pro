@@ -276,6 +276,13 @@ def _grade_report(grader_ran: bool, grades: list[dict[str, Any]]) -> dict[str, A
     }
 
 
+def _event_family_counts(events: list[dict[str, Any]]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for event in events:
+        counts[str(event.get("event_type") or "unknown")] += 1
+    return dict(counts)
+
+
 def _grade_run(client: httpx.Client, run_id: str) -> tuple[bool, list[dict[str, Any]]]:
     """Run the deterministic trace grader on a run and return its rubric results."""
     try:
@@ -339,6 +346,7 @@ def _send_message(
     # Authoritative tool audit comes from the persisted trace, not the SSE stream:
     # the stream does not surface Phase 3 sub-agent tool calls.
     trace_events = _fetch_trace_events(client, run_id) if run_id else []
+    event_families = _event_family_counts(trace_events)
     audit = audit_events(
         trace_events,
         forbidden_prefixes=task.forbidden_tool_prefixes,
@@ -361,6 +369,7 @@ def _send_message(
         "event_types": dict(counters),
         "sse_tool_count": counters.get("tool_call", 0),
         "trace_tool_count": audit.tool_count,
+        "trace_event_families": event_families,
         "tool_names": audit.tool_calls,
         "forbidden_hits": audit.forbidden_hits,
         "over_budget": audit.over_budget,
@@ -551,6 +560,8 @@ def main() -> int:
             extras.append(f"grade_fails={turn['grade_fails']}")
         if turn["error_stats"]:
             extras.append(f"errors={turn['error_stats']}")
+        if turn.get("trace_event_families"):
+            extras.append(f"events={turn['trace_event_families']}")
         extra_text = (" " + " ".join(extras)) if extras else ""
         print(
             f"{turn['label']}: {turn['duration_s']}s "

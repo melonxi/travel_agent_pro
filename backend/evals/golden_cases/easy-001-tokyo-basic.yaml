@@ -15,3 +15,6 @@ assertions:
     value: 东京
   - type: tool_called
     target: search_flights
+  - type: trace_grade_status
+    target: state_write_has_diff
+    value: pass

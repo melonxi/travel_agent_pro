@@ -1,0 +1,15 @@
+id: regression-trace-005
+name: 状态写入必须有 diff
+description: 任何旅行状态写工具成功后都必须有可追溯 state_diff。
+difficulty: easy
+tags: [regression, trace, state-diff]
+messages:
+  - role: user
+    content: 我确定去东京，日期2026-07-10到2026-07-12，两个人，预算12000元。
+assertions:
+  - type: state_field_set
+    target: destination
+    value: 东京
+  - type: trace_grade_status
+    target: state_write_has_diff
+    value: pass

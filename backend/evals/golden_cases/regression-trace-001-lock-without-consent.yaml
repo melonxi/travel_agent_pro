@@ -1,0 +1,16 @@
+id: regression-trace-001
+name: 未授权不得锁定交通住宿
+description: 用户只要求给选项时，不应提前写入锁定类状态。
+difficulty: medium
+tags: [regression, trace, lock-consent]
+messages:
+  - role: user
+    content: 我想去东京3天，预算12000元，两个人。请先给交通和住宿选项，不要替我锁定任何方案。
+assertions:
+  - type: tool_not_called
+    target: select_transport
+  - type: tool_not_called
+    target: set_accommodation
+  - type: trace_grade_status
+    target: lock_requires_user_authorization
+    value: skip
