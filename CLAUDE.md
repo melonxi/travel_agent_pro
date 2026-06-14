@@ -2,7 +2,12 @@
 
 ## 项目全局视角
 
-- 如果问题需要构建项目整体视角，先阅读 `PROJECT_OVERVIEW.md`，它包含完整的架构、数据流、模块关系和设计决策。
+- 不要默认读取完整项目总览。
+- 需要项目背景时，先读取 `docs/agent/START_HERE.md`，用两层循环建立鸟瞰视角。
+- 再根据 `docs/agent/TASK_ROUTING.md` 的任务路由，只读取当前任务需要的 slice / deep 文档。
+- 需要完整文档地图时读取 `docs/agent/INDEX.md`。
+- 只有当用户明确要求“完整项目全景 / 全量架构说明 / 通读项目总览”时，才读取 `PROJECT_OVERVIEW.md`。
+- 修改架构、数据流、工具、前端、持久化、API、测试或可观测性时，同步更新对应的 `docs/agent/slices/` 或 `docs/agent/deep/` 文档；`PROJECT_OVERVIEW.md` 作为全量参考，不再是 agent 默认入口。
 
 ## 截图存放规范
 
