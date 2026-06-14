@@ -2,7 +2,7 @@
 
 A full-stack AI travel planning system powered by a hand-crafted Agent Loop with a production Phase 1/2/3/4 planning path and a **5-layer harness architecture** ensuring safety, correctness, and quality at every step. Built from scratch without LangChain or other agent frameworks.
 
-**Quality at Scale:** 590+ tests, 15 executable golden eval cases, JSON eval reports, cost/latency tracking per session.
+**Quality at Scale:** 590+ tests, 40 executable golden eval cases, JSON eval reports, persisted trace grading, and cost/latency tracking per session.
 
 ## Architecture
 
@@ -168,6 +168,25 @@ The backend ships with OpenTelemetry tracing enabled by default. Local traces ca
 be viewed in Jaeger, including Phase B span events for tool inputs/outputs, LLM
 request summaries, phase snapshots, and context compression decisions.
 
+The app also persists a run-scoped Agent flight recorder in SQLite:
+
+- `trace_runs`, `trace_events`, `trace_artifacts`, and `trace_grades`
+- event families including `run_start`, `run_end`, `llm_call`, `llm_output`, `tool_call`, `tool_result`, `state_snapshot`, `state_diff`, `phase_gate`, `phase_transition`, `quality_gate`, `soft_judge`, `validation`, `memory_recall`, `memory_hit`, `context_build`, `context_compression`, `context_rebuild`, `phase3_orchestrator`, `phase3_worker`, `deliverable_draft`, `deliverable_finalize`, and `error`
+- large prompt/tool/deliverable bodies stored as redacted artifacts with hashes; API responses return artifact metadata by default and only expose content through safe debug paths
+- deterministic trace grader via `POST /api/traces/{run_id}/grade`; golden evals and canary reports can assert `trace_grade_status`
+
+Implemented now: run-scoped trace persistence, artifact metadata, trace grading, failure-analysis evidence, and 40 executable golden eval cases. Still planned for production: retention policy enforcement, artifact permission model, sampled online eval, and CI release gates.
+
+Debug one run:
+
+```bash
+curl http://127.0.0.1:8000/api/traces/<run_id>
+curl -X POST http://127.0.0.1:8000/api/traces/<run_id>/grade
+sqlite3 backend/data/sessions.db "select event_type,count(*) from trace_events where run_id='<run_id>' group by event_type;"
+```
+
+When a rubric fails, use `evidence_event_ids` from `trace_grades` to jump to the exact `tool_call`, `tool_result`, `state_diff`, `phase_gate`, or `context_build` row, then fix the owning prompt/tool/validator path instead of guessing from the final answer.
+
 ### Start Jaeger Locally
 
 ```bash
@@ -243,7 +262,7 @@ travel_agent_pro/
 │   ├── memory/              # User preference & trip history persistence
 │   ├── harness/             # 5-layer harness: guardrail, validator, judge, feasibility
 │   ├── telemetry/           # OTel tracing + SessionStats cost/latency tracking
-│   ├── evals/               # Executable eval pipeline (15 golden cases, JSON reports)
+│   ├── evals/               # Executable eval pipeline (40 golden cases, JSON reports)
 │   └── tests/               # 590+ tests (pytest-asyncio)
 ├── frontend/
 │   ├── src/

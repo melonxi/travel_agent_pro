@@ -1,6 +1,6 @@
 # Travel Agent Pro — 项目全景图
 
-> **用途**：为 AI 模型提供项目大局观。遇到需要全局理解的问题时先读此文件。
+> **用途**：全量项目参考。Agent 默认入口是 `docs/agent/INDEX.md`；只有需要完整项目全景或用户明确要求通读总览时，才读此文件。
 > **维护规则**：只反映**当前架构**，不记录变更历史。具体参数、代码行数、UI 文案、实现细节请读代码；改动历史请读 git log。
 
 ---
@@ -38,12 +38,12 @@ travel_agent_pro/
 │   ├── llm/                    # LLM 抽象：base Protocol / errors / factory / openai_provider / anthropic_provider
 │   ├── state/                  # 旅行状态模型：models / manager / intake / plan_writers
 │   ├── memory/                 # v3 分层记忆：v3_models / v3_store / archival / episode_slices / manager / extraction / policy / formatter / symbolic_recall / recall_stage3*
-│   ├── context/                # 上下文：manager（系统提示/压缩决策）+ soul.md（按 phase/Phase 2 step 注入的人格片段）
+│   ├── context/                # 上下文：manager（static system / turn_context / 压缩决策）+ soul.md（按 phase/Phase 2 step 注入的人格片段）
 │   ├── phase/                  # 阶段路由：router / prompts（skill-card 架构，PHASE{1,2,3,4}_PROMPT + build_phase2_prompt）/ red_flags / backtrack
 │   ├── tools/                  # 领域工具：base / engine / plan_tools(聚合导出 + Phase 1/2/3/4 通用写工具 + Phase 2 强 schema + Phase 3 daily_plans + 回退工具) / 搜索类 / 规划类 / normalizers
 │   ├── storage/                # SQLite 层：database / session_store / message_store / archive_store
 │   ├── harness/                # 质量守护：guardrail / validator / judge / feasibility（成本与延迟在 telemetry）
-│   ├── evals/                  # 评估管线：models / runner / stability / failure_report / golden_cases
+│   ├── evals/                  # 评估管线：models / runner / stability(pass@k) / trace_grader(确定性轨迹评分) / trace_models / canary_audit / user_simulator / reranker / failure_report / golden_cases / reranker_cases
 │   ├── telemetry/              # 可观测 + 成本：setup / attributes / decorators / stats
 │   ├── api/                    # API 层：schemas / trace / routes / orchestration；routes 按 HTTP 资源分组，orchestration 按 agent / chat / memory / session / common 子包承载请求编排
 │   └── tests/                  # pytest 测试套件（含 test_plan_tools/ Phase 1/2/3 写工具专项）
@@ -129,10 +129,10 @@ travel_agent_pro/
 
 ### Phase 4 — 出发前查漏（skill-card）
 - 角色：出发前查漏官；扫描全计划，生成带优先级的检查清单
-- 工具：`check_weather`、`check_availability`、`search_travel_services`、`web_search`、`request_backtrack`（仅在发现严重问题需回退时使用）
-- **当前 Prompt 工具契约**：Phase 4 直接使用 `request_backtrack`，并在收口时调用 `generate_summary(plan_data, travel_plan_markdown, checklist_markdown)`
+- 工具：`check_weather`、`search_travel_services`、`web_search`、小红书三件套、`select_transport`（仅用户明确改选已锁定交通时）、`request_backtrack`（仅在发现严重问题需回退时使用）
+- **当前 Prompt 工具契约**：Phase 4 直接使用 `request_backtrack`，并在收口时调用 `generate_summary(plan_data, title, daily_sections, checklist_title, checklist_categories, overview?)` 提交结构化交付数据，由代码生成双 markdown
 - 扫描维度：证件签证、天气、预订确认、交通接驳、应急预案
-- **完成 Gate**：所有高优先级项解决 → `generate_summary` 冻结双 markdown 交付物
+- **完成 Gate**：所有高优先级项解决 → `generate_summary` 提交交付物候选 → 质量检查通过后冻结 `travel_plan.md` / `checklist.md`
 
 ### Red Flags
 所有阶段 prompt 末尾都会追加 `phase/red_flags.py::render_red_flags()` 生成的失败模式修复规则；规则由 `CORE_RED_FLAGS`、阶段级 red flags、Phase 2 base/step red flags 和 Phase 3 worker red flags 组成。`PhaseRouter.get_prompt_for_plan()` 负责把当前 phase / Phase 2 step 对应的 red flags 追加到阶段 prompt 后。
@@ -153,9 +153,9 @@ travel_agent_pro/
 | Reflection | 被动自省提示，会话级去重 | before_llm_call（步骤切换时） |
 | Parallel Tool Exec | 读写分离并行调度，parallel_group ID 透传到 Stats 层 | 工具批量执行时 |
 | Tool Choice (always auto) | Phase 切分后总返回 "auto"，依赖提示纪律 | LLM 调用前 |
-| Memory System | v3 只保留四类权威记忆：`profile.json`、trip-scoped `working_memory.json`、`episodes.jsonl`、`episode_slices.jsonl`；当前旅行事实始终由 `TravelPlanState` 权威提供，working memory 只服务当前 session/trip，不参与 historical recall。同步 recall 采用 `Stage 0` 硬规则短路 + `Stage 1` recall gate + `Stage 2` retrieval plan + `Stage 3` candidate generation；Stage 3 会返回 `RecallCandidate[]` 与 `evidence_by_id` sidecar。Stage 4 reranker 默认在规则主干之上叠加 lane-fused / semantic / lexical evidence 权重，消费 Stage 3 透传的 `evidence_by_id`；trace 与 stats 会记录 `reranker_selected_ids`、`reranker_per_item_scores`、`reranker_intent_label` 和 `reranker_selection_metrics`。reranker 配置已预留 code-only `intent_weights`、默认关闭的 `dynamic_budget` block，以及默认激活的 `evidence` block（`lane_fused_weight=0.25` / `semantic_score_weight=0.15` / `lexical_score_weight=0.08`，`*_hit_weight` 与 `destination_match_type_weight` 保持 0）；Stage 4 当前已显式解析 intent profile（支持缺省 default 的局部覆盖安全回退）并把 bucket/domain/keyword/destination/recency/applicability/conflict rule signals 与 evidence lane/score signals 写入结构化 `per_item_scores`；最终 source-aware 流程先计算 `rule_score`，再叠加 `evidence_score` 得到 `source_score`，按 profile / slice 分源做 min-max `source_normalized_score` 并加 source prior 生成 `final_score` 后选择候选，所有通过 hard-filter 和 dedupe 并进入归一化的候选，其 `per_item_scores` 会同步暴露归一化后的 `source_normalized_score` / `final_score`；生产端可在 `config.yaml` 把三个 score 权重写回 0 并关闭 `stage3.semantic.enabled` 回到第零期行为；evidence 分数归一化会把单个非正值或全为 0 的已知分数保持为 0，避免 symbolic-only/unfused evidence 被误抬高；`RecallRerankResult.selection_metrics` 在空结果、小候选集和正常 source-aware 路径均带 pairwise similarity placeholder。默认生产行为启用 symbolic + semantic lane（`BAAI/bge-small-zh-v1.5` + FastEmbed + ONNX CPU + 本地 cache，`local_files_only=True`），lexical lane 仍在 feature flag 后面；symbolic lane 继续沿用 `symbolic_recall.py` 的检索顺序与候选语义。Stage 1 LLM gate 现已收紧为只判断 `latest_user_message` 是否语义上需要召回，`previous_user_messages` 仅用于省略/指代/承接消歧，`current_trip_facts` 仅用于识别当前行程事实问题，且不再接收或构建 `memory_summary`，避免库存信号污染是否召回的判断；Gate Window 从最近消息向前回填，最新用户消息完整保留，早期消息整条加入或丢弃。Stage 2 现已收紧为 source-aware query contract：`profile` / `hybrid_history` source 必填 `buckets`，`episode_slice` source 不暴露 `buckets`，`domains` 只允许系统枚举，`destination` 取代开放式 `entities`；Retrieval Plan prompt 同样以 `latest_user_message` 为主，`previous_user_messages` 仅用于承接消歧，`plan_facts` 只用于抽取目的地/当前对象/预算/同行人等检索参数，不重新判断是否 recall；Stage 2 会在 gate 放行后自行构建 `memory_summary` 以规划如何查。query timeout / error 会回退到 stage0-aware heuristic retrieval plan。Stage 3 还挂接了 feature-flagged 的 destination normalization、lexical expansion 与 semantic embedding lane；默认 semantic runtime 为 FastEmbed + `BAAI/bge-small-zh-v1.5`，走 ONNX Runtime CPU，并复用 `backend/data/embedding_cache` 本地 cache，单元测试通过 fake/null provider 避免模型下载。source widening 配置已预留，但首个合并版本仍保持默认禁用，不视为生产行为。长期 profile 不再固定常驻 prompt，而是和 episode slice 一样只在命中时以 recall candidate 注入上下文。profile extraction 会先规范化高价值 domain/key，再写成 recall-ready 的 `MemoryProfileItem`；route-aware gate 只按需触发 `extract_profile_memory` 与 `extract_working_memory` 两条 v3 extractor，后台提取采用 session 级 latest-wins coalescing queue。Phase 4 结束后直接归档 `ArchivedTripEpisode`，并派生新的 slice taxonomy：`itinerary_pattern`、`stay_choice`、`transport_choice`、`budget_signal`、`rejected_option`、`pitfall`。 | system prompt 构建前检索；每轮 chat 追加 user message 后立即后台排队 gate/job |
+| Memory System | v3 只保留四类权威记忆：`profile.json`、trip-scoped `working_memory.json`、`episodes.jsonl`、`episode_slices.jsonl`；当前旅行事实始终由 `TravelPlanState` 权威提供，working memory 只服务当前 session/trip，不参与 historical recall。同步 recall 采用 `Stage 0` 硬规则短路 + `Stage 1` recall gate + `Stage 2` retrieval plan + `Stage 3` candidate generation；Stage 3 会返回 `RecallCandidate[]` 与 `evidence_by_id` sidecar。Stage 4 reranker 默认在规则主干之上叠加 lane-fused / semantic / lexical evidence 权重，消费 Stage 3 透传的 `evidence_by_id`；trace 与 stats 会记录 `reranker_selected_ids`、`reranker_per_item_scores`、`reranker_intent_label` 和 `reranker_selection_metrics`。reranker 配置已预留 code-only `intent_weights`、默认关闭的 `dynamic_budget` block，以及默认激活的 `evidence` block（`lane_fused_weight=0.25` / `semantic_score_weight=0.15` / `lexical_score_weight=0.08`，`*_hit_weight` 与 `destination_match_type_weight` 保持 0）；Stage 4 当前已显式解析 intent profile（支持缺省 default 的局部覆盖安全回退）并把 bucket/domain/keyword/destination/recency/applicability/conflict rule signals 与 evidence lane/score signals 写入结构化 `per_item_scores`；最终 source-aware 流程先计算 `rule_score`，再叠加 `evidence_score` 得到 `source_score`，按 profile / slice 分源做 min-max `source_normalized_score` 并加 source prior 生成 `final_score` 后选择候选，所有通过 hard-filter 和 dedupe 并进入归一化的候选，其 `per_item_scores` 会同步暴露归一化后的 `source_normalized_score` / `final_score`；生产端可在 `config.yaml` 把三个 score 权重写回 0 并关闭 `stage3.semantic.enabled` 回到第零期行为；evidence 分数归一化会把单个非正值或全为 0 的已知分数保持为 0，避免 symbolic-only/unfused evidence 被误抬高；`RecallRerankResult.selection_metrics` 在空结果、小候选集和正常 source-aware 路径均带 pairwise similarity placeholder。默认生产行为启用 symbolic + semantic lane（`BAAI/bge-small-zh-v1.5` + FastEmbed + ONNX CPU + 本地 cache，`local_files_only=True`），lexical lane 仍在 feature flag 后面；symbolic lane 继续沿用 `symbolic_recall.py` 的检索顺序与候选语义。Stage 1 LLM gate 现已收紧为只判断 `latest_user_message` 是否语义上需要召回，`previous_user_messages` 仅用于省略/指代/承接消歧，`current_trip_facts` 仅用于识别当前行程事实问题，且不再接收或构建 `memory_summary`，避免库存信号污染是否召回的判断；Gate Window 从最近消息向前回填，最新用户消息完整保留，早期消息整条加入或丢弃。Stage 2 现已收紧为 source-aware query contract：`profile` / `hybrid_history` source 必填 `buckets`，`episode_slice` source 不暴露 `buckets`，`domains` 只允许系统枚举，`destination` 取代开放式 `entities`；Retrieval Plan prompt 同样以 `latest_user_message` 为主，`previous_user_messages` 仅用于承接消歧，`plan_facts` 只用于抽取目的地/当前对象/预算/同行人等检索参数，不重新判断是否 recall；Stage 2 会在 gate 放行后自行构建 `memory_summary` 以规划如何查。query timeout / error 会回退到 stage0-aware heuristic retrieval plan。Stage 3 还挂接了 feature-flagged 的 destination normalization、lexical expansion 与 semantic embedding lane；默认 semantic runtime 为 FastEmbed + `BAAI/bge-small-zh-v1.5`，走 ONNX Runtime CPU，并复用 `backend/data/embedding_cache` 本地 cache，单元测试通过 fake/null provider 避免模型下载。source widening 配置已预留，但首个合并版本仍保持默认禁用，不视为生产行为。长期 profile 不再固定常驻 prompt，而是和 episode slice 一样只在命中时以 recall candidate 注入上下文。profile extraction 会先规范化高价值 domain/key，再写成 recall-ready 的 `MemoryProfileItem`；route-aware gate 只按需触发 `extract_profile_memory` 与 `extract_working_memory` 两条 v3 extractor，后台提取采用 session 级 latest-wins coalescing queue。Phase 4 结束后直接归档 `ArchivedTripEpisode`，并派生新的 slice taxonomy：`itinerary_pattern`、`stay_choice`、`transport_choice`、`budget_signal`、`rejected_option`、`pitfall`。 | 本轮 `<turn_context>` 构建前同步检索；每轮 chat 追加 user message 后立即后台排队 gate/job |
 | Tool Guardrails | 输入/输出护栏，可按规则名禁用 | 工具执行前后 |
-| Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖；memory recall 专项 case 通过 `memory_recall_field` 断言和 `memory_recall` 聚合指标跟踪 false skip / false recall / hit rate / zero-hit rate；Phase 3/4 可通过 `daily_plans_count`、`daily_plans_have_activities`、`deliverable_field_set` 与 `trace_grade_status` 断言锁定真实落盘结果；另有 deterministic reranker-only eval 固定 Stage 0/1/2 输出与候选集，只验证 Stage 4 reranker 的 selected ids、fallback、final reason 与 per-item reason | 离线/批量评估 |
+| Eval Runner | YAML golden cases + 可注入执行器；支持 pass@k 稳定性评估；测试中的 golden case 路径按文件位置解析，避免 cwd 依赖；memory recall 专项 case 通过 `memory_recall_field` 断言和 `memory_recall` 聚合指标跟踪 false skip / false recall / hit rate / zero-hit rate；Phase 3/4 可通过 `daily_plans_count`、`daily_plans_have_activities`、`deliverable_field_set` 与 `trace_grade_status` 断言锁定真实落盘结果；`trace_grade_status` 把 `trace_grader` 的确定性轨迹 rubric 结果纳入断言；另有 deterministic reranker-only eval 固定 Stage 0/1/2 输出与候选集，只验证 Stage 4 reranker 的 selected ids、fallback、final reason 与 per-item reason；canary 脚本以 LLM 用户模拟器 / 固定脚本在 live backend 跑全链路并审计持久化 trace（含 Phase 3 子 agent） | 离线/批量评估 |
 
 #### 召回门控三层结构
 
@@ -176,22 +176,23 @@ travel_agent_pro/
 ```
 用户消息 (POST /api/chat/{session_id})
     ↓
-[api.routes.chat_routes + api.orchestration.*] 加载会话+方案，追加 user message
-    ├─ 同步：`api.orchestration.memory.turn` 编排 `memory_recall` → system prompt
+[api.routes.chat_routes + api.orchestration.*] 加载会话+方案，构造 persisted_history + current_user
+    ├─ 同步：`api.orchestration.memory.turn` 编排 `memory_recall` → 本轮 memory_context
+    ├─ 运行时输入：`ContextManager.build_static_system_message()` + persisted_history + current_user + `build_turn_context_message()`
     └─ 异步：提交 session 级 memory job snapshot，由 `api.orchestration.memory.orchestration` 调度提取任务
     ↓
 [AgentLoop.run()] 进入迭代循环
     │
     ├─ Phase 3 并行分流检查（agent/phase3/parallel.py::should_enter_parallel_phase3_now / should_enter_parallel_phase3_at_iteration_boundary）
-    │   └─ 条件满足 → agent/phase3/orchestrator.py::Phase3Orchestrator.run() → split → spawn workers → collect → validate → write → return
+    │   └─ 条件满足 → agent/phase3/orchestrator.py::Phase3Orchestrator.run() → split → spawn workers → collect → validate → handoff → AgentLoop 内部 `replace_all_day_plans` 标准写入链路
     │
     ├─ 取消检查点（迭代开始 / LLM 流式 chunk 前 / 工具执行前）
     │
     ├─ [agent/execution/llm_turn.py] 单轮 LLM 调用与流式 chunk 解析
     │
     ├─ [Hook: before_llm_call]
-    │   ├─ ContextManager.build_system_message() → phase-scoped soul + 阶段提示 + 状态快照
-    │   ├─ ReflectionInjector → 关键阶段自省提示
+    │   ├─ flush_pending_system_notes() → transient `<runtime_notice>`
+    │   ├─ ReflectionInjector → transient `<runtime_notice kind="reflection">`
     │   └─ compact_messages_for_prompt() → token 预算内渐进压缩
     │
     ├─ [ToolChoiceDecider] → 当前始终返回 "auto"（split 工具后移除强制）
@@ -216,11 +217,11 @@ travel_agent_pro/
     [RunRecord] → 运行状态 + can_continue 判定 + continuation_context 保存
 ```
 
-### Pending system notes
-工具执行阶段产生的 SYSTEM 消息（如实时约束检查）不会立刻 append 到消息历史，而是缓存到 session 级缓冲区，在下一次 LLM 调用前统一 flush。目的是保证 `assistant.tool_calls → 全部 tool 答复` 的协议序列原子性；并行 tool_calls 期间任何 SYSTEM 都落在整组 tool 之后、下一次 assistant 之前。缓冲区不落盘。
+### Pending runtime notices
+工具执行阶段产生的运行时反馈（如实时约束检查）不会立刻 append 到消息历史，而是缓存到 session 级缓冲区，在下一次 LLM 调用前统一 flush 成 transient `<runtime_notice kind="validation">`。目的是保证 `assistant.tool_calls → 全部 tool 答复` 的协议序列原子性；并行 tool_calls 期间任何 runtime notice 都落在整组 tool 之后、下一次 assistant 之前。缓冲区不落盘。
 
 ### Session message history persistence
-会话消息持久化采用 append-only history：SQLite `messages` 是完整历史事实源，`session["messages"]` 仍是可被 phase rebuild 替换的短 runtime prompt 工作集。`messages` 表具备完整历史所需的元数据列：`phase`、`phase2_step`、`history_seq`、`run_id`、`trip_id`、`context_epoch`、`rebuild_reason`；其中 `context_epoch` / `rebuild_reason` 用于从消息行派生 context segment 诊断视图。`history_seq` 通过 `(session_id, history_seq)` 唯一索引约束单 session 内历史顺序，旧数据允许这些列为空；`MessageStore` 支持写入这些元数据，并提供 `max_history_seq()`、`load_by_context_epoch()` 与过滤 system row 的 `load_frontend_view()` helper。
+会话消息持久化采用 append-only history：SQLite `messages` 是完整历史事实源；`session["messages"]` 是进程内保留的非 system、非 transient history view，供前端恢复和下一轮拼接使用。真正发给 LLM 的 runtime input 每轮临时构造，并在运行中放到 `session["_active_runtime_messages"]`，可被 phase rebuild 替换。`messages` 表具备完整历史所需的元数据列：`phase`、`phase2_step`、`history_seq`、`run_id`、`trip_id`、`context_epoch`、`rebuild_reason`；其中 `context_epoch` / `rebuild_reason` 用于从消息行派生 context segment 诊断视图。`history_seq` 通过 `(session_id, history_seq)` 唯一索引约束单 session 内历史顺序，旧数据允许这些列为空；`MessageStore` 支持写入这些元数据，并提供 `max_history_seq()`、`load_by_context_epoch()` 与过滤 system row 的 `load_frontend_view()` helper。
 
 Context segment 不单独建表；`api.orchestration.session.context_segments` 会按 `(session_id, context_epoch)` 从 `messages` rows 纯计算出分段、run_ids、history_seq 范围和 rebuild reason。重复进入同一 phase/Phase 2 子步骤时依靠不同 `context_epoch` 区分历史 segment，例如 backtrack 后再次进入 Phase 2 skeleton 不会覆盖第一次 skeleton segment。
 
@@ -228,11 +229,11 @@ Context segment 检查目前只开放在 service/helper 层：`SessionPersistenc
 
 `SessionPersistence.persist_messages()` 现在只 append 尚未落盘的 runtime `Message`，用 session 级 `next_history_seq` 分配 durable `history_seq`，并在写入成功后把内存消息标记为 `history_persisted`。恢复 session 时会把 DB 历史消息标记为已持久化、保留已有 `history_seq`，通过历史 rows 初始化下一次 append 的 `next_history_seq` 和 `current_context_epoch`；restore 本身不推进 epoch，直到下一次 runtime-context rebuild boundary 才变化。
 
-恢复 session 时后端会加载完整 append-only `history_view` 作为内部 `history_messages`，用于保留历史事实和初始化后续写入游标；传给 `AgentLoop` 的 `session["messages"]` 则是由当前 plan、phase prompt、memory context、可用工具和最新安全 user anchor 重建的短 `runtime_view`。恢复可读取 `context_epoch` metadata 来优先选择最新 epoch 的 anchor，但不会 replay 旧阶段 tool 结果、Phase 2 旧子步骤流水账、backtrack 前的旧目标阶段 segment，或任何旧 segment body。
+恢复 session 时后端会加载完整 append-only `history_view` 作为内部 `history_messages`，用于保留历史事实和初始化后续写入游标；`session["messages"]` 则恢复为最多 120 条非 system、非 transient 的 cache-first history view，并清理不完整的 tool-call 协议片段。下一轮 chat 再用当前 plan、phase prompt、可用工具、current user 和同步召回得到的 memory context 临时拼出 LLM runtime input；旧 system prompt、旧 transient tail 和 pending notes 不会被 replay。
 
 `AgentLoop` 在 phase 转换和 Phase 2 子步骤导致 runtime messages 被重建前，支持调用 `on_before_message_rebuild` 异步回调；回调异常会被记录为 warning 并继续重建，保证编排层可以先 flush 当前完整消息尾部，再让 runtime view 收缩。生产聊天编排使用 `on_context_rebuild` 作为统一 runtime-context boundary：phase forward、Phase 2 step change 和 backtrack 都先把旧 runtime messages 写入旧 `current_context_epoch`，再将 epoch 加 1，并把新 epoch 第一条落盘消息标记 `rebuild_reason`。
 
-Chat/continue 路由会为每个 run 安装该 pre-rebuild flush 回调，并用 session 内 `next_history_seq` 在中途 flush、正常收尾和取消保底持久化之间共享同一个单调 cursor；fallback backtrack 在 `trip_id` 轮转前也会先 flush 当前 runtime 消息。`/api/messages/{session_id}` 在一期仍返回前端聊天窗口可消费视图，不作为完整内部 history/debug API：在线会话返回当前 runtime view（过滤 system message），离线恢复路径通过 `MessageStore.load_frontend_view()` 返回持久化历史中的前端可见视图。
+Chat/continue 路由会为每个 run 安装该 pre-rebuild flush 回调，并用 session 内 `next_history_seq` 在中途 flush、正常收尾和取消保底持久化之间共享同一个单调 cursor；fallback backtrack 在 `trip_id` 轮转前也会先 flush 当前 runtime 消息。`/api/messages/{session_id}` 在一期仍返回前端聊天窗口可消费视图，不作为完整内部 history/debug API：在线会话返回 `session["messages"]` 中的前端可见消息，离线恢复路径通过 `MessageStore.load_frontend_view()` 返回持久化历史中的前端可见视图。
 
 ### Internal task stream
 后端用 `agent.internal_tasks.InternalTask` + `ChunkType.INTERNAL_TASK` 表达非用户工具但会消耗时间或影响上下文的运行时任务。当前有两条通道：
@@ -259,10 +260,10 @@ Chat/continue 路由会为每个 run 安装该 pre-rebuild flush 回调，并用
 
 ## 6. 上下文压缩机制
 
-### 两层压缩策略
-1. **before_llm_call 预压缩**：按 `context_window - max_output_tokens` 预留出预算，超出部分按渐进阈值压缩——先压工具结果（信息密度低），最后才对历史做摘要。
+### 压缩与重建策略
+1. **before_llm_call 预压缩**：按 `context_window - max_output_tokens - safety_margin` 预留出 prompt 预算，超出部分按渐进阈值压缩——先压工具结果（信息密度低），最后才对历史做摘要。
 2. **阶段转换交接**：前进切换时不再注入历史摘要，而是注入一条确定性的 handoff note，交代当前阶段、已完成事项、当前唯一目标、禁止重复事项，以及"开场白协议"（要求下一次回复先用 1-2 句自然语言承上启下，禁止 `[Phase N 启动]`/`前置条件检查：✓` 式机器感 checklist 开场）；前进与回退都会保留触发转换的原始用户消息，避免新阶段变成 assistant-only 历史并丢失当前任务。
-3. **Phase 2 子阶段切换**（brief→candidate→skeleton→lock）：也会触发 system message 重建（无 handoff note / backtrack notice），确保 runtime context 随子阶段即时刷新。Runtime context 中：Phase 4 展开 daily_plans 每日活动（出发前查漏需要），Phase 2 skeleton 子阶段展开骨架紧凑摘要（id/name/tradeoffs/每天 theme），preferences/constraints 自 Phase 1 起即注入。
+3. **Phase 2 子阶段切换**（brief→candidate→skeleton→lock）：也会触发 runtime input 重建（static system + current user + transient `<turn_context>`，无 handoff note / backtrack notice），确保 phase prompt、可用工具和状态快照随子阶段即时刷新。Runtime context 中：Phase 4 展开 daily_plans 每日活动（出发前查漏需要），Phase 2 skeleton 子阶段展开骨架紧凑摘要（id/name/tradeoffs/每天 theme），preferences/constraints 自 Phase 1 起即注入。
 
 ### 工具结果特定压缩
 `web_search` / `xiaohongshu_search_notes` / `xiaohongshu_read_note` / `xiaohongshu_get_comments` 按工具类型裁剪摘要长度与条数，保留信息骨架；具体阈值见 `backend/agent/compaction.py`。
@@ -392,9 +393,13 @@ LLM API 异常
 ### SQLite Schema
 ```sql
 sessions       → session_id, user_id, title, phase, status, last_run_*
-messages       → id, session_id, role, content, tool_calls, tool_call_id, seq, history_seq, phase, phase2_step, run_id, trip_id, context_epoch, rebuild_reason
+messages       → id, session_id, role, content, tool_calls, tool_call_id, provider_state, seq, history_seq, phase, phase2_step, run_id, trip_id, context_epoch, rebuild_reason
 plan_snapshots → id, session_id, phase, plan_json, created_at
 archives       → id, session_id, plan_json, summary, created_at
+trace_runs     → run 级 trace 元数据、模型/工具 schema 指纹、token/cost/duration 汇总
+trace_events   → run-scoped 事件流，含 phase/tool/llm/status/因果链 metadata
+trace_artifacts→ 大 prompt/tool/result/deliverable body 的脱敏 artifact 索引
+trace_grades   → deterministic trace grader 的 rubric 结果
 ```
 
 `TravelPlanState.deliverables` 保存 Phase 4 冻结后的元数据，指向 `travel_plan.md` 与 `checklist.md` 的文件名。
@@ -435,6 +440,8 @@ GET    /api/messages/{session_id}           消息历史
 POST   /api/backtrack/{session_id}          回退阶段
 GET    /api/archives/{session_id}           归档方案
 GET    /api/sessions/{session_id}/trace     Trace 视图
+GET    /api/traces/{run_id}                 run-scoped persisted trace + artifact metadata
+POST   /api/traces/{run_id}/grade           deterministic trace grader
 GET    /api/sessions/{session_id}/stats     成本与延迟
 GET    /api/memory/{user_id}/profile        v3 长期画像
 GET    /api/memory/{user_id}/episode-slices v3 历史切片
@@ -451,7 +458,7 @@ GET    /api/memory/{user_id}/episodes       v3 历史旅行 episodes
 
 1. **输入护栏 Guardrail** — 中文注入检测、消息长度限制、搜索结果字段分级校验、工具结果异常检测；预算负值检测扩展到 `update_trip_basics`
 2. **硬约束验证器 Validator** — 时间冲突/预算超支/天数超限；所有 `PLAN_WRITER_TOOL_NAMES` 成功写入后都会走 `validate_incremental` 注入实时约束反馈；涉及交通/住宿锁定的写入还会触发 `validate_lock_budget` 检查预算占比
-3. **软评分 Judge** — pace / geography / coherence / personalization 四维评分，在 `save_day_plan`、`replace_all_day_plans`、`generate_summary` 后触发；`generate_summary` 由 Phase 4 以 `travel_plan_markdown` 和 `checklist_markdown` 提交最终交付物
+3. **软评分 Judge** — pace / geography / coherence / personalization 四维评分，在 `save_day_plan`、`replace_all_day_plans`、`generate_summary` 后触发；`generate_summary` 由 Phase 4 以 `title`、`daily_sections`、`checklist_title`、`checklist_categories` 等结构化字段提交最终交付物候选
 4. **可行性门控 Feasibility Gate** — Phase 1→2 转换时基于目的地查表做规则式判断
 5. **成本与延迟追踪** — `SessionStats` 记录 token 用量与模型定价；`ToolCallRecord` 承载 `state_changes`、`parallel_group`、`validation_errors`、`judge_scores`、`suggestion`；`MemoryHitRecord` 记录命中记忆；Trace 视图输出 `error_code` 和 `suggestion` 字段用于错误诊断
 
@@ -530,12 +537,12 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase3.par
 | 回退快照 | 每次阶段转换存档，支持历史回溯 |
 | Hook 系统 | 软评分/验证/压缩与核心循环解耦 |
 | Evaluator-Optimizer | 硬约束错误阻断；软评分低于阈值注入修改建议；评分器异常不阻断主流程 |
-| Reflection 自省 | 被动 system message 注入，零额外 LLM 调用，会话级幂等 |
+| Reflection 自省 | 被动 `<runtime_notice kind="reflection">` 注入，零额外 LLM 调用，会话级幂等 |
 | 并行工具执行 | 读写分离：搜索类并行，状态更新顺序 |
 | Tool Choice (always auto) | split 工具后移除强制逻辑，全依赖 prompt 纪律与 State Repair |
 | Memory System | v3 结构化长期画像（profile）+ 当前 session/trip 的 working memory + historical episodes / episode slices；当前旅行事实由 `TravelPlanState` 权威提供，working memory 不参与 historical recall。同步 recall 采用 `Stage 0` 硬规则短路 + `Stage 1` recall gate + `Stage 2` retrieval plan + `Stage 3` candidate generation；Stage 3 会返回 `RecallCandidate[]` 与 `evidence_by_id` sidecar。Stage 4 reranker 默认在规则主干之上叠加 lane-fused / semantic / lexical evidence 权重（默认 `lane_fused_weight=0.25` / `semantic_score_weight=0.15` / `lexical_score_weight=0.08`），消费 Stage 3 透传的 `evidence_by_id`；trace 与 stats 会记录 `reranker_selected_ids`、`reranker_per_item_scores`、`reranker_intent_label` 和 `reranker_selection_metrics`。Stage 1 / Stage 2 已统一 latest-first 信息控制：最新用户消息是主判断/主检索对象，前序用户消息只用于省略、指代和承接消歧；Stage 1 不再读取 `memory_summary`，Gate Window 完整保留最新用户消息并只整条回填更早消息；Stage 2 保持 source-aware schema 与 parser：`profile` / `hybrid_history` source 必填 `buckets`，`episode_slice` source 仅使用 `domains`、`destination`、`keywords`、`top_k`，`plan_facts` 只用于检索参数提取，`memory_summary` 只在 gate 放行后由 Stage 2 自行构建。长期 profile 不再固定常驻注入，只有 query recall 命中后才以 candidate 进入上下文；当前有效来源只保留 `query_profile`、`working_memory`、`episode_slice`。profile extraction 持久化前会先规范化高价值画像 domain/key，并把 `applicability`、`recall_hints`、`source_refs` 一起写成 recall-ready metadata；若新的偏好假设得到既有 profile 证据反复印证，会升级为 stable preference 后再写入长期画像；Stage 4 已从“阈值截断 top-N”改为 rule-based weighted reranker：按 retrieval source 应用不同配额，对 profile / slice 分池打分后归一化合并，并综合 bucket prior、domain/keyword overlap、destination、recency decay、applicability 与当前 user message 的局部 conflict penalty；当前 reranker config 已预留 code-only `intent_weights`、默认激活的 evidence 配置（`lane_fused_weight=0.25` / `semantic_score_weight=0.15` / `lexical_score_weight=0.08`，`*_hit_weight` 保持 0）与默认关闭的 dynamic budget 配置，Stage 4 已将 intent label/profile 解析与 rule-signal 计算拆成独立 helper，intent profile 解析支持局部覆盖并安全回退默认配置，并把 rule signals、evidence lane/score signals 与 hard-filter reason 写入 `RecallRerankResult.per_item_scores`；最终 scoring 明确为 `source_score = rule_score + evidence_score`，分 source min-max 归一化后加 profile/slice source prior 得到 `final_score` 再进入 source budget selection，且所有通过 hard-filter 和 dedupe 并进入归一化的候选都会在 `per_item_scores` 中使用归一化后的 score detail，同时所有返回路径统一填充 pairwise similarity selection metrics placeholder；Stage 3 产出的 `evidence_by_id` 已从 manager 透传到 Stage 4 reranker 入口，缺失 evidence key 会按空证据处理，fused/lexical/semantic evidence 分数会按候选池内有效值归一化后写入详情，单个非正值或全 0 已知分数保持为 0，并按默认激活的 evidence 权重进入 `source_score`（生产端可通过 `config.yaml` 把三个 score 权重写回 0 回到第零期 rule-only 行为）；同组 profile 候选与精确重复的 episode slice 会去重，冲突项和全弱相关候选会被丢弃，最终把选中结果、fallback telemetry 与 per-item reason 一起暴露给 SSE / trace / stats；`backend/evals/reranker.py` 通过固定 `RecallRetrievalPlan` 与 `RecallCandidate` 集合提供 reranker-only 上限评估，避免 Stage 0/1/2 live 抖动污染判断。query tool 超时或异常时不再注入空泛 default plan，而是直接产出 stage0-aware heuristic retrieval plan，并保留 `query_plan_fallback` 遥测；gate 超时、异常或 invalid payload 时会先用 heuristic 判定是否仍应召回，命中历史/画像线索则以 `gate_*_heuristic_recall` 继续走 manager heuristic fallback，否则以 `no_recall_applied` 跳过，并在 telemetry 标记 `recall_skip_source=gate_failure_no_heuristic`。 |
 | Tool Guardrails | 确定性规则校验，不依赖 LLM，可按规则名禁用 |
-| Trace Data Pipeline | "丰富 Stats 层，Trace 只做读取"：钩子 post-hoc 写入 `ToolCallRecord`；`build_trace` 纯读取消费 |
+| Trace Data Pipeline | 双轨兼容：legacy `/api/sessions/{session_id}/trace` 继续从 `SessionStats` 构建 TraceViewer 视图；run-scoped flight recorder 由 `TraceRecorder` 在行为发生时写入 `trace_runs` / `trace_events` / `trace_artifacts` / `trace_grades` 四表，供 `/api/traces/{run_id}`、`/api/traces/{run_id}/grade`、trace grader、canary 和 failure-analysis 消费 |
 | Memory Recall SSE | `memory_recall` 事件透传到前端，payload 含 `gate`、`sources`、`profile_ids`、`working_memory_ids`、`slice_ids`、`matched_reasons`、`stage0_decision`、`stage0_reason`、`stage0_matched_rule`、`stage0_signals`、`gate_needs_recall`、`gate_intent_type`、`gate_confidence`、`gate_reason`、`final_recall_decision`、`fallback_used`、`recall_skip_source`、`query_plan`、`query_plan_source`、`query_plan_fallback`、`recall_attempted_but_zero_hit`，以及 `candidate_count`、`reranker_selected_ids`、`reranker_final_reason`、`reranker_fallback`、`reranker_per_item_reason`、`reranker_per_item_scores`、`reranker_intent_label`、`reranker_selection_metrics`；其中 `sources` 只保留 `query_profile`、`working_memory`、`episode_slice`，`profile_ids` 表示本轮最终命中的 profile recall item ids；真实召回命中仍只进入 `SessionStats.memory_hits`，而 recall gate / reranker 摘要单独进入 `SessionStats.recall_telemetry` / `/api/sessions/{session_id}/trace.iterations[].memory_recall`，这样零命中时仍保留可见性且不污染 `memory_hit_count` |
 | LLM 韧性三层架构 | 错误归一化 → 停止生成（cancel_event + 取消检查点 + RunRecord）→ 安全继续（continuation_context + continue endpoint） |
 | 工具白名单前瞻容错 | 每个 Phase 2 子阶段向前开放下一阶段写入工具，防止 LLM 跳阶时工具不可用导致状态丢失和死循环 |
@@ -549,6 +556,7 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase3.par
 | trip_brief 权威字段强制覆盖 | dates/total_days 在 hydrate 时直接赋值，防止 stale |
 | plan_writer 增量持久化 | 每次 plan_writer 工具成功后立即 `state_mgr.save(plan)` 并同步更新 session meta（phase/title），finally 保底保存 plan 与 messages（含 logger.warning 日志），并把仍处于 running 的 run 标记为 cancelled，防止 SSE 中断丢失状态、消息或三源不一致 |
 | Phase 3 并行交付路径 | Orchestrator 只负责拆分、派发、收集和全局验证；最终 day plans 通过 AgentLoop 内部 `replace_all_day_plans` 工具调用写入，继续复用标准阶段推进、hook、telemetry 和 SSE 事件链路 |
+| Trace flight recorder | `TraceRecorder` 以 run 为边界写入 `trace_events`（24 类事件），覆盖 `run_start`/`run_end`、`llm_call`/`llm_output`、`tool_call`/`tool_result`、`state_snapshot`/`state_diff`、`phase_gate`/`phase_transition`、`quality_gate`/`soft_judge`/`validation`、`memory_recall`/`memory_hit`、`context_build`/`context_compression`/`context_rebuild`、Phase 3 orchestrator/worker、Phase 4 draft/finalize 和 `error`；每个事件带 phase/phase2_step/iteration、tool_name、llm provider+model、status、duration_ms、cost_usd 与 `parent_event_id`/`root_event_id`/`correlation_id` 因果链。`trace_runs` 保存 run 级元数据与可复现指纹（`config_hash`/`prompt_version`/`model_config_json`/`tool_schema_hash`/`trace_schema_version`）、token/cost/duration 聚合与最终 phase/status；大 prompt/tool/result/deliverable body 进入 `trace_artifacts`（content_hash + content_type + redaction + storage_path），事件 payload 只保留 hash、preview、artifact id 与 redaction 状态；`trace_grades` 持久化 trace grader 输出的每条 rubric 结果（rubric_id/status/score/reason/evidence_event_ids）|
 
 ---
 
@@ -559,8 +567,10 @@ config.yaml    运行时配置（LLM 覆盖 / 阈值 / 功能开关 / phase3.par
 - **测试基线语义**：未知 Anthropic 异常遵循共享 `classify_opaque_api_error` 逻辑，默认归类为 `LLM_TRANSIENT_ERROR`；`validate_lock_budget` 的占比提示基于 `DateRange.total_days` 的 inclusive 天数语义；并行 `add_constraints` 用 `items` 作为增量状态写入参数，约束提示通过 `_pending_system_notes` 在下一轮 LLM 调用前 flush
 - **Memory 集成测试策略**：`backend/tests/test_memory_integration.py` 以公开 chat 流程和 schema-conformant fake tool payload 验证 Phase 4 episode 归档与 EpisodeSlice 派生写入幂等、chat 与 memory extraction 解耦、route-aware split extractor forced tool call 语义、profile-only / working-only / no-route 三类路由写入与跳过行为、split internal-task 生命周期、timeout/warning/partial-failure 语义，以及 session 级 each-turn memory extraction 排队行为；需要观测后台调度器时通过 `app.state` 暴露的测试钩子读取，而不是依赖路由闭包捕获细节
 - **记忆/遥测测试整理**：遗留的 `test_memory.py` 与 `test_telemetry_integration.py` 已并入 `test_memory_manager.py`、`test_telemetry_setup.py`；`test_memory_manager.py` 中只验证 episode slice `top_k` 语义的用例会显式关闭 Stage 3 semantic lane，避免语义候选干扰该用例的排序边界；记忆文档同步补充了 `memory_recall` / `memory_hits` 的可观测性现状与 `TripEpisode` 仍未进入主召回链路的限制
-- **Phase 4 交付物契约**：`generate_summary` 接收 `travel_plan_markdown` / `checklist_markdown` 并校验 markdown 结构；`persist_phase4_deliverables` 写入 `sessions/{session_id}/deliverables/`，`plan.deliverables` 保存冻结元数据，`/api/sessions/{session_id}/deliverables/{filename}` 提供下载；回退会清理交付物文件与状态
-- **评估管线**：golden cases（YAML）+ 断言评估 + 离线 runner；断言类型包含 `phase_reached`/`state_field_set`/`tool_called`/`tool_not_called`/`contains_text`/`not_contains_text`/`budget_within`/`memory_recall_field`/`daily_plans_count`/`daily_plans_have_activities`/`deliverable_field_set`/`trace_grade_status`（其中 `not_contains_text` 用于回归"机器感 checklist"类文案违规，`memory_recall_field` 用于断言 `last_memory_recall` 字段，`trace_grade_status` 用于把持久化 `trace_events` 的 rubric 结果纳入 golden/live executor 断言）；trace grader 覆盖 Phase 2 搜索纪律、Phase 3 daily plan 覆盖/去重/并行候选最终落盘、工具错误率、Phase 4 deliverables 冻结和 run 完成状态；`memory_recall` tagged cases 会聚合 false skip / false recall / hit rate / zero-hit rate；`scripts/eval-stability.py` 生成 pass@k 稳定性报告（JSON + Markdown）；`scripts/failure-analysis/` 对 live backend 执行失败场景并产出分析报告
+- **Phase 4 交付物契约**：`generate_summary` 接收 `plan_data`、`title`、`daily_sections`、`checklist_title`、`checklist_categories` 和可选 `overview`，代码生成并校验双 markdown；`persist_phase4_deliverables` 写入 `sessions/{session_id}/deliverables/`，`plan.deliverables` 保存冻结元数据，`/api/sessions/{session_id}/deliverables/{filename}` 提供下载；回退会清理交付物文件与状态
+- **评估管线**：40 个 golden cases（YAML，按 easy / med / hard / failure / infeasible / recall / regression-prompt / regression-trace / reranker 分类）+ 断言评估 + 离线 runner；`scripts/eval-stability.py` 提供 live / mock 两种可注入执行器，live executor 跑完 case 后从持久化 trace 提取工具调用并把 `trace_grades` 注入 stats。断言类型共 12 类：`phase_reached`/`state_field_set`/`tool_called`/`tool_not_called`/`contains_text`/`not_contains_text`/`budget_within`/`memory_recall_field`/`daily_plans_count`/`daily_plans_have_activities`/`deliverable_field_set`/`trace_grade_status`（`not_contains_text` 用于回归"机器感 checklist"类文案违规，`memory_recall_field` 断言 `last_memory_recall` 字段，`trace_grade_status` 把持久化 `trace_events` 的 rubric 结果纳入 golden/live executor 断言）；`memory_recall` tagged cases 额外聚合 false skip / false recall / hit rate / zero-hit rate
+- **确定性轨迹评分（trace grader）**：`backend/evals/trace_grader.py` 对一次 run 的持久化 `trace_events` 跑 18 条事件级 rubric + 1 条 run 完成状态，每条输出 `pass`/`fail`/`skip` + reason + `evidence_event_ids`（可回溯到具体事件），纯规则、不依赖 LLM judge；覆盖 Phase 2 先搜索后写候选、骨架天数匹配、状态写入只走 plan writer、Phase 3 跨天 POI 去重 / 日程覆盖 / 并行候选经 `replace_all_day_plans` 最终落盘、工具错误率、tool args grounded、空工具结果不被当证据、相同失败参数不重试、阶段转换有 gate 证据、写工具有 state_diff、天气不确定性保留、锁定需用户授权、当前行程事实问句跳过召回、注入记忆与 memory_hit 一致、Phase 4 交付物在质量通过后冻结等；结果落 `trace_grades` 并经 `POST /api/traces/{run_id}/grade` 暴露
+- **稳定性 / 金丝雀 / 失败分析**：`scripts/eval-stability.py` 生成 pass@k 稳定性报告（JSON + Markdown），含 per-assertion 一致性、工具调用集合重合度、成本与延迟的 min/max/mean/stddev；`scripts/run-adaptive-canary.py` 用 LLM 用户模拟器（`backend/evals/user_simulator.py`，带 persona + agenda，读 agent 真实回复与 plan 状态自适应推进、按需授权锁定）在 live backend 上驱动 Phase 1→4，`scripts/run-full-phase-canary.py` 为固定脚本对照版；两者都用 `backend/evals/canary_audit.py` 从持久化 trace 审计工具调用（覆盖 SSE 看不到的 Phase 3 子 agent）、检测 forbidden tool / 工具预算超限 / 高错误率，强制 lock-without-consent 硬不变量，并跑 trace grader、统计 prompt-cache 命中率；`scripts/failure-analysis/` 对 live backend 执行失败场景并产出按 10 类失败模式（planning / tool selection / tool args / tool result quality / state write / phase transition / memory recall / context pollution / quality gate / external service）归因、含 trace evidence 的分析报告
 - **E2E 测试**：Playwright 三套专项配置——主流程（含 deterministic mock 的阶段切换）、重试体验（继续/重发/停止/不可恢复错误）、等待体验（ThinkingBubble 与工具耗时提示）；demo spec 基于 `demo-scripted-session.json` 稳定回放 Phase 1 → Phase 2 → Phase 3 → backtrack；Prompt 行为回归集中于 `e2e-phase1-no-offtopic.spec.ts`（验证 Phase 1 不主动追问非目的地字段）；本地 Playwright 运行态目录 `.playwright-mcp/` 与 `.playwright-cli/` 均作为开发机产物忽略，不进入版本库
 - **运行**：`cd backend && pytest` / `npx playwright test`
 
