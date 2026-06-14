@@ -1,5 +1,6 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
+from evals.trace_models import TraceEvent
 from main import create_app
 from telemetry.stats import SessionStats
 
@@ -809,6 +810,83 @@ async def test_get_persisted_trace_by_run_id(app):
     assert data["run"]["run_id"] == "run-api-1"
     assert data["events"] == []
     assert data["grades"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_persisted_trace_includes_common_fields_and_artifacts(app):
+    trace_store = _get_trace_store(app)
+    await _insert_trace_session(trace_store, "trace-session-fields")
+    await trace_store.create_run(
+        run_id="run-api-fields",
+        session_id="trace-session-fields",
+        trip_id="trip-1",
+        context_epoch=2,
+        started_at="2026-06-07T10:00:00+00:00",
+        status="completed",
+    )
+    await trace_store.append_event(
+        TraceEvent(
+            event_id="evt-api-1",
+            run_id="run-api-fields",
+            sequence=1,
+            event_type="tool_result",
+            phase=3,
+            phase2_step=None,
+            iteration=4,
+            tool_name="save_day_plan",
+            llm_provider=None,
+            llm_model=None,
+            status="success",
+            duration_ms=12.0,
+            cost_usd=None,
+            payload={"schema_version": 2, "status": "success"},
+            created_at="2026-06-07T10:00:01+00:00",
+            session_id="trace-session-fields",
+            trip_id="trip-1",
+            context_epoch=2,
+            parent_event_id="evt-tool-call",
+            root_event_id="evt-llm-output",
+            correlation_id="corr-1",
+            actor="tool_engine",
+            started_at="2026-06-07T10:00:00+00:00",
+            ended_at="2026-06-07T10:00:01+00:00",
+            payload_schema_version=2,
+        )
+    )
+    await trace_store.save_artifact_metadata(
+        {
+            "artifact_id": "artifact-api-1",
+            "run_id": "run-api-fields",
+            "event_id": "evt-api-1",
+            "kind": "tool_result",
+            "content_type": "application/json",
+            "content_hash": "sha256:test",
+            "redaction_status": "hash_only",
+            "storage_path": None,
+            "size_bytes": 123,
+            "created_at": "2026-06-07T10:00:02+00:00",
+        }
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/traces/run-api-fields")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    event = data["events"][0]
+    assert event["session_id"] == "trace-session-fields"
+    assert event["trip_id"] == "trip-1"
+    assert event["context_epoch"] == 2
+    assert event["parent_event_id"] == "evt-tool-call"
+    assert event["root_event_id"] == "evt-llm-output"
+    assert event["correlation_id"] == "corr-1"
+    assert event["actor"] == "tool_engine"
+    assert event["payload_schema_version"] == 2
+    assert event["artifacts"][0]["artifact_id"] == "artifact-api-1"
+    assert "content" not in event["artifacts"][0]
+    assert data["artifacts"][0]["kind"] == "tool_result"
 
 
 @pytest.mark.asyncio

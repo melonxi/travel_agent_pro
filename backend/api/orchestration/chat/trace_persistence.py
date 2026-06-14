@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
@@ -298,6 +298,28 @@ async def persist_trace_run_safely(
         return
     stats = session.get("stats")
     if not isinstance(stats, SessionStats):
+        # No reconstructable stats. The realtime recorder no longer writes the
+        # run summary, so finalize status/ended_at here to avoid leaving the run
+        # dangling in 'running'. A non-existent trace_runs row makes this a no-op.
+        try:
+            await trace_store.update_run_summary(
+                run_id=run.run_id,
+                ended_at=_timestamp_iso(run.finished_at or time.time()),
+                status=run.status,
+                final_phase=plan.phase,
+                final_phase2_step=getattr(plan, "phase2_step", None),
+                total_input_tokens=0,
+                total_output_tokens=0,
+                total_cost_usd=0.0,
+                total_duration_ms=0.0,
+            )
+        except Exception:
+            logger.warning(
+                "trace run summary finalize failed session=%s run=%s",
+                plan.session_id,
+                run.run_id,
+                exc_info=True,
+            )
         return
     try:
         await ensure_trace_run_started(
@@ -315,7 +337,30 @@ async def persist_trace_run_safely(
             tool_side_effects=tool_side_effects,
             offsets=offsets,
         )
-        await trace_store.replace_events(run.run_id, events)
+        existing_events = await trace_store.load_events(run.run_id)
+        has_realtime_events = any(
+            row.get("payload_schema_version") == 2 for row in existing_events
+        )
+        if has_realtime_events:
+            existing_event_types = {row.get("event_type") for row in existing_events}
+            max_sequence = max(
+                (int(row.get("sequence") or 0) for row in existing_events),
+                default=0,
+            )
+            legacy_events = [
+                event
+                for event in events
+                if event.event_type in {"memory_recall", "memory_hit"}
+                and event.event_type not in existing_event_types
+            ]
+            await trace_store.append_events(
+                [
+                    replace(event, sequence=max_sequence + index)
+                    for index, event in enumerate(legacy_events, start=1)
+                ]
+            )
+        else:
+            await trace_store.replace_events(run.run_id, events)
         total_cost_usd = round(sum(event.cost_usd or 0.0 for event in events), 6)
         total_duration_ms = sum(event.duration_ms or 0.0 for event in events)
         total_input_tokens = sum(

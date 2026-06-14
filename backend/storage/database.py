@@ -61,6 +61,11 @@ CREATE TABLE IF NOT EXISTS trace_runs (
     session_id          TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
     trip_id             TEXT,
     context_epoch       INTEGER,
+    config_hash         TEXT,
+    prompt_version      TEXT,
+    model_config_json   TEXT,
+    tool_schema_hash    TEXT,
+    trace_schema_version INTEGER DEFAULT 2,
     started_at          TEXT NOT NULL,
     ended_at            TEXT,
     status              TEXT NOT NULL,
@@ -75,22 +80,45 @@ CREATE TABLE IF NOT EXISTS trace_runs (
 );
 
 CREATE TABLE IF NOT EXISTS trace_events (
-    event_id     TEXT PRIMARY KEY,
-    run_id       TEXT NOT NULL REFERENCES trace_runs(run_id) ON DELETE CASCADE,
-    sequence     INTEGER NOT NULL,
-    event_type   TEXT NOT NULL,
-    phase        INTEGER,
-    phase2_step  TEXT,
-    iteration    INTEGER,
-    tool_name    TEXT,
-    llm_provider TEXT,
-    llm_model    TEXT,
-    status       TEXT,
-    duration_ms  REAL,
-    cost_usd     REAL,
-    payload_json TEXT NOT NULL,
-    created_at   TEXT NOT NULL,
+    event_id               TEXT PRIMARY KEY,
+    run_id                 TEXT NOT NULL REFERENCES trace_runs(run_id) ON DELETE CASCADE,
+    sequence               INTEGER NOT NULL,
+    event_type             TEXT NOT NULL,
+    phase                  INTEGER,
+    phase2_step            TEXT,
+    iteration              INTEGER,
+    tool_name              TEXT,
+    llm_provider           TEXT,
+    llm_model              TEXT,
+    status                 TEXT,
+    duration_ms            REAL,
+    cost_usd               REAL,
+    payload_json           TEXT NOT NULL,
+    created_at             TEXT NOT NULL,
+    session_id             TEXT,
+    trip_id                TEXT,
+    context_epoch          INTEGER,
+    parent_event_id        TEXT,
+    root_event_id          TEXT,
+    correlation_id         TEXT,
+    actor                  TEXT,
+    started_at             TEXT,
+    ended_at               TEXT,
+    payload_schema_version INTEGER,
     UNIQUE(run_id, sequence)
+);
+
+CREATE TABLE IF NOT EXISTS trace_artifacts (
+    artifact_id      TEXT PRIMARY KEY,
+    run_id           TEXT NOT NULL REFERENCES trace_runs(run_id) ON DELETE CASCADE,
+    event_id         TEXT REFERENCES trace_events(event_id) ON DELETE SET NULL,
+    kind             TEXT NOT NULL,
+    content_type     TEXT NOT NULL,
+    content_hash     TEXT NOT NULL,
+    redaction_status TEXT NOT NULL,
+    storage_path     TEXT,
+    size_bytes       INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS trace_grades (
@@ -118,6 +146,14 @@ CREATE INDEX IF NOT EXISTS idx_trace_events_type
 ON trace_events(run_id, event_type);
 CREATE INDEX IF NOT EXISTS idx_trace_events_tool
 ON trace_events(run_id, tool_name);
+CREATE INDEX IF NOT EXISTS idx_trace_artifacts_run
+ON trace_artifacts(run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_trace_artifacts_event
+ON trace_artifacts(event_id);
+CREATE INDEX IF NOT EXISTS idx_trace_artifacts_hash
+ON trace_artifacts(content_hash);
+CREATE INDEX IF NOT EXISTS idx_trace_artifacts_kind
+ON trace_artifacts(run_id, kind);
 CREATE INDEX IF NOT EXISTS idx_trace_grades_run
 ON trace_grades(run_id);
 CREATE INDEX IF NOT EXISTS idx_trace_grades_status
@@ -211,6 +247,11 @@ class Database:
                 session_id          TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
                 trip_id             TEXT,
                 context_epoch       INTEGER,
+                config_hash         TEXT,
+                prompt_version      TEXT,
+                model_config_json   TEXT,
+                tool_schema_hash    TEXT,
+                trace_schema_version INTEGER DEFAULT 2,
                 started_at          TEXT NOT NULL,
                 ended_at            TEXT,
                 status              TEXT NOT NULL,
@@ -224,22 +265,44 @@ class Database:
                 updated_at          TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS trace_events (
-                event_id     TEXT PRIMARY KEY,
-                run_id       TEXT NOT NULL REFERENCES trace_runs(run_id) ON DELETE CASCADE,
-                sequence     INTEGER NOT NULL,
-                event_type   TEXT NOT NULL,
-                phase        INTEGER,
-                phase2_step  TEXT,
-                iteration    INTEGER,
-                tool_name    TEXT,
-                llm_provider TEXT,
-                llm_model    TEXT,
-                status       TEXT,
-                duration_ms  REAL,
-                cost_usd     REAL,
-                payload_json TEXT NOT NULL,
-                created_at   TEXT NOT NULL,
+                event_id               TEXT PRIMARY KEY,
+                run_id                 TEXT NOT NULL REFERENCES trace_runs(run_id) ON DELETE CASCADE,
+                sequence               INTEGER NOT NULL,
+                event_type             TEXT NOT NULL,
+                phase                  INTEGER,
+                phase2_step            TEXT,
+                iteration              INTEGER,
+                tool_name              TEXT,
+                llm_provider           TEXT,
+                llm_model              TEXT,
+                status                 TEXT,
+                duration_ms            REAL,
+                cost_usd               REAL,
+                payload_json           TEXT NOT NULL,
+                created_at             TEXT NOT NULL,
+                session_id             TEXT,
+                trip_id                TEXT,
+                context_epoch          INTEGER,
+                parent_event_id        TEXT,
+                root_event_id          TEXT,
+                correlation_id         TEXT,
+                actor                  TEXT,
+                started_at             TEXT,
+                ended_at               TEXT,
+                payload_schema_version INTEGER,
                 UNIQUE(run_id, sequence)
+            );
+            CREATE TABLE IF NOT EXISTS trace_artifacts (
+                artifact_id      TEXT PRIMARY KEY,
+                run_id           TEXT NOT NULL REFERENCES trace_runs(run_id) ON DELETE CASCADE,
+                event_id         TEXT REFERENCES trace_events(event_id) ON DELETE SET NULL,
+                kind             TEXT NOT NULL,
+                content_type     TEXT NOT NULL,
+                content_hash     TEXT NOT NULL,
+                redaction_status TEXT NOT NULL,
+                storage_path     TEXT,
+                size_bytes       INTEGER NOT NULL DEFAULT 0,
+                created_at       TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS trace_grades (
                 grade_id                TEXT PRIMARY KEY,
@@ -262,12 +325,79 @@ class Database:
             ON trace_events(run_id, event_type);
             CREATE INDEX IF NOT EXISTS idx_trace_events_tool
             ON trace_events(run_id, tool_name);
+            CREATE INDEX IF NOT EXISTS idx_trace_artifacts_run
+            ON trace_artifacts(run_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_trace_artifacts_event
+            ON trace_artifacts(event_id);
+            CREATE INDEX IF NOT EXISTS idx_trace_artifacts_hash
+            ON trace_artifacts(content_hash);
+            CREATE INDEX IF NOT EXISTS idx_trace_artifacts_kind
+            ON trace_artifacts(run_id, kind);
             CREATE INDEX IF NOT EXISTS idx_trace_grades_run
             ON trace_grades(run_id);
             CREATE INDEX IF NOT EXISTS idx_trace_grades_status
             ON trace_grades(status);
             """
         )
+        await self._add_missing_columns(
+            "trace_runs",
+            (
+                ("config_hash", "TEXT"),
+                ("prompt_version", "TEXT"),
+                ("model_config_json", "TEXT"),
+                ("tool_schema_hash", "TEXT"),
+                ("trace_schema_version", "INTEGER"),
+            ),
+        )
+        await self._add_missing_columns(
+            "trace_events",
+            (
+                ("session_id", "TEXT"),
+                ("trip_id", "TEXT"),
+                ("context_epoch", "INTEGER"),
+                ("parent_event_id", "TEXT"),
+                ("root_event_id", "TEXT"),
+                ("correlation_id", "TEXT"),
+                ("actor", "TEXT"),
+                ("started_at", "TEXT"),
+                ("ended_at", "TEXT"),
+                ("payload_schema_version", "INTEGER"),
+            ),
+        )
+        await self.conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_trace_events_session_created
+            ON trace_events(session_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_session_run_sequence
+            ON trace_events(session_id, run_id, sequence);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_correlation
+            ON trace_events(run_id, correlation_id, sequence);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_parent
+            ON trace_events(parent_event_id);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_root
+            ON trace_events(root_event_id);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_context_epoch
+            ON trace_events(session_id, context_epoch, sequence);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_actor
+            ON trace_events(run_id, actor);
+            """
+        )
+
+    async def _add_missing_columns(
+        self,
+        table_name: str,
+        columns: tuple[tuple[str, str], ...],
+    ) -> None:
+        async with self.conn.execute(f"PRAGMA table_info({table_name})") as cursor:
+            rows = await cursor.fetchall()
+
+        existing_columns = {row["name"] for row in rows}
+        for column_name, column_type in columns:
+            if column_name in existing_columns:
+                continue
+            await self.conn.execute(
+                f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+            )
 
     async def close(self) -> None:
         if self._conn is None:

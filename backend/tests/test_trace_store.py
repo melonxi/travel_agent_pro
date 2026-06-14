@@ -107,6 +107,180 @@ async def test_replace_events_is_idempotent(trace_store: TraceStore):
     assert len(events) == 1
     assert events[0]["event_id"] == "evt-2"
     assert json.loads(events[0]["payload_json"])["tool_name"] == "quick_travel_search"
+    assert events[0]["payload_schema_version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_append_event_persists_common_fields_and_queries(trace_store: TraceStore):
+    await trace_store.create_run(
+        run_id="run-1",
+        session_id="session-1",
+        trip_id="trip-1",
+        context_epoch=2,
+        started_at="2026-06-07T10:00:00+00:00",
+        status="running",
+        config_hash="sha256:config",
+        prompt_version="p1",
+        model_config_json='{"model":"gpt-4o"}',
+        tool_schema_hash="sha256:tools",
+    )
+    event = TraceEvent(
+        event_id="evt-1",
+        run_id="run-1",
+        sequence=1,
+        event_type="tool_call",
+        phase=2,
+        phase2_step="brief",
+        iteration=1,
+        tool_name="web_search",
+        llm_provider=None,
+        llm_model=None,
+        status="success",
+        duration_ms=11.0,
+        cost_usd=None,
+        payload={"schema_version": 2, "arguments_hash": "sha256:args"},
+        created_at="2026-06-07T10:00:01+00:00",
+        session_id="session-1",
+        trip_id="trip-1",
+        context_epoch=2,
+        parent_event_id="evt-parent",
+        root_event_id="evt-root",
+        correlation_id="corr-1",
+        actor="tool_engine",
+        started_at="2026-06-07T10:00:00+00:00",
+        ended_at="2026-06-07T10:00:01+00:00",
+        payload_schema_version=2,
+    )
+
+    await trace_store.append_event(event)
+
+    run = await trace_store.load_run("run-1")
+    events = await trace_store.load_events("run-1")
+    session_events = await trace_store.load_events_by_session("session-1")
+    correlation_events = await trace_store.load_events_by_correlation("run-1", "corr-1")
+
+    assert run is not None
+    assert run["config_hash"] == "sha256:config"
+    assert run["prompt_version"] == "p1"
+    assert run["tool_schema_hash"] == "sha256:tools"
+    assert events == session_events == correlation_events
+    assert events[0]["session_id"] == "session-1"
+    assert events[0]["trip_id"] == "trip-1"
+    assert events[0]["context_epoch"] == 2
+    assert events[0]["parent_event_id"] == "evt-parent"
+    assert events[0]["root_event_id"] == "evt-root"
+    assert events[0]["correlation_id"] == "corr-1"
+    assert events[0]["actor"] == "tool_engine"
+    assert events[0]["payload_schema_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_append_events_rolls_back_atomically_on_duplicate_sequence(
+    trace_store: TraceStore,
+):
+    await trace_store.create_run(
+        run_id="run-1",
+        session_id="session-1",
+        trip_id=None,
+        context_epoch=None,
+        started_at="2026-06-07T10:00:00+00:00",
+        status="running",
+    )
+    first = TraceEvent(
+        event_id="evt-1",
+        run_id="run-1",
+        sequence=1,
+        event_type="internal_task",
+        phase=None,
+        phase2_step=None,
+        iteration=None,
+        tool_name=None,
+        llm_provider=None,
+        llm_model=None,
+        status="success",
+        duration_ms=None,
+        cost_usd=None,
+        payload={},
+        created_at="2026-06-07T10:00:01+00:00",
+    )
+    duplicate_sequence = TraceEvent(
+        event_id="evt-2",
+        run_id="run-1",
+        sequence=1,
+        event_type="internal_task",
+        phase=None,
+        phase2_step=None,
+        iteration=None,
+        tool_name=None,
+        llm_provider=None,
+        llm_model=None,
+        status="success",
+        duration_ms=None,
+        cost_usd=None,
+        payload={},
+        created_at="2026-06-07T10:00:02+00:00",
+    )
+
+    with pytest.raises(Exception):
+        await trace_store.append_events([first, duplicate_sequence])
+
+    assert await trace_store.load_events("run-1") == []
+
+
+@pytest.mark.asyncio
+async def test_artifact_metadata_save_and_load_by_run_and_event(
+    trace_store: TraceStore,
+):
+    await trace_store.create_run(
+        run_id="run-1",
+        session_id="session-1",
+        trip_id=None,
+        context_epoch=None,
+        started_at="2026-06-07T10:00:00+00:00",
+        status="running",
+    )
+    event = TraceEvent(
+        event_id="evt-1",
+        run_id="run-1",
+        sequence=1,
+        event_type="tool_call",
+        phase=None,
+        phase2_step=None,
+        iteration=None,
+        tool_name="web_search",
+        llm_provider=None,
+        llm_model=None,
+        status="success",
+        duration_ms=None,
+        cost_usd=None,
+        payload={},
+        created_at="2026-06-07T10:00:01+00:00",
+        session_id="session-1",
+    )
+    await trace_store.append_event(event)
+
+    metadata = {
+        "artifact_id": "artifact-1",
+        "run_id": "run-1",
+        "event_id": "evt-1",
+        "kind": "tool_arguments",
+        "content_type": "application/json",
+        "content_hash": "sha256:abc",
+        "redaction_status": "redacted",
+        "storage_path": "trace_artifacts/session-1/run-1/artifact-1.json",
+        "size_bytes": 42,
+        "created_at": "2026-06-07T10:00:02+00:00",
+    }
+
+    await trace_store.save_artifact_metadata(metadata)
+
+    by_run = await trace_store.load_artifact_metadata("run-1")
+    by_event = await trace_store.load_artifact_metadata("run-1", event_id="evt-1")
+
+    assert by_run == by_event
+    assert by_run[0]["artifact_id"] == "artifact-1"
+    assert by_run[0]["kind"] == "tool_arguments"
+    assert by_run[0]["content_hash"] == "sha256:abc"
 
 
 @pytest.mark.asyncio

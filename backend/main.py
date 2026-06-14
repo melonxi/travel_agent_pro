@@ -56,6 +56,7 @@ from storage.message_store import MessageStore
 from storage.session_store import SessionStore
 from storage.trace_store import TraceStore
 from state.manager import StateManager
+from telemetry.trace_recorder import LocalTraceArtifactStore
 
 KEEPALIVE_INTERVAL_S = 8
 _APP_ROOT = Path(__file__).resolve().parent.parent
@@ -102,6 +103,10 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
     message_store = MessageStore(db)
     archive_store = ArchiveStore(db)
     trace_store = TraceStore(db)
+    trace_artifact_store = LocalTraceArtifactStore(
+        Path(data_dir) / "trace_artifacts",
+        relative_to=Path(data_dir),
+    )
 
     memory_orchestration = create_memory_orchestration(
         config=config,
@@ -285,6 +290,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
         append_archived_trip_episode_once=_append_archived_trip_episode_once,
         user_friendly_message=user_friendly_message,
         trace_store=trace_store,
+        trace_artifact_store=trace_artifact_store,
         tool_side_effects=_tool_side_effects,
     )
 

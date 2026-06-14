@@ -8,6 +8,7 @@ from api.orchestration.chat.trace_persistence import (
     ensure_trace_run_started,
     persist_trace_run_safely,
 )
+from evals.trace_models import TraceEvent
 from run import RunRecord
 from state.models import TravelPlanState
 from storage.database import Database
@@ -290,6 +291,57 @@ async def test_persist_trace_run_safely_uses_run_scoped_stats_offsets(
     assert run_2_row["total_input_tokens"] == 321
     assert run_2_row["total_output_tokens"] == 45
     assert run_2_row["total_duration_ms"] == 50.0
+
+
+@pytest.mark.asyncio
+async def test_persist_trace_run_safely_preserves_realtime_v2_events(
+    trace_store: TraceStore,
+):
+    realtime_event = TraceEvent(
+        event_id="evt-realtime",
+        run_id="run-1",
+        sequence=1,
+        event_type="llm_call",
+        phase=1,
+        phase2_step=None,
+        iteration=0,
+        tool_name=None,
+        llm_provider="openai",
+        llm_model="gpt-4o",
+        status="started",
+        duration_ms=None,
+        cost_usd=None,
+        payload={"schema_version": 2, "prompt_hash": "sha256:prompt"},
+        created_at="2026-06-07T10:00:00+00:00",
+        session_id="session-1",
+        payload_schema_version=2,
+    )
+    await trace_store.append_event(realtime_event)
+
+    stats = SessionStats()
+    stats.record_tool_call(
+        tool_name="web_search",
+        duration_ms=10.0,
+        status="success",
+        error_code=None,
+        phase=1,
+    )
+    session = {"stats": stats, "current_context_epoch": 0}
+    plan = TravelPlanState(session_id="session-1")
+    run = RunRecord(run_id="run-1", session_id="session-1", status="completed")
+
+    await persist_trace_run_safely(
+        trace_store=trace_store,
+        session=session,
+        plan=plan,
+        run=run,
+        tool_side_effects={"web_search": "read"},
+    )
+
+    events = await trace_store.load_events("run-1")
+
+    assert [event["event_id"] for event in events] == ["evt-realtime"]
+    assert events[0]["payload_schema_version"] == 2
 
 
 class FailingTraceStore:

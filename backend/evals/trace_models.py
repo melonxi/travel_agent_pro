@@ -5,13 +5,30 @@ from typing import Any, Literal
 
 
 TraceEventType = Literal[
+    "run_start",
+    "run_end",
     "llm_call",
+    "llm_output",
     "tool_call",
+    "tool_result",
+    "state_snapshot",
+    "state_diff",
+    "phase_gate",
+    "quality_gate",
+    "soft_judge",
+    "validation",
     "memory_recall",
     "memory_hit",
+    "context_build",
+    "context_rebuild",
     "phase_transition",
     "internal_task",
     "context_compression",
+    "phase3_orchestrator",
+    "phase3_worker",
+    "deliverable_draft",
+    "deliverable_finalize",
+    "error",
 ]
 
 RubricStatus = Literal["pass", "fail", "skip"]
@@ -34,6 +51,16 @@ class TraceEvent:
     cost_usd: float | None
     payload: dict[str, Any] = field(default_factory=dict)
     created_at: str = ""
+    session_id: str | None = None
+    trip_id: str | None = None
+    context_epoch: int | None = None
+    parent_event_id: str | None = None
+    root_event_id: str | None = None
+    correlation_id: str | None = None
+    actor: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    payload_schema_version: int | None = None
 
 
 @dataclass
