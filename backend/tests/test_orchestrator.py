@@ -21,6 +21,19 @@ from state.models import (
     Accommodation,
     Budget,
 )
+from telemetry.trace_recorder import TraceContext, TraceRecorder
+
+
+class _TraceStore:
+    def __init__(self):
+        self.events = []
+        self.artifacts = []
+
+    async def append_event(self, event):
+        self.events.append(event)
+
+    async def save_artifact_metadata(self, metadata):
+        self.artifacts.append(metadata)
 
 
 def _make_plan_with_skeleton() -> TravelPlanState:
@@ -1352,10 +1365,10 @@ async def test_orchestrator_exposes_final_dayplans_without_writing_plan(monkeypa
     plan = _make_plan_with_skeleton()
     assert plan.daily_plans == []
 
-    def activity(name: str) -> dict:
+    def activity(name: str, day: int) -> dict:
         return {
             "name": name,
-            "location": {"name": name, "lat": 35.0, "lng": 139.0},
+            "location": {"name": name, "lat": 35.0 + day, "lng": 139.0 + day},
             "start_time": "09:00",
             "end_time": "10:00",
             "category": "activity",
@@ -1372,7 +1385,7 @@ async def test_orchestrator_exposes_final_dayplans_without_writing_plan(monkeypa
                 "day": day,
                 "date": f"2026-05-0{day}",
                 "notes": f"day {day}",
-                "activities": [activity(f"POI {day}")],
+                "activities": [activity(f"POI {day}", day)],
             },
             iterations=1,
         )
@@ -1397,6 +1410,86 @@ async def test_orchestrator_exposes_final_dayplans_without_writing_plan(monkeypa
         for c in chunks
     )
     assert not any(c.type == ChunkType.DONE for c in chunks)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_emits_phase3_trace_events(monkeypatch, tmp_path):
+    plan = _make_plan_with_skeleton()
+
+    def activity(name: str, day: int) -> dict:
+        return {
+            "name": name,
+            "location": {"name": name, "lat": 35.0 + day, "lng": 139.0 + day},
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "category": "activity",
+            "cost": 0,
+        }
+
+    async def _fake_worker(**kwargs):
+        task = kwargs["task"]
+        return DayWorkerResult(
+            day=task.day,
+            date=task.date,
+            success=True,
+            dayplan={
+                "day": task.day,
+                "date": task.date,
+                "notes": f"day {task.day}",
+                "activities": [activity(f"POI {task.day}", task.day)],
+            },
+            iterations=1,
+        )
+
+    monkeypatch.setattr("agent.phase3.orchestrator.run_day_worker", _fake_worker)
+    trace_store = _TraceStore()
+
+    orch = Phase3Orchestrator(
+        plan=plan,
+        llm=AsyncMock(),
+        tool_engine=AsyncMock(),
+        config=Phase3ParallelConfig(
+            enabled=True,
+            max_workers=3,
+            artifact_root=str(tmp_path),
+        ),
+        trace_recorder=TraceRecorder(trace_store=trace_store),
+        trace_context=TraceContext(run_id="main-run", session_id=plan.session_id, phase=3),
+    )
+
+    chunks = [chunk async for chunk in orch.run()]
+
+    assert len(chunks) > 0
+    phase3_events = [
+        event for event in trace_store.events if event.event_type == "phase3_orchestrator"
+    ]
+    assert phase3_events[0].payload["stage"] == "start"
+    assert phase3_events[0].payload["day_task_count"] == 3
+    assert phase3_events[-1].payload["stage"] == "handoff"
+    assert phase3_events[-1].payload["handoff_tool_name"] == "replace_all_day_plans"
+
+    worker_events = [
+        event for event in trace_store.events if event.event_type == "phase3_worker"
+    ]
+    assert len([event for event in worker_events if event.status == "started"]) == 3
+    assert len([event for event in worker_events if event.status == "success"]) == 3
+    assert all(event.actor == "phase3_worker" for event in worker_events)
+
+    validation_events = [
+        event
+        for event in trace_store.events
+        if event.event_type == "validation"
+        and event.payload["validation_rule_id"] == "phase3_global_validation"
+    ]
+    assert [event.payload["stage"] for event in validation_events] == [
+        "initial_global_validation",
+        "final_global_validation",
+    ]
+    assert all(event.status == "pass" for event in validation_events)
+
+    artifact_kinds = {artifact.kind for artifact in trace_store.artifacts}
+    assert "context_snapshot" in artifact_kinds
+    assert "phase3_candidate" in artifact_kinds
 
 
 def test_unresolved_constraint_notice_lists_error_issues():

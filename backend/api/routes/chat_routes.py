@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from dataclasses import asdict, is_dataclass
 
 from fastapi import FastAPI, HTTPException
 from sse_starlette.sse import EventSourceResponse
@@ -17,6 +18,8 @@ from api.orchestration.chat.stream import ChatStreamDeps, run_agent_stream
 from api.orchestration.chat.trace_persistence import ensure_trace_run_started
 from api.orchestration.memory.turn import build_memory_context_for_turn
 from api.schemas import BacktrackRequest, ChatRequest
+from storage.trace_redaction import stable_content_hash
+from telemetry.trace_recorder import TraceContext, TraceRecorder
 
 
 def _continuation_notice(context_type: str) -> str | None:
@@ -25,6 +28,89 @@ def _continuation_notice(context_type: str) -> str | None:
     if context_type == "tools_read_only":
         return "你已经调用了工具并获得结果，但总结被中断了。请根据已有的工具结果继续回复。"
     return None
+
+
+def _llm_model_config(config) -> dict:
+    llm_config = getattr(config, "llm", None)
+    if llm_config is None:
+        return {}
+    if is_dataclass(llm_config):
+        return asdict(llm_config)
+    return {
+        "provider": getattr(llm_config, "provider", None),
+        "model": getattr(llm_config, "model", None),
+        "temperature": getattr(llm_config, "temperature", None),
+        "max_tokens": getattr(llm_config, "max_tokens", None),
+    }
+
+
+async def _install_trace_recorder(
+    *,
+    chat_stream_deps: ChatStreamDeps,
+    session,
+    plan,
+    agent,
+    run,
+    phase_prompt: str | None = None,
+) -> None:
+    if chat_stream_deps.trace_store is None:
+        return
+    context = TraceContext(
+        run_id=run.run_id,
+        session_id=plan.session_id,
+        trip_id=getattr(plan, "trip_id", None),
+        context_epoch=session.get("current_context_epoch"),
+        phase=plan.phase,
+        phase2_step=getattr(plan, "phase2_step", None),
+        metadata={
+            "phase_prompt_id": (
+                f"phase:{plan.phase}:step:{getattr(plan, 'phase2_step', None) or 'none'}"
+            ),
+            "phase_prompt_hash": (
+                stable_content_hash(phase_prompt) if phase_prompt is not None else None
+            ),
+        },
+    )
+    recorder = TraceRecorder(
+        trace_store=chat_stream_deps.trace_store,
+        artifact_store=chat_stream_deps.trace_artifact_store,
+    )
+    tool_schemas = agent.tool_engine.get_tools_for_phase(plan.phase, plan)
+    await recorder.start_run(
+        context,
+        payload={
+            "phase": plan.phase,
+            "phase2_step": getattr(plan, "phase2_step", None),
+            "tool_count": len(tool_schemas),
+        },
+        model_config=_llm_model_config(chat_stream_deps.config),
+        tool_schema_hash=stable_content_hash(tool_schemas),
+    )
+    initial_snapshot = plan.to_dict()
+    snapshot_event = await recorder.emit_event(
+        context,
+        event_type="state_snapshot",
+        status="success",
+        actor="storage",
+        payload={
+            "snapshot_scope": "run_start",
+            "state_hash": stable_content_hash(initial_snapshot),
+            "phase": plan.phase,
+            "phase2_step": getattr(plan, "phase2_step", None),
+        },
+    )
+    if snapshot_event is not None:
+        await recorder.attach_artifact(
+            context,
+            event_id=snapshot_event.event_id,
+            kind="state_snapshot",
+            content=initial_snapshot,
+        )
+    agent.trace_recorder = recorder
+    agent.trace_context = context
+    session["_trace_recorder"] = recorder
+    session["_trace_context"] = context
+    session["_trace_realtime_run_id"] = run.run_id
 
 
 def register_chat_routes(
@@ -143,6 +229,27 @@ def register_chat_routes(
             persisted_history = clean_persisted_session_messages(messages)
             current_user = Message(role=Role.USER, content=req.message)
             recall_messages = [*persisted_history, current_user]
+
+            from run import RunRecord
+
+            run = RunRecord(
+                run_id=str(uuid.uuid4()), session_id=plan.session_id, status="running"
+            )
+            await ensure_trace_run_started(
+                trace_store=chat_stream_deps.trace_store,
+                session=session,
+                plan=plan,
+                run=run,
+            )
+            await _install_trace_recorder(
+                chat_stream_deps=chat_stream_deps,
+                session=session,
+                plan=plan,
+                agent=agent,
+                run=run,
+                phase_prompt=phase_prompt,
+            )
+            session["_current_run"] = run
             submit_memory_snapshot(
                 build_memory_job_snapshot(
                     session_id=plan.session_id,
@@ -162,10 +269,36 @@ def register_chat_routes(
                 user_message=req.message,
                 decide_memory_recall=decide_memory_recall,
                 build_recall_retrieval_plan=_build_recall_retrieval_plan,
+                trace_recorder=getattr(agent, "trace_recorder", None),
+                trace_context=getattr(agent, "trace_context", None),
             )
             for event in memory_turn.events:
                 yield event
             memory_context = memory_turn.memory_context
+            if memory_turn.memory_hit_event_id and getattr(agent, "trace_context", None):
+                current_trace_context = agent.trace_context
+                agent.trace_context = TraceContext(
+                    run_id=current_trace_context.run_id,
+                    session_id=current_trace_context.session_id,
+                    trip_id=current_trace_context.trip_id,
+                    context_epoch=current_trace_context.context_epoch,
+                    phase=current_trace_context.phase,
+                    phase2_step=current_trace_context.phase2_step,
+                    parent_event_id=memory_turn.memory_hit_event_id,
+                    root_event_id=memory_turn.memory_hit_event_id,
+                    correlation_id=current_trace_context.correlation_id,
+                    actor=current_trace_context.actor,
+                    metadata={
+                        **dict(current_trace_context.metadata),
+                        "memory_candidate_ids": list(
+                            memory_turn.injected_context_ids or []
+                        ),
+                        "memory_hit_event_id": memory_turn.memory_hit_event_id,
+                        "memory_recall_event_id": memory_turn.memory_recall_event_id,
+                        "memory_context_hash": memory_turn.memory_context_hash,
+                    },
+                )
+                session["_trace_context"] = agent.trace_context
 
             llm_messages = [
                 context_mgr.build_static_system_message(plan, phase_prompt),
@@ -178,19 +311,6 @@ def register_chat_routes(
                 ),
             ]
             session["_active_runtime_messages"] = llm_messages
-
-            from run import RunRecord
-
-            run = RunRecord(
-                run_id=str(uuid.uuid4()), session_id=plan.session_id, status="running"
-            )
-            await ensure_trace_run_started(
-                trace_store=chat_stream_deps.trace_store,
-                session=session,
-                plan=plan,
-                run=run,
-            )
-            session["_current_run"] = run
             cancel_event = asyncio.Event()
             session["_cancel_event"] = cancel_event
             agent.cancel_event = cancel_event
@@ -291,6 +411,14 @@ def register_chat_routes(
             session=session,
             plan=plan,
             run=run,
+        )
+        await _install_trace_recorder(
+            chat_stream_deps=chat_stream_deps,
+            session=session,
+            plan=plan,
+            agent=agent,
+            run=run,
+            phase_prompt=phase_prompt,
         )
         session["_current_run"] = run
         cancel_event = asyncio.Event()

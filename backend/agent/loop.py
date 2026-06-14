@@ -5,7 +5,6 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 from opentelemetry import trace
@@ -24,10 +23,15 @@ from agent.execution.message_rebuild import (
     rebuild_messages_for_phase2_step_change,
     rebuild_messages_for_phase_change,
 )
-from agent.execution.phase_transition import (
-    PhaseTransitionRequest,
-    detect_phase_transition,
+from agent.execution.loop_events import (
+    PhaseTransitionOutcome,
+    emit_internal_task_trace,
+    emit_phase_gate_trace,
+    emit_phase_transition_trace,
+    handle_phase_transition,
+    notify_context_rebuild,
 )
+from agent.execution.phase_transition import detect_phase_transition
 from agent.execution.repair_hints import (
     RepairHintOutcome,
     build_phase2_state_repair_message,
@@ -57,13 +61,6 @@ from tools.engine import ToolEngine
 from config import Phase3ParallelConfig
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class PhaseTransitionOutcome:
-    messages: list[Message]
-    current_phase: int
-    tools: list[dict]
 
 
 ContextRebuildCallback = Callable[..., Awaitable[None]]
@@ -98,6 +95,8 @@ class AgentLoop:
         session_stats: Any | None = None,
         on_before_message_rebuild: Callable[..., Awaitable[None]] | None = None,
         on_context_rebuild: ContextRebuildCallback | None = None,
+        trace_recorder: Any | None = None,
+        trace_context: Any | None = None,
     ):
         if deps is not None:
             llm = deps.llm
@@ -111,6 +110,8 @@ class AgentLoop:
             reflection = deps.reflection
             tool_choice_decider = deps.tool_choice_decider
             guardrail = deps.guardrail
+            trace_recorder = deps.trace_recorder
+            trace_context = deps.trace_context
 
         if config is not None:
             max_iterations = config.max_iterations
@@ -122,6 +123,8 @@ class AgentLoop:
             cancel_event = config.cancel_event
             phase3_parallel_config = config.phase3_parallel_config
             internal_task_events = config.internal_task_events
+            trace_recorder = config.trace_recorder
+            trace_context = config.trace_context
 
         if llm is None or tool_engine is None or hooks is None:
             raise TypeError("AgentLoop requires llm, tool_engine, and hooks")
@@ -160,6 +163,11 @@ class AgentLoop:
         )
         self.on_before_message_rebuild = on_before_message_rebuild
         self.on_context_rebuild = on_context_rebuild
+        self.trace_recorder = trace_recorder
+        self.trace_context = trace_context
+        self._last_llm_output_event_id: str | None = None
+        self._last_llm_correlation_id: str | None = None
+        self._last_phase_gate_event_id: str | None = None
         self._progress: IterationProgress = IterationProgress.NO_OUTPUT
         self._search_history = SearchHistoryTracker()
 
@@ -241,6 +249,8 @@ class AgentLoop:
             config=self.phase3_parallel_config,
             on_handoff=_capture_handoff,
             stats=self.session_stats,
+            trace_recorder=self.trace_recorder,
+            trace_context=self.trace_context,
         ):
             yield chunk
 
@@ -328,11 +338,24 @@ class AgentLoop:
             current_phase=phase_before_batch,
             drain_internal_task_events=self._drain_internal_task_events,
         )
+        await emit_phase_gate_trace(
+            self,
+            phase_before_batch=phase_before_batch,
+            phase2_step_before_batch=phase2_step_before_batch,
+            transition_detection=transition_detection,
+            batch_outcome=batch_outcome,
+        )
         for task in transition_detection.internal_tasks:
+            await emit_internal_task_trace(
+                self,
+                task,
+                parent_event_id=self._last_phase_gate_event_id,
+            )
             yield LLMChunk(type=ChunkType.INTERNAL_TASK, internal_task=task)
 
         if transition_detection.request is not None:
-            async for transition_item in self._handle_phase_transition(
+            async for transition_item in handle_phase_transition(
+                self,
                 messages=messages,
                 request=transition_detection.request,
                 original_user_message=original_user_message,
@@ -406,6 +429,8 @@ class AgentLoop:
                             "_progress",
                             progress,
                         ),
+                        trace_recorder=self.trace_recorder,
+                        trace_context=self.trace_context,
                     ):
                         if isinstance(turn_item, LLMChunk):
                             yield turn_item
@@ -417,6 +442,10 @@ class AgentLoop:
 
                     iteration_idx = turn_outcome.next_iteration_idx
                     self._prev_phase2_step = turn_outcome.previous_phase2_step
+                    self._last_llm_output_event_id = (
+                        turn_outcome.llm_output_event_id
+                    )
+                    self._last_llm_correlation_id = turn_outcome.correlation_id
                     self._progress = turn_outcome.progress
                     prev_iteration_had_tools = False
                     phase_changed_in_prev_iteration = False
@@ -499,7 +528,19 @@ class AgentLoop:
                         current_phase=current_phase,
                         drain_internal_task_events=self._drain_internal_task_events,
                     )
+                    await emit_phase_gate_trace(
+                        self,
+                        phase_before_batch=phase_before_batch,
+                        phase2_step_before_batch=phase2_step_before_batch,
+                        transition_detection=transition_detection,
+                        batch_outcome=batch_outcome,
+                    )
                     for task in transition_detection.internal_tasks:
+                        await emit_internal_task_trace(
+                            self,
+                            task,
+                            parent_event_id=self._last_phase_gate_event_id,
+                        )
                         yield LLMChunk(
                             type=ChunkType.INTERNAL_TASK,
                             internal_task=task,
@@ -509,7 +550,8 @@ class AgentLoop:
                         prev_iteration_had_tools = True
                         phase_changed_in_prev_iteration = True
                         transition_outcome: PhaseTransitionOutcome | None = None
-                        async for transition_item in self._handle_phase_transition(
+                        async for transition_item in handle_phase_transition(
+                            self,
                             messages=messages,
                             request=transition_detection.request,
                             original_user_message=original_user_message,
@@ -532,6 +574,14 @@ class AgentLoop:
                     )
                     if phase2_step_after_batch != phase2_step_before_batch:
                         phase_changed_in_prev_iteration = True
+                        await emit_phase_transition_trace(
+                            self,
+                            from_phase=current_phase,
+                            from_step=phase2_step_before_batch,
+                            to_phase=current_phase,
+                            to_step=phase2_step_after_batch,
+                            reason="phase2_step_change",
+                        )
                         await self._flush_before_message_rebuild(
                             messages=messages,
                             from_phase=current_phase,
@@ -592,46 +642,16 @@ class AgentLoop:
             check_cancelled=self._check_cancelled,
             run_after_tool_result_hook=self._run_after_tool_result_hook,
             current_progress=self._progress,
+            plan=self.plan,
+            trace_recorder=self.trace_recorder,
+            trace_context=self.trace_context,
+            trace_parent_event_id=self._last_llm_output_event_id,
+            trace_correlation_id=self._last_llm_correlation_id,
         ):
             if isinstance(batch_item, ToolBatchOutcome):
                 self._parallel_group_counter = batch_item.next_parallel_group_counter
                 self._progress = batch_item.progress
             yield batch_item
-
-    async def _handle_phase_transition(
-        self,
-        *,
-        messages: list[Message],
-        request: PhaseTransitionRequest,
-        original_user_message: Message,
-    ) -> AsyncIterator[LLMChunk | PhaseTransitionOutcome]:
-        yield LLMChunk(
-            type=ChunkType.PHASE_TRANSITION,
-            phase_info={
-                "from_phase": request.from_phase,
-                "to_phase": request.to_phase,
-                "from_step": request.from_step,
-                "to_step": getattr(self.plan, "phase2_step", None),
-                "reason": request.reason,
-            },
-        )
-        await self._flush_before_message_rebuild(
-            messages=messages,
-            from_phase=request.from_phase,
-            from_phase2_step=request.from_step,
-        )
-        rebuilt_messages = await self._rebuild_messages_for_phase_change(
-            messages=messages,
-            from_phase=request.from_phase,
-            to_phase=request.to_phase,
-            original_user_message=original_user_message,
-            result=request.result,
-        )
-        yield PhaseTransitionOutcome(
-            messages=rebuilt_messages,
-            current_phase=request.to_phase,
-            tools=self.tool_engine.get_tools_for_phase(request.to_phase, self.plan),
-        )
 
     async def _flush_before_message_rebuild(
         self,
@@ -662,36 +682,6 @@ class AgentLoop:
     def _copy_message(self, message: Message) -> Message:
         return copy_message(message)
 
-    async def _notify_context_rebuild(
-        self,
-        *,
-        messages: list[Message],
-        from_phase: int,
-        from_phase2_step: str | None,
-        to_phase: int,
-        to_phase2_step: str | None,
-        rebuild_reason: str,
-    ) -> None:
-        if self.on_context_rebuild is None:
-            return
-        try:
-            await self.on_context_rebuild(
-                messages=messages,
-                from_phase=from_phase,
-                from_phase2_step=from_phase2_step,
-                to_phase=to_phase,
-                to_phase2_step=to_phase2_step,
-                rebuild_reason=rebuild_reason,
-            )
-        except Exception:
-            logger.warning(
-                "context rebuild callback failed phase=%s phase2_step=%s reason=%s",
-                from_phase,
-                from_phase2_step,
-                rebuild_reason,
-                exc_info=True,
-            )
-
     async def _rebuild_messages_for_phase_change(
         self,
         messages: list[Message],
@@ -706,7 +696,8 @@ class AgentLoop:
             or (isinstance(result.data, dict) and "backtrack" in result.data)
             else "phase_forward"
         )
-        await self._notify_context_rebuild(
+        await notify_context_rebuild(
+            self,
             messages=messages,
             from_phase=from_phase,
             from_phase2_step=(
@@ -738,7 +729,8 @@ class AgentLoop:
         from_phase2_step: str | None,
         to_phase2_step: str | None,
     ) -> list[Message]:
-        await self._notify_context_rebuild(
+        await notify_context_rebuild(
+            self,
             messages=messages,
             from_phase=2,
             from_phase2_step=from_phase2_step,

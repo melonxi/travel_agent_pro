@@ -4,6 +4,7 @@ import logging
 import re
 import time
 from datetime import date as dt_date, timedelta
+from typing import Any
 
 from agent.compaction import (
     compact_messages_for_prompt,
@@ -26,6 +27,7 @@ from harness.validator import (
     validate_lock_budget,
 )
 from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
+from storage.trace_redaction import stable_content_hash
 
 from api.orchestration.session.pending_notes import flush_pending_system_notes, push_pending_system_note
 from api.orchestration.common.telemetry_helpers import (
@@ -35,6 +37,125 @@ from api.orchestration.common.telemetry_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_PROMPT_TOKEN_ANCHORS_KEY = "_prompt_token_anchors"
+_PENDING_PROMPT_TOKEN_ANCHOR_KEY = "_pending_prompt_token_anchor"
+
+
+def _messages_prompt_hash(messages: list[Message]) -> str:
+    return stable_content_hash([message.to_dict() for message in messages])
+
+
+def _prompt_token_phase_key(
+    *,
+    provider: str | None,
+    model: str | None,
+    context_epoch: Any,
+    phase: Any,
+    phase2_step: str | None,
+    tools: list[dict] | None,
+) -> str:
+    return stable_content_hash(
+        {
+            "provider": provider or "unknown",
+            "model": model or "unknown",
+            "context_epoch": context_epoch,
+            "phase": phase,
+            "phase2_step": phase2_step,
+            "tools_schema_hash": stable_content_hash(tools or []),
+        }
+    )
+
+
+def _refresh_prompt_token_anchor_from_usage(session: dict | None) -> None:
+    if session is None:
+        return
+    pending = session.get(_PENDING_PROMPT_TOKEN_ANCHOR_KEY)
+    if not isinstance(pending, dict):
+        return
+
+    stats = session.get("stats")
+    calls = getattr(stats, "llm_calls", None)
+    usage_call_index = pending.get("usage_call_index")
+    if (
+        not isinstance(calls, list)
+        or not isinstance(usage_call_index, int)
+        or len(calls) <= usage_call_index
+    ):
+        return
+
+    real_input_tokens = getattr(calls[usage_call_index], "input_tokens", None)
+    if not isinstance(real_input_tokens, int) or real_input_tokens <= 0:
+        session.pop(_PENDING_PROMPT_TOKEN_ANCHOR_KEY, None)
+        return
+
+    phase_key = pending.get("phase_key")
+    message_count = pending.get("message_count")
+    prompt_hash = pending.get("prompt_hash")
+    if not (
+        isinstance(phase_key, str)
+        and isinstance(message_count, int)
+        and message_count >= 0
+        and isinstance(prompt_hash, str)
+    ):
+        session.pop(_PENDING_PROMPT_TOKEN_ANCHOR_KEY, None)
+        return
+
+    anchors = session.setdefault(_PROMPT_TOKEN_ANCHORS_KEY, {})
+    if isinstance(anchors, dict):
+        anchors[phase_key] = {
+            "real_input_tokens": real_input_tokens,
+            "message_count": message_count,
+            "prompt_hash": prompt_hash,
+        }
+    session.pop(_PENDING_PROMPT_TOKEN_ANCHOR_KEY, None)
+
+
+def _estimate_prompt_tokens_with_anchor(
+    session: dict | None,
+    messages: list[Message],
+    tools: list[dict] | None,
+    phase_key: str,
+) -> int:
+    if session is not None:
+        anchors = session.get(_PROMPT_TOKEN_ANCHORS_KEY)
+        anchor = anchors.get(phase_key) if isinstance(anchors, dict) else None
+        if isinstance(anchor, dict):
+            real_input_tokens = anchor.get("real_input_tokens")
+            message_count = anchor.get("message_count")
+            prompt_hash = anchor.get("prompt_hash")
+            if (
+                isinstance(real_input_tokens, int)
+                and real_input_tokens > 0
+                and isinstance(message_count, int)
+                and message_count >= 0
+                and len(messages) >= message_count
+                and isinstance(prompt_hash, str)
+                and _messages_prompt_hash(messages[:message_count]) == prompt_hash
+            ):
+                suffix = messages[message_count:]
+                return real_input_tokens + estimate_messages_tokens(suffix, tools=None)
+    return estimate_messages_tokens(messages, tools=tools)
+
+
+def _record_prompt_token_anchor_candidate(
+    session: dict | None,
+    messages: list[Message],
+    *,
+    phase_key: str,
+) -> None:
+    if session is None:
+        return
+    stats = session.get("stats")
+    calls = getattr(stats, "llm_calls", None)
+    session[_PENDING_PROMPT_TOKEN_ANCHOR_KEY] = {
+        "phase_key": phase_key,
+        "message_count": len(messages),
+        "prompt_hash": _messages_prompt_hash(messages),
+        "usage_call_index": len(calls) if isinstance(calls, list) else 0,
+    }
+
 
 _REFERENCE_ONLY_WEATHER_NOTE = "精确日期预报不可用"
 _REQUIRED_WEATHER_CONFIRMATION = "临近出发前再确认"
@@ -370,6 +491,10 @@ def _mark_future_weather_delivery_error(result) -> None:
         f"把天气表述改为参考信息，并在 travel_plan_markdown 或 "
         f"checklist_markdown 中明确写「{_REQUIRED_WEATHER_CONFIRMATION}」。"
     )
+    if result.metadata is None:
+        result.metadata = {}
+    result.metadata["validation_errors"] = [result.error]
+    result.metadata["validation_rule_id"] = _FUTURE_WEATHER_ERROR_CODE
 
 
 def _mark_deliverable_consistency_error(result, errors: list[str]) -> None:
@@ -381,6 +506,10 @@ def _mark_deliverable_consistency_error(result, errors: list[str]) -> None:
         "请按 TravelPlanState 的权威字段重写 generate_summary；"
         "不要改写已锁定交通、住宿、日期、预算或逐日天气事实。"
     )
+    if result.metadata is None:
+        result.metadata = {}
+    result.metadata["validation_errors"] = list(errors)
+    result.metadata["validation_rule_id"] = _DELIVERABLE_CONSISTENCY_ERROR_CODE
 
 
 def _mark_deliverable_estimation_error(result, errors: list[str]) -> None:
@@ -393,6 +522,10 @@ def _mark_deliverable_estimation_error(result, errors: list[str]) -> None:
         "系统应自动在 travel_plan_markdown 中标注；"
         "如未自动标注，请在 daily_sections 的 content 中手动添加「估算」或「⚠️」标记后重新提交。"
     )
+    if result.metadata is None:
+        result.metadata = {}
+    result.metadata["validation_errors"] = list(errors)
+    result.metadata["validation_rule_id"] = _DELIVERABLE_ESTIMATION_ERROR_CODE
 
 
 def build_agent_hooks(
@@ -491,6 +624,10 @@ def build_agent_hooks(
                     errors.extend(validate_lock_budget(plan))
 
             if errors:
+                if result.metadata is None:
+                    result.metadata = {}
+                result.metadata["validation_errors"] = list(errors)
+                result.metadata["validation_rule_id"] = "incremental_plan_validation"
                 session["_pending_validation_errors"] = errors
                 push_pending_system_note(
                     session,
@@ -498,7 +635,7 @@ def build_agent_hooks(
                     + "\n".join(f"- {error}" for error in errors),
                 )
 
-    async def on_before_llm(**kwargs):
+    async def _on_before_llm_impl(**kwargs):
         msgs = kwargs.get("messages")
         tools = kwargs.get("tools") or []
         phase = kwargs.get("phase", plan.phase)
@@ -507,24 +644,46 @@ def build_agent_hooks(
         session = sessions.get(plan.session_id)
         if session:
             flush_pending_system_notes(session, msgs)
+            _refresh_prompt_token_anchor_from_usage(session)
+        phase2_step = getattr(plan, "phase2_step", None)
+
+        def estimate_prompt(
+            candidate_messages: list[Message], candidate_tools: list[dict] | None
+        ) -> int:
+            candidate_phase_key = _prompt_token_phase_key(
+                provider=getattr(config.llm, "provider", None),
+                model=getattr(config.llm, "model", None),
+                context_epoch=(
+                    session.get("current_context_epoch") if session is not None else None
+                ),
+                phase=phase,
+                phase2_step=phase2_step,
+                tools=candidate_tools,
+            )
+            return _estimate_prompt_tokens_with_anchor(
+                session,
+                candidate_messages,
+                candidate_tools,
+                candidate_phase_key,
+            )
+
         prompt_budget = compute_prompt_budget(
             resolved_context_window["value"],
             config.llm.max_tokens,
         )
-        estimated_tokens_before = estimate_messages_tokens(msgs, tools=tools)
+        estimated_tokens_before = estimate_prompt(msgs, tools)
         message_count_before = len(msgs)
 
         tool_compaction = compact_messages_for_prompt(
             msgs,
             prompt_budget=prompt_budget,
             tools=tools,
+            prompt_token_estimator=estimate_prompt,
         )
         if tool_compaction.changed:
             msgs[:] = tool_compaction.messages
 
-        estimated_after_tool_compaction = estimate_messages_tokens(
-            msgs, tools=tools
-        )
+        estimated_after_tool_compaction = estimate_prompt(msgs, tools)
         if (
             tool_compaction.changed
             and estimated_after_tool_compaction <= prompt_budget
@@ -539,6 +698,12 @@ def build_agent_hooks(
                         "compressed_count": tool_compaction.compacted_tool_messages,
                         "estimated_tokens_before": estimated_tokens_before,
                         "estimated_tokens_after": estimated_after_tool_compaction,
+                        "compacted_summary_hash": stable_content_hash(
+                            {
+                                "mode": tool_compaction.mode,
+                                "messages": [m.to_dict() for m in msgs],
+                            }
+                        ),
                         "mode": "tool_compaction",
                         "reason": (
                             f"prompt 预算 {prompt_budget} 内进行 {tool_compaction.mode or 'moderate'}"
@@ -548,7 +713,12 @@ def build_agent_hooks(
                 )
             return
 
-        if not context_mgr.should_compress(msgs, prompt_budget, tools=tools):
+        if not context_mgr.should_compress(
+            msgs,
+            prompt_budget,
+            tools=tools,
+            estimated_tokens=estimated_after_tool_compaction,
+        ):
             return
 
         must_keep, compressible = context_mgr.classify_messages(msgs)
@@ -597,7 +767,7 @@ def build_agent_hooks(
 
         msgs[:] = rebuilt
 
-        estimated_after_summary = estimate_messages_tokens(msgs, tools=tools)
+        estimated_after_summary = estimate_prompt(msgs, tools)
         if compression_events is not None:
             compression_events.append(
                 {
@@ -608,6 +778,7 @@ def build_agent_hooks(
                     "compressed_count": len(summary_source),
                     "estimated_tokens_before": estimated_tokens_before,
                     "estimated_tokens_after": estimated_after_summary,
+                    "compacted_summary_hash": stable_content_hash(summary_text),
                     "mode": "history_summary",
                     "reason": (
                         f"prompt 预算 {prompt_budget} 仍不足，"
@@ -615,6 +786,35 @@ def build_agent_hooks(
                     ),
                 }
             )
+
+    async def on_before_llm(**kwargs):
+        # Run compaction, then remember the exact prompt prefix we actually send.
+        # The next turn reconciles this pending anchor with provider usage.
+        try:
+            await _on_before_llm_impl(**kwargs)
+        finally:
+            msgs = kwargs.get("messages")
+            if msgs:
+                session = sessions.get(plan.session_id)
+                tools = kwargs.get("tools") or []
+                phase = kwargs.get("phase", plan.phase)
+                phase_key = _prompt_token_phase_key(
+                    provider=getattr(config.llm, "provider", None),
+                    model=getattr(config.llm, "model", None),
+                    context_epoch=(
+                        session.get("current_context_epoch")
+                        if session is not None
+                        else None
+                    ),
+                    phase=phase,
+                    phase2_step=getattr(plan, "phase2_step", None),
+                    tools=tools,
+                )
+                _record_prompt_token_anchor_candidate(
+                    session,
+                    msgs,
+                    phase_key=phase_key,
+                )
 
     hooks.register("before_llm_call", on_before_llm)
 
@@ -723,6 +923,9 @@ def build_agent_hooks(
             "personalization": score.personalization,
             "suggestions_count": len(score.suggestions),
         }
+        result.metadata = dict(result.metadata or {})
+        result.metadata["judge_scores"] = judge_scores
+        result.metadata["soft_judge_action_items"] = list(score.suggestions)
         session["_pending_judge_scores"] = judge_scores
         stats = session.get("stats")
         if stats and stats.tool_calls:
@@ -789,6 +992,8 @@ def build_agent_hooks(
         to_phase = int(kwargs.get("to_phase", from_phase))
         session = sessions.get(target_plan.session_id)
         task_id = f"quality_gate:{target_plan.session_id}:{from_phase}:{to_phase}"
+        retry_key = (target_plan.session_id, from_phase, to_phase)
+        retry_count = quality_gate_retries.get(retry_key, 0)
         started_at = time.time()
         internal_task_events.append(
             InternalTask(
@@ -799,7 +1004,12 @@ def build_agent_hooks(
                 message=f"正在判断 Phase {from_phase} 是否可以进入 Phase {to_phase}…",
                 blocking=True,
                 scope="turn",
-                result={"from_phase": from_phase, "to_phase": to_phase},
+                result={
+                    "from_phase": from_phase,
+                    "to_phase": to_phase,
+                    "retry_count": retry_count,
+                    "final_action": "pending",
+                },
                 started_at=started_at,
             )
         )
@@ -834,7 +1044,12 @@ def build_agent_hooks(
                         message="可行性检查未通过，暂不推进阶段。",
                         blocking=True,
                         scope="turn",
-                        result={"reasons": feas.reasons},
+                        result={
+                            "reasons": feas.reasons,
+                            "errors": feas.reasons,
+                            "retry_count": retry_count,
+                            "final_action": "block",
+                        },
                         started_at=started_at,
                         ended_at=time.time(),
                     )
@@ -859,7 +1074,11 @@ def build_agent_hooks(
                     message="发现硬约束冲突，暂不推进阶段。",
                     blocking=True,
                     scope="turn",
-                    result={"errors": errors},
+                    result={
+                        "errors": errors,
+                        "retry_count": retry_count,
+                        "final_action": "block",
+                    },
                     started_at=started_at,
                     ended_at=time.time(),
                 )
@@ -876,7 +1095,12 @@ def build_agent_hooks(
                     message=f"允许进入 Phase {to_phase}。",
                     blocking=True,
                     scope="turn",
-                    result={"from_phase": from_phase, "to_phase": to_phase},
+                    result={
+                        "from_phase": from_phase,
+                        "to_phase": to_phase,
+                        "retry_count": retry_count,
+                        "final_action": "allow",
+                    },
                     started_at=started_at,
                     ended_at=time.time(),
                 )
@@ -908,6 +1132,10 @@ def build_agent_hooks(
                     blocking=True,
                     scope="turn",
                     error=str(exc),
+                    result={
+                        "retry_count": retry_count,
+                        "final_action": "allow",
+                    },
                     started_at=started_at,
                     ended_at=time.time(),
                 )
@@ -927,15 +1155,17 @@ def build_agent_hooks(
                     message=f"评分 {score.overall:.1f}/5，可以进入 Phase {to_phase}。",
                     blocking=True,
                     scope="turn",
-                    result={"overall": score.overall},
+                    result={
+                        "overall": score.overall,
+                        "retry_count": retry_count,
+                        "final_action": "allow",
+                    },
                     started_at=started_at,
                     ended_at=time.time(),
                 )
             )
             return GateResult(allowed=True)
 
-        retry_key = (target_plan.session_id, from_phase, to_phase)
-        retry_count = quality_gate_retries.get(retry_key, 0)
         if retry_count >= config.quality_gate.max_retries:
             quality_gate_retries.pop(retry_key, None)
             internal_task_events.append(
@@ -947,7 +1177,11 @@ def build_agent_hooks(
                     message="质量门控已达到重试上限，本次允许继续。",
                     blocking=True,
                     scope="turn",
-                    result={"overall": score.overall},
+                    result={
+                        "overall": score.overall,
+                        "retry_count": retry_count,
+                        "final_action": "allow_retry_limit",
+                    },
                     started_at=started_at,
                     ended_at=time.time(),
                 )
@@ -977,7 +1211,12 @@ def build_agent_hooks(
                 message=f"评分 {score.overall:.1f}/5，低于阈值 {config.quality_gate.threshold:.1f}。",
                 blocking=True,
                 scope="turn",
-                result={"overall": score.overall, "suggestions": suggestions},
+                result={
+                    "overall": score.overall,
+                    "suggestions": suggestions,
+                    "retry_count": retry_count + 1,
+                    "final_action": "block",
+                },
                 started_at=started_at,
                 ended_at=time.time(),
             )

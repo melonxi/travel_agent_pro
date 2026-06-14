@@ -28,7 +28,9 @@ from agent.phase3.worker_prompt import DayTask, build_day_suffix, build_shared_p
 from llm.base import LLMProvider
 from llm.types import ChunkType
 from state.models import TravelPlanState
-from telemetry.stats import llm_cache_usage_metadata
+from storage.trace_redaction import redact_for_trace, stable_content_hash
+from telemetry.stats import estimate_llm_cost_usd, llm_cache_usage_metadata
+from telemetry.trace_recorder import TraceContext, TraceRecorder
 from tools.engine import ToolEngine
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,245 @@ def _truncate_preview(value: Any, max_len: int = 120) -> str:
         return ""
     text = value if isinstance(value, str) else str(value)
     return text[:max_len] + "..." if len(text) > max_len else text
+
+
+def _trace_context_for_worker(
+    trace_context: TraceContext | None,
+    *,
+    task: DayTask,
+    run_id: str | None,
+    attempt: int,
+    actor: str,
+    parent_event_id: str | None,
+    root_event_id: str | None,
+    correlation_id: str | None = None,
+) -> TraceContext | None:
+    if trace_context is None:
+        return None
+    return TraceContext(
+        run_id=trace_context.run_id,
+        session_id=trace_context.session_id,
+        trip_id=trace_context.trip_id,
+        context_epoch=trace_context.context_epoch,
+        phase=3,
+        phase2_step=trace_context.phase2_step,
+        parent_event_id=parent_event_id,
+        root_event_id=root_event_id or parent_event_id,
+        correlation_id=correlation_id
+        or f"phase3_worker:{run_id or 'unknown'}:day:{task.day}:attempt:{attempt}",
+        actor=actor,
+        metadata=dict(trace_context.metadata),
+    )
+
+
+async def _attach_worker_artifact(
+    *,
+    trace_recorder: TraceRecorder | None,
+    trace_context: TraceContext | None,
+    task: DayTask,
+    run_id: str | None,
+    attempt: int,
+    event_id: str | None,
+    kind: str,
+    content: Any,
+    parent_event_id: str | None,
+) -> Any | None:
+    if trace_recorder is None:
+        return None
+    context = _trace_context_for_worker(
+        trace_context,
+        task=task,
+        run_id=run_id,
+        attempt=attempt,
+        actor="phase3_worker",
+        parent_event_id=parent_event_id,
+        root_event_id=parent_event_id,
+    )
+    if context is None:
+        return None
+    return await trace_recorder.attach_artifact(
+        context,
+        event_id=event_id,
+        kind=kind,
+        content=content,
+    )
+
+
+async def _emit_worker_tool_call_trace(
+    *,
+    trace_recorder: TraceRecorder | None,
+    trace_context: TraceContext | None,
+    tool_engine: ToolEngine,
+    task: DayTask,
+    run_id: str | None,
+    attempt: int,
+    iteration: int,
+    call: ToolCall,
+    parent_event_id: str | None,
+    root_event_id: str | None,
+    worker_tools: list[dict[str, Any]],
+) -> Any | None:
+    if trace_recorder is None:
+        return None
+    context = _trace_context_for_worker(
+        trace_context,
+        task=task,
+        run_id=run_id,
+        attempt=attempt,
+        actor="phase3_worker",
+        parent_event_id=parent_event_id,
+        root_event_id=root_event_id,
+    )
+    if context is None:
+        return None
+    redacted = redact_for_trace(call.arguments or {})
+    tool_schema = next(
+        (
+            schema
+            for schema in worker_tools
+            if isinstance(schema, dict) and schema.get("name") == call.name
+        ),
+        None,
+    )
+    tool_def = tool_engine.get_tool(call.name)
+    side_effect = (
+        "phase3_candidate_submit"
+        if call.name == "submit_day_plan_candidate"
+        else getattr(tool_def, "side_effect", "read")
+        if tool_def is not None
+        else "read"
+    )
+    event = await trace_recorder.emit_event(
+        context,
+        event_type="tool_call",
+        tool_name=call.name,
+        status="started",
+        iteration=iteration,
+        actor="phase3_worker",
+        parent_event_id=parent_event_id,
+        root_event_id=root_event_id,
+        payload={
+            "tool_call_id": call.id,
+            "tool_name": call.name,
+            "scope": "phase3_worker",
+            "day": task.day,
+            "attempt": attempt,
+            "worker_run_id": run_id,
+            "arguments_hash": stable_content_hash(redacted.value),
+            "arguments_preview": _truncate_preview(redacted.value, 500),
+            "arguments_redaction_status": redacted.redaction_status,
+            "tool_schema_hash": stable_content_hash(tool_schema)
+            if tool_schema is not None
+            else None,
+            "side_effect": side_effect,
+        },
+    )
+    if event is not None:
+        await _attach_worker_artifact(
+            trace_recorder=trace_recorder,
+            trace_context=trace_context,
+            task=task,
+            run_id=run_id,
+            attempt=attempt,
+            event_id=event.event_id,
+            kind="tool_arguments",
+            content=call.arguments or {},
+            parent_event_id=parent_event_id,
+        )
+    return event
+
+
+async def _emit_worker_tool_result_trace(
+    *,
+    trace_recorder: TraceRecorder | None,
+    trace_context: TraceContext | None,
+    task: DayTask,
+    run_id: str | None,
+    attempt: int,
+    iteration: int,
+    call: ToolCall,
+    result: ToolResult,
+    call_event: Any | None,
+) -> Any | None:
+    if trace_recorder is None:
+        return None
+    parent_event_id = call_event.event_id if call_event is not None else None
+    root_event_id = (
+        call_event.root_event_id or call_event.event_id
+        if call_event is not None
+        else None
+    )
+    context = _trace_context_for_worker(
+        trace_context,
+        task=task,
+        run_id=run_id,
+        attempt=attempt,
+        actor="phase3_worker",
+        parent_event_id=parent_event_id,
+        root_event_id=root_event_id,
+    )
+    if context is None:
+        return None
+    result_body = result.data if result.status == "success" else {
+        "error": result.error,
+        "error_code": result.error_code,
+        "suggestion": result.suggestion,
+    }
+    redacted = redact_for_trace(result_body)
+    event = await trace_recorder.emit_event(
+        context,
+        event_type="tool_result",
+        tool_name=call.name,
+        status=result.status,
+        iteration=iteration,
+        actor="phase3_worker",
+        parent_event_id=parent_event_id,
+        root_event_id=root_event_id,
+        payload={
+            "tool_call_id": call.id,
+            "tool_name": call.name,
+            "scope": "phase3_worker",
+            "day": task.day,
+            "attempt": attempt,
+            "worker_run_id": run_id,
+            "status": result.status,
+            "error_code": result.error_code,
+            "suggestion": result.suggestion,
+            "retryable": result.status == "error",
+            "result_hash": stable_content_hash(redacted.value),
+            "result_preview": _truncate_preview(redacted.value, 500),
+            "result_redaction_status": redacted.redaction_status,
+            "quality_flags": {
+                "usable": result.status == "success" and bool(result.data),
+                "empty": result.status == "success" and not bool(result.data),
+                "partial": bool(result.metadata and result.metadata.get("partial")),
+                "low_confidence": bool(
+                    result.metadata and result.metadata.get("low_confidence")
+                ),
+                "error": result.status == "error",
+            },
+            "metadata": dict(result.metadata or {}),
+            "candidate_submission_path": (
+                result.data.get("path")
+                if isinstance(result.data, dict)
+                and call.name == "submit_day_plan_candidate"
+                else None
+            ),
+        },
+    )
+    if event is not None:
+        await _attach_worker_artifact(
+            trace_recorder=trace_recorder,
+            trace_context=trace_context,
+            task=task,
+            run_id=run_id,
+            attempt=attempt,
+            event_id=event.event_id,
+            kind="tool_result",
+            content=result_body,
+            parent_event_id=parent_event_id,
+        )
+    return event
 
 
 def _worker_metadata(
@@ -536,6 +777,9 @@ async def run_day_worker(
     run_id: str | None = None,
     attempt: int = 1,
     stats: Any | None = None,
+    trace_recorder: TraceRecorder | None = None,
+    trace_context: TraceContext | None = None,
+    trace_parent_event_id: str | None = None,
 ) -> DayWorkerResult:
     """Run a single Day Worker agent loop.
 
@@ -614,6 +858,83 @@ async def run_day_worker(
                     provider_state: dict[str, object] = {}
                     llm_started_at = time.monotonic()
                     usage_recorded = False
+                    usage_info: dict[str, Any] | None = None
+                    worker_correlation_id = (
+                        f"phase3_worker:{run_id or 'unknown'}:"
+                        f"day:{task.day}:attempt:{attempt}:iter:{iterations}"
+                    )
+                    prompt_payload = [message.to_dict() for message in messages]
+                    worker_tools_hash = stable_content_hash(worker_tools)
+                    llm_call_event = None
+                    llm_output_event = None
+                    if trace_recorder is not None:
+                        llm_context = _trace_context_for_worker(
+                            trace_context,
+                            task=task,
+                            run_id=run_id,
+                            attempt=attempt,
+                            actor="phase3_worker",
+                            parent_event_id=trace_parent_event_id,
+                            root_event_id=trace_parent_event_id,
+                            correlation_id=worker_correlation_id,
+                        )
+                        if llm_context is not None:
+                            llm_call_event = await trace_recorder.emit_event(
+                                llm_context,
+                                event_type="llm_call",
+                                iteration=iterations,
+                                llm_provider=getattr(
+                                    llm, "provider_name", "unknown"
+                                ),
+                                llm_model=getattr(llm, "model", "unknown"),
+                                status="started",
+                                actor="phase3_worker",
+                                parent_event_id=trace_parent_event_id,
+                                root_event_id=trace_parent_event_id,
+                                correlation_id=worker_correlation_id,
+                                payload={
+                                    "scope": "phase3_worker",
+                                    "day": task.day,
+                                    "attempt": attempt,
+                                    "worker_run_id": run_id,
+                                    "provider": getattr(
+                                        llm, "provider_name", "unknown"
+                                    ),
+                                    "model": getattr(llm, "model", "unknown"),
+                                    "stream": True,
+                                    "tool_names": [
+                                        schema.get("name")
+                                        for schema in worker_tools
+                                        if isinstance(schema, dict)
+                                    ],
+                                    "tool_schema_hash": worker_tools_hash,
+                                    "system_prompt_hash": stable_content_hash(
+                                        shared_prefix
+                                    ),
+                                    "prompt_hash": stable_content_hash(
+                                        prompt_payload
+                                    ),
+                                    "message_count": len(messages),
+                                    "constraints_hash": stable_content_hash(
+                                        task.__dict__
+                                    ),
+                                },
+                            )
+                            if llm_call_event is not None:
+                                await _attach_worker_artifact(
+                                    trace_recorder=trace_recorder,
+                                    trace_context=trace_context,
+                                    task=task,
+                                    run_id=run_id,
+                                    attempt=attempt,
+                                    event_id=llm_call_event.event_id,
+                                    kind="llm_prompt",
+                                    content={
+                                        "messages": prompt_payload,
+                                        "tools": worker_tools,
+                                    },
+                                    parent_event_id=trace_parent_event_id,
+                                )
 
                     async for chunk in llm.chat(
                         messages, tools=worker_tools, stream=True
@@ -638,6 +959,7 @@ async def run_day_worker(
                         ):
                             tool_calls.append(chunk.tool_call)
                         elif chunk.type == ChunkType.USAGE and chunk.usage_info:
+                            usage_info = dict(chunk.usage_info)
                             usage_recorded = True
                             _record_worker_llm_call(
                                 stats=stats,
@@ -677,6 +999,110 @@ async def run_day_worker(
                         )
 
                     assistant_text = "".join(text_chunks)
+                    if trace_recorder is not None:
+                        output_parent_event_id = (
+                            llm_call_event.event_id
+                            if llm_call_event is not None
+                            else trace_parent_event_id
+                        )
+                        output_root_event_id = (
+                            llm_call_event.root_event_id or llm_call_event.event_id
+                            if llm_call_event is not None
+                            else trace_parent_event_id
+                        )
+                        output_context = _trace_context_for_worker(
+                            trace_context,
+                            task=task,
+                            run_id=run_id,
+                            attempt=attempt,
+                            actor="phase3_worker",
+                            parent_event_id=output_parent_event_id,
+                            root_event_id=output_root_event_id,
+                            correlation_id=worker_correlation_id,
+                        )
+                        if output_context is not None:
+                            input_tokens = int(
+                                (usage_info or {}).get("input_tokens", 0)
+                                or (usage_info or {}).get("prompt_tokens", 0)
+                                or 0
+                            )
+                            output_tokens = int(
+                                (usage_info or {}).get("output_tokens", 0)
+                                or (usage_info or {}).get("completion_tokens", 0)
+                                or 0
+                            )
+                            llm_output_event = await trace_recorder.emit_event(
+                                output_context,
+                                event_type="llm_output",
+                                iteration=iterations,
+                                llm_provider=getattr(
+                                    llm, "provider_name", "unknown"
+                                ),
+                                llm_model=getattr(llm, "model", "unknown"),
+                                status="success",
+                                duration_ms=max(
+                                    0.0,
+                                    (time.monotonic() - llm_started_at) * 1000,
+                                ),
+                                cost_usd=round(
+                                    estimate_llm_cost_usd(
+                                        getattr(llm, "model", "unknown"),
+                                        input_tokens,
+                                        output_tokens,
+                                        usage_info,
+                                    ),
+                                    6,
+                                ),
+                                actor="phase3_worker",
+                                parent_event_id=output_parent_event_id,
+                                root_event_id=output_root_event_id,
+                                correlation_id=worker_correlation_id,
+                                payload={
+                                    "scope": "phase3_worker",
+                                    "day": task.day,
+                                    "attempt": attempt,
+                                    "worker_run_id": run_id,
+                                    "input_tokens": input_tokens,
+                                    "output_tokens": output_tokens,
+                                    "usage": usage_info or {},
+                                    "output_hash": stable_content_hash(
+                                        {
+                                            "text": assistant_text,
+                                            "tool_calls": [
+                                                call.__dict__
+                                                for call in tool_calls
+                                            ],
+                                        }
+                                    ),
+                                    "output_preview": _truncate_preview(
+                                        assistant_text, 500
+                                    ),
+                                    "tool_call_ids": [
+                                        call.id for call in tool_calls
+                                    ],
+                                    "tool_call_names": [
+                                        call.name for call in tool_calls
+                                    ],
+                                },
+                            )
+                            if llm_output_event is not None:
+                                await _attach_worker_artifact(
+                                    trace_recorder=trace_recorder,
+                                    trace_context=trace_context,
+                                    task=task,
+                                    run_id=run_id,
+                                    attempt=attempt,
+                                    event_id=llm_output_event.event_id,
+                                    kind="llm_response",
+                                    content={
+                                        "text": assistant_text,
+                                        "tool_calls": [
+                                            call.__dict__ for call in tool_calls
+                                        ],
+                                        "usage": usage_info or {},
+                                    },
+                                    parent_event_id=output_parent_event_id,
+                                )
 
                     # No tool calls → final response, extract JSON
                     if not tool_calls:
@@ -818,7 +1244,27 @@ async def run_day_worker(
                     results: list[ToolResult] = []
                     external_tool_calls: list[ToolCall] = []
                     external_positions: list[int] = []
+                    tool_call_events: dict[str, Any | None] = {}
                     for pos, call in enumerate(tool_calls):
+                        tool_call_events[call.id] = await _emit_worker_tool_call_trace(
+                            trace_recorder=trace_recorder,
+                            trace_context=trace_context,
+                            tool_engine=tool_engine,
+                            task=task,
+                            run_id=run_id,
+                            attempt=attempt,
+                            iteration=iterations,
+                            call=call,
+                            parent_event_id=(
+                                llm_output_event.event_id
+                                if llm_output_event is not None
+                                else llm_call_event.event_id
+                                if llm_call_event is not None
+                                else trace_parent_event_id
+                            ),
+                            root_event_id=trace_parent_event_id,
+                            worker_tools=worker_tools,
+                        )
                         if call.name == "submit_day_plan_candidate":
                             result = _submit_day_plan_candidate(
                                 call=call,
@@ -966,6 +1412,17 @@ async def run_day_worker(
                             iteration=iterations,
                             tool_call=tc,
                             result=result,
+                        )
+                        await _emit_worker_tool_result_trace(
+                            trace_recorder=trace_recorder,
+                            trace_context=trace_context,
+                            task=task,
+                            run_id=run_id,
+                            attempt=attempt,
+                            iteration=iterations,
+                            call=tc,
+                            result=result,
+                            call_event=tool_call_events.get(tc.id),
                         )
                         messages.append(Message(role=Role.TOOL, tool_result=result))
                         if followup_prompt:

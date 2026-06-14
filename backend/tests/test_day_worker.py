@@ -19,6 +19,19 @@ from agent.phase3.worker_prompt import DayTask
 from llm.types import ChunkType, LLMChunk
 from state.models import DateRange, TravelPlanState
 from telemetry.stats import SessionStats
+from telemetry.trace_recorder import TraceContext, TraceRecorder
+
+
+class _TraceStore:
+    def __init__(self):
+        self.events = []
+        self.artifacts = []
+
+    async def append_event(self, event):
+        self.events.append(event)
+
+    async def save_artifact_metadata(self, metadata):
+        self.artifacts.append(metadata)
 
 
 def _stub_plan() -> TravelPlanState:
@@ -238,6 +251,72 @@ async def test_run_day_worker_records_worker_stats(tmp_path):
     assert stats.tool_calls[0].tool_name == "submit_day_plan_candidate"
     assert stats.tool_calls[0].metadata["day"] == 1
     assert stats.tool_calls[0].metadata["tool_call_id"] == "submit_1"
+
+
+@pytest.mark.asyncio
+async def test_run_day_worker_emits_worker_trace_events(tmp_path):
+    dayplan = {"day": 1, "date": "2026-05-01", "notes": "submitted", "activities": []}
+    llm = _LLMStub(
+        [
+            [
+                LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=_tc(
+                        "submit_day_plan_candidate",
+                        call_id="submit_1",
+                        dayplan=dayplan,
+                    ),
+                ),
+                LLMChunk(
+                    type=ChunkType.USAGE,
+                    usage_info={"input_tokens": 12, "output_tokens": 4},
+                ),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+            [
+                LLMChunk(type=ChunkType.TEXT_DELTA, content="已提交第 1 天计划。"),
+                LLMChunk(type=ChunkType.DONE),
+            ],
+        ]
+    )
+    trace_store = _TraceStore()
+
+    result = await run_day_worker(
+        llm=llm,
+        tool_engine=_ToolEngineStub(),
+        plan=_stub_plan(),
+        task=_task(),
+        shared_prefix="SHARED PREFIX",
+        timeout_seconds=5,
+        candidate_store=Phase3CandidateStore(tmp_path),
+        run_id="phase3_run_1",
+        attempt=1,
+        trace_recorder=TraceRecorder(trace_store=trace_store),
+        trace_context=TraceContext(
+            run_id="main-run",
+            session_id="s-day-worker",
+            phase=3,
+        ),
+        trace_parent_event_id="evt_orchestrator",
+    )
+
+    assert result.success is True
+    event_types = [event.event_type for event in trace_store.events]
+    assert event_types[:4] == ["llm_call", "llm_output", "tool_call", "tool_result"]
+
+    llm_output = trace_store.events[1]
+    tool_call = trace_store.events[2]
+    tool_result = trace_store.events[3]
+    assert tool_call.parent_event_id == llm_output.event_id
+    assert tool_result.parent_event_id == tool_call.event_id
+    assert tool_call.actor == "phase3_worker"
+    assert tool_call.payload["scope"] == "phase3_worker"
+    assert tool_call.payload["day"] == 1
+    assert tool_call.payload["side_effect"] == "phase3_candidate_submit"
+    assert tool_result.payload["candidate_submission_path"]
+
+    artifact_kinds = {artifact.kind for artifact in trace_store.artifacts}
+    assert {"llm_prompt", "llm_response", "tool_arguments", "tool_result"} <= artifact_kinds
 
 
 def test_extract_dayplan_json_from_code_block():

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
+from agent.token_chars import estimate_text_tokens
 from agent.types import Message, Role, ToolCall, ToolResult
 
 DEFAULT_SAFETY_MARGIN = 2000
@@ -25,6 +26,9 @@ class CompactionOutcome:
     mode: str | None = None
     compacted_tool_messages: int = 0
     largest_tool_tokens: int = 0
+
+
+PromptTokenEstimator = Callable[[list[Message], list[dict[str, Any]] | None], int]
 
 
 def compute_prompt_budget(
@@ -84,8 +88,14 @@ def compact_messages_for_prompt(
     aggressive_ratio: float = AGGRESSIVE_COMPACT_RATIO,
     oversized_tool_ratio: float = OVERSIZED_TOOL_RATIO,
     oversized_tool_min_tokens: int = OVERSIZED_TOOL_MIN_TOKENS,
+    prompt_token_estimator: PromptTokenEstimator | None = None,
 ) -> CompactionOutcome:
-    estimated_before = estimate_messages_tokens(messages, tools=tools)
+    def estimate_prompt(candidate: list[Message]) -> int:
+        if prompt_token_estimator is not None:
+            return prompt_token_estimator(candidate, tools)
+        return estimate_messages_tokens(candidate, tools=tools)
+
+    estimated_before = estimate_prompt(messages)
     usage_ratio_before = estimated_before / prompt_budget if prompt_budget else 0.0
 
     pending_tool_calls: dict[str, ToolCall] = {}
@@ -138,7 +148,7 @@ def compact_messages_for_prompt(
             changed = True
             compacted_tool_messages += 1
 
-    estimated_after = estimate_messages_tokens(new_messages, tools=tools)
+    estimated_after = estimate_prompt(new_messages)
     return CompactionOutcome(
         messages=new_messages if changed else messages,
         estimated_before=estimated_before,
@@ -356,9 +366,9 @@ def _safe_dump(value: Any) -> str:
 
 
 def _estimate_text_tokens(text: str) -> int:
-    if not text:
-        return 0
-    return max(1, len(text) // 3)
+    # Language-aware, calibrated against real provider usage. A flat len//N ratio
+    # under-estimates CJK and over-estimates ASCII; see agent.token_chars.
+    return estimate_text_tokens(text)
 
 
 def _truncate_text(value: Any, limit: int) -> Any:

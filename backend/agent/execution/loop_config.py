@@ -23,6 +23,8 @@ class AgentLoopDeps:
     reflection: Any | None = None
     tool_choice_decider: Any | None = None
     guardrail: Any | None = None
+    trace_recorder: Any | None = None
+    trace_context: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -36,3 +38,5 @@ class AgentLoopConfig:
     cancel_event: asyncio.Event | None = None
     phase3_parallel_config: Phase3ParallelConfig | None = None
     internal_task_events: list[InternalTask] | None = None
+    trace_recorder: Any | None = None
+    trace_context: Any | None = None

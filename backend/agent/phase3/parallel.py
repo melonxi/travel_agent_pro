@@ -68,6 +68,8 @@ async def run_parallel_phase3_orchestrator(
     config: Phase3ParallelConfig | None,
     on_handoff: Callable[[Phase3ParallelHandoff], None] | None = None,
     stats: Any | None = None,
+    trace_recorder: Any | None = None,
+    trace_context: Any | None = None,
 ) -> AsyncIterator[LLMChunk]:
     from agent.phase3.orchestrator import Phase3Orchestrator
 
@@ -93,6 +95,8 @@ async def run_parallel_phase3_orchestrator(
         tool_engine=tool_engine,
         config=config,
         stats=stats,
+        trace_recorder=trace_recorder,
+        trace_context=trace_context,
     )
     try:
         async for chunk in orchestrator.run():

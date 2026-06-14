@@ -4,7 +4,6 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from agent.types import Message, Role
@@ -30,9 +29,12 @@ from api.orchestration.chat.events import (
 )
 from api.orchestration.chat.finalization import (
     finalize_agent_run,
-    persist_run_safely,
 )
-from api.orchestration.chat.trace_persistence import persist_trace_run_safely
+from api.orchestration.chat.stream_runtime import run_timeout
+from api.orchestration.chat.stream_trace import (
+    emit_deliverable_draft_trace,
+    finalize_stream_trace_and_persistence,
+)
 from api.orchestration.common.telemetry_helpers import (
     _plan_writer_updated_fields as plan_writer_updated_fields,
     _record_llm_usage_stats as record_llm_usage_stats,
@@ -41,15 +43,6 @@ from api.orchestration.common.telemetry_helpers import (
 
 logger = logging.getLogger(__name__)
 _has_frozen_phase4_deliverables = has_frozen_phase4_deliverables
-
-
-@asynccontextmanager
-async def _run_timeout(seconds: object):
-    if not isinstance(seconds, (int, float)) or seconds <= 0:
-        yield
-        return
-    async with asyncio.timeout(float(seconds)):
-        yield
 
 
 @dataclass
@@ -70,6 +63,7 @@ class ChatStreamDeps:
     append_archived_trip_episode_once: Callable[..., object]
     user_friendly_message: Callable[[LLMError], str]
     trace_store: object | None = None
+    trace_artifact_store: object | None = None
     tool_side_effects: Callable[[], dict[str, str]] | None = None
 
 
@@ -109,7 +103,7 @@ async def run_agent_stream(
         llm_started_at = time.monotonic()
         usage_iteration = 0
         try:
-            async with _run_timeout(getattr(deps.config, "run_timeout_seconds", None)):
+            async with run_timeout(getattr(deps.config, "run_timeout_seconds", None)):
                 async for chunk in agent.run(messages, phase=plan.phase):
                     if chunk.type.value == "keepalive":
                         passthrough_event = passthrough_chunk_event(chunk)
@@ -135,6 +129,12 @@ async def run_agent_stream(
                     if passthrough_event is not None:
                         yield passthrough_event
                         if chunk.type == ChunkType.INTERNAL_TASK:
+                            session["_trace_recorder"] = getattr(
+                                agent, "trace_recorder", None
+                            )
+                            session["_trace_context"] = getattr(
+                                agent, "trace_context", None
+                            )
                             if await finalize_pending_phase4_deliverables(
                                 deps=deps,
                                 session=session,
@@ -182,9 +182,21 @@ async def run_agent_stream(
                         )
                         updated_fields = plan_writer_updated_fields(result_data)
                         if tool_name == "generate_summary":
+                            await emit_deliverable_draft_trace(
+                                session=session,
+                                plan=plan,
+                                agent=agent,
+                                tool_result=chunk.tool_result,
+                                result_data=result_data,
+                            )
                             session["_pending_phase4_deliverables"] = {
                                 "tool_call_id": chunk.tool_result.tool_call_id,
                                 "result_data": result_data,
+                                "tool_result_trace_event_id": (
+                                    chunk.tool_result.metadata or {}
+                                ).get("trace_event_id")
+                                if isinstance(chunk.tool_result.metadata, dict)
+                                else None,
                             }
                         elif result_data.get("backtracked"):
                             await deps.state_mgr.clear_deliverables(plan.session_id)
@@ -243,6 +255,8 @@ async def run_agent_stream(
                             yield event_json(
                                 {"type": "phase_transition", **_pending_step}
                             )
+                session["_trace_recorder"] = getattr(agent, "trace_recorder", None)
+                session["_trace_context"] = getattr(agent, "trace_context", None)
                 if await finalize_pending_phase4_deliverables(
                     deps=deps,
                     session=session,
@@ -369,22 +383,13 @@ async def run_agent_stream(
             yield event
 
     finally:
-        await persist_run_safely(
+        await finalize_stream_trace_and_persistence(
             deps=deps,
             session=session,
             plan=plan,
             messages=messages,
+            agent=agent,
             run=run,
-        )
-        tool_side_effects = (
-            deps.tool_side_effects() if deps.tool_side_effects is not None else {}
-        )
-        await persist_trace_run_safely(
-            trace_store=deps.trace_store,
-            session=session,
-            plan=plan,
-            run=run,
-            tool_side_effects=tool_side_effects,
         )
         keepalive_task.cancel()
         session.pop("_cancel_event", None)

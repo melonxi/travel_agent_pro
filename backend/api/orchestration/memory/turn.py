@@ -8,6 +8,8 @@ from typing import Any
 from agent.internal_tasks import InternalTask
 from agent.types import Role
 from memory.formatter import MemoryRecallTelemetry
+from storage.trace_redaction import stable_content_hash
+from telemetry.trace_recorder import TraceContext, TraceRecorder
 
 from api.orchestration.memory.recall_planning import (
     _GATE_HEURISTIC_RECALL_FALLBACKS,
@@ -24,6 +26,10 @@ from api.orchestration.common.telemetry_helpers import (
 class MemoryTurnResult:
     memory_context: str
     events: list[str]
+    memory_recall_event_id: str | None = None
+    memory_hit_event_id: str | None = None
+    injected_context_ids: list[str] | None = None
+    memory_context_hash: str | None = None
 
 
 async def build_memory_context_for_turn(
@@ -37,6 +43,8 @@ async def build_memory_context_for_turn(
     user_message: str,
     decide_memory_recall,
     build_recall_retrieval_plan,
+    trace_recorder: TraceRecorder | None = None,
+    trace_context: TraceContext | None = None,
 ) -> MemoryTurnResult:
     if not config.memory.enabled:
         return MemoryTurnResult(memory_context="暂无相关用户记忆", events=[])
@@ -68,6 +76,8 @@ async def build_memory_context_for_turn(
         for message in messages
         if message.role == Role.USER and message.content
     ]
+    previous_user_messages = user_messages[:-1]
+    correlation_id = f"memory_recall:{plan.session_id}:{int(memory_recall_started_at)}"
     recall_decision = await decide_memory_recall(
         session_id=plan.session_id,
         user_id=user_id,
@@ -149,6 +159,8 @@ async def build_memory_context_for_turn(
         memory_recall.final_recall_decision
         or _final_recall_decision_from_gate(recall_decision.needs_recall)
     )
+    memory_recall_event_id = None
+    memory_hit_event_id = None
 
     recalled_ids = list(
         dict.fromkeys(
@@ -240,6 +252,110 @@ async def build_memory_context_for_turn(
         if memory_hit_record is not None:
             session_stats.memory_hits.append(memory_hit_record)
 
+    if trace_recorder is not None and trace_context is not None:
+        recall_payload = {
+            **memory_recall.to_dict(),
+            "latest_user_message_hash": stable_content_hash(user_message or ""),
+            "previous_user_message_count": len(previous_user_messages),
+            "previous_user_messages_hash": stable_content_hash(previous_user_messages),
+            "stage1_gate_input_hash": stable_content_hash(
+                {
+                    "user_messages": user_messages,
+                    "plan_session_id": getattr(plan, "session_id", None),
+                    "plan_phase": getattr(plan, "phase", None),
+                }
+            ),
+            "stage1_gate_output": {
+                "needs_recall": recall_decision.needs_recall,
+                "intent_type": recall_decision.intent_type,
+                "confidence": recall_decision.confidence,
+                "reason": recall_decision.reason,
+            },
+            "stage2_retrieval_plan": memory_recall.query_plan,
+            "stage3_candidate_counts": {
+                "candidate_count": memory_recall.candidate_count,
+                "sources": dict(memory_recall.sources),
+                "stage3_profile": dict(memory_recall.stage3_profile),
+                "stage3_episode": dict(memory_recall.stage3_episode),
+            },
+            "stage4_selected_ids": {
+                "profile": list(memory_recall.profile_reranker_selected_ids),
+                "episode": list(memory_recall.episode_reranker_selected_ids),
+                "combined": list(memory_recall.reranker_selected_ids),
+            },
+            "stage4_score_summaries": {
+                "reranker_per_item_scores": dict(
+                    memory_recall.reranker_per_item_scores
+                ),
+                "profile_reranker_per_item_scores": dict(
+                    memory_recall.profile_reranker_per_item_scores
+                ),
+                "episode_reranker_per_item_scores": dict(
+                    memory_recall.episode_reranker_per_item_scores
+                ),
+            },
+            "fallback_source": memory_recall.fallback_used,
+            "query_plan_fallback": memory_recall.query_plan_fallback,
+            "error_path": memory_recall.recall_skip_source,
+        }
+        recall_context = TraceContext(
+            run_id=trace_context.run_id,
+            session_id=trace_context.session_id,
+            trip_id=trace_context.trip_id,
+            context_epoch=trace_context.context_epoch,
+            phase=getattr(plan, "phase", trace_context.phase),
+            phase2_step=getattr(plan, "phase2_step", trace_context.phase2_step),
+            correlation_id=correlation_id,
+            actor="memory_system",
+            metadata=dict(trace_context.metadata),
+        )
+        recall_event = await trace_recorder.emit_event(
+            recall_context,
+            event_type="memory_recall",
+            status="success" if recalled_ids else "skipped",
+            actor="memory_system",
+            correlation_id=correlation_id,
+            payload=recall_payload,
+        )
+        memory_recall_event_id = (
+            recall_event.event_id if recall_event is not None else None
+        )
+        if recalled_ids:
+            hit_context = TraceContext(
+                run_id=trace_context.run_id,
+                session_id=trace_context.session_id,
+                trip_id=trace_context.trip_id,
+                context_epoch=trace_context.context_epoch,
+                phase=getattr(plan, "phase", trace_context.phase),
+                phase2_step=getattr(plan, "phase2_step", trace_context.phase2_step),
+                parent_event_id=memory_recall_event_id,
+                root_event_id=memory_recall_event_id,
+                correlation_id=correlation_id,
+                actor="memory_system",
+                metadata=dict(trace_context.metadata),
+            )
+            hit_event = await trace_recorder.emit_event(
+                hit_context,
+                event_type="memory_hit",
+                status="success",
+                actor="memory_system",
+                parent_event_id=memory_recall_event_id,
+                root_event_id=memory_recall_event_id,
+                correlation_id=correlation_id,
+                payload={
+                    "selected_ids": recalled_ids,
+                    "injected_context_ids": recalled_ids,
+                    "profile_ids": list(memory_recall.profile_ids),
+                    "working_memory_ids": list(memory_recall.working_memory_ids),
+                    "slice_ids": list(memory_recall.slice_ids),
+                    "sources": dict(memory_recall.sources),
+                    "memory_context_hash": stable_content_hash(memory_context),
+                },
+            )
+            memory_hit_event_id = (
+                hit_event.event_id if hit_event is not None else None
+            )
+
     events.append(
         json.dumps(
             {
@@ -250,4 +366,11 @@ async def build_memory_context_for_turn(
             ensure_ascii=False,
         )
     )
-    return MemoryTurnResult(memory_context=memory_context, events=events)
+    return MemoryTurnResult(
+        memory_context=memory_context,
+        events=events,
+        memory_recall_event_id=memory_recall_event_id,
+        memory_hit_event_id=memory_hit_event_id,
+        injected_context_ids=recalled_ids,
+        memory_context_hash=stable_content_hash(memory_context),
+    )

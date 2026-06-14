@@ -530,10 +530,15 @@ class ContextManager:
         max_tokens: int,
         *,
         tools: list[dict[str, Any]] | None = None,
+        estimated_tokens: int | None = None,
     ) -> bool:
         tracer = trace.get_tracer("travel-agent-pro")
         with tracer.start_as_current_span("context.should_compress") as span:
-            estimated = estimate_messages_tokens(messages, tools=tools)
+            estimated = (
+                estimated_tokens
+                if estimated_tokens is not None
+                else estimate_messages_tokens(messages, tools=tools)
+            )
             span.set_attribute(CONTEXT_TOKENS_BEFORE, estimated)
             span.set_attribute("context.max_tokens", max_tokens)
             result = estimated > max_tokens

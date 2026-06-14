@@ -34,6 +34,8 @@ from config import Phase3ParallelConfig
 from llm.base import LLMProvider
 from llm.types import ChunkType, LLMChunk
 from state.models import TravelPlanState, normalize_pace_value
+from storage.trace_redaction import stable_content_hash
+from telemetry.trace_recorder import TraceContext, TraceRecorder
 from tools.engine import ToolEngine
 
 logger = logging.getLogger(__name__)
@@ -232,14 +234,183 @@ class Phase3Orchestrator:
         tool_engine: ToolEngine | None,
         config: Phase3ParallelConfig | None,
         stats: Any | None = None,
+        trace_recorder: TraceRecorder | None = None,
+        trace_context: TraceContext | None = None,
     ):
         self.plan = plan
         self.llm = llm
         self.tool_engine = tool_engine
         self.config = config or Phase3ParallelConfig()
         self.stats = stats
+        self.trace_recorder = trace_recorder
+        self.trace_context = trace_context
         self.final_dayplans: list[dict[str, Any]] = []
         self.final_issues: list[GlobalValidationIssue] = []
+        self._trace_orchestrator_event_id: str | None = None
+
+    def _trace_context(
+        self,
+        *,
+        actor: str = "phase3_orchestrator",
+        correlation_id: str | None = None,
+        parent_event_id: str | None = None,
+        root_event_id: str | None = None,
+    ) -> TraceContext | None:
+        if self.trace_context is None:
+            return None
+        return TraceContext(
+            run_id=self.trace_context.run_id,
+            session_id=self.trace_context.session_id,
+            trip_id=self.trace_context.trip_id,
+            context_epoch=self.trace_context.context_epoch,
+            phase=3,
+            phase2_step=getattr(self.plan, "phase2_step", None),
+            parent_event_id=parent_event_id,
+            root_event_id=root_event_id,
+            correlation_id=correlation_id or self.trace_context.correlation_id,
+            actor=actor,
+            metadata=dict(self.trace_context.metadata),
+        )
+
+    async def _emit_trace_event(
+        self,
+        *,
+        event_type: str,
+        status: str,
+        payload: dict[str, Any],
+        actor: str = "phase3_orchestrator",
+        correlation_id: str | None = None,
+        parent_event_id: str | None = None,
+        root_event_id: str | None = None,
+    ) -> Any | None:
+        if self.trace_recorder is None:
+            return None
+        context = self._trace_context(
+            actor=actor,
+            correlation_id=correlation_id,
+            parent_event_id=parent_event_id,
+            root_event_id=root_event_id,
+        )
+        if context is None:
+            return None
+        return await self.trace_recorder.emit_event(
+            context,
+            event_type=event_type,
+            status=status,
+            actor=actor,
+            parent_event_id=parent_event_id,
+            root_event_id=root_event_id,
+            correlation_id=correlation_id,
+            payload=payload,
+        )
+
+    async def _attach_trace_artifact(
+        self,
+        *,
+        event_id: str | None,
+        kind: str,
+        content: Any,
+    ) -> Any | None:
+        if self.trace_recorder is None or self.trace_context is None:
+            return None
+        context = self._trace_context()
+        if context is None:
+            return None
+        return await self.trace_recorder.attach_artifact(
+            context,
+            event_id=event_id,
+            kind=kind,
+            content=content,
+        )
+
+    async def _emit_worker_start_trace(
+        self,
+        *,
+        task: DayTask,
+        run_id: str,
+        attempt: int,
+    ) -> str | None:
+        event = await self._emit_trace_event(
+            event_type="phase3_worker",
+            status="started",
+            actor="phase3_worker",
+            correlation_id=f"phase3_worker:{run_id}:day:{task.day}:attempt:{attempt}",
+            parent_event_id=self._trace_orchestrator_event_id,
+            root_event_id=self._trace_orchestrator_event_id,
+            payload={
+                "stage": "start",
+                "phase3_run_id": run_id,
+                "day": task.day,
+                "date": task.date,
+                "attempt": attempt,
+                "constraints_hash": stable_content_hash(
+                    {
+                        "skeleton_slice": task.skeleton_slice,
+                        "pace": task.pace,
+                        "locked_pois": task.locked_pois,
+                        "candidate_pois": task.candidate_pois,
+                        "forbidden_pois": task.forbidden_pois,
+                        "mobility_envelope": task.mobility_envelope,
+                        "repair_hints": task.repair_hints,
+                    }
+                ),
+                "locked_poi_count": len(task.locked_pois),
+                "candidate_poi_count": len(task.candidate_pois),
+                "repair_hint_count": len(task.repair_hints),
+            },
+        )
+        return event.event_id if event is not None else None
+
+    async def _emit_worker_result_trace(
+        self,
+        *,
+        task: DayTask,
+        result: DayWorkerResult,
+        run_id: str,
+        attempt: int,
+        parent_event_id: str | None,
+    ) -> None:
+        candidate_metadata = None
+        if result.dayplan is not None:
+            candidate_metadata = await self._attach_trace_artifact(
+                event_id=None,
+                kind="phase3_candidate",
+                content=result.dayplan,
+            )
+        event = await self._emit_trace_event(
+            event_type="phase3_worker",
+            status="success" if result.success else "error",
+            actor="phase3_worker",
+            correlation_id=f"phase3_worker:{run_id}:day:{task.day}:attempt:{attempt}",
+            parent_event_id=parent_event_id,
+            root_event_id=self._trace_orchestrator_event_id or parent_event_id,
+            payload={
+                "stage": "result",
+                "phase3_run_id": run_id,
+                "day": task.day,
+                "date": task.date,
+                "attempt": attempt,
+                "success": result.success,
+                "iterations": result.iterations,
+                "activity_count": (
+                    len(result.dayplan.get("activities", []))
+                    if isinstance(result.dayplan, dict)
+                    else 0
+                ),
+                "candidate_submission_hash": (
+                    stable_content_hash(result.dayplan)
+                    if result.dayplan is not None
+                    else None
+                ),
+                "candidate_submission_artifact_id": (
+                    candidate_metadata.artifact_id
+                    if candidate_metadata is not None
+                    else None
+                ),
+                "error_code": result.error_code,
+                "error": _format_error(result.error),
+            },
+        )
 
     def _find_selected_skeleton(self) -> dict[str, Any] | None:
         if not self.plan.selected_skeleton_id or not self.plan.skeleton_plans:
@@ -648,6 +819,35 @@ class Phase3Orchestrator:
             shared_prefix = build_shared_prefix(self.plan)
             run_id = f"phase3_{uuid.uuid4().hex[:12]}"
             candidate_store = Phase3CandidateStore(self.config.artifact_root)
+            day_task_payload = [dict(task.__dict__) for task in tasks]
+            start_event = await self._emit_trace_event(
+                event_type="phase3_orchestrator",
+                status="started",
+                correlation_id=f"phase3_orchestrator:{run_id}",
+                payload={
+                    "stage": "start",
+                    "phase3_run_id": run_id,
+                    "day_task_count": total_days,
+                    "max_workers": self.config.max_workers,
+                    "fallback_to_serial": self.config.fallback_to_serial,
+                    "worker_max_iterations": self.config.worker_max_iterations,
+                    "worker_timeout_seconds": self.config.worker_timeout_seconds,
+                    "compiled_day_tasks_hash": stable_content_hash(day_task_payload),
+                    "shared_prefix_hash": stable_content_hash(shared_prefix),
+                },
+            )
+            self._trace_orchestrator_event_id = (
+                start_event.event_id if start_event is not None else None
+            )
+            await self._attach_trace_artifact(
+                event_id=self._trace_orchestrator_event_id,
+                kind="context_snapshot",
+                content={
+                    "phase3_run_id": run_id,
+                    "shared_prefix": shared_prefix,
+                    "day_tasks": day_task_payload,
+                },
+            )
 
             # 3. Initialize per-worker status tracking
             worker_statuses: list[dict[str, Any]] = [
@@ -679,6 +879,7 @@ class Phase3Orchestrator:
             # 4. Spawn workers with concurrency control
             semaphore = asyncio.Semaphore(self.config.max_workers)
             progress_queue: asyncio.Queue = asyncio.Queue()
+            worker_start_event_ids: dict[tuple[int, int], str | None] = {}
 
             def _make_progress_cb(idx: int):
                 def _on_progress(day: int, kind: str, payload: dict) -> None:
@@ -714,10 +915,22 @@ class Phase3Orchestrator:
                         run_id=run_id,
                         attempt=1,
                         stats=self.stats,
+                        trace_recorder=self.trace_recorder,
+                        trace_context=self.trace_context,
+                        trace_parent_event_id=worker_start_event_ids.get(
+                            (task.day, 1)
+                        ),
                     )
 
             pending: dict[asyncio.Task, DayTask] = {}
             for task in tasks:
+                worker_start_event_ids[(task.day, 1)] = (
+                    await self._emit_worker_start_trace(
+                        task=task,
+                        run_id=run_id,
+                        attempt=1,
+                    )
+                )
                 atask = asyncio.create_task(_run_with_semaphore(task))
                 pending[atask] = task
 
@@ -773,6 +986,15 @@ class Phase3Orchestrator:
                                 result.error_code,
                                 result.error,
                             )
+                        await self._emit_worker_result_trace(
+                            task=day_task,
+                            result=result,
+                            run_id=run_id,
+                            attempt=1,
+                            parent_event_id=worker_start_event_ids.get(
+                                (day_task.day, 1)
+                            ),
+                        )
                     except Exception as e:
                         failures.append((day_task, f"Exception: {e}"))
                         worker_statuses[idx]["status"] = "failed"
@@ -783,6 +1005,22 @@ class Phase3Orchestrator:
                         worker_statuses[idx]["error_code"] = "EXCEPTION"
                         logger.error(
                             "Day %d worker exception: %s", day_task.day, e
+                        )
+                        await self._emit_worker_result_trace(
+                            task=day_task,
+                            result=DayWorkerResult(
+                                day=day_task.day,
+                                date=day_task.date,
+                                success=False,
+                                dayplan=None,
+                                error=str(e),
+                                error_code="EXCEPTION",
+                            ),
+                            run_id=run_id,
+                            attempt=1,
+                            parent_event_id=worker_start_event_ids.get(
+                                (day_task.day, 1)
+                            ),
                         )
 
                 done_count = sum(
@@ -812,6 +1050,20 @@ class Phase3Orchestrator:
                     "Parallel mode failure rate %.0f%%, falling back to serial",
                     len(failures) / len(tasks) * 100,
                 )
+                await self._emit_trace_event(
+                    event_type="phase3_orchestrator",
+                    status="fallback",
+                    correlation_id=f"phase3_orchestrator:{run_id}",
+                    parent_event_id=self._trace_orchestrator_event_id,
+                    root_event_id=self._trace_orchestrator_event_id,
+                    payload={
+                        "stage": "fallback",
+                        "phase3_run_id": run_id,
+                        "reason": "parallel_failure_rate",
+                        "failure_count": len(failures),
+                        "day_task_count": len(tasks),
+                    },
+                )
                 yield self._build_progress_chunk(
                     worker_statuses,
                     total_days,
@@ -838,6 +1090,13 @@ class Phase3Orchestrator:
                 logger.info(
                     "Retrying day %d (previous error: %s)", task.day, error_msg
                 )
+                worker_start_event_ids[(task.day, 2)] = (
+                    await self._emit_worker_start_trace(
+                        task=task,
+                        run_id=run_id,
+                        attempt=2,
+                    )
+                )
                 retry_result = await run_day_worker(
                     llm=self.llm,
                     tool_engine=self.tool_engine,
@@ -851,6 +1110,16 @@ class Phase3Orchestrator:
                     run_id=run_id,
                     attempt=2,
                     stats=self.stats,
+                    trace_recorder=self.trace_recorder,
+                    trace_context=self.trace_context,
+                    trace_parent_event_id=worker_start_event_ids.get((task.day, 2)),
+                )
+                await self._emit_worker_result_trace(
+                    task=task,
+                    result=retry_result,
+                    run_id=run_id,
+                    attempt=2,
+                    parent_event_id=worker_start_event_ids.get((task.day, 2)),
                 )
                 if retry_result.success:
                     successes.append(retry_result)
@@ -897,6 +1166,19 @@ class Phase3Orchestrator:
                     "骨架分配失败，以下天数无法按当前骨架展开:\n"
                     + "\n".join(all_replan_errors)
                 )
+                await self._emit_trace_event(
+                    event_type="phase3_orchestrator",
+                    status="error",
+                    correlation_id=f"phase3_orchestrator:{run_id}",
+                    parent_event_id=self._trace_orchestrator_event_id,
+                    root_event_id=self._trace_orchestrator_event_id,
+                    payload={
+                        "stage": "needs_replan",
+                        "phase3_run_id": run_id,
+                        "error_code": "NEEDS_PHASE3_REPLAN",
+                        "errors": all_replan_errors,
+                    },
+                )
                 yield LLMChunk(
                     type=ChunkType.TEXT_DELTA,
                     content=f"\n\n⚠️ {reason}\n需要回退到 Phase 2 重新调整骨架方案。\n",
@@ -924,6 +1206,33 @@ class Phase3Orchestrator:
             issues = self._global_validate(dayplans)
             for issue in issues:
                 logger.warning("Global validation [%s]: %s", issue.severity, issue.description)
+            await self._emit_trace_event(
+                event_type="validation",
+                status="fail" if any(i.severity == "error" for i in issues) else "pass",
+                actor="phase3_orchestrator",
+                correlation_id=f"phase3_orchestrator:{run_id}:validation",
+                parent_event_id=self._trace_orchestrator_event_id,
+                root_event_id=self._trace_orchestrator_event_id,
+                payload={
+                    "validation_rule_id": "phase3_global_validation",
+                    "stage": "initial_global_validation",
+                    "phase3_run_id": run_id,
+                    "status": (
+                        "fail"
+                        if any(i.severity == "error" for i in issues)
+                        else "pass"
+                    ),
+                    "issue_count": len(issues),
+                    "issue_counts_by_type": {
+                        issue_type: sum(1 for issue in issues if issue.issue_type == issue_type)
+                        for issue_type in sorted({issue.issue_type for issue in issues})
+                    },
+                    "issues": [dict(issue.__dict__) for issue in issues],
+                    "re_dispatch_hints": [
+                        issue.description for issue in issues if issue.severity == "error"
+                    ],
+                },
+            )
 
             # 8b. Re-dispatch for error-severity issues (max 1 round)
             error_issues = [i for i in issues if i.severity == "error"]
@@ -1014,6 +1323,13 @@ class Phase3Orchestrator:
                         "activity_count": None,
                     })
                     try:
+                        worker_start_event_ids[(rd_day, 3)] = (
+                            await self._emit_worker_start_trace(
+                                task=rd_task,
+                                run_id=run_id,
+                                attempt=3,
+                            )
+                        )
                         rd_result = await run_day_worker(
                             llm=self.llm,
                             tool_engine=self.tool_engine,
@@ -1027,6 +1343,11 @@ class Phase3Orchestrator:
                             run_id=run_id,
                             attempt=3,
                             stats=self.stats,
+                            trace_recorder=self.trace_recorder,
+                            trace_context=self.trace_context,
+                            trace_parent_event_id=worker_start_event_ids.get(
+                                (rd_day, 3)
+                            ),
                         )
                     except Exception as exc:
                         logger.warning(
@@ -1042,6 +1363,13 @@ class Phase3Orchestrator:
                             error=str(exc),
                             error_code="EXCEPTION",
                         )
+                    await self._emit_worker_result_trace(
+                        task=rd_task,
+                        result=rd_result,
+                        run_id=run_id,
+                        attempt=3,
+                        parent_event_id=worker_start_event_ids.get((rd_day, 3)),
+                    )
                     return rd_day, rd_result
 
                 local_issues = [
@@ -1147,11 +1475,51 @@ class Phase3Orchestrator:
                 if unresolved:
                     for ui in unresolved:
                         logger.warning("Unresolved after re-dispatch: %s", ui.description)
+            await self._emit_trace_event(
+                event_type="validation",
+                status="fail" if any(i.severity == "error" for i in issues) else "pass",
+                actor="phase3_orchestrator",
+                correlation_id=f"phase3_orchestrator:{run_id}:final_validation",
+                parent_event_id=self._trace_orchestrator_event_id,
+                root_event_id=self._trace_orchestrator_event_id,
+                payload={
+                    "validation_rule_id": "phase3_global_validation",
+                    "stage": "final_global_validation",
+                    "phase3_run_id": run_id,
+                    "status": (
+                        "fail"
+                        if any(i.severity == "error" for i in issues)
+                        else "pass"
+                    ),
+                    "issue_count": len(issues),
+                    "issue_counts_by_type": {
+                        issue_type: sum(1 for issue in issues if issue.issue_type == issue_type)
+                        for issue_type in sorted({issue.issue_type for issue in issues})
+                    },
+                    "issues": [dict(issue.__dict__) for issue in issues],
+                    "re_dispatch_hints": [],
+                },
+            )
 
             # 9. Expose results for AgentLoop to commit via the standard write-tool path.
             self.final_dayplans = list(dayplans)
             self.final_issues = list(issues)
             if dayplans:
+                await self._emit_trace_event(
+                    event_type="phase3_orchestrator",
+                    status="success",
+                    correlation_id=f"phase3_orchestrator:{run_id}",
+                    parent_event_id=self._trace_orchestrator_event_id,
+                    root_event_id=self._trace_orchestrator_event_id,
+                    payload={
+                        "stage": "handoff",
+                        "phase3_run_id": run_id,
+                        "handoff_tool_name": "replace_all_day_plans",
+                        "dayplan_count": len(dayplans),
+                        "dayplans_hash": stable_content_hash(dayplans),
+                        "issue_count": len(issues),
+                    },
+                )
                 yield self._build_progress_chunk(
                     worker_statuses,
                     total_days,

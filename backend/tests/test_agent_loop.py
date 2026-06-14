@@ -4,7 +4,8 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from agent.hooks import HookManager
+from agent.hooks import GateResult, HookManager
+from agent.internal_tasks import InternalTask
 from agent.loop import AgentLoop
 from agent.types import Message, Role, ToolCall, ToolResult
 from config import Phase3ParallelConfig
@@ -14,9 +15,11 @@ from llm.types import ChunkType, LLMChunk
 from phase.router import PhaseRouter
 from run import IterationProgress
 from state.models import Accommodation, BacktrackEvent, DateRange, TravelPlanState
+from telemetry.trace_recorder import TraceContext, TraceRecorder
 from tools.engine import ToolEngine
 from tools.base import tool
 from tests.helpers.register_plan_tools import register_all_plan_tools
+from tools.plan_tools.backtrack import make_request_backtrack_tool
 
 
 class FakePhaseRouter:
@@ -125,6 +128,18 @@ class FakeMemoryManager:
         return f"memory:{user_id}", [], 0, 0, 0
 
 
+class TraceStoreStub:
+    def __init__(self):
+        self.events = []
+        self.artifacts = []
+
+    async def append_event(self, event):
+        self.events.append(event)
+
+    async def save_artifact_metadata(self, metadata):
+        self.artifacts.append(metadata)
+
+
 @pytest.fixture
 def mock_llm():
     provider = AsyncMock()
@@ -189,6 +204,335 @@ async def test_text_response(agent, mock_llm):
         chunks.append(chunk)
 
     assert any(c.content == "你好！" for c in chunks)
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_emits_phase_gate_and_transition_trace_events(hooks):
+    plan = TravelPlanState(session_id="s1", phase=1)
+
+    @tool(
+        name="promote_phase",
+        description="promote",
+        phases=[1],
+        parameters={"type": "object", "properties": {}, "required": []},
+        side_effect="write",
+    )
+    async def promote_phase() -> dict:
+        plan.phase = 2
+        return {"phase": 2}
+
+    class _LLM:
+        provider_name = "test"
+        model = "fake"
+        temperature = 0
+        max_tokens = 16
+
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="call-1",
+                        name="promote_phase",
+                        arguments={},
+                    ),
+                )
+                yield LLMChunk(
+                    type=ChunkType.USAGE,
+                    usage_info={"input_tokens": 1, "output_tokens": 1},
+                )
+            else:
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+            yield LLMChunk(type=ChunkType.DONE)
+
+    engine = ToolEngine()
+    engine.register(promote_phase)
+    store = TraceStoreStub()
+    agent = AgentLoop(
+        llm=_LLM(),
+        tool_engine=engine,
+        hooks=hooks,
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        memory_mgr=FakeMemoryManager(),
+        plan=plan,
+        trace_recorder=TraceRecorder(trace_store=store),
+        trace_context=TraceContext(run_id="run-1", session_id="s1", phase=1),
+    )
+
+    async for _chunk in agent.run([Message(role=Role.USER, content="go")], phase=1):
+        pass
+
+    phase_gate = next(event for event in store.events if event.event_type == "phase_gate")
+    transition = next(
+        event for event in store.events if event.event_type == "phase_transition"
+    )
+    assert phase_gate.payload["allowed"] is True
+    assert phase_gate.payload["from_phase"] == 1
+    assert phase_gate.payload["to_phase_candidate"] == 2
+    assert transition.parent_event_id == phase_gate.event_id
+    assert transition.payload["from_phase"] == 1
+    assert transition.payload["to_phase"] == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_emits_blocked_quality_gate_trace_event():
+    plan = TravelPlanState(session_id="s1", phase=1)
+    internal_tasks: list[InternalTask] = []
+    hooks = HookManager()
+
+    async def block_transition(**kwargs):
+        internal_tasks.append(
+            InternalTask(
+                id="quality_gate:s1:1:2",
+                kind="quality_gate",
+                label="gate",
+                status="warning",
+                message="blocked",
+                blocking=True,
+                result={"errors": ["missing budget"], "retry_count": 1},
+            )
+        )
+        return GateResult(allowed=False, feedback="blocked")
+
+    hooks.register_gate("before_phase_transition", block_transition)
+
+    @tool(
+        name="update_trip_basics",
+        description="write basics",
+        phases=[1],
+        parameters={"type": "object", "properties": {}, "required": []},
+        side_effect="write",
+    )
+    async def update_trip_basics() -> dict:
+        plan.destination = "Tokyo"
+        return {"destination": "Tokyo"}
+
+    class _LLM:
+        provider_name = "test"
+        model = "fake"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="call-1",
+                        name="update_trip_basics",
+                        arguments={},
+                    ),
+                )
+            else:
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+            yield LLMChunk(type=ChunkType.DONE)
+
+    engine = ToolEngine()
+    engine.register(update_trip_basics)
+    store = TraceStoreStub()
+    agent = AgentLoop(
+        llm=_LLM(),
+        tool_engine=engine,
+        hooks=hooks,
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        memory_mgr=FakeMemoryManager(),
+        plan=plan,
+        internal_task_events=internal_tasks,
+        trace_recorder=TraceRecorder(trace_store=store),
+        trace_context=TraceContext(run_id="run-1", session_id="s1", phase=1),
+    )
+
+    async for _chunk in agent.run([Message(role=Role.USER, content="go")], phase=1):
+        pass
+
+    phase_gate = next(event for event in store.events if event.event_type == "phase_gate")
+    quality_gate = next(
+        event for event in store.events if event.event_type == "quality_gate"
+    )
+    assert phase_gate.status == "blocked"
+    assert phase_gate.payload["allowed"] is False
+    assert "no_phase_or_step_change" in phase_gate.payload["blockers"]
+    assert quality_gate.parent_event_id == phase_gate.event_id
+    assert quality_gate.payload["blockers"] == ["missing budget"]
+    assert quality_gate.payload["retry_count"] == 1
+    assert not any(event.event_type == "phase_transition" for event in store.events)
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_emits_phase2_step_transition_trace_event():
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=2,
+        phase2_step="brief",
+        destination="Tokyo",
+        dates=DateRange(start="2026-07-01", end="2026-07-03"),
+    )
+
+    @tool(
+        name="set_trip_brief",
+        description="write brief",
+        phases=[2],
+        parameters={
+            "type": "object",
+            "properties": {"fields": {"type": "object"}},
+            "required": ["fields"],
+        },
+        side_effect="write",
+    )
+    async def set_trip_brief(fields: dict) -> dict:
+        plan.trip_brief.update(fields)
+        return {"updated_fields": ["trip_brief"]}
+
+    class _LLM:
+        provider_name = "test"
+        model = "fake"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="call-1",
+                        name="set_trip_brief",
+                        arguments={"fields": {"style": "food"}},
+                    ),
+                )
+            else:
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+            yield LLMChunk(type=ChunkType.DONE)
+
+    engine = ToolEngine()
+    engine.register(set_trip_brief)
+    store = TraceStoreStub()
+    agent = AgentLoop(
+        llm=_LLM(),
+        tool_engine=engine,
+        hooks=HookManager(),
+        phase_router=PhaseRouter(),
+        context_manager=FakeContextManager(),
+        memory_mgr=FakeMemoryManager(),
+        plan=plan,
+        trace_recorder=TraceRecorder(trace_store=store),
+        trace_context=TraceContext(
+            run_id="run-1",
+            session_id="s1",
+            phase=2,
+            phase2_step="brief",
+        ),
+    )
+
+    async for _chunk in agent.run([Message(role=Role.USER, content="go")], phase=2):
+        pass
+
+    phase_gate = next(event for event in store.events if event.event_type == "phase_gate")
+    transition = next(
+        event for event in store.events if event.event_type == "phase_transition"
+    )
+    assert plan.phase == 2
+    assert plan.phase2_step == "candidate"
+    assert phase_gate.payload["allowed"] is True
+    assert phase_gate.payload["from_step"] == "brief"
+    assert phase_gate.payload["to_step_candidate"] == "candidate"
+    assert transition.parent_event_id == phase_gate.event_id
+    assert transition.payload["from_phase"] == 2
+    assert transition.payload["to_phase"] == 2
+    assert transition.payload["from_step"] == "brief"
+    assert transition.payload["to_step"] == "candidate"
+    assert transition.payload["reason"] == "phase2_step_change"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_emits_backtrack_transition_trace_event():
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=3,
+        phase2_step="lock",
+        destination="Tokyo",
+        dates=DateRange(start="2026-07-01", end="2026-07-02"),
+        trip_brief={"style": "food"},
+        daily_plans=[],
+    )
+
+    class _LLM:
+        provider_name = "test"
+        model = "fake"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="call-1",
+                        name="request_backtrack",
+                        arguments={"to_phase": 1, "reason": "换目的地"},
+                    ),
+                )
+            else:
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content="done")
+            yield LLMChunk(type=ChunkType.DONE)
+
+    engine = ToolEngine()
+    engine.register(make_request_backtrack_tool(plan))
+    store = TraceStoreStub()
+    agent = AgentLoop(
+        llm=_LLM(),
+        tool_engine=engine,
+        hooks=HookManager(),
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        memory_mgr=FakeMemoryManager(),
+        plan=plan,
+        trace_recorder=TraceRecorder(trace_store=store),
+        trace_context=TraceContext(
+            run_id="run-1",
+            session_id="s1",
+            phase=3,
+            phase2_step="lock",
+        ),
+    )
+
+    chunks = [chunk async for chunk in agent.run([Message(role=Role.USER, content="go")], phase=3)]
+
+    phase_chunks = [chunk for chunk in chunks if chunk.type == ChunkType.PHASE_TRANSITION]
+    phase_gate = next(event for event in store.events if event.event_type == "phase_gate")
+    transition = next(
+        event for event in store.events if event.event_type == "phase_transition"
+    )
+    state_diff = next(event for event in store.events if event.event_type == "state_diff")
+    assert plan.phase == 1
+    assert plan.destination is None
+    assert phase_chunks[0].phase_info == {
+        "from_phase": 3,
+        "to_phase": 1,
+        "from_step": "lock",
+        "to_step": "brief",
+        "reason": "backtrack",
+    }
+    assert phase_gate.payload["allowed"] is True
+    assert phase_gate.payload["needs_rebuild"] is True
+    assert transition.parent_event_id == phase_gate.event_id
+    assert transition.payload["reason"] == "backtrack"
+    assert transition.payload["from_phase"] == 3
+    assert transition.payload["to_phase"] == 1
+    assert state_diff.payload["field_diffs"]["destination"]["after_hash"].startswith(
+        "sha256:"
+    )
 
 
 @pytest.mark.asyncio

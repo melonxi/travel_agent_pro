@@ -10,6 +10,7 @@ from agent.types import Message, Role, ToolCall
 from llm.errors import LLMError, LLMErrorCode
 from llm.types import ChunkType, LLMChunk
 from run import IterationProgress
+from telemetry.trace_recorder import TraceContext, TraceRecorder
 
 
 @dataclass
@@ -28,6 +29,9 @@ class _Plan:
     phase = 1
     phase2_step = None
     destination = None
+
+    def to_dict(self):
+        return {"phase": self.phase, "phase2_step": self.phase2_step}
 
 
 class _Reflection:
@@ -57,6 +61,18 @@ class _LLM:
         )
         yield LLMChunk(type=ChunkType.USAGE, usage_info={"total_tokens": 3})
         yield LLMChunk(type=ChunkType.DONE)
+
+
+class _TraceStore:
+    def __init__(self):
+        self.events = []
+        self.artifacts = []
+
+    async def append_event(self, event):
+        self.events.append(event)
+
+    async def save_artifact_metadata(self, metadata):
+        self.artifacts.append(metadata)
 
 
 @pytest.mark.asyncio
@@ -131,6 +147,90 @@ async def test_run_llm_turn_emits_status_reflection_and_collects_outcome():
         ChunkType.USAGE,
     ]
     assert cancelled_checks >= 4
+
+
+@pytest.mark.asyncio
+async def test_run_llm_turn_emits_context_call_and_output_trace_events():
+    store = _TraceStore()
+    recorder = TraceRecorder(trace_store=store)
+    outcome = None
+
+    async for item in run_llm_turn(
+        llm=_LLM(),
+        tool_engine=_ToolEngine(),
+        hooks=HookManager(),
+        messages=[
+            Message(role=Role.SYSTEM, content="system prompt"),
+            Message(role=Role.USER, content="hi"),
+        ],
+        tools=[{"name": "search", "parameters": {}}],
+        current_phase=1,
+        plan=_Plan(),
+        reflection=None,
+        tool_choice_decider=None,
+        compression_events=[
+            {
+                "mode": "transition",
+                "reason": "test compaction",
+                "message_count_before": 8,
+                "message_count_after": 2,
+                "summary_text": "compact summary",
+            }
+        ],
+        iteration_idx=0,
+        previous_iteration_had_tools=False,
+        phase_changed_in_previous_iteration=False,
+        previous_phase2_step=None,
+        check_cancelled=lambda: None,
+        update_progress=lambda progress: None,
+        trace_recorder=recorder,
+        trace_context=TraceContext(
+            run_id="run-1",
+            session_id="session-1",
+            context_epoch=3,
+            phase=1,
+            parent_event_id="evt-memory-hit",
+            root_event_id="evt-memory-hit",
+            metadata={
+                "phase_prompt_id": "phase:1:test",
+                "phase_prompt_hash": "sha256:phase-prompt",
+                "memory_candidate_ids": ["mem-1", "mem-2"],
+                "memory_hit_event_id": "evt-memory-hit",
+                "memory_context_hash": "sha256:memory-context",
+            },
+        ),
+    ):
+        if isinstance(item, LlmTurnOutcome):
+            outcome = item
+
+    assert outcome is not None
+    event_types = [event.event_type for event in store.events]
+    assert event_types == ["context_compression", "context_build", "llm_call", "llm_output"]
+    compression_event, context_event, call_event, output_event = store.events
+    assert compression_event.payload["message_count_before"] == 8
+    assert compression_event.payload["message_count_after"] == 2
+    assert compression_event.payload["compacted_summary_hash"].startswith("sha256:")
+    assert context_event.parent_event_id == "evt-memory-hit"
+    assert context_event.payload["phase_prompt_id"] == "phase:1:test"
+    assert context_event.payload["phase_prompt_hash"] == "sha256:phase-prompt"
+    assert context_event.payload["memory_candidate_ids"] == ["mem-1", "mem-2"]
+    assert context_event.payload["memory_hit_event_id"] == "evt-memory-hit"
+    assert context_event.payload["message_count_before_compaction"] == 8
+    assert context_event.payload["message_count_after_compaction"] == 2
+    assert context_event.payload["compacted_summary_hash"].startswith("sha256:")
+    assert context_event.payload["plan_snapshot_hash"].startswith("sha256:")
+    assert call_event.parent_event_id == context_event.event_id
+    assert output_event.parent_event_id == call_event.event_id
+    assert output_event.root_event_id == "evt-memory-hit"
+    assert output_event.correlation_id == call_event.correlation_id
+    assert output_event.payload["tool_call_ids"] == ["tc1"]
+    assert output_event.payload["usage"] == {"total_tokens": 3}
+    assert outcome.llm_output_event_id == output_event.event_id
+    assert [artifact.kind for artifact in store.artifacts] == [
+        "context_snapshot",
+        "llm_prompt",
+        "llm_response",
+    ]
 
 
 @pytest.mark.asyncio
