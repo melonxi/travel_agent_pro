@@ -29,10 +29,10 @@ dates / travelers / budget 默认不主动追问（见当前阶段职责）。�
 按这个顺序自检，命中即停：
 
 1. 用户已明确拍板**单一可执行旅行单元**——一个城市（"东京""北京"）、一个紧凑国家（"冰岛""马尔代夫""不丹"）、或一个具体区域（"京都""清迈"）→ 不搜，直接走"状态写入契约"。
-2. 用户在 2-3 个具体候选间犹豫（"京都还是大阪""三亚还是普吉"）→ 用 `xiaohongshu_read_note` / `xiaohongshu_get_comments` 拉两者差异点，**不要**重新发散。
-3. 用户给了模糊意图但无候选（"想看海""带娃""想躺平"）→ 用 `xiaohongshu_search_notes` + `xiaohongshu_read_note` 提炼 2-3 个候选。
+2. 用户在 2-3 个具体候选间犹豫（"京都还是大阪""三亚还是普吉"）→ 用 **UGC 域内搜索**（`web_search` + `include_domains=["xiaohongshu.com","mafengwo.cn","qyer.com"]`）拉两者差异点和真实口碑，**不要**重新发散。
+3. 用户给了模糊意图但无候选（"想看海""带娃""想躺平"）→ 用 UGC 域内搜索提炼 2-3 个候选。
 4. 用户给的是**多城市国家或大区域**（"想去日本""想去美国""想去东南亚""想去泰国"）→ 当作模糊意图处理（走 3），向城市级收敛，**不要**写 `destination=日本`。
-5. 候选间存在**价格量级**差异时（"东南亚 vs 欧洲"）→ 用 `quick_travel_search` 快速取价格带；**季节性/政策性**差异用 `web_search`。
+5. 候选间存在**价格量级**差异时（"东南亚 vs 欧洲"）→ 用 `web_search` 查大致价格带（机酒人均预算量级）；**季节性/政策性**差异同样用 `web_search`（不限域名）。
 
 **判定经验法则**：
 - 紧凑或单一旅游目的地国家（冰岛 / 马尔代夫 / 不丹 / 摩洛哥等）通常作为整体规划，可视为有效目的地。
@@ -41,16 +41,13 @@ dates / travelers / budget 默认不主动追问（见当前阶段职责）。�
 
 ### 工具职责
 
-- `xiaohongshu_search_notes`（导航层）：关键词搜索笔记列表。仅用于定位有价值的笔记，**标题和热度不足以支撑推荐或比较判断**。每次搜索后至少选 1-2 篇高相关笔记进入下一层。
-- `xiaohongshu_read_note`（信息层）：读取笔记正文。"多目的地推荐 / 旅行地盘点 / A vs B 对比"类，**必须读正文**才能下结论。
-- `xiaohongshu_get_comments`（评价层）：获取评论区观点。"求推荐""值不值得去""避雷"类问题，评论区比正文更有参考价值。
-- `quick_travel_search`：单一自然语言查询，返回跨品类产品卡片（门票/酒店/签证/跟团游）。**仅用于价格量级感知**——决策树第 5 条触发。
-- `web_search`：仅在信息**实时性**或**确定性**要求高时用——签证政策、自然灾害、航线开通、官方开放时间、入境规定、安全预警。**不**用于灵感探索或目的地推荐。
+- **UGC 域内搜索**（本阶段主力）：`web_search` 加 `include_domains=["xiaohongshu.com","mafengwo.cn","qyer.com"]`,获取真实体验、氛围、口碑和"值不值得去"共识。搜索词写完整意图,如"京都 大阪 对比 选哪个""带娃 海岛 推荐"。一次搜索信息不足时换关键词再搜(如追加"避雷""缺点"),用 `search_depth="advanced"` 拿更完整摘要。
+- `web_search`（不限域名）：信息**实时性**或**确定性**要求高时用——签证政策、自然灾害、航线开通、官方开放时间、入境规定、安全预警、机酒价格量级。
 
 ### 调用纪律
 
-- 至少读 1 篇笔记正文再下结论；超过 2 篇正文仍未明朗，停下来给用户一个简化二选一推动对话。
-- 高风险事实（签证、价格、开放时间、交通政策）用 `web_search` 交叉验证后再确认，小红书内容不能直接当事实结论。
+- 推荐或对比结论必须有搜索结果支撑;结果摘要不足以支撑判断时,换关键词补搜一次,仍不明朗就停下来给用户一个简化二选一推动对话。
+- 高风险事实（签证、价格、开放时间、交通政策）用不限域名的 `web_search` 交叉验证后再确认,UGC 内容不能直接当事实结论。
 
 ## 状态写入契约
 
@@ -61,7 +58,7 @@ dates / travelers / budget 默认不主动追问（见当前阶段职责）。�
 **写入边界**：
 - 用户明确拍板目的地后，立即调用 `update_trip_basics(destination="目的地名称")`。
 - 不要把你推荐出来的候选、分析结论、默认偏好写进状态；只有用户明确表达的信息才写入。
-- 用户已明确拍板目的地时，不要先做目的地研究（小红书 / web_search），直接写状态。
+- 用户已明确拍板目的地时，不要先做目的地研究（web_search），直接写状态。
 
 ## 写入即收尾
 
@@ -105,14 +102,16 @@ PHASE2_BASE_PROMPT = """## 状态写入纪律
 - 你自己的分析产物应写入 `trip_brief`、`candidate_pool`、`shortlist`、`skeleton_plans`、`transport_options`、`accommodation_options`、`risks`、`alternatives`，不要混写进用户偏好字段。
 - 严格按当前子阶段的"关键产出"选用写入工具——例如在 brief 阶段不要越界写 `skeleton_plans`，在 candidate 阶段不要越界写 `accommodation`。
 
-## 小红书搜索三层
+## UGC 攻略域内搜索
 
-- **xiaohongshu_search_notes（导航层）**：关键词搜索笔记列表，仅返回标题和热度。标题和热度只用于定位笔记，**不足以支撑决策判断**。
-- **xiaohongshu_read_note（信息层）**：读取笔记正文，获取真实体验、路线安排、实用细节。这是获取实质信息的核心操作，找到相关笔记后必须进入此层。
-- **xiaohongshu_get_comments（评价层）**：获取评论区多元观点。需要主观评价佐证时（"值不值得""怎么样""避雷"），应进入此层提取共识和反对意见。
+获取真实体验、避坑、路线参考时,用 `web_search` 加域名限定做 UGC 站内搜索:
+
+- **标准用法**：`web_search(query="...", include_domains=["xiaohongshu.com","mafengwo.cn","qyer.com"])`。
+- **搜索词写完整意图**：如"东京 亲子 5天 路线""镰仓 一日游 避坑",不要只给孤立地名。
+- **分层加深**：第一轮拿概览;对高价值主题换更具体的关键词补搜(如追加"排队""避雷""几点去"),需要更完整内容时用 `search_depth="advanced"`。
 
 使用原则：
-- 小红书适合拿体验、避坑、路线参考和氛围判断；不适合单独承担事实校验——营业时间、价格、开放政策等信息要用 web_search 交叉验证。
+- UGC 结果适合拿体验、避坑、路线参考和氛围判断；不适合单独承担事实校验——营业时间、价格、开放政策等信息要用不限域名的 web_search 交叉验证。
 
 ## 回复纪律
 
@@ -148,8 +147,8 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 
 ## 工具策略
 
-- `xiaohongshu_search_notes` / `xiaohongshu_read_note`：补充真实体验，如"几月去最好""淡季体验""亲子 / 摄影 / 慢旅行感受"。搜索定位笔记后必须读正文。
-- `web_search`：查季节、节庆、淡旺季、时间窗口等高确定性信息。
+- UGC 域内搜索：补充真实体验,如"几月去最好""淡季体验""亲子 / 摄影 / 慢旅行感受"。
+- `web_search`（不限域名）：查季节、节庆、淡旺季、时间窗口等高确定性信息。
 - 不要在 brief 未成型前调用交通、住宿、动线类工具。
 
 ## 收敛压力
@@ -171,16 +170,15 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 
 ### 第一步：锚定扩展
 - 从 trip_brief 的目标、节奏、必去 / 不去出发，结合目的地常识形成初始候选。
-- 通过小红书搜索扩展：搜"目的地 + trip_brief.goal""目的地 + 小众""目的地 + 本地人推荐"等，从 UGC 中发现训练数据未覆盖的体验。
+- 通过 UGC 域内搜索扩展：`web_search` 加 `include_domains=["xiaohongshu.com","mafengwo.cn","qyer.com"]`,搜"目的地 + trip_brief.goal""目的地 + 小众""目的地 + 本地人推荐"等,从 UGC 中发现训练数据未覆盖的体验。
 - 对成熟热门目的地仍要搜索——体验随时间变化，LLM 训练数据不能替代 UGC 新鲜度。
 - 扩展产出粗筛候选，写入 `set_candidate_pool`。
 
 ### 第二步：逐项验证
 - 用 trip_brief 做硬过滤：与目标冲突或匹配 avoid 列表的直接标记不建议。
 - 对"高潜力但存疑"项做深度验证：
-  - `xiaohongshu_read_note` 拿真实体验细节（排队、耗时、适合人群、季节限制）
-  - `xiaohongshu_get_comments` 拿评论区"值不值得去"共识
-  - `web_search` 交叉验证开放时间、门票、预约等事实
+  - UGC 域内搜索拿真实体验细节和口碑：搜"POI 名 + 排队 / 避雷 / 值不值得去"（`search_depth="advanced"` 拿完整摘要）
+  - `web_search`（不限域名）交叉验证开放时间、门票、预约等事实
 - 必选项和明显不建议项可快速判定，验证精力集中在边界。
 
 ### 第三步：筛选成短名单
@@ -195,7 +193,7 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 `shortlist` 写入**不触发推进**——你仍在 candidate。本轮自然语言收尾（"短名单已定，下一步我去搜 N 天攻略"），**下一轮主动进入攻略经验采集**：
 
 - 搜"目的地 + N 天路线""目的地 + 行程安排""目的地 + 攻略"（N = 用户出行天数）。
-- 用 `xiaohongshu_read_note` 读 2-3 篇高相关攻略正文，提炼区域分组 / 天数分配 / 体力节奏 / 常见坑。
+- 用 UGC 域内搜索（`search_depth="advanced"`）读 2-3 组高相关攻略结果，提炼区域分组 / 天数分配 / 体力节奏 / 常见坑。
 - 用户画像有特殊约束（亲子 / 老人 / 摄影），追加搜"目的地 + 约束 + 攻略"。
 - 完成经验采集后再写 `set_skeleton_plans`——`skeleton_plans` 写入触发推进到 skeleton。
 
@@ -203,10 +201,9 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 
 ## 工具策略
 
-- 小红书三层贯穿扩展（search_notes 定位 + read_note 取正文）和验证（read_note 细节 + get_comments 评价）。
-- `quick_travel_search`：感知片区或玩法的产品形态和价格带。
+- UGC 域内搜索贯穿扩展（发现候选）和验证（体验细节 + 口碑评价），见 base prompt 的标准用法。
+- `web_search`（不限域名）：验证门票、营业时间、官方活动等高确定性事实；查产品价格带。
 - `get_poi_info`：补充结构化 POI 信息（坐标、门票、开放时间）。
-- `web_search`：验证门票、营业时间、官方活动等高确定性事实。
 - 搜索为验证和写入服务；获取足够信息后立即写入，不要为查全反复延迟。""",
     "skeleton": """# 当前子阶段：skeleton — 生成行程骨架方案
 
@@ -264,7 +261,7 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 
 ## 工具策略
 
-- `xiaohongshu_search_notes` / `xiaohongshu_read_note`：本子阶段最重要工具，经验采集主力。
+- UGC 域内搜索：本子阶段最重要手段，经验采集主力（`web_search` + UGC 域名限定，见 base prompt）。
 - `calculate_route`：验证跨区域移动是否过于折腾。
 - `assemble_day_plan`：内部辅助，不是最终输出。
 - `check_availability`：检查关键景点或活动在计划日期是否可行。""",
@@ -297,12 +294,13 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 
 ## 工具策略
 
-- `xiaohongshu_search_notes` / `xiaohongshu_read_note`：在住宿区域选择时，搜"目的地 + 住哪里""目的地 + 住宿区域推荐"，读正文获取真实住宿体验（便利度、治安、氛围）。
-- `search_flights` / `search_trains`：搜大交通方案。
-- `search_accommodations`：搜住宿方案。
+- UGC 域内搜索：在住宿区域选择时，搜"目的地 + 住哪里""目的地 + 住宿区域推荐"，获取真实住宿体验（便利度、治安、氛围）。
+- `search_trains`：搜火车 / 高铁车次（12306 实时余票）。注意结果不含票价——确定候选车次后用 `web_search` 查"车次 票价"补齐，并提示用户以 12306 为准。
+- 航班：当前没有结构化航班搜索工具。用 `web_search` 查"出发地 目的地 机票 价格 月份"获取航线、大致价格带和航司选项，给出 2-3 个方向性方案，**明确提示用户到购票平台核实价格后再确认锁定**。锁定时把用户确认的航班信息写入 `select_transport`。
+- `search_accommodations`：搜住宿方案。注意结果可能不含房价（数据源限制）——用 `web_search` 查"酒店名 价格"补价格带，并提示用户以预订平台实时价格为准。
 - `calculate_route`：验证住宿与主要活动区域的通勤。
 
-⚠️ `search_flights` 和 `search_trains` 是 **Phase 2 专属**——离开 Phase 2 后不可用。务必在 lock 子阶段完成大交通搜索，避免进入 Phase 3 后无法搜索航班 / 火车。""",
+⚠️ `search_trains` 是 **Phase 2 专属**——离开 Phase 2 后不可用。务必在 lock 子阶段完成大交通搜索，避免进入 Phase 3 后无法搜索车次。""",
 }
 
 
@@ -350,7 +348,7 @@ PHASE3_PROMPT = """## 硬法则（执行级）
 - calculate_route：验证跨区域移动和酒店往返是否合理
 - check_weather：天气敏感日程或用户在意天气时使用
 - web_search：当景点开放状态、营业时间等无法通过其他工具确认时，用 web_search 补充查证
-- xiaohongshu_search_notes / xiaohongshu_read_note / xiaohongshu_get_comments：补真实体验、排队强度、避坑和替代玩法
+- UGC 域内搜索（web_search + include_domains=["xiaohongshu.com","mafengwo.cn","qyer.com"]）：补真实体验、排队强度、避坑和替代玩法
 - 不是每个活动都机械查一遍，优先查关键项、高风险项、会影响整天结构的项
 
 ### 动作 4 — commit（写入状态）
@@ -403,7 +401,7 @@ PHASE3_PROMPT = """## 硬法则（执行级）
 辅助工具：
 - `get_poi_info`：补齐 POI 坐标、基础属性、价格
 - `check_weather`：天气敏感日程验证
-- xhs 三件套：补真实体验、排队、避坑、替代玩法
+- UGC 域内搜索：补真实体验、排队、避坑、替代玩法
 - `web_search`：补充专项工具无法提供的信息
 
 工具回退：
@@ -433,7 +431,7 @@ PHASE3_PROMPT = """## 硬法则（执行级）
 场景 A：骨架内容不足
 ```
 状态：skeleton_plans 中已选骨架只有每天的区域名，没有具体活动
-正确：用 xiaohongshu_search_notes / xiaohongshu_read_note 和 get_poi_info 补充核心活动，再组装
+正确：用 UGC 域内搜索和 get_poi_info 补充核心活动，再组装
 错误：凭空编造活动名称和时间
 ```
 
@@ -473,7 +471,7 @@ PHASE4_PROMPT = """## 输入 Gate
 ### 步骤 1 — 信息收集
 
 - `check_weather`：获取出行日期的目的地天气预报
-- `search_travel_services`：搜签证办理、旅行保险、电话卡、WiFi、接送机等实用服务
+- `web_search`：搜"目的地 + 签证办理 / 旅行保险 / 电话卡 / WiFi / 接送机"等实用服务信息,提炼办理渠道和注意事项
 - 回顾 `daily_plans` 中的活动类型，识别需要特别准备的项目（寺庙着装、温泉纹身政策、远郊交通卡等）
 - 如果用户在本阶段明确改选已锁定大交通，先调用 `select_transport` 写入新的权威交通；如果影响到达/离开日安排，再调用 `request_backtrack(to_phase=3, reason="...")` 让 Phase 3 基于新交通重排。
 
@@ -519,13 +517,12 @@ PHASE4_PROMPT = """## 输入 Gate
 
 必用工具：
 - `check_weather`：获取目的地出行期间的天气预报
-- `search_travel_services`：搜签证、保险、电话卡、租车、接送机等服务（附预订链接）
+- `web_search`：搜签证办理、保险、电话卡、租车、接送机等服务信息;验证签证政策、入境规定、安全预警等高时效性信息
 - `generate_summary`：提交正式交付物候选，传 `title` + `daily_sections` + `checklist_title` + `checklist_categories`；代码自动生成 H1 标题和逐日章节；质量检查通过后系统才会冻结文件
 
 辅助工具：
 - `select_transport`：仅当用户在 Phase 4 明确改选已锁定大交通时使用；必须先写入新交通，再回退重排行程。
-- `web_search`：验证签证政策、入境规定、安全预警等高时效性信息
-- xhs 三件套：补充目的地实用贴士、避坑经验
+- UGC 域内搜索（web_search + include_domains=["xiaohongshu.com","mafengwo.cn","qyer.com"]）：补充目的地实用贴士、避坑经验
 
 不可用：本阶段不能调用行程规划类工具（`assemble_day_plan` / `calculate_route` 等）。
 

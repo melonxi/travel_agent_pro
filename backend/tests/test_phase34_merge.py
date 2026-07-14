@@ -158,7 +158,7 @@ class TestToolPhasesAfterMerge:
         flight_tool = make_search_flights_tool(keys)
         assert flight_tool.phases == [2]
 
-        train_tool = make_search_trains_tool(None)
+        train_tool = make_search_trains_tool()
         assert train_tool.phases == [2]
 
         accom_tool = make_search_accommodations_tool(keys)

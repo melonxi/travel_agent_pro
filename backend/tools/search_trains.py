@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from tools.base import ToolError, tool
-from tools.normalizers import normalize_flyai_train
+from tools.train12306_client import Train12306Client, Train12306Error
 
 logger = logging.getLogger(__name__)
 
@@ -13,41 +13,47 @@ _PARAMETERS = {
     "properties": {
         "origin": {
             "type": "string",
-            "description": "出发城市或车站名，如 '北京' '上海虹桥'",
+            "description": "出发城市或车站名,如 '北京' '上海虹桥'",
         },
         "destination": {
             "type": "string",
-            "description": "目的地城市或车站名，如 '上海' '杭州'",
+            "description": "目的地城市或车站名,如 '上海' '杭州'",
         },
-        "date": {"type": "string", "description": "出发日期，如 '2026-04-15'"},
-        "seat_class": {
+        "date": {"type": "string", "description": "出发日期,如 '2026-04-15'"},
+        "train_types": {
             "type": "string",
-            "description": "席别：second class / first class / business class / hard sleeper / soft sleeper",
+            "description": "车次类型过滤,由 G/D/Z/T/K 组成的字符串,如 'GD' 只看高铁动车。缺省不过滤。",
         },
-        "journey_type": {
+        "earliest_start": {
+            "type": "string",
+            "description": "最早出发时间 HH:MM,如 '08:00'。缺省不过滤。",
+        },
+        "latest_start": {
+            "type": "string",
+            "description": "最晚出发时间 HH:MM,如 '18:00'。缺省不过滤。",
+        },
+        "max_results": {
             "type": "integer",
-            "description": "1=直达, 2=中转",
-        },
-        "sort_type": {
-            "type": "integer",
-            "description": "排序：1=价格降序 2=推荐 3=价格升序 4=耗时升序 5=耗时降序 6=出发早→晚 7=出发晚→早 8=直达优先",
-        },
-        "max_price": {
-            "type": "number",
-            "description": "最高票价（元）",
+            "description": "最大返回数量,默认 10,自动限制在 1-30。",
         },
     },
     "required": ["origin", "destination", "date"],
 }
 
+# 进程级共享:车站码表与查询路径只需解析一次
+_shared_client = Train12306Client()
 
-def make_search_trains_tool(flyai_client):
+
+def make_search_trains_tool():
     @tool(
         name="search_trains",
-        description="""搜索火车/高铁车次信息。
-Use when: 用户在阶段 2，需要查询火车或高铁出行方案（国内城市间交通）。
-Don't use when: 用户明确要坐飞机，或目的地不通火车。
-        返回车次列表，含车次号、出发/到达站、时间、票价、席别和预订链接。""",
+        description="""搜索火车/高铁车次信息(12306 官方实时数据)。
+Use when: 用户在阶段 2,需要查询火车或高铁出行方案(国内城市间交通)。
+Don't use when: 用户明确要坐飞机,或目的地不通火车。
+Important:
+  - 返回车次、出发/到达站、时间、历时、可预订状态和各席别余票。
+  - 不含票价:确定候选车次后,用 web_search 查询"车次 出发站 到达站 票价"补齐,并提示用户以 12306 为准。
+  - 12306 预售期约 15 天,超出预售期的日期查不到车次,应向用户说明并改为给出参考车次。""",
         phases=[2],
         parameters=_PARAMETERS,
         human_label="检索火车",
@@ -56,51 +62,70 @@ Don't use when: 用户明确要坐飞机，或目的地不通火车。
         origin: str,
         destination: str,
         date: str,
-        seat_class: str | None = None,
-        journey_type: int | None = None,
-        sort_type: int | None = None,
-        max_price: float | None = None,
+        train_types: str | None = None,
+        earliest_start: str | None = None,
+        latest_start: str | None = None,
+        max_results: int = 10,
     ) -> dict:
-        if not flyai_client or not flyai_client.available:
-            raise ToolError(
-                "FlyAI service unavailable — cannot search trains",
-                error_code="SERVICE_UNAVAILABLE",
-                suggestion="Train search requires flyai CLI. Install with: npm i -g @fly-ai/flyai-cli",
-            )
-
-        kwargs: dict = {"destination": destination, "dep_date": date}
-        if seat_class:
-            kwargs["seat_class_name"] = seat_class
-        if journey_type is not None:
-            kwargs["journey_type"] = journey_type
-        if sort_type is not None:
-            kwargs["sort_type"] = sort_type
-        if max_price is not None:
-            kwargs["max_price"] = max_price
-
+        max_results = max(1, min(30, max_results))
         try:
-            raw_list = await flyai_client.search_train(origin=origin, **kwargs)
-        except RuntimeError as exc:
+            data = await _shared_client.query_left_tickets(origin, destination, date)
+        except Train12306Error as exc:
+            if exc.code == "STATION_NOT_FOUND":
+                raise ToolError(
+                    str(exc),
+                    error_code="STATION_NOT_FOUND",
+                    suggestion="请使用 12306 收录的城市或车站中文名,如 '北京''上海虹桥'。",
+                ) from exc
             raise ToolError(
-                f"FlyAI train search failed: {exc}",
+                f"12306 查询失败: {exc}",
                 error_code="SERVICE_UNAVAILABLE",
-                suggestion="Check FlyAI CLI quota/auth status or retry later.",
+                suggestion=(
+                    "12306 接口暂时不可用或被限流。请稍后重试;"
+                    "如持续失败,用 web_search 查询车次和票价作为参考,并提示用户自行核实。"
+                ),
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("12306 search failed: %s", exc)
+            raise ToolError(
+                f"12306 查询失败: {exc}",
+                error_code="SERVICE_UNAVAILABLE",
+                suggestion="请稍后重试,或用 web_search 查询车次作为参考。",
             ) from exc
 
-        if not raw_list:
+        trains = data["trains"]
+        if train_types:
+            allowed = {c.upper() for c in train_types}
+            trains = [
+                t
+                for t in trains
+                if t["train_code"][:1].upper() in allowed
+            ]
+        if earliest_start:
+            trains = [t for t in trains if t["start_time"] >= earliest_start]
+        if latest_start:
+            trains = [t for t in trains if t["start_time"] <= latest_start]
+
+        if not trains:
             raise ToolError(
                 f"No train results for {origin} → {destination} on {date}",
                 error_code="NO_RESULTS",
-                suggestion="Try different dates, cities, or remove filters",
+                suggestion=(
+                    "请检查日期是否在 12306 预售期内、放宽车次类型/时间过滤,"
+                    "或尝试邻近车站(见返回的备选车站列表)。"
+                ),
             )
 
-        trains = [normalize_flyai_train(r) for r in raw_list]
-
         return {
-            "trains": [t.to_dict() for t in trains],
+            "trains": trains[:max_results],
+            "total_found": len(trains),
             "origin": origin,
             "destination": destination,
             "date": date,
+            "origin_station_alternatives": data["from_alternatives"],
+            "destination_station_alternatives": data["to_alternatives"],
+            "source": "12306",
+            "note": "票价未包含;确定候选车次后用 web_search 查票价,并提示用户以 12306 为准。",
         }
 
     return search_trains

@@ -126,11 +126,13 @@ def test_phase3_prompt_mentions_actual_phase3_tools(router):
         "calculate_route",
         "check_weather",
         "web_search",
-        "xiaohongshu_search_notes",
         "save_day_plan",
         "replace_all_day_plans",
     ]:
         assert tool_name in prompt
+    # xhs 工具已下线,UGC 改走 web_search 域内搜索
+    assert "xiaohongshu_search_notes" not in prompt
+    assert "UGC 域内搜索" in prompt
 
 
 def test_phase3_prompt_does_not_mention_legacy_phase3_plan_tools(router):
@@ -152,9 +154,10 @@ def test_phase3_prompt_avoids_unavailable_phase2_tools(router):
 
 def test_phase1_prompt_encourages_reading_recommendation_posts_and_comments(router):
     prompt = router.get_prompt(1)
-    assert "标题和热度不足以支撑推荐或比较判断" in prompt
-    assert "至少读 1 篇笔记正文再下结论" in prompt
-    assert "评论区比正文更有参考价值" in prompt
+    # xhs 工具下线后,UGC 获取改为 web_search 域内搜索
+    assert "UGC 域内搜索" in prompt
+    assert "include_domains" in prompt
+    assert "值不值得去" in prompt
 
 
 def test_phase1_prompt_skips_search_when_destination_is_already_confirmed(router):

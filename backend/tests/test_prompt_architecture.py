@@ -144,8 +144,10 @@ class TestPhase1ExecutionRules:
         assert PHASE_PROMPTS[1] == PHASE1_PROMPT
 
     def test_phase1_still_mentions_core_tools(self):
-        assert "xiaohongshu_search_notes" in PHASE1_PROMPT
+        # xhs 工具下线,UGC 改走 web_search 域内搜索
+        assert "UGC 域内搜索" in PHASE1_PROMPT
         assert "web_search" in PHASE1_PROMPT
+        assert "xiaohongshu_search_notes" not in PHASE1_PROMPT
 
     def test_phase1_skips_search_when_destination_confirmed(self):
         assert "不要先做目的地研究" in PHASE1_PROMPT
@@ -452,7 +454,10 @@ class TestPhase4ExecutionRules:
         assert "冻结" in PHASE4_PROMPT or "先回退" in PHASE4_PROMPT
 
     def test_phase4_mentions_search_travel_services(self):
-        assert "search_travel_services" in PHASE4_PROMPT
+        # search_travel_services(flyai)已下线,服务搜索降级 web_search
+        assert "search_travel_services" not in PHASE4_PROMPT
+        assert "签证办理" in PHASE4_PROMPT
+        assert "web_search" in PHASE4_PROMPT
 
     def test_phase4_registered(self):
         assert PHASE_PROMPTS[4] == PHASE4_PROMPT

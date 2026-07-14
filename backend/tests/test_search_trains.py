@@ -1,129 +1,141 @@
 # backend/tests/test_search_trains.py
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock
 
 from tools.base import ToolError
 from tools.search_trains import make_search_trains_tool
+from tools.train12306_client import Train12306Client, Train12306Error
 
 
-FLYAI_TRAIN_RESPONSE = [
-    {
-        "adultPrice": "¥553.0",
-        "journeys": [
-            {
-                "journeyType": "直达",
-                "segments": [
-                    {
-                        "depCityName": "北京",
-                        "depStationName": "北京南",
-                        "depDateTime": "2026-04-15 08:00:00",
-                        "arrCityName": "上海",
-                        "arrStationName": "上海虹桥",
-                        "arrDateTime": "2026-04-15 12:28:00",
-                        "duration": "268分钟",
-                        "transportType": "火车",
-                        "marketingTransportNo": "G11",
-                        "seatClassName": "二等座",
-                    }
-                ],
-                "totalDuration": "268分钟",
-            }
-        ],
-        "jumpUrl": "https://fliggy.com/t/123",
-    }
-]
+QUERY_RESULT = {
+    "trains": [
+        {
+            "train_code": "G11",
+            "from_station": "北京南",
+            "to_station": "上海虹桥",
+            "start_time": "08:00",
+            "arrive_time": "12:28",
+            "duration": "04:28",
+            "bookable": True,
+            "seats": {"二等座": "有", "一等座": "12"},
+        },
+        {
+            "train_code": "D717",
+            "from_station": "北京",
+            "to_station": "上海",
+            "start_time": "19:36",
+            "arrive_time": "07:22",
+            "duration": "11:46",
+            "bookable": True,
+            "seats": {"软卧/一等卧": "有"},
+        },
+        {
+            "train_code": "T109",
+            "from_station": "北京",
+            "to_station": "上海",
+            "start_time": "20:05",
+            "arrive_time": "10:50",
+            "duration": "14:45",
+            "bookable": False,
+            "seats": {},
+        },
+    ],
+    "from_alternatives": ["北京南", "北京西"],
+    "to_alternatives": ["上海虹桥"],
+}
 
 
-@pytest.fixture
-def mock_flyai_client():
-    client = AsyncMock()
-    client.available = True
-    return client
-
-
-@pytest.fixture
-def mock_flyai_unavailable():
-    client = AsyncMock()
-    client.available = False
-    return client
+def _patched_query(result=None, error: Exception | None = None):
+    mock = AsyncMock()
+    if error is not None:
+        mock.side_effect = error
+    else:
+        mock.return_value = result
+    return patch.object(Train12306Client, "query_left_tickets", mock), mock
 
 
 @pytest.mark.asyncio
-async def test_search_trains_success(mock_flyai_client):
-    mock_flyai_client.search_train.return_value = FLYAI_TRAIN_RESPONSE
+async def test_search_trains_success():
+    patcher, mock = _patched_query(QUERY_RESULT)
+    with patcher:
+        tool_fn = make_search_trains_tool()
+        result = await tool_fn(origin="北京", destination="上海", date="2026-04-15")
 
-    tool_fn = make_search_trains_tool(mock_flyai_client)
-    result = await tool_fn(origin="北京", destination="上海", date="2026-04-15")
-
-    assert len(result["trains"]) == 1
+    mock.assert_awaited_once_with("北京", "上海", "2026-04-15")
+    assert result["source"] == "12306"
+    assert result["total_found"] == 3
     train = result["trains"][0]
-    assert train["train_no"] == "G11"
-    assert train["origin"] == "北京"
-    assert train["origin_station"] == "北京南"
-    assert train["destination"] == "上海"
-    assert train["destination_station"] == "上海虹桥"
-    assert train["duration_min"] == 268
-    assert train["price"] == 553.0
-    assert train["seat_class"] == "二等座"
-    assert train["stops"] == 0
-    assert train["booking_url"] == "https://fliggy.com/t/123"
-    assert train["source"] == "flyai"
+    assert train["train_code"] == "G11"
+    assert train["from_station"] == "北京南"
+    assert train["seats"]["二等座"] == "有"
+    assert result["origin_station_alternatives"] == ["北京南", "北京西"]
 
 
 @pytest.mark.asyncio
-async def test_search_trains_with_filters(mock_flyai_client):
-    mock_flyai_client.search_train.return_value = FLYAI_TRAIN_RESPONSE
+async def test_search_trains_train_type_filter():
+    patcher, _ = _patched_query(QUERY_RESULT)
+    with patcher:
+        tool_fn = make_search_trains_tool()
+        result = await tool_fn(
+            origin="北京", destination="上海", date="2026-04-15", train_types="GD"
+        )
 
-    tool_fn = make_search_trains_tool(mock_flyai_client)
-    await tool_fn(
-        origin="北京",
-        destination="上海",
-        date="2026-04-15",
-        seat_class="second class",
-        journey_type=1,
-        sort_type=3,
-        max_price=600,
+    codes = [t["train_code"] for t in result["trains"]]
+    assert codes == ["G11", "D717"]
+
+
+@pytest.mark.asyncio
+async def test_search_trains_time_window_filter():
+    patcher, _ = _patched_query(QUERY_RESULT)
+    with patcher:
+        tool_fn = make_search_trains_tool()
+        result = await tool_fn(
+            origin="北京",
+            destination="上海",
+            date="2026-04-15",
+            earliest_start="19:00",
+            latest_start="20:00",
+        )
+
+    codes = [t["train_code"] for t in result["trains"]]
+    assert codes == ["D717"]
+
+
+@pytest.mark.asyncio
+async def test_search_trains_no_results():
+    patcher, _ = _patched_query(
+        {"trains": [], "from_alternatives": [], "to_alternatives": []}
     )
-
-    mock_flyai_client.search_train.assert_called_once()
-    call_kwargs = mock_flyai_client.search_train.call_args.kwargs
-    assert call_kwargs["origin"] == "北京"
-    assert call_kwargs["seat_class_name"] == "second class"
-    assert call_kwargs["journey_type"] == 1
-    assert call_kwargs["sort_type"] == 3
-    assert call_kwargs["max_price"] == 600
+    with patcher:
+        tool_fn = make_search_trains_tool()
+        with pytest.raises(ToolError, match="No train results"):
+            await tool_fn(origin="北京", destination="拉萨", date="2026-04-15")
 
 
 @pytest.mark.asyncio
-async def test_search_trains_no_results(mock_flyai_client):
-    mock_flyai_client.search_train.return_value = []
-
-    tool_fn = make_search_trains_tool(mock_flyai_client)
-    with pytest.raises(ToolError, match="No train results"):
-        await tool_fn(origin="北京", destination="拉萨", date="2026-04-15")
-
-
-@pytest.mark.asyncio
-async def test_search_trains_unavailable(mock_flyai_unavailable):
-    tool_fn = make_search_trains_tool(mock_flyai_unavailable)
-    with pytest.raises(ToolError, match="unavailable"):
-        await tool_fn(origin="北京", destination="上海", date="2026-04-15")
-
-
-@pytest.mark.asyncio
-async def test_search_trains_propagates_flyai_runtime_error(mock_flyai_client):
-    mock_flyai_client.search_train.side_effect = RuntimeError(
-        "Trial limit reached. Please configure FLYAI_API_KEY"
+async def test_search_trains_station_not_found():
+    patcher, _ = _patched_query(
+        error=Train12306Error("未找到车站: 不存在站", code="STATION_NOT_FOUND")
     )
+    with patcher:
+        tool_fn = make_search_trains_tool()
+        with pytest.raises(ToolError) as exc_info:
+            await tool_fn(origin="不存在站", destination="上海", date="2026-04-15")
 
-    tool_fn = make_search_trains_tool(mock_flyai_client)
+    assert exc_info.value.error_code == "STATION_NOT_FOUND"
 
-    with pytest.raises(ToolError) as exc_info:
-        await tool_fn(origin="北京", destination="上海", date="2026-04-15")
+
+@pytest.mark.asyncio
+async def test_search_trains_service_unavailable():
+    patcher, _ = _patched_query(error=Train12306Error("12306 查询失败: timeout"))
+    with patcher:
+        tool_fn = make_search_trains_tool()
+        with pytest.raises(ToolError) as exc_info:
+            await tool_fn(origin="北京", destination="上海", date="2026-04-15")
 
     error = exc_info.value
-    assert "Trial limit reached" in str(error)
     assert error.error_code == "SERVICE_UNAVAILABLE"
-    assert error.suggestion == "Check FlyAI CLI quota/auth status or retry later."
+    assert "web_search" in (error.suggestion or "")

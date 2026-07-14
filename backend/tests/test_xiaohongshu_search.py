@@ -422,40 +422,23 @@ async def test_xiaohongshu_split_tools_require_specific_inputs():
 
 
 @pytest.mark.asyncio
-async def test_xiaohongshu_split_tools_registration(monkeypatch):
-    from main import create_app
+async def test_xiaohongshu_split_tools_registration():
+    # xhs 默认已下线(触发风控),这里显式开启配置验证三件套拆分与 schema 正确。
+    from config import load_config
+    from dataclasses import replace
+    from state.models import TravelPlanState
+    from api.orchestration.agent.tools import build_tool_engine
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    app = create_app()
+    cfg = load_config()
+    cfg = replace(cfg, xhs=replace(cfg.xhs, enabled=True))
+    plan = TravelPlanState(session_id="s_xhs", phase=1)
+    tool_engine = build_tool_engine(config=cfg, plan=plan)
 
-    sessions = None
-    for route in app.routes:
-        endpoint = getattr(route, "endpoint", None)
-        if endpoint is None or getattr(endpoint, "__name__", "") != "create_session":
-            continue
-        for name, cell in zip(
-            endpoint.__code__.co_freevars, endpoint.__closure__ or ()
-        ):
-            if name == "sessions":
-                sessions = cell.cell_contents
-                break
+    assert tool_engine.get_tool("xiaohongshu_search") is None
 
-    assert sessions is not None
-
-    from httpx import ASGITransport, AsyncClient
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post("/api/sessions")
-
-    session_id = resp.json()["session_id"]
-    agent = sessions[session_id]["agent"]
-    assert agent.tool_engine.get_tool("xiaohongshu_search") is None
-
-    search_tool = agent.tool_engine.get_tool("xiaohongshu_search_notes")
-    read_tool = agent.tool_engine.get_tool("xiaohongshu_read_note")
-    comments_tool = agent.tool_engine.get_tool("xiaohongshu_get_comments")
+    search_tool = tool_engine.get_tool("xiaohongshu_search_notes")
+    read_tool = tool_engine.get_tool("xiaohongshu_read_note")
+    comments_tool = tool_engine.get_tool("xiaohongshu_get_comments")
 
     assert search_tool is not None
     assert read_tool is not None
@@ -469,6 +452,23 @@ async def test_xiaohongshu_split_tools_registration(monkeypatch):
     assert "标题不足以支撑判断" in read_tool.description
     assert "评论区" in comments_tool.description
     assert "phase 1" not in search_tool.description
+
+
+@pytest.mark.asyncio
+async def test_xiaohongshu_tools_not_registered_when_disabled():
+    # 默认配置下 xhs.enabled=false,三件套不应出现在工具引擎中。
+    from config import load_config
+    from state.models import TravelPlanState
+    from api.orchestration.agent.tools import build_tool_engine
+
+    cfg = load_config()
+    assert cfg.xhs.enabled is False
+    plan = TravelPlanState(session_id="s_xhs_off", phase=1)
+    tool_engine = build_tool_engine(config=cfg, plan=plan)
+
+    assert tool_engine.get_tool("xiaohongshu_search_notes") is None
+    assert tool_engine.get_tool("xiaohongshu_read_note") is None
+    assert tool_engine.get_tool("xiaohongshu_get_comments") is None
 
 
 @pytest.mark.asyncio

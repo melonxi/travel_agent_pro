@@ -37,9 +37,19 @@ def build_tool_engine(*, config, plan) -> ToolEngine:
 
     for plan_tool in make_all_plan_tools(plan):
         tool_engine.register(plan_tool)
-    tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
-    tool_engine.register(make_search_trains_tool(flyai_client))
-    tool_engine.register(make_ai_travel_search_tool(flyai_client))
+    # search_flights 依赖 Amadeus key 或 flyai;两者都不可用时不注册,
+    # 由 lock 阶段 prompt 引导用 web_search 查航班价格带。
+    if flyai_client is not None or (
+        config.api_keys.amadeus_key and config.api_keys.amadeus_secret
+    ):
+        tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
+    # search_trains 走 12306 直连,不依赖 flyai。
+    tool_engine.register(make_search_trains_tool())
+    # 以下工具的唯一数据源是 flyai,client 不可用时不注册。
+    if flyai_client is not None:
+        tool_engine.register(make_ai_travel_search_tool(flyai_client))
+        tool_engine.register(make_quick_travel_search_tool(flyai_client))
+        tool_engine.register(make_search_travel_services_tool(flyai_client))
     tool_engine.register(make_search_accommodations_tool(config.api_keys, flyai_client))
     tool_engine.register(make_get_poi_info_tool(config.api_keys, flyai_client))
     tool_engine.register(make_calculate_route_tool(config.api_keys))
@@ -48,11 +58,10 @@ def build_tool_engine(*, config, plan) -> ToolEngine:
     tool_engine.register(make_check_availability_tool(config.api_keys))
     tool_engine.register(make_check_weather_tool(config.api_keys))
     tool_engine.register(make_generate_summary_tool(plan))
-    tool_engine.register(make_quick_travel_search_tool(flyai_client))
-    tool_engine.register(make_search_travel_services_tool(flyai_client))
     tool_engine.register(make_web_search_tool(config.api_keys))
-    tool_engine.register(make_xiaohongshu_search_notes_tool(config.xhs))
-    tool_engine.register(make_xiaohongshu_read_note_tool(config.xhs))
-    tool_engine.register(make_xiaohongshu_get_comments_tool(config.xhs))
+    if config.xhs.enabled:
+        tool_engine.register(make_xiaohongshu_search_notes_tool(config.xhs))
+        tool_engine.register(make_xiaohongshu_read_note_tool(config.xhs))
+        tool_engine.register(make_xiaohongshu_get_comments_tool(config.xhs))
 
     return tool_engine

@@ -37,6 +37,7 @@
 - `deep/sqlite-schema.md`：SQLite 表与消息历史语义。
 - `deep/harness-architecture.md`：5 层质量守护。
 - `deep/trace-flight-recorder.md`：run-scoped trace 事件与 grader。
+- `deep/architecture-comparison-pi.md`：与 earendil-works/pi 的架构对比及改进空间。
 
 ## 更新规则
 

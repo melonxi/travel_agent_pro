@@ -34,3 +34,4 @@
 - Phase 3 并行：`../deep/phase3-parallel.md`
 - 工具写状态：`tools.md`、`../deep/tool-state-writes.md`
 - 数据流：`data-flow.md`
+- 架构演进与对比：`../deep/architecture-comparison-pi.md`

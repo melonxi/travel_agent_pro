@@ -83,7 +83,7 @@ def _build_default_tool_engine(plan: TravelPlanState) -> ToolEngine:
 
     register_all_plan_tools(engine, plan)
     engine.register(make_search_flights_tool(api_keys, flyai_client))
-    engine.register(make_search_trains_tool(flyai_client))
+    engine.register(make_search_trains_tool())
     engine.register(make_ai_travel_search_tool(flyai_client))
     engine.register(make_search_accommodations_tool(api_keys, flyai_client))
     engine.register(make_get_poi_info_tool(api_keys, flyai_client))
