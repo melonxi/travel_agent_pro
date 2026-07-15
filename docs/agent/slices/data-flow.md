@@ -40,6 +40,7 @@ POST /api/chat/{session_id}
 
 - runtime notice 不能插到一组 assistant tool_calls 和 tool results 中间；必须下一轮 LLM 前 flush。
 - soft judge / quality gate / hard constraint 反馈统一走 `push_pending_system_note`，在 `before_llm_call` 时 flush；禁止直接 `active_runtime_messages.append`。
+- D4 运行中引导：`POST /api/chat/{session_id}/steer` 入队 `session["_steer_queue"]`；普通迭代在 LLM 前 drain 为 `runtime_notice`；Phase 3 在 worker 收集循环 drain，按「第 N 天」挂 `repair_hints` 或 redispatch。
 - Phase 3 并行入口会检查用户是否明确暂缓（如「先等等」）；骨架失配时 orchestrator 输出可对话提示，不抛硬异常。
 - Phase 转换或 Phase 2 子步骤变化会 rebuild runtime input；旧消息要先按 `context_epoch` 落盘。
 - Phase 3 并行结果不能由 Orchestrator 直接写状态，必须交回 AgentLoop 用 `replace_all_day_plans` 标准工具路径写入。

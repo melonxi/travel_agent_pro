@@ -18,17 +18,13 @@ from api.orchestration.chat.deliverables import (
 )
 from api.orchestration.chat.errors import agent_stream_error_event, is_retryable_stream_error
 from api.orchestration.chat.events import (
-    apply_pending_tool_stats,
-    chunk_event_data,
-    done_event,
-    event_json,
+    apply_pending_tool_stats, chunk_event_data, done_event, event_json,
     passthrough_chunk_event,
 )
 from api.orchestration.chat.finalization import finalize_agent_run
 from api.orchestration.chat.stream_runtime import resolve_run_timeout_seconds, run_timeout
 from api.orchestration.chat.stream_trace import (
-    emit_deliverable_draft_trace,
-    finalize_stream_trace_and_persistence,
+    emit_deliverable_draft_trace, finalize_stream_trace_and_persistence,
 )
 from api.orchestration.common.telemetry_helpers import (
     _plan_writer_updated_fields as plan_writer_updated_fields,
@@ -92,6 +88,8 @@ async def run_agent_stream(
 
     keepalive_task = asyncio.create_task(_keepalive_loop())
     session["_soft_judge_repair_feedback_buckets"] = {}
+    # D4：与 _cancel_event 同构，run 起建 / run 终清
+    session["_steer_queue"] = agent.steer_queue = asyncio.Queue()
 
     try:
         accum_text = ""  # 追踪本轮 LLM 输出的文本，供中断恢复使用
@@ -393,6 +391,8 @@ async def run_agent_stream(
         )
         keepalive_task.cancel()
         session.pop("_cancel_event", None)
+        session.pop("_steer_queue", None)
+        agent.steer_queue = None
         # 当 run 可以继续时，保留 _current_run 以供 continue endpoint 使用
         if not run.can_continue:
             session.pop("_current_run", None)

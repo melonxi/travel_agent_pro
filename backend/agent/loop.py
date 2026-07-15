@@ -159,6 +159,7 @@ class AgentLoop:
         self._parallel_group_counter: int = 0
         self._prev_phase2_step: str | None = None
         self.cancel_event = cancel_event
+        self.steer_queue: asyncio.Queue | None = None  # D4：由 stream 在 run 前挂载
         self.phase3_parallel_config = phase3_parallel_config
         self.session_stats = session_stats
         self.internal_task_events = (
@@ -233,9 +234,7 @@ class AgentLoop:
         *,
         user_message: Any | None = None,
     ) -> bool:
-        return should_use_parallel_phase3(
-            plan, config, user_message=user_message
-        )
+        return should_use_parallel_phase3(plan, config, user_message=user_message)
 
     async def _run_parallel_phase3_orchestrator(
         self,
@@ -258,6 +257,7 @@ class AgentLoop:
             stats=self.session_stats,
             trace_recorder=self.trace_recorder,
             trace_context=self.trace_context,
+            steer_queue=self.steer_queue,
         ):
             yield chunk
 
@@ -400,6 +400,9 @@ class AgentLoop:
 
                 self._check_cancelled()
                 self._progress = IterationProgress.NO_OUTPUT
+                from agent.steering import drain_and_inject_steering
+                for ack in drain_and_inject_steering(self.steer_queue, messages):
+                    yield ack
                 with tracer.start_as_current_span("agent_loop.iteration") as iter_span:
                     iter_span.set_attribute(AGENT_ITERATION, iteration)
 

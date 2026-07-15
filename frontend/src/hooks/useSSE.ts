@@ -106,6 +106,21 @@ export function useSSE() {
     }
   }, [])
 
+  /** D4：向进行中的 run 注入引导，不中断主 SSE */
+  const steer = useCallback(async (sessionId: string, text: string) => {
+    const body = JSON.stringify({ text })
+    const resp = await fetch(`/api/chat/${sessionId}/steer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+    if (!resp.ok) {
+      const detail = await resp.text().catch(() => '')
+      throw new Error(detail || `steer failed: ${resp.status}`)
+    }
+    return resp.json() as Promise<{ status: string }>
+  }, [])
+
   const continueGeneration = useCallback(
     async (
       sessionId: string,
@@ -123,5 +138,5 @@ export function useSSE() {
     [],
   )
 
-  return { sendMessage, subscribe, cancel, continueGeneration }
+  return { sendMessage, subscribe, cancel, steer, continueGeneration }
 }

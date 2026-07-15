@@ -209,7 +209,7 @@ Phase 3 是长 run,当前用户只能等完或取消。`asyncio.Queue` + `/steer
 ### ⏳ 未完成(设计级,视排期)——已产出独立施工蓝图
 
 - **D3**(hub-and-spoke 再协商 + 黑板):**阶段 1+2 已落地**(结构化 `ReplanRequest`、只重派受影响天、共享黑板查表即拒);阶段 3 有限波次按蓝图默认不做。蓝图见 [`2026-07-15-D3-phase3-renegotiation-plan.md`](2026-07-15-D3-phase3-renegotiation-plan.md)。
-- **D4**(Steering 运行中引导):`asyncio.Queue` + `/steer` endpoint,长 run 中途纠偏。独立特性,未开始。**施工蓝图见 [`2026-07-15-D4-steering-plan.md`](2026-07-15-D4-steering-plan.md)**(含 drain 注入点、`/steer` 端点模板、与 D3 的配合)。
+- **D4**(Steering 运行中引导):**阶段 1+2 已落地**(`/steer`、普通迭代 drain、Phase 3 收集循环 drain + 单天 redispatch)。蓝图见 [`2026-07-15-D4-steering-plan.md`](2026-07-15-D4-steering-plan.md)。
 
 ---
 

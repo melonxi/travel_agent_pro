@@ -243,6 +243,7 @@ class Phase3Orchestrator:
         stats: Any | None = None,
         trace_recorder: TraceRecorder | None = None,
         trace_context: TraceContext | None = None,
+        steer_queue: Any | None = None,
     ):
         self.plan = plan
         self.llm = llm
@@ -251,6 +252,7 @@ class Phase3Orchestrator:
         self.stats = stats
         self.trace_recorder = trace_recorder
         self.trace_context = trace_context
+        self.steer_queue = steer_queue  # D4
         self.final_dayplans: list[dict[str, Any]] = []
         self.final_issues: list[GlobalValidationIssue] = []
         self._locked_pois_by_day: dict[int, list[str]] = {}
@@ -260,6 +262,9 @@ class Phase3Orchestrator:
         self._skeleton_copy: dict[str, Any] | None = None
         self._skeleton_amendments: list[Any] = []
         self._blackboard: Phase3Blackboard = Phase3Blackboard()
+        # D4：day → 用户引导原文列表；已完成天可触发重派
+        self._pending_steer_hints: dict[int, list[str]] = {}
+        self._steer_redispatch_days: set[int] = set()
 
     def _trace_context(
         self,
@@ -545,6 +550,80 @@ class Phase3Orchestrator:
         # 刷新 locked 记录与黑板 seed（释放后重 seed）
         self._locked_pois_by_day = {t.day: list(t.locked_pois) for t in compiled}
         return [t for t in compiled if t.day in days]
+
+    def _apply_steer_hints_to_task(self, task: DayTask) -> None:
+        """把挂起的用户引导挂到 repair_hints，供重派/重试 worker 使用。"""
+        hints = self._pending_steer_hints.get(task.day) or []
+        if not hints:
+            return
+        from agent.steering import format_steer_notice
+
+        existing = list(task.repair_hints or [])
+        for h in hints:
+            notice = format_steer_notice(h)
+            if notice not in existing:
+                existing.append(notice)
+        task.repair_hints = existing
+
+    def _drain_steering(
+        self,
+        *,
+        tasks: list[DayTask],
+        successes: list[DayWorkerResult],
+        total_days: int,
+    ) -> list[LLMChunk]:
+        """D4：在 worker 收集循环安全点 drain steering。
+
+        - 解析「第 N 天」；无天号则作用于尚未成功的天
+        - 已成功天：标记 redispatch（不回滚已 yield 的进度，稍后重派）
+        - 未成功天：挂 repair_hint，供后续 retry/redispatch 使用
+        """
+        from agent.steering import (
+            drain_steer_queue,
+            format_steer_notice,
+            parse_steer_day_targets,
+            steering_ack_chunk,
+        )
+
+        texts = drain_steer_queue(self.steer_queue)
+        if not texts:
+            return []
+
+        done_days = {s.day for s in successes}
+        all_days = {t.day for t in tasks}
+        incomplete = sorted(all_days - done_days)
+        task_by_day = {t.day: t for t in tasks}
+        acks: list[LLMChunk] = []
+
+        for text in texts:
+            targets = parse_steer_day_targets(text)
+            if not targets:
+                targets = incomplete or sorted(all_days)
+            targets = [d for d in targets if d in all_days]
+            acks.append(steering_ack_chunk(text, days=targets or None))
+            for day in targets:
+                self._pending_steer_hints.setdefault(day, []).append(text)
+                if day in done_days:
+                    self._steer_redispatch_days.add(day)
+                else:
+                    task = task_by_day.get(day)
+                    if task is not None:
+                        notice = format_steer_notice(text)
+                        if notice not in (task.repair_hints or []):
+                            task.repair_hints = list(task.repair_hints or []) + [
+                                notice
+                            ]
+            if targets:
+                acks.append(
+                    LLMChunk(
+                        type=ChunkType.TEXT_DELTA,
+                        content=(
+                            f"\n\n↪️ 因用户引导将调整第 "
+                            f"{'、'.join(str(d) for d in targets)} 天…\n"
+                        ),
+                    )
+                )
+        return acks
 
     def _compile_day_tasks(self, tasks: list[DayTask]) -> list[DayTask]:
         """Enrich DayTasks with cross-day constraints derived from skeleton."""
@@ -1217,6 +1296,13 @@ class Phase3Orchestrator:
                     total_days,
                     f"已完成 {done_count}/{total_days} 天...",
                 )
+                # D4：每收完一个 worker 结果后 drain steering
+                for ack in self._drain_steering(
+                    tasks=tasks,
+                    successes=successes,
+                    total_days=total_days,
+                ):
+                    yield ack
 
             if getter_task and not getter_task.done():
                 getter_task.cancel()
@@ -1224,6 +1310,36 @@ class Phase3Orchestrator:
                     await getter_task
                 except (asyncio.CancelledError, Exception):
                     pass
+
+            # D4：用户引导要求重做已成功天 → 从 successes 摘下，进入 step 7 重派
+            if self._steer_redispatch_days:
+                redispatch = set(self._steer_redispatch_days)
+                self._steer_redispatch_days.clear()
+                kept: list[DayWorkerResult] = []
+                for s in successes:
+                    if s.day in redispatch:
+                        self._blackboard.release_day(s.day)
+                        task = next((t for t in tasks if t.day == s.day), None)
+                        if task is not None:
+                            self._apply_steer_hints_to_task(task)
+                            failures.append(
+                                (task, "用户引导要求重排该天")
+                            )
+                            idx = _find_worker_idx(s.day)
+                            worker_statuses[idx]["status"] = "failed"
+                            worker_statuses[idx]["error"] = "steering redispatch"
+                            worker_statuses[idx]["error_code"] = "STEERING_REDISPATCH"
+                        # 不保留旧成功结果
+                    else:
+                        kept.append(s)
+                successes = kept
+                yield LLMChunk(
+                    type=ChunkType.TEXT_DELTA,
+                    content=(
+                        f"\n\n↪️ 因用户引导重派第 "
+                        f"{'、'.join(str(d) for d in sorted(redispatch))} 天…\n"
+                    ),
+                )
 
             span.set_attribute("successes", len(successes))
             span.set_attribute("failures", len(failures))
@@ -1264,6 +1380,7 @@ class Phase3Orchestrator:
                 idx = _find_worker_idx(task.day)
                 if worker_statuses[idx].get("error_code") == "NEEDS_PHASE3_REPLAN":
                     continue
+                self._apply_steer_hints_to_task(task)
                 worker_statuses[idx].update({
                     "status": "retrying",
                     "iteration": None,

@@ -115,19 +115,19 @@ D3 让 Orchestrator 能"改单天骨架 + 只重派受影响天";D4 让用户能
 
 ## 5. 分期施工步骤
 
-### 阶段 1:普通迭代 steering(不依赖 D3,可独立上线)
+### 阶段 1:普通迭代 steering(不依赖 D3,可独立上线) — ✅ 已完成(2026-07-15)
 
-1. `stream.py` 启动 run 时建 `session["_steer_queue"]`,传入 `AgentLoop.run`。
-2. `chat_routes.py` 加 `/steer` 端点 + `SteerRequest` model(照抄 /cancel)。
-3. 新增 `_drain_steer_queue` helper,`run_llm_turn` 开头(llm_turn.py:123 前)drain → `push_pending_system_note`。
-4. run 结束清理 `_steer_queue`(对齐 stream.py:395 的 cancel_event 清理)。
-5. SSE `steering_ack` 事件 + 前端最小接线(输入框在 run 进行中可发 steering)。
+1. `stream.py` 启动 run 时建 `session["_steer_queue"]`，挂到 `agent.steer_queue`。
+2. `chat_routes.py` 加 `/api/chat/{session_id}/steer` + `SteerRequest`。
+3. `agent/steering.py`：`drain_steer_queue`；`AgentLoop` 每轮 LLM 前 drain → `runtime_notice`。
+4. run 结束清理 `_steer_queue` + `agent.steer_queue = None`。
+5. SSE `agent_status.stage=steering_ack`；前端 streaming 时输入走 `/steer`。
 
-### 阶段 2:Phase 3 长 run steering(与 D3 配合)
+### 阶段 2:Phase 3 长 run steering(与 D3 配合) — ✅ 已完成(2026-07-15)
 
-6. `orchestrator.run` 接收 `steer_queue`,worker 收集循环内每步 drain。
-7. steering 消息映射到"某天追加约束 / 触发该天重派"——**复用 D3 的单天重派通道**(若 D3 未上线,退化为 pending note 喂给 handoff 后的 LLM turn)。
-8. SSE 进度里标注"因用户引导调整了第 N 天"。
+6. `Phase3Orchestrator` 接收 `steer_queue`，worker 收集循环每步 drain。
+7. 解析「第 N 天」→ `repair_hints`；已完成天走 redispatch（`STEERING_REDISPATCH`）+ D3 单天重派通道。
+8. TEXT_DELTA / steering_ack 标注「因用户引导调整了第 N 天」。
 
 ## 6. 测试策略
 

@@ -266,7 +266,8 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
   const internalTaskMessageIdsRef = useRef<Map<string, string>>(new Map())
   const lastEventTimeRef = useRef<number>(Date.now())
   const [streamFeedback, setStreamFeedback] = useState<StreamFeedback | null>(null)
-  const { sendMessage, subscribe, cancel, continueGeneration } = useSSE()
+  const { sendMessage, subscribe, cancel, steer, continueGeneration } = useSSE()
+  const [steerFeedback, setSteerFeedback] = useState<string | null>(null)
   const lastUserMessageRef = useRef('')
   const userStoppedRef = useRef(false)
   const thinkingDismissTimerRef = useRef<number | null>(null)
@@ -762,7 +763,14 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
         }])
       }
     } else if (event.type === 'agent_status') {
-      if (event.stage === 'parallel_progress' && Array.isArray(event.workers)) {
+      if (event.stage === 'steering_ack') {
+        const msg =
+          typeof event.message === 'string'
+            ? event.message
+            : '已收到引导，将在下一步调整'
+        setSteerFeedback(msg)
+        window.setTimeout(() => setSteerFeedback(null), 4000)
+      } else if (event.stage === 'parallel_progress' && Array.isArray(event.workers)) {
         setParallelProgress({
           totalDays: typeof event.total_days === 'number' ? event.total_days : 0,
           workers: event.workers as ParallelWorkerStatus[],
@@ -862,6 +870,20 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
 
   const handleSend = async () => {
     const userMsg = input.trim()
+    // D4：run 进行中走 /steer，不另开一轮对话
+    if (streaming) {
+      if (!userMsg) return
+      setInput('')
+      try {
+        await steer(sessionId, userMsg)
+        setSteerFeedback('已发送引导，将在下一步调整')
+        window.setTimeout(() => setSteerFeedback(null), 4000)
+      } catch {
+        setSteerFeedback('引导发送失败（可能没有进行中的 run）')
+        window.setTimeout(() => setSteerFeedback(null), 4000)
+      }
+      return
+    }
     await startMessageStream(userMsg, true)
   }
 
@@ -981,6 +1003,11 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
         <div ref={bottomRef} />
       </div>
       <div className="input-bar">
+        {steerFeedback && (
+          <div className="chat-status-banner" role="status">
+            {steerFeedback}
+          </div>
+        )}
         <div className="input-wrapper">
           <input
             ref={inputRef}
@@ -991,17 +1018,26 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
               e.preventDefault()
               void handleSend()
             }}
-            placeholder="告诉我你想去哪里…（Enter 发送）"
-            disabled={streaming}
+            placeholder={
+              streaming
+                ? '生成中可输入引导，例如「第 3 天别排太满」…'
+                : '告诉我你想去哪里…（Enter 发送）'
+            }
           />
         </div>
         <button
           type="button"
-          className={`send-btn ${streaming ? 'send-btn--hidden' : ''}`}
+          className={`send-btn ${streaming ? 'send-btn--steer' : ''}`}
           onClick={() => void handleSend()}
           disabled={!input.trim()}
-          aria-label="发送消息"
-          title={!input.trim() ? '请输入内容' : '发送'}
+          aria-label={streaming ? '发送引导' : '发送消息'}
+          title={
+            !input.trim()
+              ? '请输入内容'
+              : streaming
+                ? '发送运行中引导'
+                : '发送'
+          }
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="22" y1="2" x2="11" y2="13" />

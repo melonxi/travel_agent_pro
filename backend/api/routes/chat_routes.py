@@ -17,7 +17,8 @@ from api.orchestration.chat.finalization import (
 from api.orchestration.chat.stream import ChatStreamDeps, run_agent_stream
 from api.orchestration.chat.trace_persistence import ensure_trace_run_started
 from api.orchestration.memory.turn import build_memory_context_for_turn
-from api.schemas import BacktrackRequest, ChatRequest
+from api.schemas import BacktrackRequest, ChatRequest, SteerRequest
+from agent.steering import make_steer_envelope
 from storage.trace_redaction import stable_content_hash
 from telemetry.trace_recorder import TraceContext, TraceRecorder
 
@@ -350,6 +351,21 @@ def register_chat_routes(
         if cancel_event:
             cancel_event.set()
         return {"status": "cancelled"}
+
+    @app.post("/api/chat/{session_id}/steer")
+    async def steer_chat(session_id: str, req: SteerRequest):
+        """D4：向进行中的 run 注入运行中引导，不中断主 run。"""
+        session = sessions.get(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        text = (req.text or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="text is required")
+        queue = session.get("_steer_queue")
+        if queue is None:
+            raise HTTPException(status_code=409, detail="No active run to steer")
+        queue.put_nowait(make_steer_envelope(text))
+        return {"status": "accepted"}
 
     @app.post("/api/chat/{session_id}/continue")
     async def continue_chat(session_id: str):

@@ -79,6 +79,13 @@ DayTask 携带：
   - `day_boundaries`：日边界锚点
 - 候选收集时 `try_accept_dayplan` 查表即拒；P2-1 事后 locked POI 校验保留作兜底。
 
+## D4 运行中引导（Steering）
+
+- 入口：`POST /api/chat/{session_id}/steer`，queue 挂 `session["_steer_queue"]` / `agent.steer_queue`。
+- Phase 3：worker 收集循环每步 drain；解析「第 N 天」→ `repair_hints`；已完成天 `STEERING_REDISPATCH` 后重派。
+- 已完成天不静默回滚；用户引导只影响未完成 / 被显式点名重派的天。
+- SSE：`agent_status.stage=steering_ack`。
+
 ## 写入边界
 
 - Day Worker 只能提交候选，不改 `TravelPlanState.daily_plans`。
@@ -93,3 +100,4 @@ DayTask 携带：
 - `backend/agent/phase3/worker_prompt.py`
 - `backend/agent/phase3/candidate_store.py`
 - `backend/agent/phase3/renegotiation.py`
+- `backend/agent/steering.py`
