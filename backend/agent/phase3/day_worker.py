@@ -575,23 +575,39 @@ _REPORT_SKELETON_INFEASIBLE_SCHEMA = {
     "description": (
         "上报：当前骨架分配对这一天不可行，需要 Orchestrator 调整骨架后重新分派。\n"
         "【何时调用】仅在结构性不可行时：locked POI 当日闭馆/不存在、区域组合"
-        "当天根本排不下（跨区通勤远超全天时间）、locked POI 与到达/离开时间冲突。\n"
-        "【何时不要调用】信息缺失（写 notes 降级即可）、密度略高（减活动即可）、"
-        "普通交通不便（改时间即可）。误报会浪费整轮重排。\n"
+        "当天根本排不下（跨区通勤远超全天时间）、locked POI 与到达/离开时间冲突、"
+        "密度结构性超限、某 POI 应移到其他天。\n"
+        "【何时不要调用】信息缺失（写 notes 降级即可）、普通交通不便（改时间即可）。"
+        "误报会浪费整轮重排。\n"
+        "kind 必填：INFEASIBLE_DAY（结构性排不下）/ OVERLOADED（密度超限需减载）/ "
+        "SUGGEST_MOVE（建议把某 POI 移到另一天，须同时给 move_poi + to_day）。\n"
         "调用后本 worker 任务结束，不要再调用其他工具。"
     ),
     "parameters": {
         "type": "object",
         "additionalProperties": False,
-        "required": ["reason"],
+        "required": ["kind", "reason"],
         "properties": {
+            "kind": {
+                "type": "string",
+                "enum": ["INFEASIBLE_DAY", "OVERLOADED", "SUGGEST_MOVE"],
+                "description": (
+                    "INFEASIBLE_DAY:本天结构性排不下；"
+                    "OVERLOADED:密度超限需减载；"
+                    "SUGGEST_MOVE:建议把某 POI 移到另一天"
+                ),
+            },
             "reason": {
                 "type": "string",
                 "description": "结构性不可行的具体原因，含涉及的 POI/区域与证据。",
             },
-            "suggestion": {
+            "move_poi": {
                 "type": "string",
-                "description": "可选。对骨架的修改建议，如「将 X 移到第 N 天」。",
+                "description": "仅 SUGGEST_MOVE：建议移动的 POI 名（须是本天 locked/candidate 之一）。",
+            },
+            "to_day": {
+                "type": "integer",
+                "description": "仅 SUGGEST_MOVE：建议移到的目标天（1-indexed）。",
             },
         },
     },
@@ -749,6 +765,8 @@ class DayWorkerResult:
     error: str | None = None
     error_code: str | None = None
     iterations: int = 0
+    # D3：结构化再协商请求（仅 error_code=NEEDS_PHASE3_REPLAN 时有值）
+    replan_request: Any | None = None
 
 
 # JSON extraction patterns
@@ -1278,28 +1296,29 @@ async def run_day_worker(
                             },
                         )
 
-                    # P1-6：worker 上报骨架不可行 → 直接终止，产生
-                    # NEEDS_PHASE3_REPLAN，由 orchestrator 修改骨架单天后重派。
+                    # P1-6 / D3：worker 上报骨架不可行 → 直接终止，产生
+                    # NEEDS_PHASE3_REPLAN + 结构化 ReplanRequest，由 orchestrator
+                    # 修改骨架单天后只重派受影响天。
                     replan_call = next(
                         (c for c in tool_calls if c.name == "report_skeleton_infeasible"),
                         None,
                     )
                     if replan_call is not None:
-                        reason = str(replan_call.arguments.get("reason", "")).strip()
-                        suggestion = str(
-                            replan_call.arguments.get("suggestion", "")
-                        ).strip()
-                        detail = reason or "worker 判定当前骨架对该天不可行"
-                        if suggestion:
-                            detail = f"{detail}（建议：{suggestion}）"
+                        from agent.phase3.renegotiation import ReplanRequest
+
+                        replan_req = ReplanRequest.from_tool_arguments(
+                            day=task.day,
+                            arguments=replan_call.arguments or {},
+                        )
                         return DayWorkerResult(
                             day=task.day,
                             date=task.date,
                             success=False,
                             dayplan=None,
-                            error=detail,
+                            error=replan_req.to_error_detail(),
                             error_code=ERROR_NEEDS_PHASE3_REPLAN,
                             iterations=iterations,
+                            replan_request=replan_req,
                         )
 
                     # Execute tools. The worker-only submit tool is handled here

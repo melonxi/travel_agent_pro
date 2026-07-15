@@ -470,13 +470,19 @@ async def test_orchestrator_populates_activity_count_on_success(monkeypatch):
     )
 
     async def _fake_worker(**kwargs):
+        day = kwargs["task"].day
         return DayWorkerResult(
-            day=kwargs["task"].day,
+            day=day,
             date=kwargs["task"].date,
             success=True,
             dayplan={
-                "day": kwargs["task"].day,
-                "activities": [{"name": "a"}, {"name": "b"}],
+                "day": day,
+                "date": kwargs["task"].date,
+                # 每天活动名唯一，避免 D3 黑板 POI 认领拒绝后续天
+                "activities": [
+                    {"name": f"a-{day}", "cost": 0},
+                    {"name": f"b-{day}", "cost": 0},
+                ],
             },
             iterations=1,
         )

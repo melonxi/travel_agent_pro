@@ -113,8 +113,11 @@ _WORKER_ROLE = """## 角色
 
 如果这一天在**结构上**根本无法按当前骨架展开——例如 locked POI 当日闭馆/不存在、
 区域组合当天排不下、locked POI 与到达/离开时间冲突——调用
-`report_skeleton_infeasible(reason=..., suggestion=...)` 上报，由 Orchestrator 调整骨架后重排。
-仅限结构性不可行；信息缺失写 notes、密度略高减活动、交通不便改时间，都**不要**用此工具。
+`report_skeleton_infeasible(kind=..., reason=..., move_poi?=..., to_day?=...)` 上报：
+- `INFEASIBLE_DAY`：本天结构性排不下（Orchestrator 无法自动改则部分交付）
+- `OVERLOADED`：密度超限需减载（Orchestrator 会裁剪候选并只重派该天）
+- `SUGGEST_MOVE`：建议把某 POI 移到另一天（必须同时给 `move_poi` + `to_day`）
+Orchestrator 只改受影响天并重派，不会整批丢弃。信息缺失写 notes、交通不便改时间，**不要**用此工具。
 
 ## 交付方式（唯一合法路径）
 

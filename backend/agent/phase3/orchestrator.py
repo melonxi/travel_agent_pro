@@ -13,6 +13,7 @@ The orchestrator is pure Python (not an LLM agent). It:
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import re
 import uuid
@@ -24,6 +25,12 @@ from opentelemetry import trace
 
 from agent.phase3.candidate_store import Phase3CandidateStore
 from agent.phase3.day_worker import DayWorkerResult, run_day_worker
+from agent.phase3.renegotiation import (
+    Phase3Blackboard,
+    ReplanRequest,
+    RenegotiationOutcome,
+    renegotiate_skeleton,
+)
 from agent.phase3.worker_prompt import (
     DayTask,
     build_shared_prefix,
@@ -248,6 +255,11 @@ class Phase3Orchestrator:
         self.final_issues: list[GlobalValidationIssue] = []
         self._locked_pois_by_day: dict[int, list[str]] = {}
         self._trace_orchestrator_event_id: str | None = None
+        # D3：再协商 + 共享黑板（run 级状态）
+        self._renegotiate_count: dict[int, int] = {}
+        self._skeleton_copy: dict[str, Any] | None = None
+        self._skeleton_amendments: list[Any] = []
+        self._blackboard: Phase3Blackboard = Phase3Blackboard()
 
     def _trace_context(
         self,
@@ -432,6 +444,107 @@ class Phase3Orchestrator:
         if skeleton is None:
             raise ValueError("未找到已选骨架方案")
         return split_skeleton_to_day_tasks(skeleton, self.plan)
+
+    def _init_blackboard(self, tasks: list[DayTask]) -> None:
+        """D3 黑板：seed locked POI + 预算口径（活动外已锁定交通/住宿）。"""
+        transport_cost = 0.0
+        accommodation_cost = 0.0
+        transport = self.plan.selected_transport
+        if isinstance(transport, dict):
+            for key in ("outbound", "return", "price", "cost"):
+                val = transport.get(key)
+                if isinstance(val, dict):
+                    try:
+                        transport_cost += float(val.get("price") or val.get("cost") or 0)
+                    except (TypeError, ValueError):
+                        pass
+                elif key in ("price", "cost"):
+                    try:
+                        transport_cost += float(val or 0)
+                    except (TypeError, ValueError):
+                        pass
+        if self.plan.accommodation and getattr(
+            self.plan.accommodation, "price_per_night", None
+        ):
+            nights = self.plan.dates.total_days - 1 if self.plan.dates else 0
+            nights = max(nights, 0)
+            try:
+                accommodation_cost = float(
+                    self.plan.accommodation.price_per_night or 0
+                ) * nights
+            except (TypeError, ValueError):
+                accommodation_cost = 0.0
+        total = None
+        if self.plan.budget and self.plan.budget.total:
+            total = float(self.plan.budget.total)
+        self._blackboard = Phase3Blackboard(
+            total_budget=total,
+            precommitted_cost=transport_cost + accommodation_cost,
+        )
+        self._blackboard.seed_from_locked(
+            {t.day: list(t.locked_pois) for t in tasks}
+        )
+
+    def _accept_worker_dayplan(
+        self, result: DayWorkerResult
+    ) -> DayWorkerResult:
+        """D3：候选收集时查表即拒，通过则登记黑板。"""
+        if not result.success or not result.dayplan:
+            return result
+        ok, reason = self._blackboard.try_accept_dayplan(result.day, result.dayplan)
+        if ok:
+            return result
+        logger.warning(
+            "Blackboard rejected day %d candidate: %s", result.day, reason
+        )
+        return DayWorkerResult(
+            day=result.day,
+            date=result.date,
+            success=False,
+            dayplan=None,
+            error=reason,
+            error_code="BLACKBOARD_REJECT",
+            iterations=result.iterations,
+        )
+
+    def _renegotiate_skeleton(
+        self, requests: list[ReplanRequest]
+    ) -> RenegotiationOutcome:
+        """D3 A2：确定性再协商，只改骨架副本。"""
+        skeleton = self._skeleton_copy or self._find_selected_skeleton() or {
+            "days": []
+        }
+        raw_pace = (self.plan.trip_brief or {}).get("pace")
+        pace = normalize_pace_value(raw_pace) or "balanced"
+        total_days = (
+            self.plan.dates.total_days
+            if self.plan.dates
+            else len(skeleton.get("days") or [])
+        )
+        outcome = renegotiate_skeleton(
+            skeleton=skeleton,
+            requests=requests,
+            pace=pace,
+            renegotiate_count=self._renegotiate_count,
+            total_days=max(total_days, 1),
+        )
+        self._skeleton_copy = outcome.skeleton_copy
+        self._skeleton_amendments.extend(outcome.amendments)
+        return outcome
+
+    def _rebuild_tasks_for_days(
+        self, days: set[int], base_tasks: list[DayTask]
+    ) -> list[DayTask]:
+        """从骨架副本重拆并 compile，只返回受影响天的 DayTask。"""
+        skeleton = self._skeleton_copy or self._find_selected_skeleton()
+        if skeleton is None:
+            return []
+        all_tasks = split_skeleton_to_day_tasks(skeleton, self.plan)
+        # 保留未受影响天的已有 task 引用不需要；只 compile 全集以重建 forbidden
+        compiled = self._compile_day_tasks(all_tasks)
+        # 刷新 locked 记录与黑板 seed（释放后重 seed）
+        self._locked_pois_by_day = {t.day: list(t.locked_pois) for t in compiled}
+        return [t for t in compiled if t.day in days]
 
     def _compile_day_tasks(self, tasks: list[DayTask]) -> list[DayTask]:
         """Enrich DayTasks with cross-day constraints derived from skeleton."""
@@ -871,6 +984,14 @@ class Phase3Orchestrator:
             tasks = self._compile_day_tasks(tasks)
             # P2-1：记录每天编排后的 locked POI，供全局校验核对必去项是否落位。
             self._locked_pois_by_day = {t.day: list(t.locked_pois) for t in tasks}
+            # D3：骨架副本 + 黑板（run 级，不写权威 skeleton_plans）
+            selected = self._find_selected_skeleton()
+            self._skeleton_copy = (
+                copy.deepcopy(selected) if selected else {"days": []}
+            )
+            self._skeleton_amendments = []
+            self._renegotiate_count = {}
+            self._init_blackboard(tasks)
             total_days = len(tasks)
             span.set_attribute("total_days", total_days)
 
@@ -1020,7 +1141,7 @@ class Phase3Orchestrator:
                     day_task = pending.pop(completed)
                     idx = _find_worker_idx(day_task.day)
                     try:
-                        result = completed.result()
+                        result = self._accept_worker_dayplan(completed.result())
                         if result.success:
                             successes.append(result)
                             worker_statuses[idx]["status"] = "done"
@@ -1039,6 +1160,10 @@ class Phase3Orchestrator:
                                 result.error
                             )
                             worker_statuses[idx]["error_code"] = result.error_code
+                            if result.replan_request is not None:
+                                worker_statuses[idx]["replan_request"] = (
+                                    result.replan_request
+                                )
                             logger.warning(
                                 "Day %d worker failed [%s]: %s",
                                 day_task.day,
@@ -1134,8 +1259,11 @@ class Phase3Orchestrator:
                 # 不 return：继续走下面的逐天串行重试(step 7)。
 
             # 7. Retry failed days (one at a time)
+            # D3：NEEDS_PHASE3_REPLAN 需改骨架后重派，同骨架串行重试无意义，留给 7b。
             for task, error_msg in failures:
                 idx = _find_worker_idx(task.day)
+                if worker_statuses[idx].get("error_code") == "NEEDS_PHASE3_REPLAN":
+                    continue
                 worker_statuses[idx].update({
                     "status": "retrying",
                     "iteration": None,
@@ -1159,22 +1287,24 @@ class Phase3Orchestrator:
                         attempt=2,
                     )
                 )
-                retry_result = await run_day_worker(
-                    llm=self.llm,
-                    tool_engine=self.tool_engine,
-                    plan=self.plan,
-                    task=task,
-                    shared_prefix=shared_prefix,
-                    max_iterations=self.config.worker_max_iterations,
-                    timeout_seconds=self.config.worker_timeout_seconds,
-                    on_progress=_make_progress_cb(idx),
-                    candidate_store=candidate_store,
-                    run_id=run_id,
-                    attempt=2,
-                    stats=self.stats,
-                    trace_recorder=self.trace_recorder,
-                    trace_context=self.trace_context,
-                    trace_parent_event_id=worker_start_event_ids.get((task.day, 2)),
+                retry_result = self._accept_worker_dayplan(
+                    await run_day_worker(
+                        llm=self.llm,
+                        tool_engine=self.tool_engine,
+                        plan=self.plan,
+                        task=task,
+                        shared_prefix=shared_prefix,
+                        max_iterations=self.config.worker_max_iterations,
+                        timeout_seconds=self.config.worker_timeout_seconds,
+                        on_progress=_make_progress_cb(idx),
+                        candidate_store=candidate_store,
+                        run_id=run_id,
+                        attempt=2,
+                        stats=self.stats,
+                        trace_recorder=self.trace_recorder,
+                        trace_context=self.trace_context,
+                        trace_parent_event_id=worker_start_event_ids.get((task.day, 2)),
+                    )
                 )
                 await self._emit_worker_result_trace(
                     task=task,
@@ -1203,6 +1333,10 @@ class Phase3Orchestrator:
                         retry_result.error
                     )
                     worker_statuses[idx]["error_code"] = retry_result.error_code
+                    if retry_result.replan_request is not None:
+                        worker_statuses[idx]["replan_request"] = (
+                            retry_result.replan_request
+                        )
                     logger.error(
                         "Day %d retry also failed [%s]: %s",
                         task.day,
@@ -1215,42 +1349,193 @@ class Phase3Orchestrator:
                         f"第 {task.day} 天重试失败",
                     )
 
-            # 7b. Check for NEEDS_PHASE3_REPLAN from any worker
-            all_replan_errors: list[str] = []
+            # 7b. D3：结构化再协商 — 改骨架副本 + 只重派受影响天
+            replan_requests: list[ReplanRequest] = []
             for ws in worker_statuses:
-                if ws.get("error_code") == "NEEDS_PHASE3_REPLAN":
-                    all_replan_errors.append(
-                        f"Day {ws['day']}: {ws.get('error', 'unknown')}"
+                if ws.get("error_code") != "NEEDS_PHASE3_REPLAN":
+                    continue
+                req = ws.get("replan_request")
+                if isinstance(req, ReplanRequest):
+                    replan_requests.append(req)
+                else:
+                    replan_requests.append(
+                        ReplanRequest(
+                            day=int(ws["day"]),
+                            kind="INFEASIBLE_DAY",
+                            reason=str(ws.get("error") or "unknown"),
+                        )
                     )
 
-            if all_replan_errors:
-                reason = (
-                    "骨架分配失败，以下天数无法按当前骨架展开:\n"
-                    + "\n".join(all_replan_errors)
-                )
+            if replan_requests:
+                outcome = self._renegotiate_skeleton(replan_requests)
                 await self._emit_trace_event(
                     event_type="phase3_orchestrator",
-                    status="error",
+                    status="ok" if outcome.affected_days else "error",
                     correlation_id=f"phase3_orchestrator:{run_id}",
                     parent_event_id=self._trace_orchestrator_event_id,
                     root_event_id=self._trace_orchestrator_event_id,
                     payload={
-                        "stage": "needs_replan",
+                        "stage": "renegotiate",
                         "phase3_run_id": run_id,
                         "error_code": "NEEDS_PHASE3_REPLAN",
-                        "errors": all_replan_errors,
+                        "requests": [
+                            {
+                                "day": r.day,
+                                "kind": r.kind,
+                                "reason": r.reason,
+                                "move_poi": r.move_poi,
+                                "to_day": r.to_day,
+                            }
+                            for r in replan_requests
+                        ],
+                        "affected_days": sorted(outcome.affected_days),
+                        "amendments": [
+                            {
+                                "kind": a.kind,
+                                "description": a.description,
+                                "source_day": a.source_day,
+                                "target_day": a.target_day,
+                                "poi": a.poi,
+                            }
+                            for a in outcome.amendments
+                        ],
+                        "unresolved": [
+                            {"day": r.day, "kind": r.kind, "reason": r.reason}
+                            for r in outcome.unresolved
+                        ],
+                        "skeleton_amendments": True,
                     },
                 )
-                yield LLMChunk(
-                    type=ChunkType.TEXT_DELTA,
-                    content=(
-                        f"\n\n⚠️ {reason}\n受影响的天数需要调整骨架后重排；"
-                        "其余已完成的天会先保留交付，你可以让我针对这些天回退到 "
-                        "Phase 2 微调骨架。\n"
-                    ),
-                )
-                # P1-6 + P0-2：不再整批丢弃。已成功的天走下面的部分交付路径落盘，
-                # 只有受影响天缺失，避免"一天不可行 → 全部重来"的最坏循环。
+
+                if outcome.affected_days:
+                    yield self._build_progress_chunk(
+                        worker_statuses,
+                        total_days,
+                        f"骨架再协商：重派第 "
+                        f"{'、'.join(str(d) for d in sorted(outcome.affected_days))} 天...",
+                    )
+                    # 释放受影响天的黑板认领，并从 successes 移除（若目标天曾成功）
+                    for d in outcome.affected_days:
+                        self._blackboard.release_day(d)
+                    successes = [
+                        s for s in successes if s.day not in outcome.affected_days
+                    ]
+                    redispatched = self._rebuild_tasks_for_days(
+                        outcome.affected_days, tasks
+                    )
+                    # 同步 tasks 中受影响天的约束，供后续 repair 使用
+                    task_by_day_map = {t.day: t for t in tasks}
+                    for nt in redispatched:
+                        task_by_day_map[nt.day] = nt
+                    tasks = [task_by_day_map[t.day] for t in tasks]
+
+                    for rd_task in redispatched:
+                        idx = _find_worker_idx(rd_task.day)
+                        worker_statuses[idx].update({
+                            "status": "renegotiate",
+                            "iteration": None,
+                            "current_tool": None,
+                            "error": None,
+                            "error_code": None,
+                            "activity_count": None,
+                            "replan_request": None,
+                        })
+                        yield self._build_progress_chunk(
+                            worker_statuses,
+                            total_days,
+                            f"再协商后重派第 {rd_task.day} 天...",
+                        )
+                        worker_start_event_ids[(rd_task.day, 4)] = (
+                            await self._emit_worker_start_trace(
+                                task=rd_task,
+                                run_id=run_id,
+                                attempt=4,
+                            )
+                        )
+                        rd_result = self._accept_worker_dayplan(
+                            await run_day_worker(
+                                llm=self.llm,
+                                tool_engine=self.tool_engine,
+                                plan=self.plan,
+                                task=rd_task,
+                                shared_prefix=shared_prefix,
+                                max_iterations=self.config.worker_max_iterations,
+                                timeout_seconds=self.config.worker_timeout_seconds,
+                                on_progress=_make_progress_cb(idx),
+                                candidate_store=candidate_store,
+                                run_id=run_id,
+                                attempt=4,
+                                stats=self.stats,
+                                trace_recorder=self.trace_recorder,
+                                trace_context=self.trace_context,
+                                trace_parent_event_id=worker_start_event_ids.get(
+                                    (rd_task.day, 4)
+                                ),
+                            )
+                        )
+                        await self._emit_worker_result_trace(
+                            task=rd_task,
+                            result=rd_result,
+                            run_id=run_id,
+                            attempt=4,
+                            parent_event_id=worker_start_event_ids.get(
+                                (rd_task.day, 4)
+                            ),
+                        )
+                        if rd_result.success:
+                            successes.append(rd_result)
+                            worker_statuses[idx]["status"] = "done"
+                            worker_statuses[idx]["current_tool"] = None
+                            if rd_result.dayplan:
+                                worker_statuses[idx]["activity_count"] = len(
+                                    rd_result.dayplan.get("activities", [])
+                                )
+                            yield self._build_progress_chunk(
+                                worker_statuses,
+                                total_days,
+                                f"第 {rd_task.day} 天再协商重派完成",
+                            )
+                        else:
+                            worker_statuses[idx]["status"] = "failed"
+                            worker_statuses[idx]["current_tool"] = None
+                            worker_statuses[idx]["error"] = _format_error(
+                                rd_result.error
+                            )
+                            worker_statuses[idx]["error_code"] = rd_result.error_code
+                            yield self._build_progress_chunk(
+                                worker_statuses,
+                                total_days,
+                                f"第 {rd_task.day} 天再协商重派失败",
+                            )
+
+                # 用户可见摘要：自动改动 + 仍不可行的天
+                summary_lines: list[str] = []
+                if outcome.amendments:
+                    summary_lines.append("已自动调整骨架并重派受影响天：")
+                    for a in outcome.amendments:
+                        summary_lines.append(f"- {a.description}")
+                if outcome.unresolved:
+                    summary_lines.append(
+                        "以下天数无法自动改骨架，已保留其余天部分交付："
+                    )
+                    for r in outcome.unresolved:
+                        summary_lines.append(
+                            f"- Day {r.day} [{r.kind}]: {r.reason}"
+                        )
+                    summary_lines.append(
+                        "你可以让我针对这些天回退到 Phase 2 微调骨架。"
+                    )
+                if summary_lines:
+                    # 兼容旧测试：INFEASIBLE 路径保留「骨架分配失败」关键字
+                    if outcome.unresolved and not outcome.amendments:
+                        head = "骨架分配失败，以下天数无法按当前骨架展开:\n"
+                    else:
+                        head = ""
+                    yield LLMChunk(
+                        type=ChunkType.TEXT_DELTA,
+                        content=f"\n\n⚠️ {head}" + "\n".join(summary_lines) + "\n",
+                    )
+                # P1-6 + P0-2 + D3：不再整批丢弃；已成功天走部分交付。
 
             # 8. Sort and validate
             artifact_candidates = candidate_store.load_latest_candidates(
@@ -1395,24 +1680,27 @@ class Phase3Orchestrator:
                                 attempt=3,
                             )
                         )
-                        rd_result = await run_day_worker(
-                            llm=self.llm,
-                            tool_engine=self.tool_engine,
-                            plan=self.plan,
-                            task=rd_task,
-                            shared_prefix=shared_prefix,
-                            max_iterations=self.config.worker_max_iterations,
-                            timeout_seconds=self.config.worker_timeout_seconds,
-                            on_progress=_make_progress_cb(idx),
-                            candidate_store=candidate_store,
-                            run_id=run_id,
-                            attempt=3,
-                            stats=self.stats,
-                            trace_recorder=self.trace_recorder,
-                            trace_context=self.trace_context,
-                            trace_parent_event_id=worker_start_event_ids.get(
-                                (rd_day, 3)
-                            ),
+                        self._blackboard.release_day(rd_day)
+                        rd_result = self._accept_worker_dayplan(
+                            await run_day_worker(
+                                llm=self.llm,
+                                tool_engine=self.tool_engine,
+                                plan=self.plan,
+                                task=rd_task,
+                                shared_prefix=shared_prefix,
+                                max_iterations=self.config.worker_max_iterations,
+                                timeout_seconds=self.config.worker_timeout_seconds,
+                                on_progress=_make_progress_cb(idx),
+                                candidate_store=candidate_store,
+                                run_id=run_id,
+                                attempt=3,
+                                stats=self.stats,
+                                trace_recorder=self.trace_recorder,
+                                trace_context=self.trace_context,
+                                trace_parent_event_id=worker_start_event_ids.get(
+                                    (rd_day, 3)
+                                ),
+                            )
                         )
                     except Exception as exc:
                         logger.warning(

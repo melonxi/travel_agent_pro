@@ -140,21 +140,21 @@ Orchestrator 持有三张**单写**表,worker 通过只读快照查询(worker �
 
 ## 5. 分期施工步骤
 
-### 阶段 1:结构化再协商(A1-A3,不含骨架回写持久化)
+### 阶段 1:结构化再协商(A1-A3,不含骨架回写持久化) — ✅ 已完成(2026-07-15)
 
-1. `day_worker.py:573` 升级 schema 为 `kind` 判别式 + `move_poi`/`to_day`。
-2. 新增 `backend/agent/phase3/renegotiation.py`:`ReplanRequest` dataclass + `RenegotiationOutcome`。
-3. `day_worker.py:1282-1301` 上报时填充结构化字段。
-4. `orchestrator.py` 新增 `_renegotiate_skeleton()` + `_renegotiate_count` 熔断;7b 分支(1226)接入。
-5. 受影响天走现有逐天重试路径重派;骨架副本改动仅记 trace(不持久化)。
+1. `day_worker.py` 升级 schema 为 `kind` 判别式 + `move_poi`/`to_day`。
+2. 新增 `backend/agent/phase3/renegotiation.py`:`ReplanRequest` / `RenegotiationOutcome` / `renegotiate_skeleton`。
+3. worker 上报时填充结构化 `replan_request` 挂在 `DayWorkerResult`。
+4. `orchestrator.py` `_renegotiate_skeleton()` + `_renegotiate_count` 熔断;7b 分支接入。
+5. 受影响天 attempt=4 重派;骨架副本改动记 `_skeleton_amendments` + trace(不持久化权威 skeleton_plans)。
 
-### 阶段 2:共享黑板(B)
+### 阶段 2:共享黑板(B) — ✅ 已完成(2026-07-15)
 
-6. `orchestrator.py` 把 `poi_owner` 提升为 run 级 `poi_registry` 实例状态;`budget_ledger`/`day_boundaries` 新建。
-7. 候选提交处加"查表即拒"→ worker 收到结构化 reject 后换 POI。
-8. 相应弱化 P2-1 事后全局校验(保留作兜底,不删)。
+6. `Phase3Blackboard`：`poi_registry` / `budget_ledger` / `day_boundaries`；seed locked + precommitted 交通住宿。
+7. 候选收集 `_accept_worker_dayplan` 查表即拒 → `BLACKBOARD_REJECT`。
+8. P2-1 事后 locked POI 校验保留作兜底。
 
-### 阶段 3(可选):有限波次(C)
+### 阶段 3(可选):有限波次(C) — 未实施(按文档默认不做)
 
 9. `orchestrator.py` worker 调度改两波;第二波注入第一波边界事实。
 
