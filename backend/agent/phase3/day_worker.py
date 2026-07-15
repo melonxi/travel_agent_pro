@@ -570,6 +570,34 @@ def _should_force_emit(iteration: int, max_iterations: int) -> bool:
     return iteration + 1 >= max(3, int(max_iterations * 0.6))
 
 
+_REPORT_SKELETON_INFEASIBLE_SCHEMA = {
+    "name": "report_skeleton_infeasible",
+    "description": (
+        "上报：当前骨架分配对这一天不可行，需要 Orchestrator 调整骨架后重新分派。\n"
+        "【何时调用】仅在结构性不可行时：locked POI 当日闭馆/不存在、区域组合"
+        "当天根本排不下（跨区通勤远超全天时间）、locked POI 与到达/离开时间冲突。\n"
+        "【何时不要调用】信息缺失（写 notes 降级即可）、密度略高（减活动即可）、"
+        "普通交通不便（改时间即可）。误报会浪费整轮重排。\n"
+        "调用后本 worker 任务结束，不要再调用其他工具。"
+    ),
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["reason"],
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": "结构性不可行的具体原因，含涉及的 POI/区域与证据。",
+            },
+            "suggestion": {
+                "type": "string",
+                "description": "可选。对骨架的修改建议，如「将 X 移到第 N 天」。",
+            },
+        },
+    },
+}
+
+
 def _tool_query_fingerprint(call: ToolCall) -> str | None:
     if call.name == "web_search":
         return f"web_search:{call.arguments.get('query', '')}"
@@ -810,6 +838,9 @@ async def run_day_worker(
     worker_tools = _get_worker_tools(tool_engine)
     if candidate_store is not None and run_id:
         worker_tools.append(_SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA)
+    # P1-6 最小版：给 worker 一个真实的骨架不可行上报通道，使
+    # NEEDS_PHASE3_REPLAN 可达（此前生产代码从不产生该码，7b 分支死代码）。
+    worker_tools.append(_REPORT_SKELETON_INFEASIBLE_SCHEMA)
 
     iterations = 0
     submitted_dayplan: dict[str, Any] | None = None
@@ -1121,7 +1152,14 @@ async def run_day_worker(
                                 dayplan=submitted_dayplan,
                                 iterations=iterations,
                             )
-                        dayplan = extract_dayplan_json(assistant_text)
+                        dayplan = _accept_text_fallback_dayplan(
+                            extract_dayplan_json(assistant_text),
+                            plan=plan,
+                            task=task,
+                            candidate_store=candidate_store,
+                            run_id=run_id,
+                            attempt=attempt,
+                        )
                         if dayplan is not None:
                             return DayWorkerResult(
                                 day=task.day,
@@ -1238,6 +1276,30 @@ async def run_day_worker(
                                     else first.name
                                 ),
                             },
+                        )
+
+                    # P1-6：worker 上报骨架不可行 → 直接终止，产生
+                    # NEEDS_PHASE3_REPLAN，由 orchestrator 修改骨架单天后重派。
+                    replan_call = next(
+                        (c for c in tool_calls if c.name == "report_skeleton_infeasible"),
+                        None,
+                    )
+                    if replan_call is not None:
+                        reason = str(replan_call.arguments.get("reason", "")).strip()
+                        suggestion = str(
+                            replan_call.arguments.get("suggestion", "")
+                        ).strip()
+                        detail = reason or "worker 判定当前骨架对该天不可行"
+                        if suggestion:
+                            detail = f"{detail}（建议：{suggestion}）"
+                        return DayWorkerResult(
+                            day=task.day,
+                            date=task.date,
+                            success=False,
+                            dayplan=None,
+                            error=detail,
+                            error_code=ERROR_NEEDS_PHASE3_REPLAN,
+                            iterations=iterations,
                         )
 
                     # Execute tools. The worker-only submit tool is handled here
@@ -1438,26 +1500,35 @@ async def run_day_worker(
                         )
 
                 # Exhausted iterations
-                last_text = ""
-                for msg in reversed(messages):
-                    if msg.role == Role.ASSISTANT and msg.content:
-                        last_text = msg.content
-                        break
-                dayplan = extract_dayplan_json(last_text)
-                if dayplan is not None:
-                    return DayWorkerResult(
-                        day=task.day,
-                        date=task.date,
-                        success=True,
-                        dayplan=dayplan,
-                        iterations=iterations,
-                    )
+                # P1-7：优先取已通过校验的 submit 提交，其次才是文本兜底
+                #（且文本兜底同样要过 candidate_store 校验并写入 store）。
                 if submitted_dayplan is not None:
                     return DayWorkerResult(
                         day=task.day,
                         date=task.date,
                         success=True,
                         dayplan=submitted_dayplan,
+                        iterations=iterations,
+                    )
+                last_text = ""
+                for msg in reversed(messages):
+                    if msg.role == Role.ASSISTANT and msg.content:
+                        last_text = msg.content
+                        break
+                dayplan = _accept_text_fallback_dayplan(
+                    extract_dayplan_json(last_text),
+                    plan=plan,
+                    task=task,
+                    candidate_store=candidate_store,
+                    run_id=run_id,
+                    attempt=attempt,
+                )
+                if dayplan is not None:
+                    return DayWorkerResult(
+                        day=task.day,
+                        date=task.date,
+                        success=True,
+                        dayplan=dayplan,
                         iterations=iterations,
                     )
                 return DayWorkerResult(
@@ -1508,6 +1579,47 @@ def _get_worker_tools(tool_engine: ToolEngine) -> list[dict[str, Any]]:
         if tool_def is not None:
             all_tools.append(tool_def.to_schema())
     return all_tools
+
+
+def _accept_text_fallback_dayplan(
+    dayplan: dict[str, Any] | None,
+    *,
+    plan: TravelPlanState,
+    task: DayTask,
+    candidate_store: Phase3CandidateStore | None,
+    run_id: str | None,
+    attempt: int,
+) -> dict[str, Any] | None:
+    """P1-7：文本 JSON 兜底必须过 candidate_store 同一套校验并写入 store。
+
+    否则未校验的文本结果会与 artifact 候选混用，orchestrator 按 store 汇总时
+    直接丢掉这些天，触发整批缺天失败。校验不过时返回 None（视为该天失败）。
+    """
+    if dayplan is None:
+        return None
+    if not isinstance(dayplan, dict):
+        return None
+    if _dayplan_time_conflicts(dayplan):
+        return None
+    if candidate_store is None or not run_id:
+        # 无 store 可写时只做结构校验（day 匹配 + 基本字段）
+        if dayplan.get("day") != task.day:
+            return None
+        if not isinstance(dayplan.get("activities"), list):
+            return None
+        return dayplan
+    try:
+        candidate_store.submit_candidate(
+            session_id=plan.session_id,
+            run_id=run_id,
+            worker_id=f"day_{task.day}_attempt_{attempt}_textfallback",
+            expected_day=task.day,
+            attempt=attempt,
+            dayplan=dayplan,
+        )
+    except Phase3CandidateValidationError:
+        return None
+    return dayplan
 
 
 def _submit_day_plan_candidate(

@@ -109,6 +109,13 @@ _WORKER_ROLE = """## 角色
 - 不得编造具体营业时间、具体票价、明确预约要求；无法确认的事实写入 notes。
 - 当系统提示进入收口模式时，必须停止继续调工具并直接提交 DayPlan。
 
+## 骨架不可行的上报
+
+如果这一天在**结构上**根本无法按当前骨架展开——例如 locked POI 当日闭馆/不存在、
+区域组合当天排不下、locked POI 与到达/离开时间冲突——调用
+`report_skeleton_infeasible(reason=..., suggestion=...)` 上报，由 Orchestrator 调整骨架后重排。
+仅限结构性不可行；信息缺失写 notes、密度略高减活动、交通不便改时间，都**不要**用此工具。
+
 ## 交付方式（唯一合法路径）
 
 你完成单日规划后，**必须**调用 `submit_day_plan_candidate` 工具提交 DayPlan。

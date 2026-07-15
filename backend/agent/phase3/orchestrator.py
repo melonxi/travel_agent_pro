@@ -1184,11 +1184,14 @@ class Phase3Orchestrator:
                 )
                 yield LLMChunk(
                     type=ChunkType.TEXT_DELTA,
-                    content=f"\n\n⚠️ {reason}\n需要回退到 Phase 2 重新调整骨架方案。\n",
+                    content=(
+                        f"\n\n⚠️ {reason}\n受影响的天数需要调整骨架后重排；"
+                        "其余已完成的天会先保留交付，你可以让我针对这些天回退到 "
+                        "Phase 2 微调骨架。\n"
+                    ),
                 )
-                # final_dayplans stays [] on this error path.
-                # AgentLoop owns the terminal DONE for all parallel Phase 3 paths.
-                return
+                # P1-6 + P0-2：不再整批丢弃。已成功的天走下面的部分交付路径落盘，
+                # 只有受影响天缺失，避免"一天不可行 → 全部重来"的最坏循环。
 
             # 8. Sort and validate
             artifact_candidates = candidate_store.load_latest_candidates(
