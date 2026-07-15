@@ -855,7 +855,19 @@ class Phase3Orchestrator:
                 type=ChunkType.AGENT_STATUS,
                 agent_status={"stage": "planning", "hint": "正在分解行程任务..."},
             )
-            tasks = self._split_tasks()
+            try:
+                tasks = self._split_tasks()
+            except ValueError as exc:
+                # P2-6：骨架失配转为可对话提示，而非异常穿透成硬砖。
+                message = (
+                    f"\n\n⚠️ 无法启动并行精排：{exc}。"
+                    "请先确认已用 `select_skeleton` 锁定骨架，"
+                    "且 `skeleton_plans` 中存在对应方案，"
+                    "或回退到 Phase 2 重新写入骨架后再继续。"
+                )
+                yield LLMChunk(type=ChunkType.TEXT_DELTA, content=message)
+                yield LLMChunk(type=ChunkType.DONE)
+                return
             tasks = self._compile_day_tasks(tasks)
             # P2-1：记录每天编排后的 locked POI，供全局校验核对必去项是否落位。
             self._locked_pois_by_day = {t.day: list(t.locked_pois) for t in tasks}

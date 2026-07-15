@@ -48,6 +48,33 @@ class TestPhase3Routing:
         assert should_enter_parallel_phase3_now(plan, config) is True
         assert should_enter_parallel_phase3_at_iteration_boundary(plan, config) is True
 
+    def test_defers_parallel_when_user_asks_to_wait(self):
+        from agent.phase3.parallel import user_defers_parallel_phase3
+        from state.models import TravelPlanState, DateRange, Accommodation
+
+        plan = TravelPlanState(session_id="test-routing-defer")
+        plan.phase = 3
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-02")
+        plan.selected_skeleton_id = "plan_A"
+        plan.skeleton_plans = [{"id": "plan_A", "days": [{}, {}]}]
+        plan.accommodation = Accommodation(area="新宿")
+        plan.daily_plans = []
+        config = Phase3ParallelConfig(enabled=True)
+
+        assert user_defers_parallel_phase3("先等等，我想再确认一下住宿") is True
+        assert (
+            should_enter_parallel_phase3_now(
+                plan, config, user_message="先等等，我想再确认一下住宿"
+            )
+            is False
+        )
+        assert (
+            should_enter_parallel_phase3_now(
+                plan, config, user_message="开始排每天行程吧"
+            )
+            is True
+        )
+
     def test_should_not_use_parallel_when_disabled(self):
         from state.models import TravelPlanState, DateRange, Accommodation
 

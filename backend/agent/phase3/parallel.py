@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable
@@ -8,11 +9,31 @@ from agent.internal_tasks import InternalTask
 from config import Phase3ParallelConfig
 from llm.types import ChunkType, LLMChunk
 
+# 用户明确要求先等/先讨论/先改时，不劫持整轮并行精排。
+_DEFER_PARALLEL_PHASE3_RE = re.compile(
+    r"(先等等|等等再说|等一下|先别|先不[要会]|暂停|先聊聊|先讨论|"
+    r"先确认|先改|先看看|先说说|慢点|先别排|先不要排|hold on|wait)",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class Phase3ParallelHandoff:
     dayplans: list[dict[str, Any]]
     issues: list[Any]
+
+
+def user_defers_parallel_phase3(user_message: Any | None) -> bool:
+    """轻量意图检查：用户在要求暂缓/先讨论时，跳过无条件并行劫持。"""
+    if user_message is None:
+        return False
+    if isinstance(user_message, str):
+        text = user_message
+    else:
+        text = getattr(user_message, "content", None) or ""
+    if not isinstance(text, str) or not text.strip():
+        return False
+    return bool(_DEFER_PARALLEL_PHASE3_RE.search(text))
 
 
 def build_phase3_commit_calls(
@@ -107,6 +128,8 @@ def phase3_partial_delivery_notice(
 def should_use_parallel_phase3(
     plan: Any | None,
     config: Phase3ParallelConfig | None,
+    *,
+    user_message: Any | None = None,
 ) -> bool:
     if plan is None or config is None:
         return False
@@ -120,12 +143,17 @@ def should_use_parallel_phase3(
         return False
     if not plan.skeleton_plans:
         return False
+    # P2-6：用户说「先等等」等暂缓意图时，不无条件劫持整轮并行。
+    if user_defers_parallel_phase3(user_message):
+        return False
     return True
 
 
 def should_enter_parallel_phase3_now(
     plan: Any | None,
     config: Phase3ParallelConfig | None,
+    *,
+    user_message: Any | None = None,
 ) -> bool:
     """Loop-top Phase 3 daily-planning guard for cold starts and normal phase entry.
 
@@ -133,12 +161,14 @@ def should_enter_parallel_phase3_now(
     a separate policy hook so startup routing can diverge later without changing
     the AgentLoop control flow.
     """
-    return should_use_parallel_phase3(plan, config)
+    return should_use_parallel_phase3(plan, config, user_message=user_message)
 
 
 def should_enter_parallel_phase3_at_iteration_boundary(
     plan: Any | None,
     config: Phase3ParallelConfig | None,
+    *,
+    user_message: Any | None = None,
 ) -> bool:
     """Final safety-boundary Phase 3 daily-planning guard after the last loop iteration.
 
@@ -146,7 +176,7 @@ def should_enter_parallel_phase3_at_iteration_boundary(
     allowed iteration. It may become more conservative than the loop-top guard
     if boundary-specific telemetry or fallback rules are added.
     """
-    return should_use_parallel_phase3(plan, config)
+    return should_use_parallel_phase3(plan, config, user_message=user_message)
 
 
 async def run_parallel_phase3_orchestrator(

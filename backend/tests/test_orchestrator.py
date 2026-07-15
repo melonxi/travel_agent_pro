@@ -138,6 +138,27 @@ class TestSplitTasks:
         with pytest.raises(ValueError, match="未找到已选骨架"):
             orch._split_tasks()
 
+    @pytest.mark.asyncio
+    async def test_run_converts_missing_skeleton_to_dialogue(self):
+        """P2-6：骨架失配时 run() 输出可对话提示，而不是异常穿透。"""
+        plan = _make_plan_with_skeleton()
+        plan.selected_skeleton_id = None
+        orch = Phase3Orchestrator(
+            plan=plan,
+            llm=None,
+            tool_engine=None,
+            config=Phase3ParallelConfig(enabled=True),
+        )
+        chunks = []
+        async for chunk in orch.run():
+            chunks.append(chunk)
+        text = "".join(
+            c.content or "" for c in chunks if c.type == ChunkType.TEXT_DELTA
+        )
+        assert "无法启动并行精排" in text
+        assert "select_skeleton" in text
+        assert any(c.type == ChunkType.DONE for c in chunks)
+
 
 class TestGlobalValidation:
     def _make_dayplan_dict(self, day: int, date: str, activities: list[dict]) -> dict:

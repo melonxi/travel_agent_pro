@@ -230,8 +230,12 @@ class AgentLoop:
     def should_use_parallel_phase3(
         plan: Any | None,
         config: Phase3ParallelConfig | None,
+        *,
+        user_message: Any | None = None,
     ) -> bool:
-        return should_use_parallel_phase3(plan, config)
+        return should_use_parallel_phase3(
+            plan, config, user_message=user_message
+        )
 
     async def _run_parallel_phase3_orchestrator(
         self,
@@ -385,6 +389,7 @@ class AgentLoop:
                 if should_enter_parallel_phase3_now(
                     self.plan,
                     self.phase3_parallel_config,
+                    user_message=original_user_message,
                 ):
                     async for chunk in self._run_parallel_phase3_orchestrator(
                         messages=messages,
@@ -601,6 +606,7 @@ class AgentLoop:
             if should_enter_parallel_phase3_at_iteration_boundary(
                 self.plan,
                 self.phase3_parallel_config,
+                user_message=original_user_message,
             ):
                 async for chunk in self._run_parallel_phase3_orchestrator(
                     messages=messages,
