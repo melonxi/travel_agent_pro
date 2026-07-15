@@ -573,7 +573,7 @@ def make_set_transport_options_tool(plan: TravelPlanState):
             "禁止行为：不要把用户最终选中的交通方案写入此字段——选中结果用 select_transport。\n"
             "写入后效果：transport_options 整体替换，右侧工作台会展示交通候选列表。"
         ),
-        phases=[2],
+        phases=[2, 3],
         parameters=_SET_TRANSPORT_OPTIONS_PARAMS,
         side_effect="write",
         human_label="写入交通候选",
@@ -631,7 +631,7 @@ def make_select_transport_tool(plan: TravelPlanState):
             "用户选择交通但还要求继续看住宿时，也不要调用此工具；这类消息只能继续搜索或写候选 options，并请用户确认。\n"
             "写入后效果：selected_transport 写入，锁定大交通选择。"
         ),
-        phases=[2, 4],
+        phases=[2, 3, 4],
         parameters=_SELECT_TRANSPORT_PARAMS,
         side_effect="write",
         human_label="锁定交通方案",

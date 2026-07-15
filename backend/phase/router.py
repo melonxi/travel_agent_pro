@@ -21,6 +21,8 @@ class PhaseRouter:
         self._backtrack_service = BacktrackService()
 
     def _hydrate_phase3_brief(self, plan: TravelPlanState) -> None:
+        # 注意：phase 2 也会补水（纠正 stale dates），brief 子阶段不会因此
+        # 被架空——infer_phase2_step 的推进条件要求 goal+pace 显式收集（P1-1）。
         if plan.phase < 2 or not plan.destination:
             return
 

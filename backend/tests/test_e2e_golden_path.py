@@ -136,6 +136,17 @@ async def test_golden_path_tokyo_trip(app, sessions):
                         },
                     ),
                 )
+                # P1-1：brief→candidate 推进要求显式收集 goal+pace
+                yield LLMChunk(
+                    type=ChunkType.TOOL_CALL_START,
+                    tool_call=ToolCall(
+                        id="tc_brief",
+                        name="set_trip_brief",
+                        arguments={
+                            "fields": {"goal": "亲子轻松游", "pace": "relaxed"},
+                        },
+                    ),
+                )
                 yield LLMChunk(type=ChunkType.DONE)
                 return
 

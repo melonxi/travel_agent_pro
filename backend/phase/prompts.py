@@ -300,7 +300,7 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 - `search_accommodations`：搜住宿方案。注意结果可能不含房价（数据源限制）——用 `web_search` 查"酒店名 价格"补价格带，并提示用户以预订平台实时价格为准。
 - `calculate_route`：验证住宿与主要活动区域的通勤。
 
-⚠️ `search_trains` 是 **Phase 2 专属**——离开 Phase 2 后不可用。务必在 lock 子阶段完成大交通搜索，避免进入 Phase 3 后无法搜索车次。""",
+提示：`search_trains` 和交通写入工具在 Phase 3 仍可用（用户"住宿先定、交通再看看"时可以先推进，之后在 Phase 3 补搜补锁），但建议尽量在 lock 子阶段完成大交通，避免逐日行程与到达/离开时间错配。""",
 }
 
 
@@ -408,7 +408,7 @@ PHASE3_PROMPT = """## 硬法则（执行级）
 - `get_poi_info` 返回无效信息（POI 不存在、坐标缺失、票价为空）时，必须用 `web_search` 补齐缺失字段。
 - 不要在工具返回无效后假装数据完整或编造——`web_search` 是信息补充手段。
 
-不可用：本阶段不能调用大交通搜索或住宿搜索工具；不要暗示拥有这些能力。
+大交通补搜：若上游遗留了交通空缺（用户此前说"交通再看看"），本阶段可以调用 `search_trains` / `search_flights` 补搜并用 `select_transport` 补锁，再据此对齐到达/离开日的逐日安排。住宿搜索工具仍限 Phase 2，不要暗示拥有。
 
 ## 时间冲突处理
 

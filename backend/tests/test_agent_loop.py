@@ -406,7 +406,7 @@ async def test_agent_loop_emits_phase2_step_transition_trace_event():
                     tool_call=ToolCall(
                         id="call-1",
                         name="set_trip_brief",
-                        arguments={"fields": {"style": "food"}},
+                        arguments={"fields": {"style": "food", "goal": "美食", "pace": "relaxed"}},
                     ),
                 )
             else:
@@ -1342,7 +1342,7 @@ async def test_phase3_substep_change_refreshes_tools():
                 tool_call=ToolCall(
                     id="tc1",
                     name="set_trip_brief",
-                    arguments={"fields": {"destination": "东京", "goal": "轻松游"}},
+                    arguments={"fields": {"destination": "东京", "goal": "轻松游", "pace": "relaxed"}},
                 ),
             )
             yield LLMChunk(type=ChunkType.DONE)
@@ -1379,7 +1379,13 @@ async def test_phase3_substep_change_refreshes_tools():
 
 @pytest.mark.asyncio
 async def test_phase3_inferred_substep_refreshes_tools_after_dates_written():
-    plan = TravelPlanState(session_id="s1", phase=2, destination="东京")
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=2,
+        destination="东京",
+        # P1-1：brief→candidate 推进要求 goal+pace 已收集
+        trip_brief={"goal": "轻松游", "pace": "relaxed"},
+    )
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
 
@@ -2369,7 +2375,13 @@ async def test_progress_tracks_partial_text_when_llm_stream_errors():
 @pytest.mark.asyncio
 async def test_phase2_step_change_rebuilds_system_message():
     """子阶段从 brief 推进到 candidate 时，system message 必须被重建。"""
-    plan = TravelPlanState(session_id="s1", phase=2, destination="东京")
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=2,
+        destination="东京",
+        # P1-1：brief→candidate 推进要求 goal+pace 已收集
+        trip_brief={"goal": "轻松游", "pace": "relaxed"},
+    )
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
 
@@ -2510,7 +2522,13 @@ async def test_phase3_to_phase3_transition_rechecks_parallel_routing():
 @pytest.mark.asyncio
 async def test_phase2_step_change_no_handoff_note():
     """phase2_step 变化重建时不得注入跨 phase handoff assistant note。"""
-    plan = TravelPlanState(session_id="s1", phase=2, destination="东京")
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=2,
+        destination="东京",
+        # P1-1：brief→candidate 推进要求 goal+pace 已收集
+        trip_brief={"goal": "轻松游", "pace": "relaxed"},
+    )
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
 
@@ -2638,7 +2656,13 @@ async def test_phase_transition_flushes_messages_before_rebuild():
 
 @pytest.mark.asyncio
 async def test_phase2_step_change_flushes_messages_before_rebuild():
-    plan = TravelPlanState(session_id="s1", phase=2, destination="东京")
+    plan = TravelPlanState(
+        session_id="s1",
+        phase=2,
+        destination="东京",
+        # P1-1：brief→candidate 推进要求 goal+pace 已收集
+        trip_brief={"goal": "轻松游", "pace": "relaxed"},
+    )
     engine = ToolEngine()
     register_all_plan_tools(engine, plan)
     flushed: list[dict[str, object]] = []

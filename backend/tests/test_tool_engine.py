@@ -165,6 +165,7 @@ class TestEnginePhase3NewTools:
 
         assert engine._phase2_tool_names("skeleton") == {
             *self._expected_common_tools(),
+            "set_trip_brief",
             "set_skeleton_plans",
             "select_skeleton",
             "set_candidate_pool",
@@ -187,6 +188,9 @@ class TestEnginePhase3NewTools:
 
         assert engine._phase2_tool_names("lock") == {
             *self._expected_common_tools(),
+            "set_trip_brief",
+            "set_candidate_pool",
+            "set_shortlist",
             "set_skeleton_plans",
             "select_skeleton",
             "set_transport_options",

@@ -127,8 +127,11 @@ class TestDownstreamAfterMerge:
     def test_phase2_downstream_includes_accommodation(self):
         assert "accommodation" in _PHASE_DOWNSTREAM[2]
 
-    def test_phase2_downstream_includes_dates(self):
-        assert "dates" in _PHASE_DOWNSTREAM[2]
+    def test_phase2_downstream_preserves_dates(self):
+        # P1-3 ②：回退到 Phase 2 保留 dates/trip_brief/候选池，只清骨架及下游
+        assert "dates" not in _PHASE_DOWNSTREAM[2]
+        assert "trip_brief" not in _PHASE_DOWNSTREAM[2]
+        assert "candidate_pool" not in _PHASE_DOWNSTREAM[2]
 
     def test_phase3_downstream_includes_daily_plans(self):
         assert "daily_plans" in _PHASE_DOWNSTREAM[3]
@@ -145,7 +148,7 @@ class TestDownstreamAfterMerge:
 
 class TestToolPhasesAfterMerge:
     def test_transport_and_accommodation_tools_are_phase2(self):
-        """Transport and accommodation search tools belong to Phase 2."""
+        """大交通搜索开放到 Phase 3（P1-2 补搜通道）；住宿搜索仍限 Phase 2。"""
         # We test by creating tools and checking; the actual tool files
         # are validated by importing them.
         from tools.search_flights import make_search_flights_tool
@@ -156,10 +159,10 @@ class TestToolPhasesAfterMerge:
         keys = ApiKeysConfig()
 
         flight_tool = make_search_flights_tool(keys)
-        assert flight_tool.phases == [2]
+        assert flight_tool.phases == [2, 3]
 
         train_tool = make_search_trains_tool()
-        assert train_tool.phases == [2]
+        assert train_tool.phases == [2, 3]
 
         accom_tool = make_search_accommodations_tool(keys)
         assert accom_tool.phases == [2]
@@ -235,7 +238,7 @@ class TestToolPhasesAfterMerge:
 
 
 class TestBacktrackAfterMerge:
-    def test_backtrack_to_phase3_clears_dates_and_accommodation(self):
+    def test_backtrack_to_phase2_keeps_dates_clears_skeleton_onward(self):
         from phase.backtrack import BacktrackService
 
         plan = TravelPlanState(
@@ -248,10 +251,10 @@ class TestBacktrackAfterMerge:
             accommodation=Accommodation(area="新宿"),
             daily_plans=[DayPlan(day=1, date="2026-05-01")],
         )
-        BacktrackService().execute(plan, to_phase=2, reason="改日期", snapshot_path="")
+        BacktrackService().execute(plan, to_phase=2, reason="改骨架", snapshot_path="")
 
         assert plan.phase == 2
-        assert plan.dates is None
+        assert plan.dates is not None  # P1-3 ②：选择性清除，保留上游研究成果
         assert plan.accommodation is None
         assert plan.daily_plans == []
         assert plan.selected_skeleton_id is None

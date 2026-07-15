@@ -56,11 +56,9 @@ class TestBacktrackService:
         assert event.reason == "日期变更"
         assert event.snapshot_path == "/snap/1"
 
-        # phase 2 清除: dates + phase3 产物 + accommodation + daily_plans
-        assert plan.dates is None
+        # P1-3 ②：回退到 phase 2 选择性清除——保留 dates/trip_brief/候选池
+        assert plan.dates is not None
         assert plan.phase2_step == "brief"
-        assert plan.trip_brief == {}
-        assert plan.candidate_pool == []
         assert plan.skeleton_plans == []
         assert plan.selected_skeleton_id is None
         assert plan.accommodation is None
@@ -120,8 +118,8 @@ class TestBacktrackService:
         self.service.execute(plan, to_phase=2, reason="换酒店", snapshot_path="/snap/4")
 
         assert plan.phase == 2
-        # phase 2 downstream: dates + phase3 产物 + accommodation + daily_plans
-        assert plan.dates is None
+        # P1-3 ②：选择性清除——dates 保留，骨架及下游清除
+        assert plan.dates is not None
         assert plan.selected_skeleton_id is None
         assert plan.accommodation is None
         assert plan.daily_plans == []

@@ -93,6 +93,8 @@ class ToolEngine:
             },
             "skeleton": {
                 *common,
+                # 上游写工具：skeleton 阶段允许直接修画像/候选，无需核爆式回退
+                "set_trip_brief",
                 "set_skeleton_plans",
                 "select_skeleton",
                 "set_candidate_pool",
@@ -109,6 +111,10 @@ class ToolEngine:
             },
             "lock": {
                 *common,
+                # 上游写工具：lock 阶段允许直接修画像/候选/骨架，无需核爆式回退
+                "set_trip_brief",
+                "set_candidate_pool",
+                "set_shortlist",
                 "set_skeleton_plans",
                 "select_skeleton",
                 "set_transport_options",

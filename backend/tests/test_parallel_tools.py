@@ -481,11 +481,11 @@ async def test_execute_tool_batch_state_diff_captures_backtrack_clearing_downstr
 
     diff_event = next(event for event in store.events if event.event_type == "state_diff")
     changed_fields = set(diff_event.payload["changed_top_level_fields"])
-    assert {"dates", "trip_brief", "candidate_pool", "daily_plans", "deliverables"} <= changed_fields
-    assert diff_event.payload["field_diffs"]["dates"]["after_hash"].startswith("sha256:")
+    # P1-3 ②：选择性清除——dates/trip_brief/candidate_pool 保留不再出现在 diff 中
+    assert {"skeleton_plans", "selected_skeleton_id", "daily_plans", "deliverables"} <= changed_fields
     assert diff_event.payload["field_diffs"]["daily_plans"]["after_hash"].startswith("sha256:")
     assert plan.phase == 2
-    assert plan.dates is None
+    assert plan.dates is not None  # 选择性清除保留 dates
     assert plan.daily_plans == []
     assert plan.deliverables is None
 

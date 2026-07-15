@@ -12,8 +12,14 @@ async def persist_phase4_deliverables(
     state_mgr,
     now_iso: Callable[[], str],
 ) -> None:
+    # 冻结改为版本化：已有交付物时允许重新生成（如 backtrack 4→3 后重排），
+    # 新版本覆盖文件并递增 version，而不是 once-only 直接 raise。
+    previous_version = 0
     if plan.deliverables:
-        raise RuntimeError("deliverables already frozen")
+        try:
+            previous_version = int(plan.deliverables.get("version", 1))
+        except (TypeError, ValueError):
+            previous_version = 1
 
     travel_md = str(result_data["travel_plan_markdown"])
     checklist_md = str(result_data["checklist_markdown"])
@@ -33,4 +39,5 @@ async def persist_phase4_deliverables(
         "travel_plan_md": "travel_plan.md",
         "checklist_md": "checklist.md",
         "generated_at": now_iso(),
+        "version": str(previous_version + 1),
     }

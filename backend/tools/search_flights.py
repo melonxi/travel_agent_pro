@@ -154,7 +154,7 @@ def make_search_flights_tool(api_keys: ApiKeysConfig, flyai_client=None):
 Use when: 用户在阶段 2，需要查询航班选项。
 Don't use when: 航班已预订或不需要飞行。
         返回航班列表，含价格、时间、航空公司信息和预订链接。""",
-        phases=[2],
+        phases=[2, 3],
         parameters=_PARAMETERS,
         human_label="检索航班",
     )

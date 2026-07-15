@@ -78,11 +78,9 @@ async def test_request_backtrack_success_clears_downstream_and_records_history()
     assert event.from_phase == 3
     assert event.to_phase == 2
     assert event.reason == "用户想换日期"
-    assert plan.dates is None
+    # P1-3 ②：选择性清除——dates/trip_brief/候选池保留，可在 Phase 2 原地修改
+    assert plan.dates is not None
     assert plan.phase2_step == "brief"
-    assert plan.trip_brief == {}
-    assert plan.candidate_pool == []
-    assert plan.shortlist == []
     assert plan.skeleton_plans == []
     assert plan.selected_skeleton_id is None
     assert plan.accommodation is None

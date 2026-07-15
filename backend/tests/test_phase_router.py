@@ -102,6 +102,11 @@ def test_sync_phase_state_hydrates_minimal_trip_brief_from_explicit_state(router
     router.sync_phase_state(plan)
     assert plan.trip_brief["destination"] == "Kyoto"
     assert plan.trip_brief["total_days"] == 6
+    # P1-1：仅有 hydrate 注入的字段不足以离开 brief，需显式收集 goal+pace
+    assert plan.phase2_step == "brief"
+
+    plan.trip_brief.update({"goal": "文化", "pace": "relaxed"})
+    router.sync_phase_state(plan)
     assert plan.phase2_step == "candidate"
 
 
@@ -143,13 +148,12 @@ def test_phase3_prompt_does_not_mention_legacy_phase3_plan_tools(router):
 
 def test_phase3_prompt_avoids_unavailable_phase2_tools(router):
     prompt = router.get_prompt(3)
-    for tool_name in [
-        "check_availability",
-        "search_flights",
-        "search_trains",
-        "search_accommodations",
-    ]:
-        assert tool_name not in prompt
+    # 住宿搜索仍是 Phase 2 专属，Phase 3 prompt 不应提及可用
+    assert "search_accommodations" not in prompt
+    # P1-2：大交通搜索开放到 Phase 3，prompt 应说明补搜通道
+    assert "search_trains" in prompt
+    assert "search_flights" in prompt
+    assert "select_transport" in prompt
 
 
 def test_phase1_prompt_encourages_reading_recommendation_posts_and_comments(router):

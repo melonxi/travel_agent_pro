@@ -375,12 +375,11 @@ _PHASE_DOWNSTREAM: dict[int, list[str]] = {
         "daily_plans",
         "deliverables",
     ],
+    # 回退到 Phase 2 采用按依赖选择性清除：保留 dates/trip_brief/候选池/短名单
+    # （这些可通过上游写工具原地修改），只清骨架及其下游，避免为改一个骨架
+    # 决策丢掉全部 Phase 2 研究成果。
     2: [
-        "dates",
         "phase2_step",
-        "trip_brief",
-        "candidate_pool",
-        "shortlist",
         "skeleton_plans",
         "selected_skeleton_id",
         "transport_options",
@@ -437,6 +436,10 @@ def infer_phase2_step_from_state(
             return "skeleton"
         if shortlist or candidate_pool:
             return "candidate"
+        # P1-1：brief→candidate 的推进要求画像核心字段（goal + pace）已收集，
+        # 而非 trip_brief 非空——否则 hydrate 注入 destination 后 brief 被架空。
+        if not (trip_brief.get("goal") and trip_brief.get("pace")):
+            return "brief"
         return "candidate"
     # Validate selected_skeleton_id resolves to an actual skeleton
     if skeleton_plans:

@@ -189,8 +189,9 @@ def test_plan_clear_downstream_from_phase_3():
     )
     plan.clear_downstream(from_phase=2)
     assert plan.phase2_step == "brief"
-    assert plan.trip_brief == {}
-    assert plan.candidate_pool == []
+    # P1-3 ②：选择性清除——保留 trip_brief/candidate_pool 等上游研究成果
+    assert plan.trip_brief == {"goal": "文化体验"}
+    assert plan.candidate_pool == [{"name": "清水寺"}]
     assert plan.skeleton_plans == []
     assert plan.selected_skeleton_id is None
     assert plan.accommodation is None

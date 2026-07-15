@@ -74,7 +74,7 @@ def plan():
             "写入交通候选",
             ["options"],
             {"options"},
-            [2],
+            [2, 3],
         ),
         (
             make_select_transport_tool,
@@ -82,7 +82,7 @@ def plan():
             "锁定交通方案",
             ["choice"],
             {"choice"},
-            [2, 4],
+            [2, 3, 4],
         ),
         (
             make_set_accommodation_options_tool,
