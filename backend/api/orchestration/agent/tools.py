@@ -37,11 +37,9 @@ def build_tool_engine(*, config, plan) -> ToolEngine:
 
     for plan_tool in make_all_plan_tools(plan):
         tool_engine.register(plan_tool)
-    # search_flights 依赖 Amadeus key 或 flyai;两者都不可用时不注册,
-    # 由 lock 阶段 prompt 引导用 web_search 查航班价格带。
-    if flyai_client is not None or (
-        config.api_keys.amadeus_key and config.api_keys.amadeus_secret
-    ):
+    # P2-8：search_flights 仅依赖 flyai（Amadeus sandbox 分支已删除）。
+    # flyai 不可用时不注册，由 lock 阶段 prompt 引导用 web_search 查航班价格带。
+    if flyai_client is not None:
         tool_engine.register(make_search_flights_tool(config.api_keys, flyai_client))
     # search_trains 走 12306 直连,不依赖 flyai。
     tool_engine.register(make_search_trains_tool())

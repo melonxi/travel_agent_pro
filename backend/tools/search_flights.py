@@ -1,18 +1,11 @@
 # backend/tools/search_flights.py
 from __future__ import annotations
 
-import asyncio
 import logging
-
-import httpx
 
 from config import ApiKeysConfig
 from tools.base import ToolError, tool
-from tools.normalizers import (
-    normalize_amadeus_flight,
-    normalize_flyai_flight,
-    merge_flights,
-)
+from tools.normalizers import normalize_flyai_flight
 
 logger = logging.getLogger(__name__)
 
@@ -148,10 +141,19 @@ _IATA_TO_CITY: dict[str, str] = {
 
 
 def make_search_flights_tool(api_keys: ApiKeysConfig, flyai_client=None):
+    """构建航班搜索工具。
+
+    P2-8：已移除 Amadeus sandbox 分支（用户决策不使用 Amadeus，且该分支
+    长期指向 test.api.amadeus.com 空转）。唯一结构化数据源为 flyai；
+    flyai 不可用时不在 tools 装配层注册本工具，由 lock 阶段 prompt
+    引导 web_search 查航线/价格带。
+    """
+    del api_keys  # 保留签名兼容装配层；不再读取 Amadeus key。
+
     @tool(
         name="search_flights",
         description="""搜索航班信息。
-Use when: 用户在阶段 2，需要查询航班选项。
+Use when: 用户在阶段 2/3，需要查询航班选项且 flyai 可用。
 Don't use when: 航班已预订或不需要飞行。
         返回航班列表，含价格、时间、航空公司信息和预订链接。""",
         phases=[2, 3],
@@ -161,99 +163,50 @@ Don't use when: 航班已预订或不需要飞行。
     async def search_flights(
         origin: str, destination: str, date: str, max_results: int = 5
     ) -> dict:
-        tasks = []
+        if not flyai_client or not flyai_client.available:
+            raise ToolError(
+                "FlyAI CLI not available",
+                error_code="NO_RESULTS",
+                suggestion=(
+                    "航班结构化搜索不可用。请改用 web_search 查询航线与价格带，"
+                    "并明确提示用户到购票平台核价后再锁定。"
+                ),
+            )
 
-        # Branch 1: Amadeus
-        async def _amadeus():
-            if not api_keys.amadeus_key or not api_keys.amadeus_secret:
-                return []
-            async with httpx.AsyncClient() as client:
-                token_resp = await client.post(
-                    "https://test.api.amadeus.com/v1/security/oauth2/token",
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": api_keys.amadeus_key,
-                        "client_secret": api_keys.amadeus_secret,
-                    },
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                    timeout=10,
-                )
-                token_resp.raise_for_status()
-                access_token = token_resp.json().get("access_token")
-                if not access_token:
-                    raise ToolError(
-                        "Amadeus token response missing access_token",
-                        error_code="AUTH_FAILED",
-                        suggestion="Check AMADEUS_API_KEY and AMADEUS_API_SECRET",
-                    )
-                resp = await client.post(
-                    "https://test.api.amadeus.com/v2/shopping/flight-offers",
-                    json={
-                        "originLocationCode": origin,
-                        "destinationLocationCode": destination,
-                        "departureDate": date,
-                        "adults": 1,
-                        "max": max_results,
-                    },
-                    headers={"Authorization": f"Bearer {access_token}"},
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-            return [
-                normalize_amadeus_flight(o) for o in data.get("data", [])[:max_results]
-            ]
-
-        tasks.append(_amadeus())
-
-        # Branch 2: FlyAI
-        async def _flyai():
-            if not flyai_client or not flyai_client.available:
-                return []
-            origin_city = _IATA_TO_CITY.get(origin.upper(), origin)
-            dest_city = _IATA_TO_CITY.get(destination.upper(), destination)
+        origin_city = _IATA_TO_CITY.get(origin.upper(), origin)
+        dest_city = _IATA_TO_CITY.get(destination.upper(), destination)
+        try:
             raw_list = await flyai_client.search_flight(
                 origin=origin_city,
                 destination=dest_city,
                 dep_date=date,
             )
-            return [normalize_flyai_flight(r) for r in raw_list]
-
-        tasks.append(_flyai())
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        amadeus_results = (
-            results[0] if not isinstance(results[0], BaseException) else []
-        )
-        flyai_results = results[1] if not isinstance(results[1], BaseException) else []
-
-        if isinstance(results[0], BaseException):
-            logger.warning("Amadeus search failed: %s", results[0])
-        if isinstance(results[1], BaseException):
-            logger.warning("FlyAI flight search failed: %s", results[1])
-
-        if not amadeus_results and not flyai_results:
-            reasons = []
-            if not api_keys.amadeus_key or not api_keys.amadeus_secret:
-                reasons.append("Amadeus API key not configured")
-            elif isinstance(results[0], BaseException):
-                reasons.append(f"Amadeus error: {results[0]}")
-            if not flyai_client or not flyai_client.available:
-                reasons.append("FlyAI CLI not available")
-            elif isinstance(results[1], BaseException):
-                reasons.append(f"FlyAI error: {results[1]}")
+        except Exception as exc:
+            logger.warning("FlyAI flight search failed: %s", exc)
             raise ToolError(
-                "No flight results from any source"
-                + (f" ({'; '.join(reasons)})" if reasons else ""),
+                f"No flight results (FlyAI error: {exc})",
                 error_code="NO_RESULTS",
-                suggestion="Check API keys, install FlyAI CLI, or try different dates/airports",
+                suggestion=(
+                    "航班搜索失败。请改用 web_search 查询航线与价格带，"
+                    "或换日期/机场后重试。"
+                ),
+            ) from exc
+
+        flights = [normalize_flyai_flight(r) for r in (raw_list or [])]
+        if max_results and max_results > 0:
+            flights = flights[:max_results]
+        if not flights:
+            raise ToolError(
+                "No flight results from FlyAI",
+                error_code="NO_RESULTS",
+                suggestion=(
+                    "未查到航班。请换日期/机场后重试，"
+                    "或改用 web_search 查航线与价格带。"
+                ),
             )
 
-        merged = merge_flights(amadeus_results, flyai_results)
-
         return {
-            "flights": [f.to_dict() for f in merged],
+            "flights": [f.to_dict() for f in flights],
             "origin": origin,
             "destination": destination,
         }

@@ -35,45 +35,13 @@ def mock_flyai_unavailable():
     return client
 
 
-# ── search_flights fusion ─────────────────────────────────────────
-
-AMADEUS_RESPONSE = {
-    "data": [
-        {
-            "id": "1",
-            "price": {"total": "3500.00", "currency": "CNY"},
-            "itineraries": [
-                {
-                    "duration": "PT3H30M",
-                    "segments": [
-                        {
-                            "carrierCode": "CA",
-                            "number": "1234",
-                            "departure": {
-                                "iataCode": "PEK",
-                                "at": "2026-07-15T08:00:00",
-                            },
-                            "arrival": {"iataCode": "NRT", "at": "2026-07-15T12:30:00"},
-                        }
-                    ],
-                }
-            ],
-        }
-    ]
-}
+# ── search_flights (flyai-only after P2-8) ─────────────────────────
 
 
-@respx.mock
 @pytest.mark.asyncio
-async def test_flights_both_succeed(api_keys, mock_flyai_client):
+async def test_flights_flyai_succeeds(api_keys, mock_flyai_client):
     from tools.search_flights import make_search_flights_tool
 
-    respx.post("https://test.api.amadeus.com/v1/security/oauth2/token").mock(
-        return_value=Response(200, json={"access_token": "test_access_token"})
-    )
-    respx.post("https://test.api.amadeus.com/v2/shopping/flight-offers").mock(
-        return_value=Response(200, json=AMADEUS_RESPONSE)
-    )
     mock_flyai_client.search_flight.return_value = [
         {
             "adultPrice": "¥2800.0",
@@ -100,46 +68,30 @@ async def test_flights_both_succeed(api_keys, mock_flyai_client):
 
     tool_fn = make_search_flights_tool(api_keys, mock_flyai_client)
     result = await tool_fn(origin="PEK", destination="NRT", date="2026-07-15")
-    # Should have results from both sources (different flight_no)
-    assert len(result["flights"]) == 2
+    assert len(result["flights"]) == 1
+    assert result["flights"][0]["source"] == "flyai"
 
 
-@respx.mock
 @pytest.mark.asyncio
 async def test_flights_flyai_fails(api_keys, mock_flyai_client):
+    from tools.base import ToolError
     from tools.search_flights import make_search_flights_tool
 
-    respx.post("https://test.api.amadeus.com/v1/security/oauth2/token").mock(
-        return_value=Response(200, json={"access_token": "test_access_token"})
-    )
-    respx.post("https://test.api.amadeus.com/v2/shopping/flight-offers").mock(
-        return_value=Response(200, json=AMADEUS_RESPONSE)
-    )
     mock_flyai_client.search_flight.side_effect = Exception("network error")
 
     tool_fn = make_search_flights_tool(api_keys, mock_flyai_client)
-    result = await tool_fn(origin="PEK", destination="NRT", date="2026-07-15")
-    # Amadeus results only
-    assert len(result["flights"]) >= 1
-    assert any(f["source"] == "amadeus" for f in result["flights"])
+    with pytest.raises(ToolError, match="network error"):
+        await tool_fn(origin="PEK", destination="NRT", date="2026-07-15")
 
 
-@respx.mock
 @pytest.mark.asyncio
 async def test_flights_flyai_disabled(api_keys, mock_flyai_unavailable):
+    from tools.base import ToolError
     from tools.search_flights import make_search_flights_tool
 
-    respx.post("https://test.api.amadeus.com/v1/security/oauth2/token").mock(
-        return_value=Response(200, json={"access_token": "test_access_token"})
-    )
-    respx.post("https://test.api.amadeus.com/v2/shopping/flight-offers").mock(
-        return_value=Response(200, json=AMADEUS_RESPONSE)
-    )
-
     tool_fn = make_search_flights_tool(api_keys, mock_flyai_unavailable)
-    result = await tool_fn(origin="PEK", destination="NRT", date="2026-07-15")
-    assert len(result["flights"]) >= 1
-    # FlyAI should not have been called
+    with pytest.raises(ToolError, match="FlyAI"):
+        await tool_fn(origin="PEK", destination="NRT", date="2026-07-15")
     mock_flyai_unavailable.search_flight.assert_not_called()
 
 

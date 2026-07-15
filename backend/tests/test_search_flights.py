@@ -1,98 +1,85 @@
 # backend/tests/test_search_flights.py
+from unittest.mock import AsyncMock
+
 import pytest
-import respx
-from httpx import Response
 
 from config import ApiKeysConfig
+from tools.base import ToolError
 from tools.search_flights import make_search_flights_tool
 
 
 @pytest.fixture
-def tool_fn():
-    keys = ApiKeysConfig(amadeus_key="test_key", amadeus_secret="test_secret")
-    return make_search_flights_tool(keys)
+def flyai_client():
+    client = AsyncMock()
+    client.available = True
+    client.search_flight.return_value = [
+        {
+            "adultPrice": "¥3500.0",
+            "journeys": [
+                {
+                    "journeyType": "直达",
+                    "segments": [
+                        {
+                            "marketingTransportName": "中国国际航空",
+                            "marketingTransportNo": "CA1234",
+                            "depCityName": "北京",
+                            "arrCityName": "东京",
+                            "depDateTime": "2024-07-15 08:00:00",
+                            "arrDateTime": "2024-07-15 12:30:00",
+                            "duration": "210分钟",
+                            "seatClassName": "经济舱",
+                        }
+                    ],
+                }
+            ],
+            "jumpUrl": "https://fliggy.com/f/1",
+        }
+    ]
+    return client
 
 
-@respx.mock
 @pytest.mark.asyncio
-async def test_search_flights(tool_fn):
-    respx.post("https://test.api.amadeus.com/v1/security/oauth2/token").mock(
-        return_value=Response(200, json={"access_token": "test_access_token"})
-    )
-    respx.post("https://test.api.amadeus.com/v2/shopping/flight-offers").mock(
-        return_value=Response(
-            200,
-            json={
-                "data": [
-                    {
-                        "id": "1",
-                        "price": {"total": "3500.00", "currency": "CNY"},
-                        "itineraries": [{"duration": "PT3H30M"}],
-                    },
-                ]
-            },
-        )
-    )
+async def test_search_flights(flyai_client):
+    keys = ApiKeysConfig()
+    tool_fn = make_search_flights_tool(keys, flyai_client)
     result = await tool_fn(origin="PEK", destination="NRT", date="2024-07-15")
     assert len(result["flights"]) == 1
-    assert result["flights"][0]["price"] == 3500.0
-    assert result["flights"][0]["source"] == "amadeus"
+    assert result["flights"][0]["source"] == "flyai"
     assert result["origin"] == "PEK"
+    flyai_client.search_flight.assert_awaited_once()
+    call_kwargs = flyai_client.search_flight.await_args.kwargs
+    assert call_kwargs["origin"] == "北京"
+    assert call_kwargs["destination"] == "东京"
 
 
 @pytest.mark.asyncio
-async def test_no_api_key():
-    keys = ApiKeysConfig(amadeus_key="")
-    fn = make_search_flights_tool(keys)
-    from tools.base import ToolError
+async def test_no_flyai_client():
+    keys = ApiKeysConfig()
+    fn = make_search_flights_tool(keys, None)
 
-    with pytest.raises(ToolError, match="API key"):
+    with pytest.raises(ToolError, match="FlyAI"):
         await fn(origin="PEK", destination="NRT", date="2024-07-15")
 
 
-@respx.mock
 @pytest.mark.asyncio
-async def test_search_flights_uses_amadeus_oauth_token():
-    keys = ApiKeysConfig(amadeus_key="client_id", amadeus_secret="client_secret")
-    fn = make_search_flights_tool(keys)
+async def test_flyai_unavailable():
+    client = AsyncMock()
+    client.available = False
+    fn = make_search_flights_tool(ApiKeysConfig(), client)
 
-    token_route = respx.post(
-        "https://test.api.amadeus.com/v1/security/oauth2/token"
-    ).mock(return_value=Response(200, json={"access_token": "oauth_token"}))
-    offers_route = respx.post(
-        "https://test.api.amadeus.com/v2/shopping/flight-offers"
-    ).mock(return_value=Response(200, json={"data": []}))
-
-    from tools.base import ToolError
-
-    with pytest.raises(ToolError, match="No flight results"):
+    with pytest.raises(ToolError, match="FlyAI"):
         await fn(origin="PEK", destination="NRT", date="2024-07-15")
-
-    assert token_route.called
-    assert offers_route.called
-    token_request = token_route.calls[0].request
-    assert token_request.headers["content-type"].startswith(
-        "application/x-www-form-urlencoded"
-    )
-    assert b"grant_type=client_credentials" in token_request.content
-    assert b"client_id=client_id" in token_request.content
-    assert b"client_secret=client_secret" in token_request.content
-    offers_request = offers_route.calls[0].request
-    assert offers_request.headers["authorization"] == "Bearer oauth_token"
 
 
 @pytest.mark.asyncio
 async def test_surfaces_flyai_quota_error_when_no_other_source_available():
-    from tools.base import ToolError
-
     class StubFlyAIClient:
         available = True
 
         async def search_flight(self, **kwargs):
             raise RuntimeError("Trial limit reached. Please configure FLYAI_API_KEY")
 
-    keys = ApiKeysConfig(amadeus_key="")
-    fn = make_search_flights_tool(keys, StubFlyAIClient())
+    fn = make_search_flights_tool(ApiKeysConfig(), StubFlyAIClient())
 
     with pytest.raises(ToolError, match="Trial limit reached"):
         await fn(origin="PEK", destination="NRT", date="2024-07-15")
