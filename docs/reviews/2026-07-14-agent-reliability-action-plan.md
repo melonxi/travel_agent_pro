@@ -206,10 +206,10 @@ Phase 3 是长 run,当前用户只能等完或取消。`asyncio.Queue` + `/steer
 - **P2-8**:删除 `search_flights.py` Amadeus sandbox 分支,仅保留 flyai;`tools.py` 仅在 flyai 可用时注册;测试改写为 flyai-only。
 - **D2**:`phase2_tools.py` `date_role` 必填;多天行程首/中/末日角色校验;到达/离开日 `core_activities`/`locked_pois` ≤2;prompts 同步。D1 中 pace 硬校验此前已落地,首末日轻排随 D2 下沉到写入校验。
 
-### ⏳ 未完成(设计级,视排期)
+### ⏳ 未完成(设计级,视排期)——已产出独立施工蓝图
 
-- **D3**(hub-and-spoke 再协商 + 黑板):P1-6 已做最小版(worker 上报通道);完整版需 orchestrator 改单天骨架 + 只重派受影响天 + 共享黑板三张表,是较大设计工作。
-- **D4**(Steering 运行中引导):`asyncio.Queue` + `/steer` endpoint,长 run 中途纠偏。独立特性,未开始。
+- **D3**(hub-and-spoke 再协商 + 黑板):P1-6 已做最小版(worker 上报通道);完整版需 orchestrator 改单天骨架 + 只重派受影响天 + 共享黑板三张表,是较大设计工作。**施工蓝图见 [`2026-07-15-D3-phase3-renegotiation-plan.md`](2026-07-15-D3-phase3-renegotiation-plan.md)**(含现状锚点、三部分分期步骤、测试策略与风险)。
+- **D4**(Steering 运行中引导):`asyncio.Queue` + `/steer` endpoint,长 run 中途纠偏。独立特性,未开始。**施工蓝图见 [`2026-07-15-D4-steering-plan.md`](2026-07-15-D4-steering-plan.md)**(含 drain 注入点、`/steer` 端点模板、与 D3 的配合)。
 
 ---
 
