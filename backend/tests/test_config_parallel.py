@@ -8,7 +8,7 @@ def test_phase3_parallel_defaults():
     assert isinstance(cfg.phase3_parallel, Phase3ParallelConfig)
     assert cfg.phase3_parallel.enabled is True
     assert cfg.phase3_parallel.max_workers == 5
-    assert cfg.phase3_parallel.worker_max_iterations == 60
+    assert cfg.phase3_parallel.worker_max_iterations == 20
     assert cfg.phase3_parallel.worker_timeout_seconds == 1200
     assert cfg.phase3_parallel.fallback_to_serial is True
     assert cfg.phase3_parallel.artifact_root == "./data/phase3_runs"
@@ -39,5 +39,5 @@ phase3:
     assert cfg.phase3_parallel.max_workers == 3
     assert cfg.phase3_parallel.artifact_root == str(artifact_root)
     # Other fields should have defaults
-    assert cfg.phase3_parallel.worker_max_iterations == 60
+    assert cfg.phase3_parallel.worker_max_iterations == 20
     assert cfg.phase3_parallel.worker_timeout_seconds == 1200

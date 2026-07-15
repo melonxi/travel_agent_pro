@@ -1177,7 +1177,9 @@ async def run_day_worker(
                                 forced_emit_reason = "RECOVERY_CHAIN_EXHAUSTED"
                                 break
 
-                    if forced_emit_mode:
+                    if forced_emit_mode and not any(
+                        tc.name == "submit_day_plan_candidate" for tc in tool_calls
+                    ):
                         skip_code = forced_emit_reason or "FORCED_EMIT"
                         for tc in tool_calls:
                             skipped = ToolResult(

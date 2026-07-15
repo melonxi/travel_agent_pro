@@ -30,7 +30,7 @@ from api.orchestration.chat.events import (
 from api.orchestration.chat.finalization import (
     finalize_agent_run,
 )
-from api.orchestration.chat.stream_runtime import run_timeout
+from api.orchestration.chat.stream_runtime import resolve_run_timeout_seconds, run_timeout
 from api.orchestration.chat.stream_trace import (
     emit_deliverable_draft_trace,
     finalize_stream_trace_and_persistence,
@@ -103,7 +103,8 @@ async def run_agent_stream(
         llm_started_at = time.monotonic()
         usage_iteration = 0
         try:
-            async with run_timeout(getattr(deps.config, "run_timeout_seconds", None)):
+            run_budget = resolve_run_timeout_seconds(deps.config, plan.phase)
+            async with run_timeout(run_budget):
                 async for chunk in agent.run(messages, phase=plan.phase):
                     if chunk.type.value == "keepalive":
                         passthrough_event = passthrough_chunk_event(chunk)

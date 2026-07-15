@@ -216,10 +216,13 @@ class GuardrailsConfig:
 class Phase3ParallelConfig:
     enabled: bool = True
     max_workers: int = 5
-    worker_max_iterations: int = 60
+    worker_max_iterations: int = 20
     worker_timeout_seconds: int = 1200
     fallback_to_serial: bool = True
     artifact_root: str = "./data/phase3_runs"
+    # 编排预算：并行/串行编排整体超时。为 None 时表示豁免 run 级超时，
+    # 由 worker 自身的 worker_timeout_seconds 兜底。
+    orchestration_timeout_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -579,13 +582,17 @@ def _build_guardrails_config(raw: dict) -> GuardrailsConfig:
 
 def _build_phase3_parallel_config(raw: dict) -> Phase3ParallelConfig:
     p3 = raw.get("phase3", {}).get("parallel", {})
+    raw_orch_timeout = p3.get("orchestration_timeout_seconds", None)
     return Phase3ParallelConfig(
         enabled=_as_bool(p3.get("enabled"), True),
         max_workers=int(p3.get("max_workers", 5)),
-        worker_max_iterations=int(p3.get("worker_max_iterations", 60)),
+        worker_max_iterations=int(p3.get("worker_max_iterations", 20)),
         worker_timeout_seconds=int(p3.get("worker_timeout_seconds", 1200)),
         fallback_to_serial=_as_bool(p3.get("fallback_to_serial"), True),
         artifact_root=str(p3.get("artifact_root", "./data/phase3_runs")),
+        orchestration_timeout_seconds=(
+            int(raw_orch_timeout) if raw_orch_timeout is not None else None
+        ),
     )
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:

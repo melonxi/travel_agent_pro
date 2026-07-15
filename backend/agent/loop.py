@@ -48,6 +48,9 @@ from agent.execution.tool_invocation import (
 )
 from agent.internal_tasks import InternalTask
 from agent.phase3.parallel import (
+    build_phase3_commit_calls,
+    phase3_commit_failure_notice,
+    phase3_partial_delivery_notice,
     run_parallel_phase3_orchestrator,
     should_enter_parallel_phase3_at_iteration_boundary,
     should_enter_parallel_phase3_now,
@@ -258,11 +261,12 @@ class AgentLoop:
             yield LLMChunk(type=ChunkType.DONE)
             return
 
-        commit_call = ToolCall(
-            id="internal_phase3_parallel_commit",
-            name="replace_all_day_plans",
-            arguments={"days": list(_handoff.dayplans)},
-            human_label="写入并行逐日行程",
+        # P0-2 部分交付：并行/串行重排后仍可能缺天。若强行走 replace_all_day_plans
+        # 的完整覆盖校验，会抛 INCOMPLETE_DAILY_PLANS 丢弃已成功的 N-1 天。
+        # 因此仅在全天覆盖时才整体替换；否则逐天 save_day_plan 落盘并明示缺哪几天。
+        commit_calls, covered_days, missing_days = build_phase3_commit_calls(
+            dayplans=_handoff.dayplans,
+            plan=self.plan,
         )
         # Preserve the same message-history shape as a normal assistant tool call.
         # _execute_tool_batch() appends the matching TOOL message and then existing
@@ -271,7 +275,7 @@ class AgentLoop:
             Message(
                 role=Role.ASSISTANT,
                 content=None,
-                tool_calls=[commit_call],
+                tool_calls=commit_calls,
             )
         )
 
@@ -281,7 +285,7 @@ class AgentLoop:
         )
         batch_outcome: ToolBatchOutcome | None = None
         async for batch_item in self._execute_tool_batch(
-            tool_calls=[commit_call],
+            tool_calls=commit_calls,
             messages=messages,
         ):
             if isinstance(batch_item, LLMChunk):
@@ -293,31 +297,18 @@ class AgentLoop:
             raise RuntimeError("Parallel Phase 3 commit finished without an outcome")
 
         if not batch_outcome.saw_state_update:
-            commit_result = None
-            for message in reversed(messages):
-                result = message.tool_result
-                if result and result.tool_call_id == commit_call.id:
-                    commit_result = result
-                    break
-            detail = (
-                commit_result.error
-                if commit_result is not None and commit_result.error
-                else "replace_all_day_plans 未成功写入状态"
-            )
-            suggestion = (
-                f" {commit_result.suggestion}"
-                if commit_result is not None and commit_result.suggestion
-                else ""
-            )
             yield LLMChunk(
                 type=ChunkType.TEXT_DELTA,
-                content=(
-                    "\n\n⚠️ 并行行程写入失败，当前行程尚未保存到规划状态。"
-                    f"原因：{detail}{suggestion}"
-                ),
+                content=phase3_commit_failure_notice(commit_calls, messages),
             )
             yield LLMChunk(type=ChunkType.DONE)
             return
+
+        if missing_days:
+            yield LLMChunk(
+                type=ChunkType.TEXT_DELTA,
+                content=phase3_partial_delivery_notice(covered_days, missing_days),
+            )
 
         from agent.phase3.orchestrator import build_unresolved_constraint_notice
 

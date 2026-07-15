@@ -1044,10 +1044,13 @@ class Phase3Orchestrator:
             span.set_attribute("successes", len(successes))
             span.set_attribute("failures", len(failures))
 
-            # 6. Check if we should fall back to serial
+            # 6. High parallel failure rate → degrade to serial repair instead of
+            # aborting. 之前此处 return 空结果，导致 step 7 逐天重试(实质的串行路径)
+            # 完全不可达，下一回合进入条件不变而全量重跑并行——无限空转。
+            # 现在改为继续走 step 7 的逐天串行重试；仍缺的天由 P0-2 部分交付兜底。
             if self.config.fallback_to_serial and len(failures) > len(tasks) / 2:
                 logger.warning(
-                    "Parallel mode failure rate %.0f%%, falling back to serial",
+                    "Parallel mode failure rate %.0f%%, degrading to serial per-day retry",
                     len(failures) / len(tasks) * 100,
                 )
                 await self._emit_trace_event(
@@ -1067,9 +1070,9 @@ class Phase3Orchestrator:
                 yield self._build_progress_chunk(
                     worker_statuses,
                     total_days,
-                    "并行模式失败率过高，切换到串行模式...",
+                    "并行模式失败率过高，切换到逐天串行重排...",
                 )
-                return
+                # 不 return：继续走下面的逐天串行重试(step 7)。
 
             # 7. Retry failed days (one at a time)
             for task, error_msg in failures:
