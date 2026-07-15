@@ -28,6 +28,9 @@ from tools.base import ToolError, tool
 # set_skeleton_plans
 # ---------------------------------------------------------------------------
 
+# D2：首末日轻排时 core_activities / locked_pois 的上限。
+_ARRIVAL_DEPARTURE_CORE_LIMIT = 2
+
 _SKELETON_DAY_SCHEMA = {
     "type": "object",
     "properties": {
@@ -55,11 +58,16 @@ _SKELETON_DAY_SCHEMA = {
         "fatigue_level": {"type": "string", "description": "疲劳等级"},
         "budget_level": {"type": "string", "description": "预算等级"},
         "excluded_pois": {"type": "array", "items": {"type": "string"}},
-        "date_role": {"type": "string", "enum": ["arrival_day", "departure_day", "full_day"]},
+        "date_role": {
+            "type": "string",
+            "enum": ["arrival_day", "departure_day", "full_day"],
+            "description": "日期角色：首日 arrival_day / 末日 departure_day / 中间日 full_day",
+        },
         "mobility_envelope": {"type": "object"},
         "fallback_slots": {"type": "array", "items": {"type": "object"}},
     },
-    "required": ["area_cluster", "locked_pois", "candidate_pois"],
+    # D2：date_role 必填，便于首末日轻排与 Phase 3 边界约束。
+    "required": ["area_cluster", "locked_pois", "candidate_pois", "date_role"],
 }
 
 _SET_SKELETON_PLANS_PARAMS = {
@@ -104,6 +112,90 @@ def _validate_skeleton_day_count(
                 "否则无法进入 Phase 3。"
             ),
         )
+
+
+def _validate_date_role_and_light_packing(
+    days: list, *, plan_idx: int
+) -> None:
+    """D2：date_role 必填；首/末日角色与活动数上限。"""
+    valid_roles = {"arrival_day", "departure_day", "full_day"}
+    day_dicts = [d for d in days if isinstance(d, dict)]
+    n = len(day_dicts)
+    if n == 0:
+        return
+
+    for day_idx, day in enumerate(day_dicts):
+        prefix = f"plans[{plan_idx}].days[{day_idx}]"
+        role = day.get("date_role")
+        if not isinstance(role, str) or not role.strip():
+            raise ToolError(
+                f"{prefix}.date_role 必填",
+                error_code="INVALID_VALUE",
+                suggestion=(
+                    '请为每天设置 date_role：首日 "arrival_day"、'
+                    '末日 "departure_day"、中间日 "full_day"'
+                ),
+            )
+        if role not in valid_roles:
+            raise ToolError(
+                f"{prefix}.date_role 必须是 arrival_day / departure_day / full_day 之一",
+                error_code="INVALID_VALUE",
+                suggestion='例如 "date_role": "arrival_day"',
+            )
+
+        # 首末日轻排：core_activities 与 locked_pois 各自不超过上限。
+        if role in ("arrival_day", "departure_day"):
+            core = day.get("core_activities")
+            if isinstance(core, list) and len(core) > _ARRIVAL_DEPARTURE_CORE_LIMIT:
+                raise ToolError(
+                    f"{prefix}.core_activities 有 {len(core)} 项，"
+                    f"{role} 上限为 {_ARRIVAL_DEPARTURE_CORE_LIMIT}",
+                    error_code="INVALID_VALUE",
+                    suggestion=(
+                        f"到达/离开日请轻排，core_activities 不超过 "
+                        f"{_ARRIVAL_DEPARTURE_CORE_LIMIT} 项。"
+                    ),
+                )
+            locked = day.get("locked_pois")
+            if isinstance(locked, list) and len(locked) > _ARRIVAL_DEPARTURE_CORE_LIMIT:
+                raise ToolError(
+                    f"{prefix}.locked_pois 有 {len(locked)} 项，"
+                    f"{role} 上限为 {_ARRIVAL_DEPARTURE_CORE_LIMIT}",
+                    error_code="INVALID_VALUE",
+                    suggestion=(
+                        f"到达/离开日请轻排，locked_pois 不超过 "
+                        f"{_ARRIVAL_DEPARTURE_CORE_LIMIT} 项。"
+                    ),
+                )
+
+    # 位置角色约定（仅多天行程强制）。
+    if n == 1:
+        return
+    first_role = day_dicts[0].get("date_role")
+    last_role = day_dicts[-1].get("date_role")
+    if first_role != "arrival_day":
+        raise ToolError(
+            f"plans[{plan_idx}].days[0].date_role 必须是 arrival_day，"
+            f"当前为 {first_role!r}",
+            error_code="INVALID_VALUE",
+            suggestion='多天行程第一天请设 "date_role": "arrival_day"',
+        )
+    if last_role != "departure_day":
+        raise ToolError(
+            f"plans[{plan_idx}].days[{n - 1}].date_role 必须是 departure_day，"
+            f"当前为 {last_role!r}",
+            error_code="INVALID_VALUE",
+            suggestion='多天行程最后一天请设 "date_role": "departure_day"',
+        )
+    for mid_idx, mid in enumerate(day_dicts[1:-1], start=1):
+        mid_role = mid.get("date_role")
+        if mid_role != "full_day":
+            raise ToolError(
+                f"plans[{plan_idx}].days[{mid_idx}].date_role 必须是 full_day，"
+                f"当前为 {mid_role!r}",
+                error_code="INVALID_VALUE",
+                suggestion='中间天请设 "date_role": "full_day"',
+            )
 
 
 def _validate_skeleton_days(plans: list[dict]) -> None:
@@ -173,6 +265,8 @@ def _validate_skeleton_days(plans: list[dict]) -> None:
 
             for poi_idx, poi in enumerate(cp if isinstance(cp, list) else []):
                 register_poi(poi, "candidate_pois", poi_idx)
+
+        _validate_date_role_and_light_packing(days, plan_idx=plan_idx)
 
 
 def _validated_skeleton_id_map(

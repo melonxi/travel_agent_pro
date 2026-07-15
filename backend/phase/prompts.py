@@ -232,7 +232,12 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 
 **POI 跨天唯一性**（字段契约）：同一套 skeleton 内，一个 POI 只能出现在一天的 `locked_pois` 或 `candidate_pois` 中一次。如果只是弱备选也只归属给最合适的一天；写入前自查不要让同一 POI 出现在两天的 `candidate_pois` 中。
 
-可选字段（有则更好）：`excluded_pois` / `date_role`（`arrival_day` / `departure_day` / `full_day`）/ `mobility_envelope` / `fallback_slots`。
+**`date_role` 必填**（字段契约）：
+- 多天行程：第 1 天必须 `arrival_day`，最后一天必须 `departure_day`，中间天 `full_day`
+- 单天行程：可用 `full_day` 或 `arrival_day`
+- 到达/离开日轻排：`core_activities` 与 `locked_pois` 均不超过 2 项
+
+可选字段（有则更好）：`excluded_pois` / `mobility_envelope` / `fallback_slots`。
 
 ## 工作方式：经验采集 → 骨架生成
 
