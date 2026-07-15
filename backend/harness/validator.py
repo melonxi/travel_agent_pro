@@ -355,11 +355,23 @@ def validate_hard_constraints(plan: TravelPlanState) -> list[str]:
     # Time conflict check
     errors.extend(_validate_time_conflicts(plan))
 
-    # Budget check
+    # Budget check（P0-6：全口径预算 = 活动 + 已锁交通 + 已锁住宿）
     if plan.budget and plan.daily_plans:
-        total_cost = _activity_total_cost(plan)
+        activity_cost = _activity_total_cost(plan)
+        transport_cost = _selected_transport_cost(plan)
+        accommodation_cost = (
+            _selected_accommodation_nightly_price(plan) * _trip_nights(plan)
+            if plan.accommodation
+            else 0.0
+        )
+        total_cost = activity_cost + transport_cost + accommodation_cost
         if total_cost > plan.budget.total:
-            errors.append(f"总费用 ¥{total_cost:.0f} 超出预算 ¥{plan.budget.total:.0f}")
+            over = total_cost - plan.budget.total
+            errors.append(
+                f"总费用 ¥{total_cost:.0f}（活动 ¥{activity_cost:.0f}"
+                f" + 交通 ¥{transport_cost:.0f} + 住宿 ¥{accommodation_cost:.0f}）"
+                f"超出预算 ¥{plan.budget.total:.0f}，超支 ¥{over:.0f}"
+            )
 
     # Day count check
     if plan.dates and plan.daily_plans:

@@ -264,7 +264,7 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 - UGC 域内搜索：本子阶段最重要手段，经验采集主力（`web_search` + UGC 域名限定，见 base prompt）。
 - `calculate_route`：验证跨区域移动是否过于折腾。
 - `assemble_day_plan`：内部辅助，不是最终输出。
-- `check_availability`：检查关键景点或活动在计划日期是否可行。""",
+- `check_availability`：按星期几的常规营业时间检查景点是否开放；无法判断节假日/临时闭馆，必去景点需再用 `web_search` 验证目标日期特殊安排。""",
     "lock": """# 当前子阶段：lock — 锁定大交通和住宿
 
 ## 工作方式

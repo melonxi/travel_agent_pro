@@ -11,6 +11,61 @@ class RepairHintOutcome:
     key: str
 
 
+def build_skeleton_day_mismatch_message(
+    *,
+    plan: Any | None,
+    current_phase: int,
+    repair_hints_used: set[str],
+) -> RepairHintOutcome | None:
+    """P0-5: 骨架天数≠行程天数时，Phase 2→3 gate 会静默卡死。
+
+    当已选骨架的 days 数与 plan.dates.total_days 不一致时，返回一条明确的
+    runtime notice，告诉模型差几天、如何修，避免它向用户空喊"已进入下一阶段"
+    而系统纹丝不动。
+    """
+    if current_phase != 2 or plan is None:
+        return None
+    dates = getattr(plan, "dates", None)
+    selected_id = getattr(plan, "selected_skeleton_id", None)
+    skeleton_plans = getattr(plan, "skeleton_plans", None)
+    if not dates or not selected_id or not skeleton_plans:
+        return None
+
+    selected = None
+    for skeleton in skeleton_plans:
+        if isinstance(skeleton, dict) and (
+            skeleton.get("id") == selected_id
+            or skeleton.get("name") == selected_id
+        ):
+            selected = skeleton
+            break
+    if selected is None:
+        return None
+    days = selected.get("days")
+    if not isinstance(days, list):
+        return None
+
+    total_days = dates.total_days
+    if len(days) == total_days:
+        return None
+
+    repair_key = "p2_skeleton_day_mismatch"
+    if repair_key in repair_hints_used:
+        return None
+    return RepairHintOutcome(
+        key=repair_key,
+        message=(
+            "[状态同步提醒]\n"
+            f"已选骨架 `{selected_id}` 只有 {len(days)} 天，"
+            f"而行程总天数是 {total_days} 天（{dates.start} ~ {dates.end}）。"
+            "天数不一致时系统无法进入 Phase 3，会一直停在 Phase 2。"
+            "请调用 `set_skeleton_plans(plans=[...])` 把该骨架的 days"
+            f"补齐/裁剪到精确 {total_days} 天，再重新 `select_skeleton`。"
+            "不要向用户宣布已进入下一阶段。"
+        ),
+    )
+
+
 def build_phase2_state_repair_message(
     *,
     plan: Any | None,
@@ -20,6 +75,13 @@ def build_phase2_state_repair_message(
 ) -> RepairHintOutcome | None:
     if current_phase != 2 or plan is None:
         return None
+    mismatch = build_skeleton_day_mismatch_message(
+        plan=plan,
+        current_phase=current_phase,
+        repair_hints_used=repair_hints_used,
+    )
+    if mismatch is not None:
+        return mismatch
     if not plan.destination:
         return None
     text = assistant_text.strip()

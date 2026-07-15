@@ -84,6 +84,28 @@ _SET_SKELETON_PLANS_PARAMS = {
 }
 
 
+def _validate_skeleton_day_count(
+    plan: TravelPlanState, skeleton: dict, *, label: str
+) -> None:
+    """骨架天数必须与权威 total_days 一致，否则 Phase 2→3 gate 会静默卡死。"""
+    if plan.dates is None:
+        return
+    days = skeleton.get("days")
+    if not isinstance(days, list):
+        return
+    expected = plan.dates.total_days
+    if len(days) != expected:
+        raise ToolError(
+            f"{label} 的 days 有 {len(days)} 天，与行程总天数 {expected} 天不一致",
+            error_code="SKELETON_DAY_COUNT_MISMATCH",
+            suggestion=(
+                f"请让骨架 days 精确覆盖 {expected} 天"
+                f"（行程 {plan.dates.start} ~ {plan.dates.end}），"
+                "否则无法进入 Phase 3。"
+            ),
+        )
+
+
 def _validate_skeleton_days(plans: list[dict]) -> None:
     for plan_idx, plan in enumerate(plans):
         if "days" not in plan:
@@ -315,6 +337,10 @@ def make_set_skeleton_plans_tool(plan: TravelPlanState):
             normalized_plan["name"] = normalized_name
             normalized_plans.append(normalized_plan)
         _validate_skeleton_days(normalized_plans)
+        for i, normalized_plan in enumerate(normalized_plans):
+            _validate_skeleton_day_count(
+                plan, normalized_plan, label=f"plans[{i}]"
+            )
         prev_count = len(plan.skeleton_plans)
         previous_skeleton_plans = list(plan.skeleton_plans)
         write_skeleton_plans(plan, normalized_plans)
@@ -391,6 +417,12 @@ def make_select_skeleton_tool(plan: TravelPlanState):
                 suggestion=f"可选 id: {', '.join(selectable_ids) if selectable_ids else '(无已写入骨架)'}",
             )
         matched_id = existing_id_map[normalized_id]
+        for skeleton in plan.skeleton_plans:
+            if isinstance(skeleton, dict) and skeleton.get("id") == matched_id:
+                _validate_skeleton_day_count(
+                    plan, skeleton, label=f"骨架 {matched_id!r}"
+                )
+                break
         prev = plan.selected_skeleton_id
         write_selected_skeleton_id(plan, matched_id)
         return {

@@ -104,14 +104,22 @@ def validate_tool_output(
         return result
 
     output_check = guardrail.validate_output(tool_call.name, result.data)
-    if output_check.level != "warn" or not output_check.reason:
+    # P1-5：warn 与 error 两级都要回传给 LLM。此前只处理 warn，error 级
+    # （如缺 price 等关键字段）被静默丢弃，无价数据流入规划导致预算失真。
+    if output_check.level not in ("warn", "error") or not output_check.reason:
         return result
+    suggestion = output_check.reason
+    if output_check.level == "error":
+        suggestion = (
+            f"[数据质量-error] {output_check.reason}"
+            " 关键字段缺失，请用 web_search 或其他工具补齐后再写入规划。"
+        )
     return ToolResult(
         tool_call_id=result.tool_call_id,
         status=result.status,
         data=result.data,
         metadata=result.metadata,
-        suggestion=output_check.reason,
+        suggestion=suggestion,
     )
 
 
