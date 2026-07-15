@@ -96,7 +96,7 @@ async def run_agent_stream(
     tool_call_args: dict[str, dict] = {}
 
     keepalive_task = asyncio.create_task(_keepalive_loop())
-    session["_soft_judge_repair_feedback_count"] = 0
+    session["_soft_judge_repair_feedback_buckets"] = {}
 
     try:
         accum_text = ""  # 追踪本轮 LLM 输出的文本，供中断恢复使用

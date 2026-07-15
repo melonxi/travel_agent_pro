@@ -939,10 +939,14 @@ def build_agent_hooks(
             "请根据质量评估结果先修订交付物，再重新提交 generate_summary。"
         ]
         if should_inject_feedback:
-            feedback_count = int(session.get("_soft_judge_repair_feedback_count", 0))
+            # P2-2：反馈计数器按 (tool, phase) 分桶，避免上游工具耗光额度后
+            # Phase 4 最需要时无反馈可注入。旧的全局单计数器跨工具共享且不重置。
+            bucket_key = f"{tool_name}:{getattr(plan, 'phase', '?')}"
+            buckets = session.setdefault("_soft_judge_repair_feedback_buckets", {})
+            feedback_count = int(buckets.get(bucket_key, 0))
             feedback_limit = max(1, int(config.quality_gate.max_retries))
             should_inject_feedback = feedback_count < feedback_limit
-            session["_soft_judge_repair_feedback_count"] = feedback_count + 1
+            buckets[bucket_key] = feedback_count + 1
         if tool_name == "generate_summary":
             session["_phase4_deliverables_quality"] = {
                 "tool_call_id": getattr(tool_call, "id", tool_name),

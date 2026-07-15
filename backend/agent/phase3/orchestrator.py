@@ -41,7 +41,7 @@ from tools.engine import ToolEngine
 logger = logging.getLogger(__name__)
 
 _LOCAL_REPAIR_ISSUE_TYPES = frozenset(
-    {"pace_mismatch", "time_conflict", "transport_connection"}
+    {"pace_mismatch", "time_conflict", "transport_connection", "locked_poi_missing"}
 )
 
 
@@ -246,6 +246,7 @@ class Phase3Orchestrator:
         self.trace_context = trace_context
         self.final_dayplans: list[dict[str, Any]] = []
         self.final_issues: list[GlobalValidationIssue] = []
+        self._locked_pois_by_day: dict[int, list[str]] = {}
         self._trace_orchestrator_event_id: str | None = None
 
     def _trace_context(
@@ -461,16 +462,24 @@ class Phase3Orchestrator:
                 ]
             t.candidate_activity_slots = max(max_core - len(t.locked_pois), 0)
 
-        # 1. Build global POI ownership map (locked only)
+        # 1. Build global POI ownership map (locked only).
+        # P2-3：同一 POI 被多天锁定会造成自相矛盾（既在某天 locked 又因归属
+        # 另一天而进入该天 forbidden）。保留首个锁定天为唯一 owner，并从后续
+        # 天的 locked_pois 移除重复项，避免下发互斥约束给 worker。
         poi_owner: dict[str, int] = {}
         for t in tasks:
+            deduped_locked: list[str] = []
             for poi in t.locked_pois:
                 if poi in poi_owner:
                     logger.warning(
-                        "POI '%s' locked by both Day %d and Day %d",
-                        poi, poi_owner[poi], t.day,
+                        "POI '%s' locked by both Day %d and Day %d; "
+                        "keeping Day %d and dropping the duplicate",
+                        poi, poi_owner[poi], t.day, poi_owner[poi],
                     )
+                    continue
                 poi_owner[poi] = t.day
+                deduped_locked.append(poi)
+            t.locked_pois = deduped_locked
 
         # 2. Derive forbidden_pois for each day
         for t in tasks:
@@ -638,6 +647,42 @@ class Phase3Orchestrator:
         # 7. Pace check
         issues.extend(self._validate_pace(dayplans))
 
+        # 8. Locked POI 落位校验（P2-1）：每天编排的必去项必须出现在 activities。
+        issues.extend(self._validate_locked_pois_present(dayplans))
+
+        return issues
+
+    def _validate_locked_pois_present(
+        self, dayplans: list[dict[str, Any]]
+    ) -> list[GlobalValidationIssue]:
+        issues: list[GlobalValidationIssue] = []
+        if not self._locked_pois_by_day:
+            return issues
+        by_day = {dp.get("day", 0): dp for dp in dayplans}
+        for day, locked in self._locked_pois_by_day.items():
+            if not locked:
+                continue
+            dp = by_day.get(day)
+            if dp is None:
+                continue
+            act_names = [a.get("name", "") for a in dp.get("activities", [])]
+            missing = [
+                poi
+                for poi in locked
+                if not any(_names_similar(poi, name) for name in act_names if name)
+            ]
+            if missing:
+                issues.append(
+                    GlobalValidationIssue(
+                        issue_type="locked_poi_missing",
+                        description=(
+                            f"第 {day} 天缺少必去项: {missing}；"
+                            "locked POI 必须出现在当天 activities 中"
+                        ),
+                        affected_days=[day],
+                        severity="error",
+                    )
+                )
         return issues
 
     def _validate_semantic_duplicates(
@@ -812,6 +857,8 @@ class Phase3Orchestrator:
             )
             tasks = self._split_tasks()
             tasks = self._compile_day_tasks(tasks)
+            # P2-1：记录每天编排后的 locked POI，供全局校验核对必去项是否落位。
+            self._locked_pois_by_day = {t.day: list(t.locked_pois) for t in tasks}
             total_days = len(tasks)
             span.set_attribute("total_days", total_days)
 
