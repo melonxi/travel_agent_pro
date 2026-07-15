@@ -109,6 +109,14 @@ async def finalize_agent_run(
         last_run_error=run.error_code,
     )
     if plan.phase != phase_before_run:
+        # P2-9：工具经路的 request_backtrack 会清空 plan.deliverables 指针，
+        # 但拿不到 state_mgr，无法删除 sqlite/磁盘上的交付物文件。若本轮 phase
+        # 下降且指针已消失，在此补清，避免文件与状态指针不一致。
+        if plan.phase < phase_before_run and not plan.deliverables:
+            try:
+                await deps.state_mgr.clear_deliverables(plan.session_id)
+            except Exception:
+                pass
         await deps.archive_store.save_snapshot(
             plan.session_id,
             plan.phase,
