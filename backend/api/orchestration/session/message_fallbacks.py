@@ -33,6 +33,7 @@ async def _apply_message_fallbacks(
     phase_router: PhaseRouter,
     *,
     today: date | None = None,
+    hooks=None,
 ) -> None:
     today = today or date.today()
     facts = extract_trip_facts(message, today=today)
@@ -63,4 +64,5 @@ async def _apply_message_fallbacks(
         changed = True
 
     if changed:
-        await phase_router.check_and_apply_transition(plan)
+        # P2-4：与主循环一致透传 hooks，避免 message_fallbacks 路径绕过 gate。
+        await phase_router.check_and_apply_transition(plan, hooks=hooks)

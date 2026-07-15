@@ -165,7 +165,7 @@ Phase 3 是长 run,当前用户只能等完或取消。`asyncio.Queue` + `/steer
 
 验证某个失败是否预存:`git stash && pytest <该测试> && git stash pop`。
 
-### ✅ 已完成并提交(P0 6/6、P1 7/7、P2 5/9)
+### ✅ 已完成并提交(P0 6/6、P1 7/7、P2 9/9 + D2)
 
 | commit | 覆盖项 | 关键落点 |
 |---|---|---|
@@ -176,6 +176,7 @@ Phase 3 是长 run,当前用户只能等完或取消。`asyncio.Queue` + `/steer
 | `57aa842` | P2-1/2/3 | |
 | `9160330` | P2-7 | |
 | `148a1e0` | P2-9 | |
+| _(本轮)_ | P2-4/5/6/8、D2 | 见下方「本轮接力」 |
 
 已完成项的具体改动位置(供 review / 回归):
 - **P0-1**:`orchestrator.py` 失败率>50% 分支删掉 `return`,继续走 step 7 逐天串行重试。
@@ -197,23 +198,18 @@ Phase 3 是长 run,当前用户只能等完或取消。`asyncio.Queue` + `/steer
 - **P2-7**:`validator.py::_estimated_commute_min`(haversine,transport_duration_min=0 时兜底);机场组抽到 `harness/airport_groups.py` 并扩展到 CN/HK/TW/SEA/KR。
 - **P2-9**:`finalization.py::finalize_agent_run` phase 下降且 deliverables 指针消失时补调 `state_mgr.clear_deliverables`(覆盖工具经路 request_backtrack)。
 
-### ⏳ 未完成(接力从这里开始)
+### ✅ 本轮接力完成(2026-07-15)
 
-**卡住需决策的项:**
-- **P2-4**(message_fallbacks 绕过 gate):`session/message_fallbacks.py:66` 的 `check_and_apply_transition` 没传 hooks。**卡点**:`ChatStreamDeps`(stream.py) 没暴露 hooks,`main.py` 装配处也没传。要修需改三处签名:`ChatStreamDeps` 加 hooks 字段、`main.py` 传入、`stream.py:374` 调用 `apply_message_fallbacks` 时透传。**评估**:该路径主要回填 destination/dates 触发 Phase 1→2,而 gate 硬约束主要作用于 2→3/3→4,收益边际,建议低优先或确认是否值得改配管。
+- **P2-4**:`message_fallbacks.py` 的 `check_and_apply_transition` 透传 `hooks`;`stream.py` 调用时传 `agent.hooks`(无需改 ChatStreamDeps 配管)。
+- **P2-5**:`hooks.py` soft judge / feasibility / hard_constraint / quality_gate 四处反馈全部改为 `push_pending_system_note`,在 `on_before_llm` 安全点 flush;禁止直接 `active_runtime_messages.append`。
+- **P2-6**:`parallel.py` 增加 `user_defers_parallel_phase3`(「先等等」等暂缓意图);`should_enter_parallel_phase3_*` 接收 `user_message`;`orchestrator.run` 捕获骨架失配 ValueError 并输出可对话 TEXT_DELTA + DONE。
+- **P2-8**:删除 `search_flights.py` Amadeus sandbox 分支,仅保留 flyai;`tools.py` 仅在 flyai 可用时注册;测试改写为 flyai-only。
+- **D2**:`phase2_tools.py` `date_role` 必填;多天行程首/中/末日角色校验;到达/离开日 `core_activities`/`locked_pois` ≤2;prompts 同步。D1 中 pace 硬校验此前已落地,首末日轻排随 D2 下沉到写入校验。
 
-**可继续做的自包含项:**
-- **P2-5**(soft judge/gate 反馈直接 append 运行中消息,可能插进 tool_calls 与 tool 响应之间破坏协议):`hooks.py:955-960` 附近的 `active_runtime_messages(session).append(...)` 改为统一走 `pending_notes.py` 机制。需先读 `agent/execution/pending_notes.py` 理解 pending note 如何在安全点注入。
-- **P2-6**(并行入口无条件劫持 + 骨架失配异常穿透):`loop.py` 并行入口(should_enter_parallel_phase3 系列)前置轻量意图检查;`orchestrator.py::_split_tasks` 的 `raise ValueError("未找到已选骨架方案")` 转为可对话错误提示而非硬砖。
-- **P2-8**(Amadeus 空转分支):已被"数据源下线"的条件注册基本覆盖(`api/orchestration/agent/tools.py` 在 Amadeus key 与 flyai 均不可用时不注册 search_flights)。剩余工作仅是决策**删除** `search_flights.py:167-` 的 Amadeus sandbox 分支还是保留;当前它只在配了 key 时才跑,不是永久空转。建议直接删该死分支或加注释说明。
+### ⏳ 未完成(设计级,视排期)
 
-**设计级(计划本身标为视排期,非 bug):**
-- **D1**(验收清单代码化):前四项已随 P0-6/P2-1 落地;剩 pace 符合画像、首末日轻排等可继续下沉到硬校验。
-- **D2**(粗排排布原则):`date_role 必填`、首末日活动数上限 下沉为 `set_skeleton_plans` 写入校验。
 - **D3**(hub-and-spoke 再协商 + 黑板):P1-6 已做最小版(worker 上报通道);完整版需 orchestrator 改单天骨架 + 只重派受影响天 + 共享黑板三张表,是较大设计工作。
 - **D4**(Steering 运行中引导):`asyncio.Queue` + `/steer` endpoint,长 run 中途纠偏。独立特性,未开始。
-
-**建议接力顺序**:P2-5 → P2-6 → P2-8(决策删分支)→ D2/D1 剩余下沉 → P2-4(先定是否改配管)→ D3 完整版/D4。每做完一项跑一次相关子集测试,全部做完跑一次全量确认仍是 6 个预存失败。
 
 ---
 

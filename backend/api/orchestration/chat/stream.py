@@ -16,10 +16,7 @@ from api.orchestration.chat.deliverables import (
     finalize_pending_phase4_deliverables,
     has_frozen_phase4_deliverables,
 )
-from api.orchestration.chat.errors import (
-    agent_stream_error_event,
-    is_retryable_stream_error,
-)
+from api.orchestration.chat.errors import agent_stream_error_event, is_retryable_stream_error
 from api.orchestration.chat.events import (
     apply_pending_tool_stats,
     chunk_event_data,
@@ -27,9 +24,7 @@ from api.orchestration.chat.events import (
     event_json,
     passthrough_chunk_event,
 )
-from api.orchestration.chat.finalization import (
-    finalize_agent_run,
-)
+from api.orchestration.chat.finalization import finalize_agent_run
 from api.orchestration.chat.stream_runtime import resolve_run_timeout_seconds, run_timeout
 from api.orchestration.chat.stream_trace import (
     emit_deliverable_draft_trace,
@@ -371,7 +366,11 @@ async def run_agent_stream(
             yield event
 
         if user_message is not None and plan.phase < phase_before_run:
-            await deps.apply_message_fallbacks(plan, user_message, deps.phase_router)
+            # P2-4：透传 hooks，使 fallback 触发的 phase 推进也走 gate。
+            await deps.apply_message_fallbacks(
+                plan, user_message, deps.phase_router,
+                hooks=getattr(agent, "hooks", None),
+            )
 
         async for event in finalize_agent_run(
             deps=deps,

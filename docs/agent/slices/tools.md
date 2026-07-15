@@ -22,6 +22,17 @@
 - `lock`：交通、住宿、风险、备选方案写入工具。
 - 每个子阶段向前开放下一阶段写入工具，是为了避免 LLM 跳阶时状态丢失。
 
+## 骨架写入校验（D2）
+
+- `set_skeleton_plans` 的每天 `date_role` 必填：`arrival_day` / `departure_day` / `full_day`。
+- 多天行程：首日必须 `arrival_day`，末日必须 `departure_day`，中间日 `full_day`。
+- 到达/离开日轻排：`core_activities` 与 `locked_pois` 均不超过 2 项。
+
+## 航班搜索
+
+- `search_flights` 仅在 flyai 可用时注册；已移除 Amadeus sandbox 分支。
+- flyai 不可用时由 lock 阶段 prompt 引导 `web_search` 查航线/价格带。
+
 ## 工具错误
 
 - `ToolError` 返回 `error_code` + `suggestion` 给 LLM。
