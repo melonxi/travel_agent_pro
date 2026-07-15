@@ -13,7 +13,6 @@ from agent.compaction import (
 )
 from agent.hooks import GateResult, HookManager
 from agent.internal_tasks import InternalTask
-from agent.message_filters import active_runtime_messages
 from agent.tagged_context import app_event_message
 from agent.types import Message, Role
 from harness.judge import (
@@ -955,12 +954,12 @@ def build_agent_hooks(
                 "threshold": config.quality_gate.threshold,
             }
         if should_inject_feedback:
+            # P2-5：经 pending note 缓冲，在 on_before_llm 安全点注入，
+            # 避免插进 tool_calls 与 tool result 之间破坏协议。
             suggestion_text = "\n".join(f"- {s}" for s in suggestions)
-            active_runtime_messages(session).append(
-                app_event_message(
-                    "soft_judge",
-                    f"行程质量评估（{score.overall:.1f}/5）：\n{suggestion_text}",
-                )
+            push_pending_system_note(
+                session,
+                f"行程质量评估（{score.overall:.1f}/5）：\n{suggestion_text}",
             )
         final_status = (
             "warning"
@@ -1036,9 +1035,8 @@ def build_agent_hooks(
                     + "\n请调整后再继续。"
                 )
                 if session:
-                    active_runtime_messages(session).append(
-                        app_event_message("feasibility", feedback)
-                    )
+                    # P2-5：走 pending note，避免破坏 tool_calls/tool 协议顺序。
+                    push_pending_system_note(session, feedback)
                 internal_task_events.append(
                     InternalTask(
                         id=task_id,
@@ -1066,9 +1064,8 @@ def build_agent_hooks(
                 f"- {error}" for error in errors
             )
             if session:
-                active_runtime_messages(session).append(
-                    app_event_message("hard_constraint", feedback)
-                )
+                # P2-5：走 pending note，避免破坏 tool_calls/tool 协议顺序。
+                push_pending_system_note(session, feedback)
             internal_task_events.append(
                 InternalTask(
                     id=task_id,
@@ -1203,9 +1200,8 @@ def build_agent_hooks(
             f"请修正后再进入 Phase {to_phase}：\n{suggestion_text}"
         )
         if session:
-            active_runtime_messages(session).append(
-                app_event_message("quality_gate", feedback)
-            )
+            # P2-5：走 pending note，避免破坏 tool_calls/tool 协议顺序。
+            push_pending_system_note(session, feedback)
         internal_task_events.append(
             InternalTask(
                 id=task_id,

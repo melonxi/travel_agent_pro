@@ -481,13 +481,11 @@ telemetry:
 
     assert changed is False
     assert plan.phase == 2
+    # P2-5：gate 反馈走 pending_notes，下一轮 LLM 前再 flush 为 runtime_notice，
+    # 不再直接写入 session.messages 的 app_event。
+    pending = session.get("_pending_system_notes") or []
     assert any(
-        message.role == Role.USER
-        and message.content
-        and '<app_event kind="quality_gate">' in message.content
-        and "质量门控" in message.content
-        and "补充交通住宿取舍" in message.content
-        for message in session["messages"]
+        "质量门控" in note and "补充交通住宿取舍" in note for note in pending
     )
 
 
