@@ -152,6 +152,71 @@ Phase 3 是长 run,当前用户只能等完或取消。`asyncio.Queue` + `/steer
 
 ---
 
+## 实施进度与接力说明(2026-07-15 更新)
+
+**分支**:`fix/agent-reliability-p0`(从 `main` 起,已含 7 个 commit)。
+**测试基线**:全量 `python -m pytest backend/tests/ -q` = 1993 passed / 6 failed。这 6 个失败是**本任务开始前就存在的预存问题**(依赖外部 LLM 网关的集成测试),与本次改动无关,勿花时间修:
+- `test_api.py::test_quality_gate_emits_internal_task_when_blocking`
+- `test_api.py::test_soft_judge_uses_forced_tool_call_after_replace`
+- `test_api.py::test_generate_summary_rejects_exact_weather_when_forecast_is_reference_only`
+- `test_realtime_validation_hook.py::test_plan_tool_injects_realtime_incremental_feedback`
+- `test_realtime_validation_hook.py::test_save_day_plan_replace_existing_shows_soft_judge_after_tool_result`
+- `test_save_day_plan_notes_bug_integration.py::test_save_day_plan_missing_activities_rejected_then_fixed`
+
+验证某个失败是否预存:`git stash && pytest <该测试> && git stash pop`。
+
+### ✅ 已完成并提交(P0 6/6、P1 7/7、P2 5/9)
+
+| commit | 覆盖项 | 关键落点 |
+|---|---|---|
+| `bc1da20` | P0-1/2/3/4 | 详见各项 |
+| `29bcb77` | P0-5/6、P1-4/5 | |
+| `4a76400` | P1-1/2/3 | |
+| `63f2834` | P1-6/7 | |
+| `57aa842` | P2-1/2/3 | |
+| `9160330` | P2-7 | |
+| `148a1e0` | P2-9 | |
+
+已完成项的具体改动位置(供 review / 回归):
+- **P0-1**:`orchestrator.py` 失败率>50% 分支删掉 `return`,继续走 step 7 逐天串行重试。
+- **P0-2**:`agent/phase3/parallel.py::build_phase3_commit_calls`(全覆盖→replace_all,缺天→逐天 save_day_plan);`loop.py` 调用它 + `phase3_partial_delivery_notice`。
+- **P0-3**:`config.py`/`config.yaml` 新增 `Phase3ParallelConfig.orchestration_timeout_seconds`(默认 None=豁免);`worker_max_iterations` 60→20;`stream_runtime.py::resolve_run_timeout_seconds` + `stream.py` 用它。
+- **P0-4**:`day_worker.py` forced_emit skip 增加 `not any(... submit_day_plan_candidate ...)` 豁免。
+- **P0-5**:`phase2_tools.py::_validate_skeleton_day_count`(set_skeleton_plans/select_skeleton 写入校验);`repair_hints.py::build_skeleton_day_mismatch_message`(gate 阻断反馈)。
+- **P0-6**:`validator.py::validate_hard_constraints` 预算改为 活动+交通+住宿。
+- **P1-1**:`router.py::_hydrate_phase3_brief` 保持 phase>=2 但 `models.py::infer_phase2_step_from_state` brief→candidate 要求 `goal`+`pace`。
+- **P1-2**:`search_flights.py`/`search_trains.py` phases=[2,3];`phase2_tools.py` set_transport_options=[2,3]、select_transport=[2,3,4];prompts.py 相应文案。
+- **P1-3**:`engine.py` skeleton/lock 步开放上游写工具;`models.py::_PHASE_DOWNSTREAM[2]` 选择性清除(保留 dates/trip_brief/candidate_pool/shortlist);`session/deliverables.py` 冻结改版本化(version 字段递增)。
+- **P1-4**:`check_availability.py` 用 weekday_text 按目标日期星期几判断,新增 `open_on_date`/`hours_on_date`/`open_now_at_query_time`,声明节假日局限。
+- **P1-5**:`tool_invocation.py::validate_tool_output` 处理 warn+error 两级。
+- **P1-6**:`day_worker.py::_REPORT_SKELETON_INFEASIBLE_SCHEMA` + 分派早返回产生 `NEEDS_PHASE3_REPLAN`;`orchestrator.py` 7b 分支不再整批 return,走部分交付;`worker_prompt.py` 加说明。
+- **P1-7**:`day_worker.py::_accept_text_fallback_dayplan`(文本兜底过 candidate_store 校验并写 store);耗尽路径优先取 submitted。
+- **P2-1**:`orchestrator.py::_validate_locked_pois_present` + `self._locked_pois_by_day`;`locked_poi_missing` 加入 `_LOCAL_REPAIR_ISSUE_TYPES`。
+- **P2-2**:`hooks.py` soft judge 计数器改 `_soft_judge_repair_feedback_buckets` 按 (tool, phase) 分桶;`stream.py` 初始化。
+- **P2-3**:`orchestrator.py::_compile_day_tasks` 重复锁定保留首个 owner 并从后续天移除。
+- **P2-7**:`validator.py::_estimated_commute_min`(haversine,transport_duration_min=0 时兜底);机场组抽到 `harness/airport_groups.py` 并扩展到 CN/HK/TW/SEA/KR。
+- **P2-9**:`finalization.py::finalize_agent_run` phase 下降且 deliverables 指针消失时补调 `state_mgr.clear_deliverables`(覆盖工具经路 request_backtrack)。
+
+### ⏳ 未完成(接力从这里开始)
+
+**卡住需决策的项:**
+- **P2-4**(message_fallbacks 绕过 gate):`session/message_fallbacks.py:66` 的 `check_and_apply_transition` 没传 hooks。**卡点**:`ChatStreamDeps`(stream.py) 没暴露 hooks,`main.py` 装配处也没传。要修需改三处签名:`ChatStreamDeps` 加 hooks 字段、`main.py` 传入、`stream.py:374` 调用 `apply_message_fallbacks` 时透传。**评估**:该路径主要回填 destination/dates 触发 Phase 1→2,而 gate 硬约束主要作用于 2→3/3→4,收益边际,建议低优先或确认是否值得改配管。
+
+**可继续做的自包含项:**
+- **P2-5**(soft judge/gate 反馈直接 append 运行中消息,可能插进 tool_calls 与 tool 响应之间破坏协议):`hooks.py:955-960` 附近的 `active_runtime_messages(session).append(...)` 改为统一走 `pending_notes.py` 机制。需先读 `agent/execution/pending_notes.py` 理解 pending note 如何在安全点注入。
+- **P2-6**(并行入口无条件劫持 + 骨架失配异常穿透):`loop.py` 并行入口(should_enter_parallel_phase3 系列)前置轻量意图检查;`orchestrator.py::_split_tasks` 的 `raise ValueError("未找到已选骨架方案")` 转为可对话错误提示而非硬砖。
+- **P2-8**(Amadeus 空转分支):已被"数据源下线"的条件注册基本覆盖(`api/orchestration/agent/tools.py` 在 Amadeus key 与 flyai 均不可用时不注册 search_flights)。剩余工作仅是决策**删除** `search_flights.py:167-` 的 Amadeus sandbox 分支还是保留;当前它只在配了 key 时才跑,不是永久空转。建议直接删该死分支或加注释说明。
+
+**设计级(计划本身标为视排期,非 bug):**
+- **D1**(验收清单代码化):前四项已随 P0-6/P2-1 落地;剩 pace 符合画像、首末日轻排等可继续下沉到硬校验。
+- **D2**(粗排排布原则):`date_role 必填`、首末日活动数上限 下沉为 `set_skeleton_plans` 写入校验。
+- **D3**(hub-and-spoke 再协商 + 黑板):P1-6 已做最小版(worker 上报通道);完整版需 orchestrator 改单天骨架 + 只重派受影响天 + 共享黑板三张表,是较大设计工作。
+- **D4**(Steering 运行中引导):`asyncio.Queue` + `/steer` endpoint,长 run 中途纠偏。独立特性,未开始。
+
+**建议接力顺序**:P2-5 → P2-6 → P2-8(决策删分支)→ D2/D1 剩余下沉 → P2-4(先定是否改配管)→ D3 完整版/D4。每做完一项跑一次相关子集测试,全部做完跑一次全量确认仍是 6 个预存失败。
+
+---
+
 ## 追加(2026-07-14 实施):数据源下线与免费替代
 
 背景:小红书 CLI 触发风控、飞猪 flyai CLI 转付费,两个数据源不可用。用户决策:不使用 Amadeus,免费方案优先,无方案则降级 web_search。已实施:
