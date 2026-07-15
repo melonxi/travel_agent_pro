@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any
 
+from harness.airport_groups import AIRPORT_GROUPS
 from harness.feasibility import check_feasibility
 from state.models import (
     Budget,
@@ -16,12 +17,7 @@ from state.models import (
 logger = logging.getLogger(__name__)
 
 _LOCK_BUDGET_RATIO = 0.8
-_AIRPORT_GROUPS = {
-    "haneda": {"羽田", "haneda", "hnd"},
-    "narita": {"成田", "narita", "nrt"},
-    "kansai": {"关西", "関西", "kansai", "kix"},
-    "itami": {"伊丹", "itami", "itm"},
-}
+_AIRPORT_GROUPS = AIRPORT_GROUPS
 _FLIGHT_NO_RE = re.compile(r"\b[A-Z]{1,3}\s?\d{2,4}\b", re.IGNORECASE)
 
 
@@ -141,6 +137,42 @@ def _selected_accommodation_nightly_price(plan: TravelPlanState) -> float:
     return 0.0
 
 
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    from math import asin, cos, radians, sin, sqrt
+
+    r = 6371.0
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    a = (
+        sin(dlat / 2) ** 2
+        + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    )
+    return 2 * r * asin(sqrt(a))
+
+
+def _estimated_commute_min(prev: Any, curr: Any) -> int:
+    """P2-7：transport_duration_min 缺省 0 时按直线距离估算最小通勤。
+
+    避免"0 分钟瞬移"导致时间冲突漏报。用 haversine + 保守均速（25km/h，
+    含换乘等待），只在两端都有有效坐标时估算，否则返回 0（无从估算）。
+    """
+    prev_loc = getattr(prev, "location", None)
+    curr_loc = getattr(curr, "location", None)
+    if prev_loc is None or curr_loc is None:
+        return 0
+    try:
+        lat1, lng1 = float(prev_loc.lat), float(prev_loc.lng)
+        lat2, lng2 = float(curr_loc.lat), float(curr_loc.lng)
+    except (TypeError, ValueError, AttributeError):
+        return 0
+    if not (lat1 and lng1 and lat2 and lng2):
+        return 0
+    km = _haversine_km(lat1, lng1, lat2, lng2)
+    if km < 0.3:
+        return 0  # 同一地点/极近，不强加通勤
+    return max(5, round(km / 25.0 * 60))
+
+
 def _validate_time_conflicts(plan: TravelPlanState) -> list[str]:
     errors: list[str] = []
     for day in plan.daily_plans:
@@ -159,6 +191,9 @@ def _validate_time_conflicts(plan: TravelPlanState) -> list[str]:
                 )
                 continue
             travel = curr.transport_duration_min
+            # 若模型未填交通时长（默认 0），用坐标估算兜底，防止瞬移漏报。
+            if not travel:
+                travel = _estimated_commute_min(prev, curr)
 
             if prev_end + travel > curr_start:
                 gap = curr_start - prev_end
