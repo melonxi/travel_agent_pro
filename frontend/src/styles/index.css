@@ -2849,3 +2849,31 @@ html[data-shell="craft-paper"] .inbox-brand-tag {
   color: var(--text-muted);
   margin-top: 2px;
 }
+
+/* craft-paper Inbox density */
+html[data-shell="craft-paper"] .sidebar-new-btn {
+  flex: 1;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+html[data-shell="craft-paper"] .session-item.is-active,
+html[data-shell="craft-paper"] .session-item.active {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+html[data-shell="craft-paper"] .session-item-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+html[data-shell="craft-paper"] .session-item-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+html[data-shell="craft-paper"] .sidebar-list {
+  padding: 6px 8px;
+}

@@ -46,9 +46,11 @@ export default function SessionItem({
     <div
       className={[
         'session-item',
-        isActive ? ' is-active' : '',
-        session.status === 'archived' ? ' is-archived' : '',
-      ].join('')}
+        isActive ? 'is-active' : '',
+        session.status === 'archived' ? 'is-archived' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       role="button"
       tabIndex={0}
       onClick={() => onSelect(session.session_id)}
