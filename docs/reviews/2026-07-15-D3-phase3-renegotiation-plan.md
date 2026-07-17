@@ -180,3 +180,11 @@ Orchestrator 持有三张**单写**表,worker 通过只读快照查询(worker �
 - **前置**:P1-6(worker 上报通道)、P0-2(部分交付)、P2-3(去重雏形)已完成,是 D3 地基。
 - **配合**:D4(steering)让用户在 D3 再协商发生时能看到进度并中途干预,两者配合价值最大(见 D4 文档 §与 D3 的配合)。
 - **不推翻**:D3 是在现有 hub-and-spoke 骨架上的**增量**,不引入 peer-to-peer worker 通信(行动计划 D3 节已论证否决)。
+
+## 9. 实施复核补丁（2026-07-15）
+
+- 黑板候选 artifact 增加 `accepted/rejected` 生命周期；最终 handoff 只读取 accepted 候选，拒绝结果不能从磁盘绕过黑板。
+- POI 认领使用 `poi_id/place_id/location.name` 优先、动作前缀归一化；泛化活动名不登记为 POI。
+- 预算台账复用统一 validator 的交通 segments 与住宿选项口径。
+- 黑板拒绝原因、运行时 forbidden 快照会进入重试 worker；MOVE 的 source/target 影响天保持原子，不能被熔断截成单天。
+- `to_day` 非正值在解析阶段降级为 `INFEASIBLE_DAY`，不再触发断言异常。

@@ -77,14 +77,40 @@ DayTask 携带：
   - `poi_registry`：POI 认领登记
   - `budget_ledger`：跨天活动成本 + 已锁交通/住宿 precommitted
   - `day_boundaries`：日边界锚点
-- 候选收集时 `try_accept_dayplan` 查表即拒；P2-1 事后 locked POI 校验保留作兜底。
+- 候选收集时 `try_accept_dayplan` 查表即拒；POI 优先按 `poi_id/place_id/location.name`
+  归一化；存在稳定 location 时不再用自由文本 activity name 生成身份键，泛化的
+  「午餐/自由活动」也不进入认领簿；`location.name` 归一化后产不出有效键（泛化名/空）
+  时回退用 activity name，避免真实 POI 逃过跨天去重；P2-1 事后 locked POI 校验保留作兜底。
+- 日边界校验取真实最早开始 / 最晚结束（activities 允许乱序），end 落在凌晨
+  （≤06:00）且早于 start 的活动按跨午夜折算到次日，不误拒夜间行程。
+- `candidate_pois` 是备选池，不是已占用活动；MOVE 目标天容量只按 locked POI 判断，
+  worker 再按剩余 slot 从候选池选取。
+- 候选 artifact 先写入 staging，并用每个 day 单调递增的 `seq` 表示真实写入顺序；最终
+  先按 `seq` 选该天最后版本，再要求其状态为 `accepted`。最后版本被拒或旧版本因重派
+  被作废时，该天缺失，不被动回退复活旧 accepted artifact。
+- 重派前的乐观作废带回滚（C1）：steering / late-steering / 再协商重派前会作废旧候选并
+  释放黑板认领，同时记录 `_RedispatchRollback`（旧 accepted attempt + 旧成功结果）。
+  重派失败时 `_handle_redispatch_failure` 把旧候选重新标 accepted 并 bump 到最新
+  `seq`、旧结果放回 successes、黑板重新登记——恢复旧版本总比静默丢天好。8b 修复
+  重派失败时同样恢复磁盘口径与黑板认领（交付本就保留 in-memory 旧 dayplan）。
+- 黑板重试会把拒绝原因和运行时 forbidden 快照下发到下一次 worker，避免同一候选确定性重试。
 
 ## D4 运行中引导（Steering）
 
 - 入口：`POST /api/chat/{session_id}/steer`，queue 挂 `session["_steer_queue"]` / `agent.steer_queue`。
-- Phase 3：worker 收集循环每步 drain；解析「第 N 天」→ `repair_hints`；已完成天 `STEERING_REDISPATCH` 后重派。
+- Phase 3：worker 收集循环每步 drain；解析「第 N 天」→ `repair_hints`；已完成天或
+  已经开始运行的目标天标记 `STEERING_REDISPATCH` 后重派，等待 semaphore 的 worker
+  则直接带 hint 首次执行。
 - 已完成天不静默回滚；用户引导只影响未完成 / 被显式点名重派的天。
 - SSE：`agent_status.stage=steering_ack`。
+- Steering queue 有界（64 条）；生产 drain 不静默裁剪已入队消息，队列满时 `/steer` 返回 429，
+  客户端文案明确为“排队并在下一个安全点尝试调整”。
+- step7 刚完成的目标天仍视为 active，必须进入 attempt=5 重派；进入再协商/最终修复等
+  bounded 收口段后到达的 steering 会收到“本轮未能应用，请重新发送”的终结 ack。
+- Agent run 返回后会先关闭 `/steer` 入队入口，再对队列残留逐条发送终结 ack；finally
+  只做幂等清理，不再静默吞掉 run 尾部消息。取消（cancelled）路径的终结 ack 先于
+  `done` 事件发出；断连/取消导致无法 yield 时，teardown 会把残留引导记入 warning
+  日志而非无声丢弃。Steering queue 容量统一使用 `agent.steering.MAX_STEER_QUEUE_SIZE`。
 
 ## 写入边界
 
@@ -101,3 +127,4 @@ DayTask 携带：
 - `backend/agent/phase3/candidate_store.py`
 - `backend/agent/phase3/renegotiation.py`
 - `backend/agent/steering.py`
+- `backend/api/orchestration/chat/steering.py`

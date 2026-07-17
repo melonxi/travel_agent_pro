@@ -17,6 +17,12 @@
 | `keepalive` | 心跳 |
 | `done` | 流结束 |
 
+`agent_status.stage=steering_ack` 同时承载两种结果：正常安全点 ack 表示已进入应用/重派流程；
+若 `message` 明确包含“本轮未能应用，请重新发送”，表示该消息在 bounded 收口或 run 尾部
+被终结处理，客户端不能继续显示为“将会调整”。终结 ack 保证先于 `done` 事件发出（含
+取消路径），客户端读到 `done` 前不会漏读；取消/断连后无法送达的残留引导由服务端记
+warning 日志，不再静默丢弃。
+
 ## Background Internal Task SSE
 
 `GET /api/internal-tasks/{session_id}/stream` 承载与当前回答解耦的后台任务：
@@ -68,6 +74,7 @@ payload 包含：
 
 - `backend/api/orchestration/chat/stream.py`
 - `backend/api/orchestration/chat/events.py`
+- `backend/api/orchestration/chat/steering.py`
 - `backend/api/routes/internal_task_routes.py`
 - `frontend/src/hooks/useSSE.ts`
 - `frontend/src/components/ChatPanel.tsx`

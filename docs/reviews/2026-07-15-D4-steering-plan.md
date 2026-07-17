@@ -150,3 +150,10 @@ D3 让 Orchestrator 能"改单天骨架 + 只重派受影响天";D4 让用户能
 - **前置**:P2-5(pending note 机制)是 D4 的注入地基;cancel_event 机制是 D4 的跨请求信号模板。二者均已完成。
 - **配合**:D3(单天重派)——D4 阶段 2 的 Phase 3 steering 依赖 D3 的单天重派通道才能发挥完整威力(见 §4.3)。
 - **独立价值**:D4 阶段 1(普通迭代 steering)不依赖 D3,可独立上线。
+
+## 9. 实施复核补丁（2026-07-15）
+
+- 前端 `AgentStatusEvent.stage` 已纳入 `steering_ack`，保持 TypeScript 构建可用。
+- Phase 3 drain 会区分等待中、已开始、已完成三种 worker：等待中直接带 hint，后两者走 bounded redispatch。
+- 再协商 attempt=4 会重新应用挂起的 steering hint；串行重试阶段也会补 drain，避免 steering 只在并行收集阶段生效。
+- steering queue 改为有界队列；生产 drain 不再默认静默丢弃旧消息，队列满时 `/steer` 返回 429，避免把“accepted”误解为已生效。

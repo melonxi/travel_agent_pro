@@ -14,6 +14,7 @@ DELETE /api/sessions/{session_id}
 GET    /api/plan/{session_id}
 POST   /api/chat/{session_id}
 POST   /api/chat/{session_id}/cancel
+POST   /api/chat/{session_id}/steer
 POST   /api/chat/{session_id}/continue
 GET    /api/internal-tasks/{session_id}
 GET    /api/internal-tasks/{session_id}/stream
@@ -33,6 +34,9 @@ POST   /api/memory/{user_id}/profile/{item_id}/reject
 DELETE /api/memory/{user_id}/profile/{item_id}
 GET    /api/memory/{user_id}/episodes
 ```
+
+`/steer` 仅在 active run 存在时接收入队，成功返回 `status=queued`；队列满返回 429，
+run 已关闭入队入口则返回 409。已排队但来不及在本轮应用的消息通过 chat SSE 发终结 ack。
 
 ## 编排边界
 
