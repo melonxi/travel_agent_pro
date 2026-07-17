@@ -35,8 +35,16 @@ requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["agent*", "api*", "llm*", "state*", "phase*", "tools*", "context*", "memory*", "harness*", "telemetry*", "storage*"]
+include = ["agent*", "api*", "llm*", "state*", "phase*", "tools*", "context*", "memory*", "harness*", "telemetry*", "storage*", "evals*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: needs external services, network, or real API keys",
+]
+# Default unit runs should not require Jaeger / OTLP.
+# Individual tests that assert telemetry setup may override this.
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

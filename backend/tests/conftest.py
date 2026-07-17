@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import os
+
+# Unit tests must not require a local Jaeger/OTLP collector. Telemetry setup
+# respects OTEL_SDK_DISABLED; tests that assert exporter wiring can override.
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+
 # aiosqlite.Connection inherits from threading.Thread without setting daemon=True.
 # Tests that exercise the FastAPI app via ASGITransport never run the lifespan
 # shutdown, so db.close() is not called and the non-daemon connection threads

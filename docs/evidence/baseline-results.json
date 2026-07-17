@@ -1,0 +1,43 @@
+{
+  "status": "mock_baseline",
+  "commit_sha": "7db2bc4ce6b13b8e96c0f2585cbf7a81bb7a8f48",
+  "model": null,
+  "date": "2026-07-17",
+  "executor": "mock",
+  "sample_count": 12,
+  "k": 3,
+  "cases": [
+    "easy-001",
+    "easy-002",
+    "easy-004",
+    "med-001",
+    "med-002",
+    "hard-002",
+    "hard-003",
+    "failure-001",
+    "failure-004",
+    "failure-005",
+    "infeasible-001",
+    "infeasible-002"
+  ],
+  "metrics": {
+    "pass_rate": 1.0,
+    "pass_at_k": 1.0,
+    "k": 3,
+    "unstable_cases": 0,
+    "highly_unstable_cases": 0,
+    "constraint_violation_rate": null,
+    "tool_success_rate": null,
+    "schema_recovery_rate": null,
+    "partial_replan_success_rate": null,
+    "fault_recovery_rate": null,
+    "latency_p50_ms": null,
+    "latency_p95_ms": null,
+    "cost_per_plan_usd": null
+  },
+  "reports": {
+    "markdown": "docs/evidence/baseline-stability.md",
+    "json": "docs/evidence/baseline-stability.json"
+  },
+  "notes": "Mock executor only. Do not present as live model quality. Re-run with live backend for real pass@k."
+}

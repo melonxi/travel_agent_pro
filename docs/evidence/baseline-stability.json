@@ -1,0 +1,907 @@
+{
+  "total_cases": 12,
+  "k": 3,
+  "overall_pass_rate": 1.0,
+  "unstable_cases": [],
+  "highly_unstable_cases": [],
+  "results": [
+    {
+      "case_id": "easy-001",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "phase_reached:": 1.0,
+        "state_field_set:destination": 1.0,
+        "tool_called:search_flights": 1.0,
+        "trace_grade_status:state_write_has_diff": 0.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.003958004526793957,
+        "max": 0.02041601692326367,
+        "mean": 0.01037467154674232,
+        "stddev": 0.008807398191409547
+      },
+      "runs": [
+        {
+          "case_id": "easy-001",
+          "passed": true,
+          "assertions_passed": 4,
+          "assertions_total": 4,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "easy",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": [
+              {
+                "rubric_id": "state_write_has_diff",
+                "status": "pass",
+                "score": 1,
+                "reason": "mock trace grade",
+                "evidence_event_ids": [
+                  "evt-mock"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "case_id": "easy-001",
+          "passed": true,
+          "assertions_passed": 4,
+          "assertions_total": 4,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "easy",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": [
+              {
+                "rubric_id": "state_write_has_diff",
+                "status": "pass",
+                "score": 1,
+                "reason": "mock trace grade",
+                "evidence_event_ids": [
+                  "evt-mock"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "case_id": "easy-001",
+          "passed": true,
+          "assertions_passed": 4,
+          "assertions_total": 4,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "easy",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": [
+              {
+                "rubric_id": "state_write_has_diff",
+                "status": "pass",
+                "score": 1,
+                "reason": "mock trace grade",
+                "evidence_event_ids": [
+                  "evt-mock"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "easy-002",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "phase_reached:": 1.0,
+        "state_field_set:destination": 1.0,
+        "state_field_set:travelers": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.0018339778762310743,
+        "max": 0.004917004844173789,
+        "mean": 0.00302800132582585,
+        "stddev": 0.0016548449453766432
+      },
+      "runs": [
+        {
+          "case_id": "easy-002",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "easy",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "easy-002",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "easy",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "easy-002",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "easy",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "easy-004",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "phase_reached:": 1.0,
+        "state_field_set:destination": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.0014999823179095984,
+        "max": 0.0022920139599591494,
+        "mean": 0.0018056695504734914,
+        "stddev": 0.0004258007658306094
+      },
+      "runs": [
+        {
+          "case_id": "easy-004",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "easy",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "easy-004",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "easy",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "easy-004",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "easy",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "failure-001",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "contains_text:预算": 1.0,
+        "tool_not_called:search_flights": 1.0,
+        "tool_not_called:search_accommodations": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.0022919848561286926,
+        "max": 0.00604201341047883,
+        "mean": 0.0036806644250949225,
+        "stddev": 0.0020555395605135105
+      },
+      "runs": [
+        {
+          "case_id": "failure-001",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "failure-001",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "failure-001",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "failure-004",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "state_field_set:destination": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.0012499804142862558,
+        "max": 0.0017080164980143309,
+        "mean": 0.0014306666950384777,
+        "stddev": 0.00024383834992828122
+      },
+      "runs": [
+        {
+          "case_id": "failure-004",
+          "passed": true,
+          "assertions_passed": 1,
+          "assertions_total": 1,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "failure-004",
+          "passed": true,
+          "assertions_passed": 1,
+          "assertions_total": 1,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "failure-004",
+          "passed": true,
+          "assertions_passed": 1,
+          "assertions_total": 1,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "failure-005",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "contains_text:素食": 1.0,
+        "tool_called:update_trip_basics": 1.0,
+        "tool_called:add_constraints": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.00200001522898674,
+        "max": 0.0029579969123005867,
+        "mean": 0.002389007325594624,
+        "stddev": 0.0005037177272266817
+      },
+      "runs": [
+        {
+          "case_id": "failure-005",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "failure-005",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "failure-005",
+          "passed": true,
+          "assertions_passed": 3,
+          "assertions_total": 3,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "hard-002",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "state_field_set:destination": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.0012090022210031748,
+        "max": 0.0018749851733446121,
+        "mean": 0.0014863326214253902,
+        "stddev": 0.0003466666832315966
+      },
+      "runs": [
+        {
+          "case_id": "hard-002",
+          "passed": true,
+          "assertions_passed": 1,
+          "assertions_total": 1,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "hard-002",
+          "passed": true,
+          "assertions_passed": 1,
+          "assertions_total": 1,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "hard-002",
+          "passed": true,
+          "assertions_passed": 1,
+          "assertions_total": 1,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "hard-003",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "phase_reached:": 1.0,
+        "state_field_set:destination": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.0015409896150231361,
+        "max": 0.0019160215742886066,
+        "mean": 0.0016660099693884451,
+        "stddev": 0.00021651640157346983
+      },
+      "runs": [
+        {
+          "case_id": "hard-003",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "hard-003",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "hard-003",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "hard",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "infeasible-001",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "tool_not_called:search_flights": 1.0,
+        "contains_text:预算": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.0017499842215329409,
+        "max": 0.0021669839043170214,
+        "mean": 0.0019026629161089659,
+        "stddev": 0.00022982642397268276
+      },
+      "runs": [
+        {
+          "case_id": "infeasible-001",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "infeasible",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "infeasible-001",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "infeasible",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "infeasible-001",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "infeasible",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "infeasible-002",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "contains_text:天": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.001500011421740055,
+        "max": 0.0017080164980143309,
+        "mean": 0.0015833453896145027,
+        "stddev": 0.00010999135115579828
+      },
+      "runs": [
+        {
+          "case_id": "infeasible-002",
+          "passed": true,
+          "assertions_passed": 1,
+          "assertions_total": 1,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "infeasible",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "infeasible-002",
+          "passed": true,
+          "assertions_passed": 1,
+          "assertions_total": 1,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "infeasible",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "infeasible-002",
+          "passed": true,
+          "assertions_passed": 1,
+          "assertions_total": 1,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "infeasible",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "med-001",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "phase_reached:": 1.0,
+        "state_field_set:destination": 1.0,
+        "tool_called:search_accommodations": 1.0,
+        "tool_called:search_flights": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.0019169820006936789,
+        "max": 0.002582994056865573,
+        "mean": 0.0021526551184554896,
+        "stddev": 0.0003732480422427929
+      },
+      "runs": [
+        {
+          "case_id": "med-001",
+          "passed": true,
+          "assertions_passed": 4,
+          "assertions_total": 4,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "medium",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "med-001",
+          "passed": true,
+          "assertions_passed": 4,
+          "assertions_total": 4,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "medium",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "med-001",
+          "passed": true,
+          "assertions_passed": 4,
+          "assertions_total": 4,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "medium",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "med-002",
+      "k": 3,
+      "pass_rate": 1.0,
+      "assertion_consistency": {
+        "phase_reached:": 1.0,
+        "state_field_set:destination": 1.0
+      },
+      "tool_overlap_ratio": 1.0,
+      "cost_stats": {
+        "min": 0.01,
+        "max": 0.01,
+        "mean": 0.01,
+        "stddev": 0.0
+      },
+      "duration_stats": {
+        "min": 0.001374981366097927,
+        "max": 0.0019160215742886066,
+        "mean": 0.0015693367458879948,
+        "stddev": 0.0003009722950792112
+      },
+      "runs": [
+        {
+          "case_id": "med-002",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "medium",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "med-002",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "medium",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        },
+        {
+          "case_id": "med-002",
+          "passed": true,
+          "assertions_passed": 2,
+          "assertions_total": 2,
+          "failures": [],
+          "duration_ms": 0.0,
+          "error": null,
+          "difficulty": "medium",
+          "stats": {
+            "estimated_cost_usd": 0.01,
+            "total_input_tokens": 10,
+            "total_output_tokens": 20,
+            "trace_grades": []
+          }
+        }
+      ]
+    }
+  ]
+}

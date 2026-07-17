@@ -1,8 +1,27 @@
-# Travel Agent Pro
+# Reliable Travel Agent (Travel Agent Pro)
 
-A full-stack AI travel planning system powered by a hand-crafted Agent Loop with a production Phase 1/2/3/4 planning path and a **5-layer harness architecture** ensuring safety, correctness, and quality at every step. Built from scratch without LangChain or other agent frameworks.
+**面向复杂约束与长任务的可恢复规划 Agent。**  
+旅行规划是验证场景；真正展示的是 Agent Runtime：受控自治、并行 Worker、局部重规划、运行中 steering、Trace 评测与失败恢复。
 
-**Quality at Scale:** 590+ tests, 40 executable golden eval cases, JSON eval reports, persisted trace grading, and cost/latency tracking per session.
+> **Portfolio prototype** — independent work, no production users. Reliability is demonstrated via automated tests, golden evals, fault-injection scenarios, and trace grading — not live traffic.
+
+[![ci](https://github.com/melonxi/travel_agent_pro/actions/workflows/ci.yml/badge.svg)](https://github.com/melonxi/travel_agent_pro/actions/workflows/ci.yml)
+
+| Signal | Status |
+|--------|--------|
+| Backend core tests (CI A0) | steering / orchestrator / candidate store / plan writers / eval pipeline / … |
+| Pytest collect size | ≈ **2054** tests (`cd backend && pytest --collect-only -q`) |
+| Golden eval cases | **40** YAML cases under `backend/evals/golden_cases/` |
+| Frontend | `cd frontend && npm ci && npm run build` |
+| Evidence pack | [`docs/evidence/portfolio-proof.md`](docs/evidence/portfolio-proof.md) |
+
+**Design note:** the project uses an explicit Agent Loop so phase boundaries, single-writer plan mutations, tool protocols, and failure recovery stay under precise control. Those contracts can also be ported to frameworks such as LangGraph.
+
+## Three hard problems this repo is about
+
+1. **Silent day loss under parallel workers** — candidates are versioned (`accepted` / `rejected` / `superseded`); only accepted versions commit; failed redispatch rolls back.
+2. **Mid-run steering** — `POST /api/chat/{session_id}/steer` queues user guidance and drains only at safe boundaries (never between `tool_call` and `tool_result`).
+3. **Evaluable reliability** — SQLite flight recorder, deterministic trace grader, golden cases, and fault-injection reports (see `docs/evidence/`).
 
 ## Architecture
 
@@ -70,8 +89,8 @@ Each layer operates independently:
 - FastAPI + Uvicorn (SSE streaming via `sse-starlette`)
 - OpenAI SDK / Anthropic SDK (dual provider support)
 - Pydantic v2 for all data models
-- OpenTelemetry + Jaeger (local tracing and span event inspection)
-- pytest + pytest-asyncio (590+ tests)
+- OpenTelemetry + Jaeger (local tracing and span event inspection; disable with `OTEL_SDK_DISABLED=true`)
+- pytest + pytest-asyncio (≈2054 collected tests; CI runs a core A0 subset)
 
 **Frontend** — TypeScript + React 19
 - Vite 6 dev server with API proxy
@@ -79,57 +98,64 @@ Each layer operates independently:
 - Server-Sent Events for real-time streaming
 - Dark theme UI
 
-## Quick Start
+## Three-minute start
 
 ### Prerequisites
 
 - Python >= 3.12
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
 - Node.js >= 18
-- An OpenAI or Anthropic API key
+- An OpenAI or Anthropic API key **only if** you run the live agent (unit tests do not need keys)
 
 ### Backend
 
 ```bash
 cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+uv sync --all-extras --frozen
+# fallback without uv:
+# python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
 
-# Create .env with your API keys
+# Create .env with your API keys (for live runs)
 cat > .env << 'EOF'
 DEFAULT_PROVIDER=openai
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4o
-# Optional: custom base URL
-# OPENAI_BASE_URL=https://api.openai.com/v1
-
-# Or use Anthropic:
-# DEFAULT_PROVIDER=anthropic
-# ANTHROPIC_API_KEY=sk-ant-...
-# ANTHROPIC_MODEL=claude-sonnet-4-20250514
-
-# Optional domain tool keys
-# OPENWEATHER_API_KEY=...
-# TAVILY_API_KEY=...
+# Optional: OPENAI_BASE_URL=https://api.openai.com/v1
+# Or Anthropic: DEFAULT_PROVIDER=anthropic / ANTHROPIC_API_KEY / ANTHROPIC_MODEL
 EOF
 
-uvicorn main:app --reload --port 8000
+# Optional: copy config.example.yaml → ../config.yaml for non-secret overrides
+uv run uvicorn main:app --reload --port 8000
 ```
 
 ### Frontend
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
-# Opens at http://localhost:5173, proxies /api to backend
+# http://localhost:5173 — proxies /api to backend
 ```
 
-### Run Tests
+### Run tests (no API key required for A0 core)
 
 ```bash
 cd backend
-pytest                # 590+ tests
-pytest --cov          # with coverage
+# A0 core runtime suite (matches CI)
+uv run pytest -q \
+  tests/test_steering.py \
+  tests/test_orchestrator.py \
+  tests/test_phase3_candidate_store.py \
+  tests/test_day_worker.py \
+  tests/test_plan_writers.py \
+  tests/test_phase_router.py \
+  tests/test_eval_pipeline.py \
+  tests/test_quality_gate.py \
+  tests/test_trace_api.py \
+  tests/test_session_persistence.py
+
+# Full unit suite (may take longer; mark integration tests separately when present)
+uv run pytest -q -m "not integration"
 ```
 
 ## Failure Analysis
@@ -148,6 +174,8 @@ Committed analysis lives in `docs/learning/2026-04-13-失败案例分析.md`. Lo
 - `screenshots/failure-analysis/` — one screenshot per failure scenario
 
 ## Demo Recording
+
+> **UI walkthrough (scripted / mock backend)** — this path is for stable product-flow recording, not live reliability proof. Engineering evidence demos should use real backend runs + traces (see `docs/evidence/`).
 
 The demo workflow is **deterministic scripted playback**, not a live LLM-dependent run. It needs the frontend dev server, then replays the visible Phase 1 → Phase 2 → Phase 3 → backtrack story from a fixed fixture so recording output stays stable.
 
@@ -263,7 +291,7 @@ travel_agent_pro/
 │   ├── harness/             # 5-layer harness: guardrail, validator, judge, feasibility
 │   ├── telemetry/           # OTel tracing + SessionStats cost/latency tracking
 │   ├── evals/               # Executable eval pipeline (40 golden cases, JSON reports)
-│   └── tests/               # 590+ tests (pytest-asyncio)
+│   └── tests/               # ≈2054 pytest tests (A0 core subset in CI)
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx          # Main layout (chat + info panel)
@@ -283,19 +311,28 @@ travel_agent_pro/
 └── config.yaml              # Optional YAML config (env vars take precedence)
 ```
 
-## API Endpoints
+## API Endpoints (selected)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check |
 | POST | `/api/sessions` | Create a new session |
-| GET | `/api/sessions/{id}/plan` | Get current travel plan state |
-| GET | `/api/sessions/{id}/stats` | Session cost/token/latency statistics |
-| POST | `/api/sessions/{id}/chat` | SSE streaming chat |
+| GET | `/api/sessions` | List sessions |
+| GET | `/api/plan/{session_id}` | Current travel plan state |
+| GET | `/api/sessions/{session_id}/stats` | Cost / token / latency stats |
+| GET | `/api/messages/{session_id}` | Message history |
+| POST | `/api/chat/{session_id}` | SSE streaming chat |
+| POST | `/api/chat/{session_id}/cancel` | Cancel in-flight run |
+| POST | `/api/chat/{session_id}/continue` | Continue generation |
+| POST | `/api/chat/{session_id}/steer` | Mid-run steering (queued, safe-boundary drain) |
+| POST | `/api/backtrack/{session_id}` | Phase / plan backtrack |
+| GET | `/api/traces/{run_id}` | Flight-recorder trace |
+| POST | `/api/traces/{run_id}/grade` | Deterministic trace grading |
+| GET | `/api/sessions/{session_id}/deliverables/{filename}` | Frozen deliverable files |
 
 ## License
 
-MIT
+MIT — see [`LICENSE`](LICENSE).
 
 ## Memory Embedding Sidecar
 

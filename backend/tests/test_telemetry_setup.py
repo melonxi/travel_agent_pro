@@ -21,8 +21,9 @@ def reset_otel():
     _reset_tracer_provider()
 
 
-def test_setup_telemetry_enabled():
+def test_setup_telemetry_enabled(monkeypatch):
     """enabled=True 时应配置 TracerProvider。"""
+    monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
     from telemetry.setup import setup_telemetry
 
     app = MagicMock()
@@ -62,8 +63,9 @@ def test_setup_telemetry_respects_otel_sdk_disabled(monkeypatch):
     assert isinstance(provider, trace.NoOpTracerProvider)
 
 
-def test_setup_telemetry_sets_service_name():
+def test_setup_telemetry_sets_service_name(monkeypatch):
     """应在 Resource 中设置 service.name。"""
+    monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
     from telemetry.setup import setup_telemetry
     from opentelemetry.sdk.trace import TracerProvider as SdkTP
 
