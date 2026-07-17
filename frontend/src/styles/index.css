@@ -3145,6 +3145,26 @@ html[data-shell="craft-paper"] .timeline-empty {
   box-shadow: none;
 }
 
+/* ── craft-paper loading (no italic serif display) ── */
+html[data-shell="craft-paper"] .loading-screen::before {
+  display: none;
+}
+html[data-shell="craft-paper"] .loading-title {
+  font-family: var(--font-body);
+  font-size: 2rem;
+  font-weight: 600;
+  font-style: normal;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+html[data-shell="craft-paper"] .loading-subtitle {
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+html[data-shell="craft-paper"] .loading-dots span {
+  background: var(--text-muted);
+}
+
 /* ── craft-paper quiet workbench ──────────────────── */
 html[data-shell="craft-paper"] .phase2-workbench {
   gap: 12px;

@@ -12,7 +12,9 @@
   - `ChatPanel`：聊天、工具卡、内部任务卡、停止/继续/重发。
   - `RightPanel`：Plan / Trace / Memory 标签页，含 Phase2Workbench、地图、时间线、预算、Trace、MemoryTracePanel。
 - `useSSE` 消费 chat SSE；`useTrace` 拉 trace；`useMemory` 管理 v3 memory API。
-- 设计系统是 Solstice：暗色玻璃 + 琥珀暖光。
+- 设计系统默认是 Craft Paper：纸质文档流、hairline 边框、中性 ink/accent，无玻璃/琥珀光晕。
+- 双属性外观：`html[data-shell="craft-paper"|"solstice"]` + `html[data-theme="light"|"dark"]`；Solstice 为可回滚壳。
+- `main.tsx` 在 React 渲染前从 localStorage 写入 `data-shell` / `data-theme`，避免 FOUC。
 
 ## 关键组件
 
