@@ -30,6 +30,7 @@ day_worker.run.day_N
 - 前端 TraceViewer 展示阶段、工具、LLM、memory、quality gate 等行为。
 - canary 从持久化 trace 审计工具调用，覆盖 SSE 看不到的 Phase 3 子 agent。
 - failure-analysis 用 trace evidence 做失败归因。
+- run 结束时若 `phase >= 4` 且 `plan.deliverables` 仍为空，记录 `deliverable_gap` warning；`run_end=completed` 不再掩盖交付链路缺口。
 
 ## 深入阅读
 

@@ -4,7 +4,10 @@ import pytest
 
 from agent.types import ToolResult
 from api.orchestration.chat.deliverables import finalize_pending_phase4_deliverables
-from api.orchestration.chat.stream_trace import emit_deliverable_draft_trace
+from api.orchestration.chat.stream_trace import (
+    emit_deliverable_draft_trace,
+    emit_deliverable_gap_trace,
+)
 from state.models import TravelPlanState
 from telemetry.trace_recorder import TraceContext, TraceRecorder
 
@@ -83,6 +86,48 @@ async def test_emit_deliverable_draft_trace_links_to_tool_result():
     assert len(event.payload["draft_artifacts"]) == 2
     assert session["_pending_phase4_deliverables_trace"]["draft_event_id"] == event.event_id
     assert {artifact.kind for artifact in trace_store.artifacts} == {"deliverable_draft"}
+
+
+@pytest.mark.asyncio
+async def test_emit_deliverable_gap_trace_warns_for_unfrozen_phase4():
+    trace_store = _TraceStore()
+    recorder = TraceRecorder(trace_store=trace_store)
+    plan = TravelPlanState(session_id="s-gap", phase=4)
+    agent = SimpleNamespace(
+        trace_recorder=recorder,
+        trace_context=TraceContext(run_id="run-gap", session_id=plan.session_id, phase=4),
+    )
+
+    await emit_deliverable_gap_trace(plan=plan, agent=agent)
+
+    assert len(trace_store.events) == 1
+    event = trace_store.events[0]
+    assert event.event_type == "deliverable_gap"
+    assert event.status == "warning"
+    assert event.payload["phase"] == 4
+
+
+@pytest.mark.asyncio
+async def test_emit_deliverable_gap_trace_skips_frozen_deliverables():
+    trace_store = _TraceStore()
+    recorder = TraceRecorder(trace_store=trace_store)
+    plan = TravelPlanState(
+        session_id="s-complete",
+        phase=4,
+        deliverables={"travel_plan_md": "travel_plan.md"},
+    )
+    agent = SimpleNamespace(
+        trace_recorder=recorder,
+        trace_context=TraceContext(
+            run_id="run-complete",
+            session_id=plan.session_id,
+            phase=4,
+        ),
+    )
+
+    await emit_deliverable_gap_trace(plan=plan, agent=agent)
+
+    assert trace_store.events == []
 
 
 @pytest.mark.asyncio

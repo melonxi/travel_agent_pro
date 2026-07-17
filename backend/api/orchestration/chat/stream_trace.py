@@ -70,6 +70,26 @@ async def emit_deliverable_draft_trace(
         }
 
 
+async def emit_deliverable_gap_trace(*, plan, agent) -> None:
+    """Make a Phase 4 run without frozen files explicitly observable."""
+    if plan.phase < 4 or plan.deliverables:
+        return
+    trace_recorder = getattr(agent, "trace_recorder", None)
+    trace_context = getattr(agent, "trace_context", None)
+    if trace_recorder is None or trace_context is None:
+        return
+    await trace_recorder.emit_event(
+        trace_context,
+        event_type="deliverable_gap",
+        status="warning",
+        actor="main_agent",
+        payload={
+            "phase": plan.phase,
+            "reason": "run_ended_without_frozen_phase4_deliverables",
+        },
+    )
+
+
 async def finalize_stream_trace_and_persistence(
     *,
     deps,
@@ -82,6 +102,7 @@ async def finalize_stream_trace_and_persistence(
     trace_recorder = getattr(agent, "trace_recorder", None)
     trace_context = getattr(agent, "trace_context", None)
     if trace_recorder is not None and trace_context is not None:
+        await emit_deliverable_gap_trace(plan=plan, agent=agent)
         final_snapshot = plan.to_dict()
         snapshot_event = await trace_recorder.emit_event(
             trace_context,

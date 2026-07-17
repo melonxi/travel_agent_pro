@@ -2520,6 +2520,87 @@ async def test_phase3_to_phase3_transition_rechecks_parallel_routing():
 
 
 @pytest.mark.asyncio
+async def test_parallel_phase3_continues_into_phase4_deliverables_in_same_run():
+    plan = TravelPlanState(
+        session_id="s-phase3-phase4",
+        phase=3,
+        destination="北京",
+        dates=DateRange(start="2026-07-18", end="2026-07-18"),
+        skeleton_plans=[{"id": "plan_A", "days": [{}]}],
+        selected_skeleton_id="plan_A",
+    )
+
+    @tool(
+        name="generate_summary",
+        description="Freeze Phase 4 deliverables",
+        phases=[4],
+        parameters={"type": "object", "properties": {}, "required": []},
+        side_effect="write",
+    )
+    async def generate_summary() -> dict:
+        plan.deliverables = {
+            "travel_plan_md": "travel_plan.md",
+            "checklist_md": "checklist.md",
+        }
+        return {"updated_field": "deliverables"}
+
+    engine = ToolEngine()
+    engine.register(generate_summary)
+    llm_calls = 0
+
+    async def fake_chat(messages, tools=None, stream=True):
+        nonlocal llm_calls
+        llm_calls += 1
+        if llm_calls == 1:
+            yield LLMChunk(
+                type=ChunkType.TOOL_CALL_START,
+                tool_call=ToolCall(
+                    id="tc_summary",
+                    name="generate_summary",
+                    arguments={},
+                ),
+            )
+        else:
+            yield LLMChunk(type=ChunkType.TEXT_DELTA, content="交付物已生成")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    llm = MagicMock()
+    llm.chat = fake_chat
+    agent = AgentLoop(
+        llm=llm,
+        tool_engine=engine,
+        hooks=HookManager(),
+        phase_router=FakePhaseRouter(),
+        context_manager=FakeContextManager(),
+        plan=plan,
+        llm_factory=lambda: MagicMock(),
+        memory_mgr=FakeMemoryManager(),
+        user_id="u-phase4-deliverables",
+        phase3_parallel_config=Phase3ParallelConfig(enabled=True),
+    )
+
+    async def fake_parallel_runner(*, messages=None, original_user_message=None):
+        plan.phase = 4
+        yield LLMChunk(type=ChunkType.TEXT_DELTA, content="逐日行程已完成")
+        yield LLMChunk(type=ChunkType.DONE)
+
+    agent._run_parallel_phase3_orchestrator = fake_parallel_runner
+
+    chunks = [
+        chunk
+        async for chunk in agent.run(
+            [Message(role=Role.USER, content="继续")],
+            phase=3,
+        )
+    ]
+
+    assert llm_calls == 2
+    assert plan.deliverables is not None
+    assert sum(chunk.type == ChunkType.DONE for chunk in chunks) == 1
+    assert any(chunk.content == "交付物已生成" for chunk in chunks)
+
+
+@pytest.mark.asyncio
 async def test_phase2_step_change_no_handoff_note():
     """phase2_step 变化重建时不得注入跨 phase handoff assistant note。"""
     plan = TravelPlanState(

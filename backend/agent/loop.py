@@ -349,6 +349,7 @@ class AgentLoop:
             yield LLMChunk(type=ChunkType.INTERNAL_TASK, internal_task=task)
 
         if transition_detection.request is not None:
+            transition_outcome: PhaseTransitionOutcome | None = None
             async for transition_item in handle_phase_transition(
                 self,
                 messages=messages,
@@ -357,6 +358,11 @@ class AgentLoop:
             ):
                 if isinstance(transition_item, LLMChunk):
                     yield transition_item
+                else:
+                    transition_outcome = transition_item
+            if transition_outcome is None:
+                raise RuntimeError("Phase transition finished without an outcome")
+            messages[:] = transition_outcome.messages
 
         yield LLMChunk(type=ChunkType.DONE)
 
@@ -395,8 +401,24 @@ class AgentLoop:
                         messages=messages,
                         original_user_message=original_user_message,
                     ):
-                        yield chunk
-                    return
+                        # The orchestrator owns a complete Phase 3 sub-flow and
+                        # therefore emits DONE.  When its commit advances the
+                        # plan to Phase 4, that DONE is only the sub-flow
+                        # boundary: the same agent run must continue until the
+                        # deliverables are generated.
+                        if chunk.type != ChunkType.DONE:
+                            yield chunk
+
+                    current_phase = self.plan.phase if self.plan is not None else phase
+                    if current_phase != 4 or getattr(self.plan, "deliverables", None):
+                        yield LLMChunk(type=ChunkType.DONE)
+                        return
+                    tools = self.tool_engine.get_tools_for_phase(
+                        current_phase,
+                        self.plan,
+                    )
+                    prev_iteration_had_tools = True
+                    phase_changed_in_prev_iteration = True
 
                 self._check_cancelled()
                 self._progress = IterationProgress.NO_OUTPUT

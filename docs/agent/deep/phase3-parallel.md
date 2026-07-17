@@ -117,6 +117,7 @@ DayTask 携带：
 - Day Worker 只能提交候选，不改 `TravelPlanState.daily_plans`。
 - Orchestrator 只负责拆分、派发、收集、验证、再协商（骨架副本）和 handoff。
 - 最终写入必须由 AgentLoop 内部构造 `replace_all_day_plans` 工具调用，走标准 `_execute_tool_batch -> detect_phase_transition` 链路。
+- 全天提交触发 3→4 后，Orchestrator 的 `DONE` 只表示 Phase 3 子流程结束；AgentLoop 必须在同一 run 内切换到 Phase 4 工具和重建后的消息，继续推进 `generate_summary`。仅在仍停留 Phase 3（部分交付、提交失败等）时结束本轮。
 
 ## 关键代码
 
