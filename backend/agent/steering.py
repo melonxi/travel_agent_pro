@@ -20,7 +20,7 @@ from llm.types import ChunkType, LLMChunk
 logger = logging.getLogger(__name__)
 
 # R4：单次 drain 只保留最近 N 条，丢弃更旧的并打 log。
-MAX_STEER_KEEP = 5
+MAX_STEER_QUEUE_SIZE = 64
 
 _DAY_RE = re.compile(r"第\s*(\d+)\s*天")
 
@@ -28,9 +28,9 @@ _DAY_RE = re.compile(r"第\s*(\d+)\s*天")
 def drain_steer_queue(
     queue: asyncio.Queue | None,
     *,
-    max_keep: int = MAX_STEER_KEEP,
+    max_keep: int | None = None,
 ) -> list[str]:
-    """非阻塞 drain；空队列返回 []。洪水时只保留最近 max_keep 条。"""
+    """非阻塞 drain；生产路径默认不静默丢弃已入队 steering。"""
     if queue is None:
         return []
     collected: list[str] = []
@@ -44,7 +44,7 @@ def drain_steer_queue(
             collected.append(text)
     if not collected:
         return []
-    if len(collected) > max_keep:
+    if max_keep is not None and len(collected) > max_keep:
         dropped = len(collected) - max_keep
         logger.warning(
             "Steering flood: dropped %d older message(s), keeping last %d",
@@ -88,10 +88,15 @@ def inject_steer_into_messages(messages: list[Message], texts: list[str]) -> int
     return len(texts)
 
 
-def steering_ack_chunk(text: str, *, days: list[int] | None = None) -> LLMChunk:
+def steering_ack_chunk(
+    text: str,
+    *,
+    days: list[int] | None = None,
+    message: str = "已收到引导，将在下一个安全点尝试调整",
+) -> LLMChunk:
     payload: dict[str, Any] = {
         "stage": "steering_ack",
-        "message": "已收到引导，将在下一步调整",
+        "message": message,
         "text": text,
     }
     if days:

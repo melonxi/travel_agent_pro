@@ -38,6 +38,11 @@ from agent.phase3.worker_prompt import (
     split_skeleton_to_day_tasks,
 )
 from config import Phase3ParallelConfig
+from harness.validator import (
+    _selected_accommodation_nightly_price,
+    _selected_transport_cost,
+    _trip_nights,
+)
 from llm.base import LLMProvider
 from llm.types import ChunkType, LLMChunk
 from state.models import TravelPlanState, normalize_pace_value
@@ -71,10 +76,23 @@ def _format_error(raw: str | None) -> str | None:
 @dataclass
 class GlobalValidationIssue:
     issue_type: str  # "poi_duplicate" | "budget_overrun" | "coverage_gap"
-                     # | "time_conflict" | "transport_connection" | "semantic_duplicate" | "pace_mismatch"
+    # | "time_conflict" | "transport_connection" | "semantic_duplicate" | "pace_mismatch"
     description: str
     affected_days: list[int] = field(default_factory=list)
     severity: str = "warning"  # "error" | "warning"
+
+
+@dataclass
+class _RedispatchRollback:
+    """C1：重派前乐观作废的旧版本引用。
+
+    attempt 是作废前磁盘上 accepted 候选的 attempt（无 artifact 时为 None）；
+    result 是被移出 successes 的旧成功结果（该天此前未成功时为 None）。
+    """
+
+    day: int
+    attempt: int | None = None
+    result: "DayWorkerResult | None" = None
 
 
 def build_unresolved_constraint_notice(
@@ -91,9 +109,7 @@ def build_unresolved_constraint_notice(
     blocking = [issue for issue in issues if issue.severity == "error"]
     if not blocking:
         return None
-    lines = [
-        "⚠️ 你明确要求的以下约束，自动重排后仍未完全满足，已按当前最优方案交付："
-    ]
+    lines = ["⚠️ 你明确要求的以下约束，自动重排后仍未完全满足，已按当前最优方案交付："]
     for issue in blocking:
         lines.append(f"- {issue.description}")
     lines.append("如需我进一步调整（例如删减某天的活动），告诉我即可。")
@@ -218,7 +234,8 @@ def _extract_transport_segment(
     segments = transport.get("segments")
     if isinstance(segments, list):
         matches = [
-            seg for seg in segments
+            seg
+            for seg in segments
             if isinstance(seg, dict) and seg.get("direction") == direction
         ]
         if matches:
@@ -395,7 +412,7 @@ class Phase3Orchestrator:
                 kind="phase3_candidate",
                 content=result.dayplan,
             )
-        event = await self._emit_trace_event(
+        await self._emit_trace_event(
             event_type="phase3_worker",
             status="success" if result.success else "error",
             actor="phase3_worker",
@@ -452,33 +469,12 @@ class Phase3Orchestrator:
 
     def _init_blackboard(self, tasks: list[DayTask]) -> None:
         """D3 黑板：seed locked POI + 预算口径（活动外已锁定交通/住宿）。"""
-        transport_cost = 0.0
-        accommodation_cost = 0.0
-        transport = self.plan.selected_transport
-        if isinstance(transport, dict):
-            for key in ("outbound", "return", "price", "cost"):
-                val = transport.get(key)
-                if isinstance(val, dict):
-                    try:
-                        transport_cost += float(val.get("price") or val.get("cost") or 0)
-                    except (TypeError, ValueError):
-                        pass
-                elif key in ("price", "cost"):
-                    try:
-                        transport_cost += float(val or 0)
-                    except (TypeError, ValueError):
-                        pass
-        if self.plan.accommodation and getattr(
-            self.plan.accommodation, "price_per_night", None
-        ):
-            nights = self.plan.dates.total_days - 1 if self.plan.dates else 0
-            nights = max(nights, 0)
-            try:
-                accommodation_cost = float(
-                    self.plan.accommodation.price_per_night or 0
-                ) * nights
-            except (TypeError, ValueError):
-                accommodation_cost = 0.0
+        transport_cost = _selected_transport_cost(self.plan)
+        accommodation_cost = (
+            _selected_accommodation_nightly_price(self.plan) * _trip_nights(self.plan)
+            if self.plan.accommodation
+            else 0.0
+        )
         total = None
         if self.plan.budget and self.plan.budget.total:
             total = float(self.plan.budget.total)
@@ -486,22 +482,58 @@ class Phase3Orchestrator:
             total_budget=total,
             precommitted_cost=transport_cost + accommodation_cost,
         )
-        self._blackboard.seed_from_locked(
-            {t.day: list(t.locked_pois) for t in tasks}
-        )
+        self._blackboard.seed_from_locked({t.day: list(t.locked_pois) for t in tasks})
 
     def _accept_worker_dayplan(
-        self, result: DayWorkerResult
+        self,
+        result: DayWorkerResult,
+        *,
+        candidate_store: Phase3CandidateStore | None = None,
+        run_id: str | None = None,
+        attempt: int | None = None,
     ) -> DayWorkerResult:
         """D3：候选收集时查表即拒，通过则登记黑板。"""
-        if not result.success or not result.dayplan:
+        if not result.success:
+            return result
+        if not result.dayplan:
+            if (
+                candidate_store is not None
+                and run_id is not None
+                and attempt is not None
+            ):
+                candidate_store.update_candidate_status(
+                    self.plan.session_id,
+                    run_id,
+                    result.day,
+                    attempt,
+                    status="accepted",
+                )
             return result
         ok, reason = self._blackboard.try_accept_dayplan(result.day, result.dayplan)
         if ok:
+            if (
+                candidate_store is not None
+                and run_id is not None
+                and attempt is not None
+            ):
+                candidate_store.update_candidate_status(
+                    self.plan.session_id,
+                    run_id,
+                    result.day,
+                    attempt,
+                    status="accepted",
+                )
             return result
-        logger.warning(
-            "Blackboard rejected day %d candidate: %s", result.day, reason
-        )
+        if candidate_store is not None and run_id is not None and attempt is not None:
+            candidate_store.update_candidate_status(
+                self.plan.session_id,
+                run_id,
+                result.day,
+                attempt,
+                status="rejected",
+                reason=reason,
+            )
+        logger.warning("Blackboard rejected day %d candidate: %s", result.day, reason)
         return DayWorkerResult(
             day=result.day,
             date=result.date,
@@ -512,13 +544,85 @@ class Phase3Orchestrator:
             iterations=result.iterations,
         )
 
+    def _invalidate_day_for_redispatch(
+        self,
+        *,
+        candidate_store: Phase3CandidateStore,
+        run_id: str,
+        day: int,
+        reason: str,
+        prev_result: DayWorkerResult | None = None,
+    ) -> "_RedispatchRollback":
+        """C1：重派前乐观作废旧候选，并记下旧版本引用供失败回滚。"""
+        prev_attempt: int | None = None
+        payload = candidate_store.get_latest_candidate(
+            self.plan.session_id, run_id, day
+        )
+        if payload is not None and payload.get("status") == "accepted":
+            try:
+                prev_attempt = int(payload.get("attempt", 0))
+            except (TypeError, ValueError):
+                prev_attempt = None
+        candidate_store.update_latest_candidate_status(
+            self.plan.session_id,
+            run_id,
+            day,
+            status="rejected",
+            reason=reason,
+        )
+        self._blackboard.release_day(day)
+        return _RedispatchRollback(day=day, attempt=prev_attempt, result=prev_result)
+
+    def _handle_redispatch_failure(
+        self,
+        *,
+        candidate_store: Phase3CandidateStore,
+        run_id: str,
+        rollback: "_RedispatchRollback | None",
+        successes: list[DayWorkerResult],
+    ) -> bool:
+        """C1：重派失败时回滚乐观作废——恢复旧版本总比静默丢天好。
+
+        磁盘：把作废前的 accepted 候选重新标 accepted 并 bump 到最新 seq；
+        内存：旧成功结果放回 successes 并重新登记黑板。
+        """
+        if rollback is None:
+            return False
+        restored = False
+        if rollback.attempt is not None:
+            restored = candidate_store.restore_candidate_as_latest(
+                self.plan.session_id,
+                run_id,
+                rollback.day,
+                rollback.attempt,
+                reason="restored after redispatch failure",
+            )
+        if rollback.result is not None:
+            if rollback.result.dayplan:
+                ok, reason = self._blackboard.try_accept_dayplan(
+                    rollback.day, rollback.result.dayplan
+                )
+                if not ok:
+                    logger.warning(
+                        "Day %d rollback could not re-register blackboard: %s",
+                        rollback.day,
+                        reason,
+                    )
+            if all(s.day != rollback.day for s in successes):
+                successes.append(rollback.result)
+            restored = True
+        if restored:
+            logger.warning(
+                "Redispatch of day %d failed; restored previous accepted version",
+                rollback.day,
+            )
+        return restored
+
     def _renegotiate_skeleton(
         self, requests: list[ReplanRequest]
     ) -> RenegotiationOutcome:
         """D3 A2：确定性再协商，只改骨架副本。"""
-        skeleton = self._skeleton_copy or self._find_selected_skeleton() or {
-            "days": []
-        }
+        skeleton = self._skeleton_copy or self._find_selected_skeleton() or {"days": []}
         raw_pace = (self.plan.trip_brief or {}).get("pace")
         pace = normalize_pace_value(raw_pace) or "balanced"
         total_days = (
@@ -549,7 +653,17 @@ class Phase3Orchestrator:
         compiled = self._compile_day_tasks(all_tasks)
         # 刷新 locked 记录与黑板 seed（释放后重 seed）
         self._locked_pois_by_day = {t.day: list(t.locked_pois) for t in compiled}
+        for task in compiled:
+            self._refresh_task_blackboard_snapshot(task)
         return [t for t in compiled if t.day in days]
+
+    def _refresh_task_blackboard_snapshot(self, task: DayTask) -> None:
+        """把运行时已认领 POI 作为只读 forbidden 快照下发给重派 worker。"""
+        forbidden = list(task.forbidden_pois or [])
+        for poi in self._blackboard.snapshot_forbidden_for_day(task.day):
+            if poi not in forbidden:
+                forbidden.append(poi)
+        task.forbidden_pois = forbidden
 
     def _apply_steer_hints_to_task(self, task: DayTask) -> None:
         """把挂起的用户引导挂到 repair_hints，供重派/重试 worker 使用。"""
@@ -571,6 +685,8 @@ class Phase3Orchestrator:
         tasks: list[DayTask],
         successes: list[DayWorkerResult],
         total_days: int,
+        active_days: set[int] | None = None,
+        terminal_message: str | None = None,
     ) -> list[LLMChunk]:
         """D4：在 worker 收集循环安全点 drain steering。
 
@@ -590,6 +706,7 @@ class Phase3Orchestrator:
             return []
 
         done_days = {s.day for s in successes}
+        active_days = active_days or set()
         all_days = {t.day for t in tasks}
         incomplete = sorted(all_days - done_days)
         task_by_day = {t.day: t for t in tasks}
@@ -600,19 +717,26 @@ class Phase3Orchestrator:
             if not targets:
                 targets = incomplete or sorted(all_days)
             targets = [d for d in targets if d in all_days]
+            if terminal_message is not None:
+                acks.append(
+                    steering_ack_chunk(
+                        text,
+                        days=targets or None,
+                        message=terminal_message,
+                    )
+                )
+                continue
             acks.append(steering_ack_chunk(text, days=targets or None))
             for day in targets:
                 self._pending_steer_hints.setdefault(day, []).append(text)
-                if day in done_days:
+                if day in done_days or day in active_days:
                     self._steer_redispatch_days.add(day)
                 else:
                     task = task_by_day.get(day)
                     if task is not None:
                         notice = format_steer_notice(text)
                         if notice not in (task.repair_hints or []):
-                            task.repair_hints = list(task.repair_hints or []) + [
-                                notice
-                            ]
+                            task.repair_hints = list(task.repair_hints or []) + [notice]
             if targets:
                 acks.append(
                     LLMChunk(
@@ -666,7 +790,10 @@ class Phase3Orchestrator:
                     logger.warning(
                         "POI '%s' locked by both Day %d and Day %d; "
                         "keeping Day %d and dropping the duplicate",
-                        poi, poi_owner[poi], t.day, poi_owner[poi],
+                        poi,
+                        poi_owner[poi],
+                        t.day,
+                        poi_owner[poi],
                     )
                     continue
                 poi_owner[poi] = t.day
@@ -676,8 +803,7 @@ class Phase3Orchestrator:
         # 2. Derive forbidden_pois for each day
         for t in tasks:
             t.forbidden_pois = [
-                poi for poi, owner_day in poi_owner.items()
-                if owner_day != t.day
+                poi for poi, owner_day in poi_owner.items() if owner_day != t.day
             ]
 
         # 3. Fill mobility_envelope defaults (only if skeleton didn't provide)
@@ -731,10 +857,7 @@ class Phase3Orchestrator:
             arrival_segment = _extract_transport_segment(transport, "outbound")
             departure_segment = _extract_transport_segment(transport, "return")
             sorted_tasks = sorted(tasks, key=lambda x: x.day)
-            if (
-                arrival_min is not None
-                and sorted_tasks[0].date_role == "arrival_day"
-            ):
+            if arrival_min is not None and sorted_tasks[0].date_role == "arrival_day":
                 hh, mm = divmod(arrival_min, 60)
                 sorted_tasks[0].arrival_time = f"{hh:02d}:{mm:02d}"
                 sorted_tasks[0].arrival_transport = arrival_segment
@@ -905,15 +1028,17 @@ class Phase3Orchestrator:
                 dist = _haversine_meters(lat_a, lng_a, lat_b, lng_b)
                 if dist < 200 and _names_similar(name_a, name_b):
                     seen_pairs.add(pair)
-                    issues.append(GlobalValidationIssue(
-                        issue_type="semantic_duplicate",
-                        description=(
-                            f"'{name_a}'(Day {day_a}) 与 '{name_b}'(Day {day_b}) "
-                            f"疑似同一地点（距离 {dist:.0f}m）"
-                        ),
-                        affected_days=[day_b],
-                        severity="error",
-                    ))
+                    issues.append(
+                        GlobalValidationIssue(
+                            issue_type="semantic_duplicate",
+                            description=(
+                                f"'{name_a}'(Day {day_a}) 与 '{name_b}'(Day {day_b}) "
+                                f"疑似同一地点（距离 {dist:.0f}m）"
+                            ),
+                            affected_days=[day_b],
+                            severity="error",
+                        )
+                    )
         return issues
 
     def _validate_time_conflicts(
@@ -935,19 +1060,23 @@ class Phase3Orchestrator:
                     if prev_end - curr_start > 720:
                         effective_start = curr_start + 1440
                     if prev_end + travel > effective_start:
-                        issues.append(GlobalValidationIssue(
-                            issue_type="time_conflict",
-                            description=(
-                                f"Day {day}: '{prev.get('name')}'→'{curr.get('name')}' "
-                                f"时间冲突（{prev.get('end_time')} 结束 + 交通 {travel}min "
-                                f"> {curr.get('start_time')} 开始）"
-                            ),
-                            affected_days=[day],
-                            severity="error",
-                        ))
+                        issues.append(
+                            GlobalValidationIssue(
+                                issue_type="time_conflict",
+                                description=(
+                                    f"Day {day}: '{prev.get('name')}'→'{curr.get('name')}' "
+                                    f"时间冲突（{prev.get('end_time')} 结束 + 交通 {travel}min "
+                                    f"> {curr.get('start_time')} 开始）"
+                                ),
+                                affected_days=[day],
+                                severity="error",
+                            )
+                        )
         return issues
 
-    def _validate_transport_connection(self, dayplans: list[dict[str, Any]]) -> list[GlobalValidationIssue]:
+    def _validate_transport_connection(
+        self, dayplans: list[dict[str, Any]]
+    ) -> list[GlobalValidationIssue]:
         issues: list[GlobalValidationIssue] = []
         transport = self.plan.selected_transport
         if not isinstance(transport, dict):
@@ -964,15 +1093,17 @@ class Phase3Orchestrator:
             if acts:
                 first_start = _time_to_minutes(acts[0].get("start_time", ""))
                 if first_start is not None and first_start < arrival_min + 120:
-                    issues.append(GlobalValidationIssue(
-                        issue_type="transport_connection",
-                        description=(
-                            f"Day {first_day.get('day', 1)} 首活动开始时间过早，"
-                            f"距到达不足 2 小时"
-                        ),
-                        affected_days=[first_day.get("day", 1)],
-                        severity="error",
-                    ))
+                    issues.append(
+                        GlobalValidationIssue(
+                            issue_type="transport_connection",
+                            description=(
+                                f"Day {first_day.get('day', 1)} 首活动开始时间过早，"
+                                f"距到达不足 2 小时"
+                            ),
+                            affected_days=[first_day.get("day", 1)],
+                            severity="error",
+                        )
+                    )
 
         departure_min = _extract_transport_time(transport, "return")
         if departure_min is not None:
@@ -981,19 +1112,23 @@ class Phase3Orchestrator:
             if acts:
                 last_end = _time_to_minutes(acts[-1].get("end_time", ""))
                 if last_end is not None and last_end > departure_min - 180:
-                    issues.append(GlobalValidationIssue(
-                        issue_type="transport_connection",
-                        description=(
-                            f"Day {last_day.get('day', len(sorted_days))} 末活动结束过晚，"
-                            f"距离开不足 3 小时"
-                        ),
-                        affected_days=[last_day.get("day", len(sorted_days))],
-                        severity="error",
-                    ))
+                    issues.append(
+                        GlobalValidationIssue(
+                            issue_type="transport_connection",
+                            description=(
+                                f"Day {last_day.get('day', len(sorted_days))} 末活动结束过晚，"
+                                f"距离开不足 3 小时"
+                            ),
+                            affected_days=[last_day.get("day", len(sorted_days))],
+                            severity="error",
+                        )
+                    )
 
         return issues
 
-    def _validate_pace(self, dayplans: list[dict[str, Any]]) -> list[GlobalValidationIssue]:
+    def _validate_pace(
+        self, dayplans: list[dict[str, Any]]
+    ) -> list[GlobalValidationIssue]:
         issues: list[GlobalValidationIssue] = []
         raw_pace = (self.plan.trip_brief or {}).get("pace")
         normalized_pace = normalize_pace_value(raw_pace)
@@ -1006,14 +1141,16 @@ class Phase3Orchestrator:
             day = dp.get("day", 0)
             act_count = len(dp.get("activities", []))
             if act_count > max_activities:
-                issues.append(GlobalValidationIssue(
-                    issue_type="pace_mismatch",
-                    description=(
-                        f"Day {day}: {act_count} 个活动超出 {pace} 节奏上限 {max_activities}"
-                    ),
-                    affected_days=[day],
-                    severity=severity,
-                ))
+                issues.append(
+                    GlobalValidationIssue(
+                        issue_type="pace_mismatch",
+                        description=(
+                            f"Day {day}: {act_count} 个活动超出 {pace} 节奏上限 {max_activities}"
+                        ),
+                        affected_days=[day],
+                        severity=severity,
+                    )
+                )
         return issues
 
     def _build_progress_chunk(
@@ -1065,9 +1202,7 @@ class Phase3Orchestrator:
             self._locked_pois_by_day = {t.day: list(t.locked_pois) for t in tasks}
             # D3：骨架副本 + 黑板（run 级，不写权威 skeleton_plans）
             selected = self._find_selected_skeleton()
-            self._skeleton_copy = (
-                copy.deepcopy(selected) if selected else {"days": []}
-            )
+            self._skeleton_copy = copy.deepcopy(selected) if selected else {"days": []}
             self._skeleton_amendments = []
             self._renegotiate_count = {}
             self._init_blackboard(tasks)
@@ -1125,9 +1260,7 @@ class Phase3Orchestrator:
             ]
 
             def _find_worker_idx(day: int) -> int:
-                return next(
-                    i for i, w in enumerate(worker_statuses) if w["day"] == day
-                )
+                return next(i for i, w in enumerate(worker_statuses) if w["day"] == day)
 
             yield self._build_progress_chunk(
                 worker_statuses,
@@ -1148,47 +1281,51 @@ class Phase3Orchestrator:
                             worker_statuses[idx]["max_iterations"] = payload["max"]
                             worker_statuses[idx]["current_tool"] = None
                         elif kind == "tool_start":
-                            worker_statuses[idx]["current_tool"] = (
-                                payload.get("human_label") or payload.get("tool")
-                            )
+                            worker_statuses[idx]["current_tool"] = payload.get(
+                                "human_label"
+                            ) or payload.get("tool")
                         progress_queue.put_nowait({"day": day, "kind": kind})
                     except Exception as exc:
-                        logger.warning(
-                            "orchestrator progress callback failed: %s", exc
-                        )
+                        logger.warning("orchestrator progress callback failed: %s", exc)
+
                 return _on_progress
 
             async def _run_with_semaphore(task: DayTask) -> DayWorkerResult:
                 idx = _find_worker_idx(task.day)
                 async with semaphore:
-                    return await run_day_worker(
-                        llm=self.llm,
-                        tool_engine=self.tool_engine,
-                        plan=self.plan,
-                        task=task,
-                        shared_prefix=shared_prefix,
-                        max_iterations=self.config.worker_max_iterations,
-                        timeout_seconds=self.config.worker_timeout_seconds,
-                        on_progress=_make_progress_cb(idx),
-                        candidate_store=candidate_store,
-                        run_id=run_id,
-                        attempt=1,
-                        stats=self.stats,
-                        trace_recorder=self.trace_recorder,
-                        trace_context=self.trace_context,
-                        trace_parent_event_id=worker_start_event_ids.get(
-                            (task.day, 1)
-                        ),
-                    )
+                    active_worker_days.add(task.day)
+                    try:
+                        return await run_day_worker(
+                            llm=self.llm,
+                            tool_engine=self.tool_engine,
+                            plan=self.plan,
+                            task=task,
+                            shared_prefix=shared_prefix,
+                            max_iterations=self.config.worker_max_iterations,
+                            timeout_seconds=self.config.worker_timeout_seconds,
+                            on_progress=_make_progress_cb(idx),
+                            candidate_store=candidate_store,
+                            run_id=run_id,
+                            attempt=1,
+                            stats=self.stats,
+                            trace_recorder=self.trace_recorder,
+                            trace_context=self.trace_context,
+                            trace_parent_event_id=worker_start_event_ids.get(
+                                (task.day, 1)
+                            ),
+                        )
+                    finally:
+                        active_worker_days.discard(task.day)
 
             pending: dict[asyncio.Task, DayTask] = {}
+            active_worker_days: set[int] = set()
             for task in tasks:
-                worker_start_event_ids[(task.day, 1)] = (
-                    await self._emit_worker_start_trace(
-                        task=task,
-                        run_id=run_id,
-                        attempt=1,
-                    )
+                worker_start_event_ids[
+                    (task.day, 1)
+                ] = await self._emit_worker_start_trace(
+                    task=task,
+                    run_id=run_id,
+                    attempt=1,
                 )
                 atask = asyncio.create_task(_run_with_semaphore(task))
                 pending[atask] = task
@@ -1220,7 +1357,12 @@ class Phase3Orchestrator:
                     day_task = pending.pop(completed)
                     idx = _find_worker_idx(day_task.day)
                     try:
-                        result = self._accept_worker_dayplan(completed.result())
+                        result = self._accept_worker_dayplan(
+                            completed.result(),
+                            candidate_store=candidate_store,
+                            run_id=run_id,
+                            attempt=1,
+                        )
                         if result.success:
                             successes.append(result)
                             worker_statuses[idx]["status"] = "done"
@@ -1230,14 +1372,10 @@ class Phase3Orchestrator:
                                     result.dayplan.get("activities", [])
                                 )
                         else:
-                            failures.append(
-                                (day_task, result.error or "Unknown error")
-                            )
+                            failures.append((day_task, result.error or "Unknown error"))
                             worker_statuses[idx]["status"] = "failed"
                             worker_statuses[idx]["current_tool"] = None
-                            worker_statuses[idx]["error"] = _format_error(
-                                result.error
-                            )
+                            worker_statuses[idx]["error"] = _format_error(result.error)
                             worker_statuses[idx]["error_code"] = result.error_code
                             if result.replan_request is not None:
                                 worker_statuses[idx]["replan_request"] = (
@@ -1262,13 +1400,9 @@ class Phase3Orchestrator:
                         failures.append((day_task, f"Exception: {e}"))
                         worker_statuses[idx]["status"] = "failed"
                         worker_statuses[idx]["current_tool"] = None
-                        worker_statuses[idx]["error"] = _format_error(
-                            f"Exception: {e}"
-                        )
+                        worker_statuses[idx]["error"] = _format_error(f"Exception: {e}")
                         worker_statuses[idx]["error_code"] = "EXCEPTION"
-                        logger.error(
-                            "Day %d worker exception: %s", day_task.day, e
-                        )
+                        logger.error("Day %d worker exception: %s", day_task.day, e)
                         await self._emit_worker_result_trace(
                             task=day_task,
                             result=DayWorkerResult(
@@ -1287,9 +1421,7 @@ class Phase3Orchestrator:
                         )
 
                 done_count = sum(
-                    1
-                    for w in worker_statuses
-                    if w["status"] in ("done", "failed")
+                    1 for w in worker_statuses if w["status"] in ("done", "failed")
                 )
                 yield self._build_progress_chunk(
                     worker_statuses,
@@ -1301,6 +1433,7 @@ class Phase3Orchestrator:
                     tasks=tasks,
                     successes=successes,
                     total_days=total_days,
+                    active_days=active_worker_days,
                 ):
                     yield ack
 
@@ -1312,19 +1445,27 @@ class Phase3Orchestrator:
                     pass
 
             # D4：用户引导要求重做已成功天 → 从 successes 摘下，进入 step 7 重派
+            # C1：所有"乐观作废旧候选"的重派段共用回滚表，重派失败时恢复旧版本。
+            redispatch_rollbacks: dict[int, _RedispatchRollback] = {}
             if self._steer_redispatch_days:
                 redispatch = set(self._steer_redispatch_days)
                 self._steer_redispatch_days.clear()
                 kept: list[DayWorkerResult] = []
                 for s in successes:
                     if s.day in redispatch:
-                        self._blackboard.release_day(s.day)
+                        redispatch_rollbacks[s.day] = (
+                            self._invalidate_day_for_redispatch(
+                                candidate_store=candidate_store,
+                                run_id=run_id,
+                                day=s.day,
+                                reason="superseded by steering redispatch",
+                                prev_result=s,
+                            )
+                        )
                         task = next((t for t in tasks if t.day == s.day), None)
                         if task is not None:
                             self._apply_steer_hints_to_task(task)
-                            failures.append(
-                                (task, "用户引导要求重排该天")
-                            )
+                            failures.append((task, "用户引导要求重排该天"))
                             idx = _find_worker_idx(s.day)
                             worker_statuses[idx]["status"] = "failed"
                             worker_statuses[idx]["error"] = "steering redispatch"
@@ -1381,28 +1522,31 @@ class Phase3Orchestrator:
                 if worker_statuses[idx].get("error_code") == "NEEDS_PHASE3_REPLAN":
                     continue
                 self._apply_steer_hints_to_task(task)
-                worker_statuses[idx].update({
-                    "status": "retrying",
-                    "iteration": None,
-                    "current_tool": None,
-                    "error": None,
-                    "error_code": None,
-                    "activity_count": None,
-                })
+                if error_msg and error_msg not in (task.repair_hints or []):
+                    task.repair_hints = list(task.repair_hints or []) + [error_msg]
+                self._refresh_task_blackboard_snapshot(task)
+                worker_statuses[idx].update(
+                    {
+                        "status": "retrying",
+                        "iteration": None,
+                        "current_tool": None,
+                        "error": None,
+                        "error_code": None,
+                        "activity_count": None,
+                    }
+                )
                 yield self._build_progress_chunk(
                     worker_statuses,
                     total_days,
                     f"重试第 {task.day} 天...",
                 )
-                logger.info(
-                    "Retrying day %d (previous error: %s)", task.day, error_msg
-                )
-                worker_start_event_ids[(task.day, 2)] = (
-                    await self._emit_worker_start_trace(
-                        task=task,
-                        run_id=run_id,
-                        attempt=2,
-                    )
+                logger.info("Retrying day %d (previous error: %s)", task.day, error_msg)
+                worker_start_event_ids[
+                    (task.day, 2)
+                ] = await self._emit_worker_start_trace(
+                    task=task,
+                    run_id=run_id,
+                    attempt=2,
                 )
                 retry_result = self._accept_worker_dayplan(
                     await run_day_worker(
@@ -1421,8 +1565,18 @@ class Phase3Orchestrator:
                         trace_recorder=self.trace_recorder,
                         trace_context=self.trace_context,
                         trace_parent_event_id=worker_start_event_ids.get((task.day, 2)),
-                    )
+                    ),
+                    candidate_store=candidate_store,
+                    run_id=run_id,
+                    attempt=2,
                 )
+                for ack in self._drain_steering(
+                    tasks=tasks,
+                    successes=successes,
+                    total_days=total_days,
+                    active_days={task.day},
+                ):
+                    yield ack
                 await self._emit_worker_result_trace(
                     task=task,
                     result=retry_result,
@@ -1432,6 +1586,7 @@ class Phase3Orchestrator:
                 )
                 if retry_result.success:
                     successes.append(retry_result)
+                    redispatch_rollbacks.pop(task.day, None)
                     worker_statuses[idx]["status"] = "done"
                     worker_statuses[idx]["current_tool"] = None
                     if retry_result.dayplan:
@@ -1446,9 +1601,7 @@ class Phase3Orchestrator:
                 else:
                     worker_statuses[idx]["status"] = "failed"
                     worker_statuses[idx]["current_tool"] = None
-                    worker_statuses[idx]["error"] = _format_error(
-                        retry_result.error
-                    )
+                    worker_statuses[idx]["error"] = _format_error(retry_result.error)
                     worker_statuses[idx]["error_code"] = retry_result.error_code
                     if retry_result.replan_request is not None:
                         worker_statuses[idx]["replan_request"] = (
@@ -1460,11 +1613,141 @@ class Phase3Orchestrator:
                         retry_result.error_code,
                         retry_result.error,
                     )
+                    # C1：steering 重派（作废过旧候选）失败 → 回滚恢复旧版本
+                    rollback = redispatch_rollbacks.pop(task.day, None)
+                    if self._handle_redispatch_failure(
+                        candidate_store=candidate_store,
+                        run_id=run_id,
+                        rollback=rollback,
+                        successes=successes,
+                    ):
+                        worker_statuses[idx]["status"] = "done"
+                        worker_statuses[idx]["error"] = None
+                        worker_statuses[idx]["error_code"] = None
+                        if rollback.result is not None and rollback.result.dayplan:
+                            worker_statuses[idx]["activity_count"] = len(
+                                rollback.result.dayplan.get("activities", [])
+                            )
+                        yield self._build_progress_chunk(
+                            worker_statuses,
+                            total_days,
+                            f"第 {task.day} 天重派失败，已恢复重派前版本",
+                        )
+                    else:
+                        yield self._build_progress_chunk(
+                            worker_statuses,
+                            total_days,
+                            f"第 {task.day} 天重试失败",
+                        )
+
+            # Steering may arrive while the serial retry loop is awaiting an
+            # LLM. Consume those messages before entering renegotiation instead
+            # of dropping them with the run-scoped queue.
+            for ack in self._drain_steering(
+                tasks=tasks,
+                successes=successes,
+                total_days=total_days,
+                active_days=set(),
+            ):
+                yield ack
+
+            late_steer_days = set(self._steer_redispatch_days)
+            if late_steer_days:
+                self._steer_redispatch_days.clear()
+                kept_successes: list[DayWorkerResult] = []
+                for result in successes:
+                    if result.day in late_steer_days:
+                        redispatch_rollbacks[result.day] = (
+                            self._invalidate_day_for_redispatch(
+                                candidate_store=candidate_store,
+                                run_id=run_id,
+                                day=result.day,
+                                reason="superseded by late steering redispatch",
+                                prev_result=result,
+                            )
+                        )
+                    else:
+                        kept_successes.append(result)
+                successes = kept_successes
+                for steer_day in sorted(late_steer_days):
+                    steer_task = next((t for t in tasks if t.day == steer_day), None)
+                    if steer_task is None:
+                        continue
+                    self._apply_steer_hints_to_task(steer_task)
+                    self._refresh_task_blackboard_snapshot(steer_task)
+                    idx = _find_worker_idx(steer_day)
+                    worker_statuses[idx]["status"] = "redispatch"
                     yield self._build_progress_chunk(
                         worker_statuses,
                         total_days,
-                        f"第 {task.day} 天重试失败",
+                        f"用户引导触发重派第 {steer_day} 天...",
                     )
+                    steer_result = self._accept_worker_dayplan(
+                        await run_day_worker(
+                            llm=self.llm,
+                            tool_engine=self.tool_engine,
+                            plan=self.plan,
+                            task=steer_task,
+                            shared_prefix=shared_prefix,
+                            max_iterations=self.config.worker_max_iterations,
+                            timeout_seconds=self.config.worker_timeout_seconds,
+                            on_progress=_make_progress_cb(idx),
+                            candidate_store=candidate_store,
+                            run_id=run_id,
+                            attempt=5,
+                            stats=self.stats,
+                            trace_recorder=self.trace_recorder,
+                            trace_context=self.trace_context,
+                            trace_parent_event_id=worker_start_event_ids.get(
+                                (steer_day, 5)
+                            ),
+                        ),
+                        candidate_store=candidate_store,
+                        run_id=run_id,
+                        attempt=5,
+                    )
+                    if steer_result.success:
+                        successes.append(steer_result)
+                        redispatch_rollbacks.pop(steer_day, None)
+                        worker_statuses[idx]["status"] = "done"
+                    else:
+                        worker_statuses[idx]["status"] = "failed"
+                        worker_statuses[idx]["error"] = _format_error(
+                            steer_result.error
+                        )
+                        worker_statuses[idx]["error_code"] = steer_result.error_code
+                    for ack in self._drain_steering(
+                        tasks=tasks,
+                        successes=successes,
+                        total_days=total_days,
+                        active_days={steer_day},
+                        terminal_message=(
+                            "本轮已进入最终收口，未能应用这条引导，请在下一轮重新发送"
+                        ),
+                    ):
+                        yield ack
+                # C1：重派失败（或任务缺失未重派）的天回滚，恢复旧版本
+                for steer_day in sorted(late_steer_days):
+                    rollback = redispatch_rollbacks.pop(steer_day, None)
+                    if self._handle_redispatch_failure(
+                        candidate_store=candidate_store,
+                        run_id=run_id,
+                        rollback=rollback,
+                        successes=successes,
+                    ):
+                        idx = _find_worker_idx(steer_day)
+                        worker_statuses[idx]["status"] = "done"
+                        worker_statuses[idx]["error"] = None
+                        worker_statuses[idx]["error_code"] = None
+                        if rollback.result is not None and rollback.result.dayplan:
+                            worker_statuses[idx]["activity_count"] = len(
+                                rollback.result.dayplan.get("activities", [])
+                            )
+                        yield self._build_progress_chunk(
+                            worker_statuses,
+                            total_days,
+                            f"第 {steer_day} 天重派失败，已恢复重派前版本",
+                        )
 
             # 7b. D3：结构化再协商 — 改骨架副本 + 只重派受影响天
             replan_requests: list[ReplanRequest] = []
@@ -1532,8 +1815,16 @@ class Phase3Orchestrator:
                         f"{'、'.join(str(d) for d in sorted(outcome.affected_days))} 天...",
                     )
                     # 释放受影响天的黑板认领，并从 successes 移除（若目标天曾成功）
+                    # C1：记录旧版本引用，重派失败时回滚
+                    prev_success_by_day = {s.day: s for s in successes}
                     for d in outcome.affected_days:
-                        self._blackboard.release_day(d)
+                        redispatch_rollbacks[d] = self._invalidate_day_for_redispatch(
+                            candidate_store=candidate_store,
+                            run_id=run_id,
+                            day=d,
+                            reason="superseded by skeleton renegotiation",
+                            prev_result=prev_success_by_day.get(d),
+                        )
                     successes = [
                         s for s in successes if s.day not in outcome.affected_days
                     ]
@@ -1547,27 +1838,31 @@ class Phase3Orchestrator:
                     tasks = [task_by_day_map[t.day] for t in tasks]
 
                     for rd_task in redispatched:
+                        self._apply_steer_hints_to_task(rd_task)
+                        self._refresh_task_blackboard_snapshot(rd_task)
                         idx = _find_worker_idx(rd_task.day)
-                        worker_statuses[idx].update({
-                            "status": "renegotiate",
-                            "iteration": None,
-                            "current_tool": None,
-                            "error": None,
-                            "error_code": None,
-                            "activity_count": None,
-                            "replan_request": None,
-                        })
+                        worker_statuses[idx].update(
+                            {
+                                "status": "renegotiate",
+                                "iteration": None,
+                                "current_tool": None,
+                                "error": None,
+                                "error_code": None,
+                                "activity_count": None,
+                                "replan_request": None,
+                            }
+                        )
                         yield self._build_progress_chunk(
                             worker_statuses,
                             total_days,
                             f"再协商后重派第 {rd_task.day} 天...",
                         )
-                        worker_start_event_ids[(rd_task.day, 4)] = (
-                            await self._emit_worker_start_trace(
-                                task=rd_task,
-                                run_id=run_id,
-                                attempt=4,
-                            )
+                        worker_start_event_ids[
+                            (rd_task.day, 4)
+                        ] = await self._emit_worker_start_trace(
+                            task=rd_task,
+                            run_id=run_id,
+                            attempt=4,
                         )
                         rd_result = self._accept_worker_dayplan(
                             await run_day_worker(
@@ -1588,7 +1883,10 @@ class Phase3Orchestrator:
                                 trace_parent_event_id=worker_start_event_ids.get(
                                     (rd_task.day, 4)
                                 ),
-                            )
+                            ),
+                            candidate_store=candidate_store,
+                            run_id=run_id,
+                            attempt=4,
                         )
                         await self._emit_worker_result_trace(
                             task=rd_task,
@@ -1601,6 +1899,7 @@ class Phase3Orchestrator:
                         )
                         if rd_result.success:
                             successes.append(rd_result)
+                            redispatch_rollbacks.pop(rd_task.day, None)
                             worker_statuses[idx]["status"] = "done"
                             worker_statuses[idx]["current_tool"] = None
                             if rd_result.dayplan:
@@ -1624,6 +1923,40 @@ class Phase3Orchestrator:
                                 total_days,
                                 f"第 {rd_task.day} 天再协商重派失败",
                             )
+                        for ack in self._drain_steering(
+                            tasks=tasks,
+                            successes=successes,
+                            total_days=total_days,
+                            active_days={rd_task.day},
+                            terminal_message=(
+                                "本轮已进入骨架再协商收口，未能应用这条引导，"
+                                "请在下一轮重新发送"
+                            ),
+                        ):
+                            yield ack
+
+                    # C1：再协商重派失败（或重建任务缺失未重派）的天回滚
+                    for d in sorted(outcome.affected_days):
+                        rollback = redispatch_rollbacks.pop(d, None)
+                        if self._handle_redispatch_failure(
+                            candidate_store=candidate_store,
+                            run_id=run_id,
+                            rollback=rollback,
+                            successes=successes,
+                        ):
+                            idx = _find_worker_idx(d)
+                            worker_statuses[idx]["status"] = "done"
+                            worker_statuses[idx]["error"] = None
+                            worker_statuses[idx]["error_code"] = None
+                            if rollback.result is not None and rollback.result.dayplan:
+                                worker_statuses[idx]["activity_count"] = len(
+                                    rollback.result.dayplan.get("activities", [])
+                                )
+                            yield self._build_progress_chunk(
+                                worker_statuses,
+                                total_days,
+                                f"第 {d} 天再协商重派失败，已恢复重派前版本",
+                            )
 
                 # 用户可见摘要：自动改动 + 仍不可行的天
                 summary_lines: list[str] = []
@@ -1636,9 +1969,7 @@ class Phase3Orchestrator:
                         "以下天数无法自动改骨架，已保留其余天部分交付："
                     )
                     for r in outcome.unresolved:
-                        summary_lines.append(
-                            f"- Day {r.day} [{r.kind}]: {r.reason}"
-                        )
+                        summary_lines.append(f"- Day {r.day} [{r.kind}]: {r.reason}")
                     summary_lines.append(
                         "你可以让我针对这些天回退到 Phase 2 微调骨架。"
                     )
@@ -1656,7 +1987,9 @@ class Phase3Orchestrator:
 
             # 8. Sort and validate
             artifact_candidates = candidate_store.load_latest_candidates(
-                self.plan.session_id, run_id
+                self.plan.session_id,
+                run_id,
+                accepted_only=True,
             )
             dayplans = sorted(
                 (
@@ -1672,7 +2005,9 @@ class Phase3Orchestrator:
             )
             issues = self._global_validate(dayplans)
             for issue in issues:
-                logger.warning("Global validation [%s]: %s", issue.severity, issue.description)
+                logger.warning(
+                    "Global validation [%s]: %s", issue.severity, issue.description
+                )
             await self._emit_trace_event(
                 event_type="validation",
                 status="fail" if any(i.severity == "error" for i in issues) else "pass",
@@ -1685,18 +2020,20 @@ class Phase3Orchestrator:
                     "stage": "initial_global_validation",
                     "phase3_run_id": run_id,
                     "status": (
-                        "fail"
-                        if any(i.severity == "error" for i in issues)
-                        else "pass"
+                        "fail" if any(i.severity == "error" for i in issues) else "pass"
                     ),
                     "issue_count": len(issues),
                     "issue_counts_by_type": {
-                        issue_type: sum(1 for issue in issues if issue.issue_type == issue_type)
+                        issue_type: sum(
+                            1 for issue in issues if issue.issue_type == issue_type
+                        )
                         for issue_type in sorted({issue.issue_type for issue in issues})
                     },
                     "issues": [dict(issue.__dict__) for issue in issues],
                     "re_dispatch_hints": [
-                        issue.description for issue in issues if issue.severity == "error"
+                        issue.description
+                        for issue in issues
+                        if issue.severity == "error"
                     ],
                 },
             )
@@ -1705,6 +2042,8 @@ class Phase3Orchestrator:
             error_issues = [i for i in issues if i.severity == "error"]
             if error_issues:
                 task_by_day = {t.day: t for t in tasks}
+                # C1：8b 修复重派前记录旧 accepted 候选，失败时恢复
+                repair_prev_attempts: dict[int, int] = {}
 
                 def _affected_days(issue_list: list[GlobalValidationIssue]) -> set[int]:
                     days: set[int] = set()
@@ -1729,19 +2068,20 @@ class Phase3Orchestrator:
                 ) -> None:
                     idx = _find_worker_idx(rd_day)
                     if rd_result.success and rd_result.dayplan:
+                        repair_prev_attempts.pop(rd_day, None)
                         latest_by_day = {
                             c["day"]: c["dayplan"]
                             for c in candidate_store.load_latest_candidates(
-                                self.plan.session_id, run_id
+                                self.plan.session_id,
+                                run_id,
+                                accepted_only=True,
                             )
                             if c.get("dayplan")
                         }
                         replacement_dayplan = latest_by_day.get(
                             rd_day, rd_result.dayplan
                         )
-                        dayplans[:] = [
-                            dp for dp in dayplans if dp.get("day") != rd_day
-                        ]
+                        dayplans[:] = [dp for dp in dayplans if dp.get("day") != rd_day]
                         dayplans.append(replacement_dayplan)
                         dayplans.sort(key=lambda dp: dp.get("day", 0))
                         worker_statuses[idx]["status"] = "done"
@@ -1754,10 +2094,35 @@ class Phase3Orchestrator:
                     else:
                         worker_statuses[idx]["status"] = "failed"
                         worker_statuses[idx]["current_tool"] = None
-                        worker_statuses[idx]["error"] = _format_error(
-                            rd_result.error
-                        )
+                        worker_statuses[idx]["error"] = _format_error(rd_result.error)
                         worker_statuses[idx]["error_code"] = rd_result.error_code
+                        # C1：修复重派失败——交付仍保留旧 dayplan（in-memory），
+                        # 但黑板认领已被 _run_repair_worker 释放，磁盘最新可能是
+                        # 失败尝试写入的 rejected 候选。恢复两者，防止后续串行
+                        # 修复抢占该天 POI 或磁盘口径缺天。
+                        prev_attempt = repair_prev_attempts.pop(rd_day, None)
+                        if prev_attempt is not None:
+                            candidate_store.restore_candidate_as_latest(
+                                self.plan.session_id,
+                                run_id,
+                                rd_day,
+                                prev_attempt,
+                                reason="restored after repair redispatch failure",
+                            )
+                        old_dp = next(
+                            (dp for dp in dayplans if dp.get("day") == rd_day), None
+                        )
+                        if old_dp is not None:
+                            ok, reason = self._blackboard.try_accept_dayplan(
+                                rd_day, old_dp
+                            )
+                            if not ok:
+                                logger.warning(
+                                    "Day %d blackboard re-register after repair "
+                                    "failure rejected: %s",
+                                    rd_day,
+                                    reason,
+                                )
 
                 async def _run_repair_worker(
                     *,
@@ -1777,26 +2142,41 @@ class Phase3Orchestrator:
                                 error_code="MISSING_DAY_TASK",
                             ),
                         )
-                    rd_task.repair_hints = _repair_hints_for_day(
-                        repair_issues, rd_day
-                    )
+                    rd_task.repair_hints = _repair_hints_for_day(repair_issues, rd_day)
+                    self._apply_steer_hints_to_task(rd_task)
+                    self._refresh_task_blackboard_snapshot(rd_task)
                     idx = _find_worker_idx(rd_day)
-                    worker_statuses[idx].update({
-                        "status": "redispatch",
-                        "iteration": None,
-                        "current_tool": None,
-                        "error": None,
-                        "error_code": None,
-                        "activity_count": None,
-                    })
+                    worker_statuses[idx].update(
+                        {
+                            "status": "redispatch",
+                            "iteration": None,
+                            "current_tool": None,
+                            "error": None,
+                            "error_code": None,
+                            "activity_count": None,
+                        }
+                    )
                     try:
-                        worker_start_event_ids[(rd_day, 3)] = (
-                            await self._emit_worker_start_trace(
-                                task=rd_task,
-                                run_id=run_id,
-                                attempt=3,
-                            )
+                        worker_start_event_ids[
+                            (rd_day, 3)
+                        ] = await self._emit_worker_start_trace(
+                            task=rd_task,
+                            run_id=run_id,
+                            attempt=3,
                         )
+                        prev_payload = candidate_store.get_latest_candidate(
+                            self.plan.session_id, run_id, rd_day
+                        )
+                        if (
+                            prev_payload is not None
+                            and prev_payload.get("status") == "accepted"
+                        ):
+                            try:
+                                repair_prev_attempts[rd_day] = int(
+                                    prev_payload.get("attempt", 0)
+                                )
+                            except (TypeError, ValueError):
+                                pass
                         self._blackboard.release_day(rd_day)
                         rd_result = self._accept_worker_dayplan(
                             await run_day_worker(
@@ -1817,7 +2197,10 @@ class Phase3Orchestrator:
                                 trace_parent_event_id=worker_start_event_ids.get(
                                     (rd_day, 3)
                                 ),
-                            )
+                            ),
+                            candidate_store=candidate_store,
+                            run_id=run_id,
+                            attempt=3,
                         )
                     except Exception as exc:
                         logger.warning(
@@ -1859,14 +2242,16 @@ class Phase3Orchestrator:
                 if local_days:
                     for rd_day in local_days:
                         idx = _find_worker_idx(rd_day)
-                        worker_statuses[idx].update({
-                            "status": "redispatch",
-                            "iteration": None,
-                            "current_tool": None,
-                            "error": None,
-                            "error_code": None,
-                            "activity_count": None,
-                        })
+                        worker_statuses[idx].update(
+                            {
+                                "status": "redispatch",
+                                "iteration": None,
+                                "current_tool": None,
+                                "error": None,
+                                "error_code": None,
+                                "activity_count": None,
+                            }
+                        )
                     yield self._build_progress_chunk(
                         worker_statuses,
                         total_days,
@@ -1893,6 +2278,16 @@ class Phase3Orchestrator:
                         rd_day, rd_result = result
                         _apply_repair_result(rd_day=rd_day, rd_result=rd_result)
                         repaired_days.add(rd_day)
+                    for ack in self._drain_steering(
+                        tasks=tasks,
+                        successes=successes,
+                        total_days=total_days,
+                        active_days=set(local_days),
+                        terminal_message=(
+                            "本轮已进入最终校验修复，未能应用这条引导，请在下一轮重新发送"
+                        ),
+                    ):
+                        yield ack
                     yield self._build_progress_chunk(
                         worker_statuses,
                         total_days,
@@ -1915,16 +2310,19 @@ class Phase3Orchestrator:
 
                 for rd_day in serial_days:
                     idx = _find_worker_idx(rd_day)
-                    worker_statuses[idx].update({
-                        "status": "redispatch",
-                        "iteration": None,
-                        "current_tool": None,
-                        "error": None,
-                        "error_code": None,
-                        "activity_count": None,
-                    })
+                    worker_statuses[idx].update(
+                        {
+                            "status": "redispatch",
+                            "iteration": None,
+                            "current_tool": None,
+                            "error": None,
+                            "error_code": None,
+                            "activity_count": None,
+                        }
+                    )
                     yield self._build_progress_chunk(
-                        worker_statuses, total_days,
+                        worker_statuses,
+                        total_days,
                         f"校验发现跨天冲突，保守重排第 {rd_day} 天...",
                     )
                     _, rd_result = await _run_repair_worker(
@@ -1933,9 +2331,20 @@ class Phase3Orchestrator:
                     )
                     _apply_repair_result(rd_day=rd_day, rd_result=rd_result)
                     repaired_days.add(rd_day)
+                    for ack in self._drain_steering(
+                        tasks=tasks,
+                        successes=successes,
+                        total_days=total_days,
+                        active_days={rd_day},
+                        terminal_message=(
+                            "本轮已进入最终校验修复，未能应用这条引导，请在下一轮重新发送"
+                        ),
+                    ):
+                        yield ack
 
                     yield self._build_progress_chunk(
-                        worker_statuses, total_days,
+                        worker_statuses,
+                        total_days,
                         f"第 {rd_day} 天重新规划{'完成' if rd_result.success else '失败'}",
                     )
 
@@ -1944,7 +2353,9 @@ class Phase3Orchestrator:
                 unresolved = [i for i in issues if i.severity == "error"]
                 if unresolved:
                     for ui in unresolved:
-                        logger.warning("Unresolved after re-dispatch: %s", ui.description)
+                        logger.warning(
+                            "Unresolved after re-dispatch: %s", ui.description
+                        )
             await self._emit_trace_event(
                 event_type="validation",
                 status="fail" if any(i.severity == "error" for i in issues) else "pass",
@@ -1957,13 +2368,13 @@ class Phase3Orchestrator:
                     "stage": "final_global_validation",
                     "phase3_run_id": run_id,
                     "status": (
-                        "fail"
-                        if any(i.severity == "error" for i in issues)
-                        else "pass"
+                        "fail" if any(i.severity == "error" for i in issues) else "pass"
                     ),
                     "issue_count": len(issues),
                     "issue_counts_by_type": {
-                        issue_type: sum(1 for issue in issues if issue.issue_type == issue_type)
+                        issue_type: sum(
+                            1 for issue in issues if issue.issue_type == issue_type
+                        )
                         for issue_type in sorted({issue.issue_type for issue in issues})
                     },
                     "issues": [dict(issue.__dict__) for issue in issues],

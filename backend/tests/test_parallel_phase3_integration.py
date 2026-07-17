@@ -92,7 +92,9 @@ class MockLLM:
 
     async def chat(self, messages, **kwargs):
         # Extract day number from user message (day_suffix is in messages[1])
-        day_msg = messages[1].content if len(messages) > 1 else (messages[0].content or "")
+        day_msg = (
+            messages[1].content if len(messages) > 1 else (messages[0].content or "")
+        )
         day_num = 1
         for d in range(1, 20):
             if f"第 {d} 天" in day_msg:
@@ -159,7 +161,8 @@ async def test_parallel_happy_path():
     assert len(done_chunks) == 0
 
     progress_chunks = [
-        c for c in chunks
+        c
+        for c in chunks
         if c.type == ChunkType.AGENT_STATUS
         and c.agent_status.get("stage") == "parallel_progress"
     ]
@@ -170,13 +173,17 @@ async def test_parallel_happy_path():
     last_workers = progress_chunks[-1].agent_status["workers"]
     for w in last_workers:
         if w["status"] == "done":
-            assert w["activity_count"] is not None, f"day {w['day']} missing activity_count"
-            assert "theme" in w  # theme key must be present (value may be None if skeleton slice has no area/theme)
+            assert w["activity_count"] is not None, (
+                f"day {w['day']} missing activity_count"
+            )
+            assert (
+                "theme" in w
+            )  # theme key must be present (value may be None if skeleton slice has no area/theme)
 
 
 @pytest.mark.asyncio
 async def test_parallel_detects_poi_duplicate():
-    """Duplicate POI across days should be detected in global validation."""
+    """Duplicate POI is rejected before handoff instead of being delivered."""
     plan = _make_plan()
     llm = MockLLM(
         {
@@ -196,12 +203,16 @@ async def test_parallel_detects_poi_duplicate():
     async for chunk in orch.run():
         chunks.append(chunk)
 
-    # Plans still written to orch.final_dayplans (validation is advisory for now)
-    assert len(orch.final_dayplans) == 3
+    # The first accepted owner and the non-conflicting day remain deliverable;
+    # the blackboard-rejected duplicate never reaches final_dayplans.
+    assert len(orch.final_dayplans) == 2
+    assert (
+        sum(
+            1
+            for dayplan in orch.final_dayplans
+            for activity in dayplan.get("activities", [])
+            if activity.get("name") == "浅草寺"
+        )
+        == 1
+    )
     assert plan.daily_plans == []
-
-    # Check that summary mentions the duplicate issue specifically
-    text_chunks = [c for c in chunks if c.type == ChunkType.TEXT_DELTA]
-    summary = "".join(c.content or "" for c in text_chunks)
-    assert "浅草寺" in summary
-    assert "出现在多天" in summary  # confirms dedup logic, not just POI name

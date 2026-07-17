@@ -2,7 +2,7 @@
 import asyncio
 import json
 import pytest
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import patch
 import respx
 from httpx import AsyncClient, ASGITransport, Response
@@ -13,6 +13,11 @@ from main import _apply_message_fallbacks, create_app
 from phase.router import PhaseRouter
 from state.intake import parse_dates_value
 from state.models import Accommodation, DateRange, DayPlan, TravelPlanState
+
+
+def _future_date(days_ahead: int = 30) -> str:
+    """行程日期必须在未来，否则会被 past_date guardrail 拦截；禁止写死日期。"""
+    return (date.today() + timedelta(days=days_ahead)).isoformat()
 
 
 @pytest.fixture
@@ -222,13 +227,14 @@ telemetry:
 
     session = _get_sessions(app)[session_id]
     plan = session["plan"]
+    trip_date = _future_date()
     plan.phase = 3
     plan.destination = "京都"
-    plan.dates = DateRange(start="2026-07-01", end="2026-07-01")
+    plan.dates = DateRange(start=trip_date, end=trip_date)
     plan.selected_skeleton_id = "s1"
     plan.skeleton_plans = [{"id": "s1", "days": [{"day": 1}]}]
     plan.accommodation = Accommodation(area="河原町", hotel="A")
-    plan.daily_plans = [DayPlan(day=1, date="2026-07-01")]
+    plan.daily_plans = [DayPlan(day=1, date=trip_date)]
 
     agent = session["agent"]
     call_count = 0
@@ -245,7 +251,7 @@ telemetry:
                     arguments={
                         "mode": "replace_existing",
                         "day": 1,
-                        "date": "2026-07-01",
+                        "date": trip_date,
                         "activities": [
                             {
                                 "name": "清水寺",
@@ -632,13 +638,14 @@ telemetry:
 
     session = _get_sessions(app)[session_id]
     plan = session["plan"]
+    trip_date = _future_date()
     plan.phase = 3
     plan.destination = "京都"
-    plan.dates = DateRange(start="2026-07-01", end="2026-07-01")
+    plan.dates = DateRange(start=trip_date, end=trip_date)
     plan.selected_skeleton_id = "s1"
     plan.skeleton_plans = [{"id": "s1", "days": [{"day": 1}]}]
     plan.accommodation = Accommodation(area="河原町", hotel="A")
-    plan.daily_plans = [DayPlan(day=1, date="2026-07-01")]
+    plan.daily_plans = [DayPlan(day=1, date=trip_date)]
 
     agent = session["agent"]
     call_count = 0
@@ -655,7 +662,7 @@ telemetry:
                     arguments={
                         "mode": "replace_existing",
                         "day": 1,
-                        "date": "2026-07-01",
+                        "date": trip_date,
                         "activities": [
                             {
                                 "name": "清水寺",
@@ -939,10 +946,14 @@ telemetry:
 
     session = _get_sessions(app)[session_id]
     plan = session["plan"]
+    # 行程日期取远期未来：既通过 past_date guardrail，又超出精确预报窗口，
+    # 保证 check_weather 返回"仅供参考"的近似预报。
+    trip_start = _future_date(30)
+    trip_end = _future_date(32)
     plan.phase = 4
     plan.destination = "东京"
-    plan.dates = DateRange(start="2026-07-10", end="2026-07-12")
-    plan.daily_plans = [DayPlan(day=1, date="2026-07-10")]
+    plan.dates = DateRange(start=trip_start, end=trip_end)
+    plan.daily_plans = [DayPlan(day=1, date=trip_start)]
 
     call_count = 0
 
@@ -955,7 +966,7 @@ telemetry:
                 tool_call=ToolCall(
                     id="tc_weather_far",
                     name="check_weather",
-                    arguments={"city": "Tokyo", "date": "2026-07-10"},
+                    arguments={"city": "Tokyo", "date": trip_start},
                 ),
             )
             yield LLMChunk(type=ChunkType.DONE)
@@ -985,7 +996,8 @@ telemetry:
     weather_payload = {
         "list": [
             {
-                "dt_txt": "2026-06-01 12:00:00",
+                # 近期预报条目，与请求的远期出行日不匹配 → 仅作参考
+                "dt_txt": f"{_future_date(1)} 12:00:00",
                 "main": {"temp": 20.0, "temp_min": 18.0, "temp_max": 22.0},
                 "weather": [{"description": "moderate rain"}],
                 "wind": {"speed": 3.0},

@@ -247,7 +247,7 @@ export interface ParallelWorkerStatus {
 
 export interface AgentStatusEvent extends BaseSSEEvent {
   type: 'agent_status'
-  stage: 'thinking' | 'summarizing' | 'compacting' | 'planning' | 'parallel_progress'
+  stage: 'thinking' | 'summarizing' | 'compacting' | 'planning' | 'parallel_progress' | 'steering_ack'
   iteration?: number
   hint?: string | null
   total_days?: number

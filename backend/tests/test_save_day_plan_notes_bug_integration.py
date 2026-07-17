@@ -18,6 +18,7 @@ error propagation -> LLM retry -> success, verifying that:
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 
 import httpx
 import pytest
@@ -25,6 +26,12 @@ import pytest
 from agent.types import Role, ToolCall, ToolResult
 from llm.types import ChunkType, LLMChunk
 from state.models import DateRange, DayPlan, TravelPlanState
+
+
+def _trip_date(offset: int = 0) -> str:
+    """行程日期必须在未来，否则会被 past_date guardrail 拦截；禁止写死日期。"""
+    return (date.today() + timedelta(days=30 + offset)).isoformat()
+
 
 _SAMPLE_ACTIVITY = {
     "name": "新宿御苑",
@@ -40,16 +47,16 @@ def _make_phase3_plan(session_id: str = "test-tips-bug") -> TravelPlanState:
     plan = TravelPlanState(session_id=session_id)
     plan.phase = 3
     plan.destination = "东京"
-    plan.dates = DateRange(start="2026-07-10", end="2026-07-12")
+    plan.dates = DateRange(start=_trip_date(0), end=_trip_date(2))
     plan.daily_plans = [
         DayPlan.from_dict(
-            {"day": 1, "date": "2026-07-10", "activities": [_SAMPLE_ACTIVITY]}
+            {"day": 1, "date": _trip_date(0), "activities": [_SAMPLE_ACTIVITY]}
         ),
         DayPlan.from_dict(
-            {"day": 2, "date": "2026-07-11", "activities": [_SAMPLE_ACTIVITY]}
+            {"day": 2, "date": _trip_date(1), "activities": [_SAMPLE_ACTIVITY]}
         ),
         DayPlan.from_dict(
-            {"day": 3, "date": "2026-07-12", "activities": [_SAMPLE_ACTIVITY]}
+            {"day": 3, "date": _trip_date(2), "activities": [_SAMPLE_ACTIVITY]}
         ),
     ]
     return plan
@@ -145,7 +152,7 @@ async def test_save_day_plan_missing_activities_rejected_then_fixed(app, session
                         arguments={
                             "mode": "replace_existing",
                             "day": 1,
-                            "date": "2026-07-10",
+                            "date": _trip_date(0),
                             "tips": "到达日。预留充足休整时间：落地→酒店办理入住约1.5h",
                         },
                     ),
@@ -158,7 +165,7 @@ async def test_save_day_plan_missing_activities_rejected_then_fixed(app, session
                         arguments={
                             "mode": "replace_existing",
                             "day": 3,
-                            "date": "2026-07-12",
+                            "date": _trip_date(2),
                             "tips": "离开日。精简至4个核心活动，节奏轻松",
                         },
                     ),
@@ -190,7 +197,7 @@ async def test_save_day_plan_missing_activities_rejected_then_fixed(app, session
                     arguments={
                         "mode": "replace_existing",
                         "day": 1,
-                        "date": "2026-07-10",
+                        "date": _trip_date(0),
                         "tips": "到达日休整",
                         "activities": [
                             {

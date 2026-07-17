@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import httpx
 import pytest
 
 from agent.types import Message, Role, ToolCall
 from llm.types import ChunkType, LLMChunk
 from state.models import Accommodation, Budget, DateRange, DayPlan, TravelPlanState
+
+
+def _future_date(days_ahead: int = 30) -> str:
+    """行程日期必须在未来，否则会被 past_date guardrail 拦截；禁止写死日期。"""
+    return (date.today() + timedelta(days=days_ahead)).isoformat()
 
 
 def test_build_deliverable_consistency_errors_detects_plan_fact_conflicts():
@@ -157,9 +164,10 @@ async def test_plan_tool_injects_realtime_incremental_feedback(app, sessions):
 
         session = sessions[session_id]
         plan: TravelPlanState = session["plan"]
+        trip_start = _future_date()
         plan.phase = 3
         plan.destination = "东京"
-        plan.dates = DateRange(start="2026-07-01", end="2026-07-03")
+        plan.dates = DateRange(start=trip_start, end=_future_date(32))
         plan.budget = Budget(total=10_000)
         plan.accommodation = Accommodation(area="新宿", hotel="A")
 
@@ -177,7 +185,7 @@ async def test_plan_tool_injects_realtime_incremental_feedback(app, sessions):
                     arguments={
                         "mode": "create",
                         "day": 1,
-                        "date": "2026-07-01",
+                        "date": trip_start,
                         "activities": [
                             {
                                 "name": "浅草寺",
@@ -300,16 +308,17 @@ async def test_save_day_plan_replace_existing_shows_soft_judge_after_tool_result
 
         session = sessions[session_id]
         plan: TravelPlanState = session["plan"]
+        trip_date = _future_date()
         plan.phase = 3
         plan.destination = "惠州"
-        plan.dates = DateRange(start="2026-07-01", end="2026-07-01")
+        plan.dates = DateRange(start=trip_date, end=trip_date)
         plan.budget = Budget(total=3_000)
         plan.accommodation = Accommodation(area="双月湾", hotel="A")
         plan.daily_plans = [
             DayPlan.from_dict(
                 {
                     "day": 1,
-                    "date": "2026-07-01",
+                    "date": trip_date,
                     "activities": [
                         {
                             "name": "旧行程",
@@ -343,7 +352,7 @@ async def test_save_day_plan_replace_existing_shows_soft_judge_after_tool_result
                         arguments={
                             "mode": "replace_existing",
                             "day": 1,
-                            "date": "2026-07-01",
+                            "date": trip_date,
                             "activities": [
                                 {
                                     "name": "巽寮湾散步",

@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from agent.types import Message, Role
+from agent.steering import MAX_STEER_QUEUE_SIZE
 from llm.errors import LLMError
 from llm.types import ChunkType
 from tools.plan_tools import PLAN_WRITER_TOOL_NAMES
@@ -22,10 +22,14 @@ from api.orchestration.chat.events import (
     passthrough_chunk_event,
 )
 from api.orchestration.chat.finalization import finalize_agent_run
-from api.orchestration.chat.stream_runtime import resolve_run_timeout_seconds, run_timeout
-from api.orchestration.chat.stream_trace import (
-    emit_deliverable_draft_trace, finalize_stream_trace_and_persistence,
+from api.orchestration.chat.stream_runtime import (
+    apply_continuation_context,
+    resolve_run_timeout_seconds,
+    run_timeout,
 )
+from api.orchestration.chat.steering import clear_run_steering, close_run_steering
+from api.orchestration.chat.stream_trace import (emit_deliverable_draft_trace,
+    finalize_stream_trace_and_persistence)
 from api.orchestration.common.telemetry_helpers import (
     _plan_writer_updated_fields as plan_writer_updated_fields,
     _record_llm_usage_stats as record_llm_usage_stats,
@@ -71,8 +75,6 @@ async def run_agent_stream(
     user_message: str | None = None,
 ):
     """Shared agent streaming logic for chat and continue endpoints."""
-    from run import IterationProgress
-
     keepalive_queue: asyncio.Queue[str] = asyncio.Queue()
 
     async def _keepalive_loop():
@@ -89,7 +91,9 @@ async def run_agent_stream(
     keepalive_task = asyncio.create_task(_keepalive_loop())
     session["_soft_judge_repair_feedback_buckets"] = {}
     # D4：与 _cancel_event 同构，run 起建 / run 终清
-    session["_steer_queue"] = agent.steer_queue = asyncio.Queue()
+    session["_steer_queue"] = agent.steer_queue = asyncio.Queue(
+        maxsize=MAX_STEER_QUEUE_SIZE
+    )
 
     try:
         accum_text = ""  # 追踪本轮 LLM 输出的文本，供中断恢复使用
@@ -294,6 +298,9 @@ async def run_agent_stream(
             if exc.failure_phase == "cancelled":
                 run.status = "cancelled"
                 run.finished_at = time.time()
+                # 终结 ack 必须先于 done：客户端可能读到 done 即停止消费
+                for terminal_steer_event in close_run_steering(session, agent):
+                    yield terminal_steer_event
                 yield done_event(run)
             else:
                 run.status = "failed"
@@ -305,31 +312,9 @@ async def run_agent_stream(
                     exc.code.value,
                 )
 
-                progress = agent.progress
-                can_continue = progress in (
-                    IterationProgress.PARTIAL_TEXT,
-                    IterationProgress.TOOLS_READ_ONLY,
+                can_continue = apply_continuation_context(
+                    run, agent, messages, accum_text
                 )
-
-                if can_continue and accum_text.strip():
-                    # 把不完整的 assistant 消息追加到历史
-                    messages.append(
-                        Message(
-                            role=Role.ASSISTANT,
-                            content=accum_text,
-                            incomplete=True,
-                        )
-                    )
-                    run.continuation_context = {
-                        "type": progress.value,
-                        "partial_assistant_text": accum_text,
-                    }
-                    if progress == IterationProgress.TOOLS_READ_ONLY:
-                        run.continuation_context["completed_tool_count"] = sum(
-                            1 for m in messages if m.role == Role.TOOL
-                        )
-
-                run.can_continue = can_continue
 
                 yield event_json(
                     {
@@ -344,6 +329,11 @@ async def run_agent_stream(
                         "error": exc.raw_error,
                     }
                 )
+        except (asyncio.CancelledError, GeneratorExit):
+            # 取消/断连：此后无法再向客户端 yield 终结 ack（断连时对端也收不到），
+            # 跳过 close_run_steering；finally 的 clear_run_steering 会记录
+            # 被丢弃的引导而非静默吞掉。
+            raise
         except Exception as exc:
             is_retryable = is_retryable_stream_error(exc)
             run.status = "failed"
@@ -351,6 +341,9 @@ async def run_agent_stream(
             run.finished_at = time.time()
             logger.exception("Agent stream failed for session %s", plan.session_id)
             yield agent_stream_error_event(exc, retryable=is_retryable)
+
+        for terminal_steer_event in close_run_steering(session, agent):
+            yield terminal_steer_event
 
         async for event in maybe_apply_backtrack_fallback(
             deps=deps,
@@ -391,8 +384,6 @@ async def run_agent_stream(
         )
         keepalive_task.cancel()
         session.pop("_cancel_event", None)
-        session.pop("_steer_queue", None)
-        agent.steer_queue = None
-        # 当 run 可以继续时，保留 _current_run 以供 continue endpoint 使用
+        clear_run_steering(session, agent)
         if not run.can_continue:
             session.pop("_current_run", None)

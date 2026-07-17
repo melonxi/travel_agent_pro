@@ -364,8 +364,14 @@ def register_chat_routes(
         queue = session.get("_steer_queue")
         if queue is None:
             raise HTTPException(status_code=409, detail="No active run to steer")
-        queue.put_nowait(make_steer_envelope(text))
-        return {"status": "accepted"}
+        try:
+            queue.put_nowait(make_steer_envelope(text))
+        except asyncio.QueueFull as exc:
+            raise HTTPException(
+                status_code=429,
+                detail="Steering queue is full; retry after the current safe point",
+            ) from exc
+        return {"status": "queued"}
 
     @app.post("/api/chat/{session_id}/continue")
     async def continue_chat(session_id: str):

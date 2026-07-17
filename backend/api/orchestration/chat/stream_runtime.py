@@ -28,3 +28,31 @@ def resolve_run_timeout_seconds(config: object, phase: object) -> object:
         )
     return getattr(config, "run_timeout_seconds", None)
 
+
+def apply_continuation_context(run, agent, messages, accum_text: str) -> bool:
+    """LLM 出错后判定能否续跑，并把不完整的 assistant 输出挂到恢复上下文。"""
+    from run import IterationProgress
+
+    from agent.types import Message, Role
+
+    progress = agent.progress
+    can_continue = progress in (
+        IterationProgress.PARTIAL_TEXT,
+        IterationProgress.TOOLS_READ_ONLY,
+    )
+    if can_continue and accum_text.strip():
+        # 把不完整的 assistant 消息追加到历史
+        messages.append(
+            Message(role=Role.ASSISTANT, content=accum_text, incomplete=True)
+        )
+        run.continuation_context = {
+            "type": progress.value,
+            "partial_assistant_text": accum_text,
+        }
+        if progress == IterationProgress.TOOLS_READ_ONLY:
+            run.continuation_context["completed_tool_count"] = sum(
+                1 for m in messages if m.role == Role.TOOL
+            )
+    run.can_continue = can_continue
+    return can_continue
+

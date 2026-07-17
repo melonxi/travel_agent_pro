@@ -767,7 +767,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
         const msg =
           typeof event.message === 'string'
             ? event.message
-            : '已收到引导，将在下一步调整'
+            : '已收到引导，将在下一个安全点尝试调整'
         setSteerFeedback(msg)
         window.setTimeout(() => setSteerFeedback(null), 4000)
       } else if (event.stage === 'parallel_progress' && Array.isArray(event.workers)) {
@@ -876,7 +876,7 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
       setInput('')
       try {
         await steer(sessionId, userMsg)
-        setSteerFeedback('已发送引导，将在下一步调整')
+        setSteerFeedback('已排队引导，将在下一个安全点尝试调整')
         window.setTimeout(() => setSteerFeedback(null), 4000)
       } catch {
         setSteerFeedback('引导发送失败（可能没有进行中的 run）')

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from dataclasses import dataclass, field
 from math import ceil
 from typing import Any
@@ -18,6 +19,79 @@ logger = logging.getLogger(__name__)
 
 REPLAN_KINDS = frozenset({"INFEASIBLE_DAY", "OVERLOADED", "SUGGEST_MOVE"})
 MAX_RENEGOTIATE_PER_DAY = 1
+# 活动 end < start 且 end 落在此点之前（凌晨）视为跨午夜，而非时序矛盾。
+_CROSS_MIDNIGHT_END_MAX_MIN = 6 * 60
+
+_GENERIC_ACTIVITY_NAMES = frozenset(
+    {
+        "早餐",
+        "午餐",
+        "晚餐",
+        "用餐",
+        "自由活动",
+        "自由时间",
+        "休息",
+        "交通",
+        "乘车",
+        "返回酒店",
+        "酒店入住",
+        "办理入住",
+        "退房",
+    }
+)
+_POI_ACTION_PREFIX_RE = re.compile(
+    r"^(?:参观|游览|前往|探访|到访|打卡|漫步|逛逛|逛|抵达|体验)"
+)
+_POI_ACTION_SUFFIX_RE = re.compile(r"(?:参观|游览|打卡|体验)$")
+_POI_PUNCT_RE = re.compile(r"[\s\-—_·•,，。.!！?？:：;；'\"“”‘’（）()【】\[\]]+")
+
+
+def canonical_poi_key(value: Any) -> str | None:
+    """Build a stable-enough POI key from current string-only skeleton data."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or text in _GENERIC_ACTIVITY_NAMES:
+        return None
+    normalized = _POI_PUNCT_RE.sub("", text).lower()
+    normalized = _POI_ACTION_PREFIX_RE.sub("", normalized)
+    normalized = _POI_ACTION_SUFFIX_RE.sub("", normalized)
+    if not normalized or normalized in _GENERIC_ACTIVITY_NAMES:
+        return None
+    return normalized
+
+
+def _activity_poi_keys(activity: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return (canonical key, display label), preferring provider IDs/location."""
+    keys: list[tuple[str, str]] = []
+    for id_key in ("poi_id", "place_id"):
+        raw_id = activity.get(id_key)
+        if isinstance(raw_id, str) and raw_id.strip():
+            keys.append((f"id:{raw_id.strip()}", raw_id.strip()))
+    location = activity.get("location")
+    location_name = location.get("name") if isinstance(location, dict) else None
+    # activity.name is free-form copy (for example "博物馆参观"). Once a stable
+    # location label exists, registering that copy as another identity key can
+    # merge unrelated POIs which happen to share the same activity wording.
+    # "Stable" means the label yields a canonical key: a non-empty but generic
+    # location.name (自由活动/市区) must fall back to activity.name, or the real
+    # POI carried there escapes cross-day dedup entirely.
+    labels = (
+        [location_name]
+        if canonical_poi_key(location_name)
+        else [activity.get("name")]
+    )
+    for label in labels:
+        key = canonical_poi_key(label)
+        if key:
+            display = str(label).strip()
+            aliases = [key]
+            if display not in aliases and display not in _GENERIC_ACTIVITY_NAMES:
+                aliases.append(display)
+            for alias in aliases:
+                if all(existing_key != alias for existing_key, _ in keys):
+                    keys.append((alias, display))
+    return keys
 
 
 @dataclass(frozen=True)
@@ -43,13 +117,17 @@ class ReplanRequest:
         move_poi = args.get("move_poi")
         to_day = args.get("to_day")
         move_poi_s = (
-            str(move_poi).strip() if isinstance(move_poi, str) and move_poi.strip() else None
+            str(move_poi).strip()
+            if isinstance(move_poi, str) and move_poi.strip()
+            else None
         )
         to_day_i: int | None = None
         if isinstance(to_day, int) and to_day > 0:
             to_day_i = to_day
         elif isinstance(to_day, str) and to_day.strip().isdigit():
-            to_day_i = int(to_day.strip())
+            parsed = int(to_day.strip())
+            if parsed > 0:
+                to_day_i = parsed
         if kind == "SUGGEST_MOVE" and (not move_poi_s or to_day_i is None):
             # 缺字段时降级，避免 orchestrator 误改骨架
             kind = "INFEASIBLE_DAY"
@@ -94,12 +172,13 @@ class RenegotiationOutcome:
 class Phase3Blackboard:
     """Orchestrator 单写、Worker 只读的共享黑板。
 
-    - poi_registry: POI → 认领天（编译期 locked + 运行时已接受候选）
+    - poi_registry: canonical POI key → 认领天（编译期 locked + 运行时已接受候选）
     - budget_ledger: 天 → 已提交活动成本
     - day_boundaries: 天 → (首活动开始, 末活动结束)
     """
 
     poi_registry: dict[str, int] = field(default_factory=dict)
+    poi_labels: dict[str, str] = field(default_factory=dict)
     budget_ledger: dict[int, float] = field(default_factory=dict)
     day_boundaries: dict[int, tuple[str | None, str | None]] = field(
         default_factory=dict
@@ -110,11 +189,20 @@ class Phase3Blackboard:
     def seed_from_locked(self, locked_pois_by_day: dict[int, list[str]]) -> None:
         for day, pois in locked_pois_by_day.items():
             for poi in pois:
-                if poi and poi not in self.poi_registry:
-                    self.poi_registry[poi] = day
+                key = canonical_poi_key(poi)
+                if key:
+                    aliases = {key, poi.strip()}
+                    for alias in aliases:
+                        if alias and alias not in self.poi_registry:
+                            self.poi_registry[alias] = day
+                            self.poi_labels[alias] = poi
 
     def snapshot_forbidden_for_day(self, day: int) -> list[str]:
-        return [poi for poi, owner in self.poi_registry.items() if owner != day]
+        return [
+            self.poi_labels.get(key, key)
+            for key, owner in self.poi_registry.items()
+            if owner != day
+        ]
 
     def try_accept_dayplan(
         self, day: int, dayplan: dict[str, Any]
@@ -124,34 +212,51 @@ class Phase3Blackboard:
         if not isinstance(activities, list):
             activities = []
 
-        names: list[str] = []
+        poi_keys: list[tuple[str, str]] = []
         day_cost = 0.0
         first_start: str | None = None
         last_end: str | None = None
+        first_start_min: int | None = None
+        last_end_min: int | None = None
         for act in activities:
             if not isinstance(act, dict):
                 continue
-            name = act.get("name")
-            if isinstance(name, str) and name.strip():
-                names.append(name.strip())
+            for key_and_label in _activity_poi_keys(act):
+                if key_and_label not in poi_keys:
+                    poi_keys.append(key_and_label)
             try:
                 day_cost += float(act.get("cost") or 0)
             except (TypeError, ValueError):
                 pass
             st = act.get("start_time")
             et = act.get("end_time")
-            if isinstance(st, str) and st and first_start is None:
+            st_min = _time_to_min(st) if isinstance(st, str) and st else None
+            et_min = _time_to_min(et) if isinstance(et, str) and et else None
+            if st_min is not None and (
+                first_start_min is None or st_min < first_start_min
+            ):
+                first_start_min = st_min
                 first_start = st
-            if isinstance(et, str) and et:
-                last_end = et
+            if et_min is not None:
+                adjusted = et_min
+                if (
+                    st_min is not None
+                    and et_min < st_min
+                    and et_min <= _CROSS_MIDNIGHT_END_MAX_MIN
+                ):
+                    # 结束落在凌晨且早于开始 → 跨午夜活动，按次日计
+                    adjusted = et_min + 24 * 60
+                if last_end_min is None or adjusted > last_end_min:
+                    last_end_min = adjusted
+                    last_end = et
 
         # POI 认领：已被其他天登记的 POI 拒绝
-        for name in names:
-            owner = self.poi_registry.get(name)
+        for key, label in poi_keys:
+            owner = self.poi_registry.get(key)
             if owner is not None and owner != day:
                 return (
                     False,
-                    f"POI '{name}' 已被第 {owner} 天认领，请换其他景点",
+                    f"POI '{label}' 已被第 {owner} 天认领，请换其他景点",
                 )
 
         # 预算台账：跨天累计 + 已锁定交通住宿
@@ -166,7 +271,17 @@ class Phase3Blackboard:
                     f"/ 预算 ¥{self.total_budget:.0f}），请减少本日活动费用",
                 )
 
-        # 边界锚点：与相邻天不冲突（简单：本天开始不得早于前一天结束）
+        # 边界锚点：取真实最早开始/最晚结束（activities 可能乱序），仅当能确定
+        # 同日时序矛盾才拒；跨午夜结束已在上面按次日折算，不误拒夜间行程。
+        if (
+            first_start_min is not None
+            and last_end_min is not None
+            and first_start_min > last_end_min
+        ):
+            return (
+                False,
+                f"本日边界非法：首活动 {first_start} 晚于末活动 {last_end}",
+            )
         prev = self.day_boundaries.get(day - 1)
         if prev and prev[1] and first_start:
             if _time_cmp(first_start, prev[1]) < 0:
@@ -175,8 +290,9 @@ class Phase3Blackboard:
                 pass
 
         # 接受：登记
-        for name in names:
-            self.poi_registry[name] = day
+        for key, label in poi_keys:
+            self.poi_registry[key] = day
+            self.poi_labels[key] = label
         self.budget_ledger[day] = day_cost
         self.day_boundaries[day] = (first_start, last_end)
         return True, None
@@ -186,20 +302,23 @@ class Phase3Blackboard:
         to_drop = [poi for poi, owner in self.poi_registry.items() if owner == day]
         for poi in to_drop:
             del self.poi_registry[poi]
+            self.poi_labels.pop(poi, None)
         self.budget_ledger.pop(day, None)
         self.day_boundaries.pop(day, None)
 
 
+def _time_to_min(t: str) -> int | None:
+    """解析 HH:MM 为分钟；不可解析时返回 None。"""
+    try:
+        parts = t.strip()[:5].split(":")
+        return int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, IndexError):
+        return None
+
+
 def _time_cmp(a: str, b: str) -> int:
     """粗略比较 HH:MM；不可解析时返回 0。"""
-    def to_min(t: str) -> int | None:
-        try:
-            parts = t.strip()[:5].split(":")
-            return int(parts[0]) * 60 + int(parts[1])
-        except (ValueError, IndexError):
-            return None
-
-    ma, mb = to_min(a), to_min(b)
+    ma, mb = _time_to_min(a), _time_to_min(b)
     if ma is None or mb is None:
         return 0
     return (ma > mb) - (ma < mb)
@@ -227,6 +346,8 @@ def _set_list_field(day_entry: dict[str, Any], key: str, values: list[str]) -> N
 def _capacity_left(day_entry: dict[str, Any], pace: str) -> int:
     max_core = max_core_activities_for_pace(pace)
     locked = len(_list_field(day_entry, "locked_pois"))
+    # candidate_pois is an alternative pool. Workers select only as many as the
+    # remaining activity slots permit, so the full pool is not committed load.
     return max(0, max_core - locked)
 
 
@@ -251,8 +372,10 @@ def renegotiate_skeleton(
         skeleton_copy["days"] = []
 
     outcome = RenegotiationOutcome(skeleton_copy=skeleton_copy)
-    # MOVE 至少涉及 2 天；3 天行程时 int(0.5*3)=1 会截断目标天，改用 ceil。
+    # MOVE 是原子操作，source/target 必须成对重派；两日行程至少允许 2 天。
     max_affected = max(1, ceil(total_days * max_affected_fraction))
+    if any(req.kind == "SUGGEST_MOVE" for req in requests) and total_days >= 2:
+        max_affected = max(max_affected, 2)
 
     for req in requests:
         if renegotiate_count.get(req.day, 0) >= MAX_RENEGOTIATE_PER_DAY:
@@ -271,6 +394,13 @@ def renegotiate_skeleton(
             continue
 
         if req.kind == "OVERLOADED":
+            proposed_days = outcome.affected_days | {req.day}
+            if len(proposed_days) > max_affected:
+                outcome.unresolved.append(req)
+                outcome.messages.append(
+                    f"第 {req.day} 天 OVERLOADED 会使重派范围超过上限，降级部分交付"
+                )
+                continue
             day_entry = _day_entry(skeleton_copy, req.day)
             if day_entry is None:
                 outcome.unresolved.append(req)
@@ -287,9 +417,7 @@ def renegotiate_skeleton(
                 outcome.amendments.append(
                     SkeletonAmendment(
                         kind="OVERLOADED",
-                        description=(
-                            f"第 {req.day} 天减载：移除超限候选 {removed}"
-                        ),
+                        description=(f"第 {req.day} 天减载：移除超限候选 {removed}"),
                         source_day=req.day,
                         poi=removed[0] if removed else None,
                     )
@@ -308,11 +436,24 @@ def renegotiate_skeleton(
             continue
 
         if req.kind == "SUGGEST_MOVE":
-            assert req.move_poi and req.to_day
+            if not req.move_poi or req.to_day is None:
+                outcome.unresolved.append(req)
+                outcome.messages.append(
+                    f"第 {req.day} 天 SUGGEST_MOVE 字段不完整，拒绝自动改骨架"
+                )
+                continue
             if req.to_day == req.day or req.to_day < 1 or req.to_day > total_days:
                 outcome.unresolved.append(req)
                 outcome.messages.append(
                     f"第 {req.day} 天 SUGGEST_MOVE 目标天非法 to_day={req.to_day}"
+                )
+                continue
+            proposed_days = outcome.affected_days | {req.day, req.to_day}
+            if len(proposed_days) > max_affected:
+                outcome.unresolved.append(req)
+                outcome.messages.append(
+                    f"MOVE {req.day}→{req.to_day} 会使重派范围超过上限，"
+                    "为避免拆散成对天，整条 MOVE 降级部分交付"
                 )
                 continue
             if renegotiate_count.get(req.to_day, 0) >= MAX_RENEGOTIATE_PER_DAY:
@@ -333,16 +474,12 @@ def renegotiate_skeleton(
             poi = req.move_poi
             if poi not in src_locked and poi not in src_cand:
                 outcome.unresolved.append(req)
-                outcome.messages.append(
-                    f"第 {req.day} 天找不到 POI '{poi}'，无法 MOVE"
-                )
+                outcome.messages.append(f"第 {req.day} 天找不到 POI '{poi}'，无法 MOVE")
                 continue
 
             if _capacity_left(dst, pace) <= 0:
                 outcome.unresolved.append(req)
-                outcome.messages.append(
-                    f"第 {req.to_day} 天已满载，拒绝接收 '{poi}'"
-                )
+                outcome.messages.append(f"第 {req.to_day} 天已满载，拒绝接收 '{poi}'")
                 continue
 
             was_locked = poi in src_locked
@@ -370,9 +507,7 @@ def renegotiate_skeleton(
             outcome.amendments.append(
                 SkeletonAmendment(
                     kind="SUGGEST_MOVE",
-                    description=(
-                        f"将 '{poi}' 从第 {req.day} 天移到第 {req.to_day} 天"
-                    ),
+                    description=(f"将 '{poi}' 从第 {req.day} 天移到第 {req.to_day} 天"),
                     source_day=req.day,
                     target_day=req.to_day,
                     poi=poi,
@@ -389,15 +524,5 @@ def renegotiate_skeleton(
             continue
 
         outcome.unresolved.append(req)
-
-    # 受影响天数量熔断：过多则只保留前 max_affected，其余当 unresolved 提示
-    if len(outcome.affected_days) > max_affected:
-        kept = set(sorted(outcome.affected_days)[:max_affected])
-        dropped = outcome.affected_days - kept
-        outcome.affected_days = kept
-        outcome.messages.append(
-            f"受影响天过多，仅重派 {sorted(kept)}；"
-            f"其余 {sorted(dropped)} 降级部分交付"
-        )
 
     return outcome
