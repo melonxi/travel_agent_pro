@@ -57,7 +57,12 @@ data/
 # Test results
 test-results/
 scripts/failure-analysis/results/
-screenshots/
+
+# Screenshots: runtime/debug captures stay local; whitelist only long-lived docs assets
+screenshots/*
+!screenshots/demos/
+screenshots/demos/*
+!screenshots/demos/phase1-recommendations.png
 
 # Claude Code
 .claude/

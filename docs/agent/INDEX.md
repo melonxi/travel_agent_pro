@@ -37,6 +37,7 @@
 - `deep/phase-flow.md`：Phase 1/2/3/4 细节、阶段推进、回退。
 - `deep/phase3-parallel.md`：Phase 3 Orchestrator-Workers 并行路径。
 - `deep/memory-recall.md`：Stage 0-4 recall / reranker / extraction 细节。
+- `deep/memory-embedding-sidecar.md`：Stage 3 语义召回的向量 sidecar——启用配置、文件布局、运维兜底、telemetry 恒等式。
 - `deep/tool-state-writes.md`：17 个状态写工具和写后处理。
 - `deep/sse-events.md`：前端消费的 SSE 事件协议。
 - `deep/sqlite-schema.md`：SQLite 表与消息历史语义。

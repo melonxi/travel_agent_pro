@@ -50,5 +50,6 @@ Stage 0 rule short-circuit
 ## 深入阅读
 
 - 召回/reranker 细节：`../deep/memory-recall.md`
+- Stage 3 embedding 向量 sidecar：`../deep/memory-embedding-sidecar.md`
 - 持久化位置：`persistence.md`
 - Trace 可见性：`observability.md`、`../deep/trace-flight-recorder.md`

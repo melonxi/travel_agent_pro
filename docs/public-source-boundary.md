@@ -49,6 +49,7 @@
 - `.env`、`.env.local`
 - `config.yaml`、`*.local.yaml`
 - `data/`、运行时截图、测试结果目录等
+- 例外：README / 文档长期引用的截图，先在 `.gitignore` 加白名单再提交（当前仅 `screenshots/demos/phase1-recommendations.png`）
 
 模板用 `config.example.yaml`；文档里只写占位符，不写真实 key。
 
@@ -116,3 +117,4 @@ git diff --cached | rg -i 'api[_-]?key|sk-|password|token=' && echo '可疑密�
 | 日期 | 说明 |
 |------|------|
 | 2026-07-17 | 确立边界：本地 main 为权威；私人 docs 从跟踪与历史剥离；force-with-lease 对齐 `origin/main` |
+| 2026-07-17 | README 重写为证据导向入口；`screenshots/demos/phase1-recommendations.png` 加白名单作为 README 头图 |
