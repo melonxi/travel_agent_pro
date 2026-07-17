@@ -506,3 +506,51 @@
   border-radius: 4px;
   margin-top: 8px;
 }
+
+/* ── craft-paper quiet trace ──────────────────────── */
+html[data-shell="craft-paper"] .trace-summary-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+html[data-shell="craft-paper"] .trace-phase-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: none;
+}
+html[data-shell="craft-paper"] .trace-phase-group:hover {
+  border-color: var(--border);
+}
+html[data-shell="craft-paper"] .trace-phase-header {
+  background: var(--bg-main);
+}
+html[data-shell="craft-paper"] .trace-phase-header:hover {
+  background: var(--bg-main);
+}
+html[data-shell="craft-paper"] .phase-badge,
+html[data-shell="craft-paper"] .trace-phase-group.phase-1 .phase-badge,
+html[data-shell="craft-paper"] .trace-phase-group.phase-2 .phase-badge,
+html[data-shell="craft-paper"] .trace-phase-group.phase-3 .phase-badge,
+html[data-shell="craft-paper"] .trace-phase-group.phase-4 .phase-badge {
+  background: var(--accent-ink);
+  color: var(--bg-main);
+}
+html[data-shell="craft-paper"] .trace-event-row.significance-high {
+  border-left-color: var(--accent);
+}
+html[data-shell="craft-paper"] .event-state-badge {
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+html[data-shell="craft-paper"] .event-cost {
+  color: var(--text-muted);
+}
+html[data-shell="craft-paper"] .trace-compression-info,
+html[data-shell="craft-paper"] .trace-memory-hits {
+  color: var(--text-secondary);
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+}

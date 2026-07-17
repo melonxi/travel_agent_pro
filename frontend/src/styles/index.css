@@ -3144,3 +3144,65 @@ html[data-shell="craft-paper"] .timeline-empty {
   border-radius: var(--radius-md);
   box-shadow: none;
 }
+
+/* ── craft-paper quiet workbench ──────────────────── */
+html[data-shell="craft-paper"] .phase2-workbench {
+  gap: 12px;
+}
+html[data-shell="craft-paper"] .p2-stepchip {
+  min-height: 40px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+html[data-shell="craft-paper"] .p2-stepchip.active {
+  border-color: var(--accent-ink);
+  box-shadow: none;
+  color: var(--text-primary);
+  background: var(--bg-main);
+}
+html[data-shell="craft-paper"] .p2-stepchip.active .p2-stepdot {
+  background: var(--accent-ink);
+  color: var(--bg-main);
+}
+html[data-shell="craft-paper"] .p2-stepchip.done .p2-stepdot {
+  background: var(--accent);
+  color: var(--bg-main);
+}
+html[data-shell="craft-paper"] .p2-card {
+  border-radius: var(--radius-md);
+  padding: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+html[data-shell="craft-paper"] .p2-cardhead span {
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  font-style: normal;
+  font-weight: 600;
+}
+html[data-shell="craft-paper"] .p2-cardhead strong {
+  color: var(--text-muted);
+  font-style: normal;
+}
+html[data-shell="craft-paper"] .p2-kv,
+html[data-shell="craft-paper"] .p2-lockitem,
+html[data-shell="craft-paper"] .p2-item {
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+html[data-shell="craft-paper"] .p2-skeleton.selected {
+  border-color: var(--accent);
+  box-shadow: none;
+}
+html[data-shell="craft-paper"] .p2-tag {
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}

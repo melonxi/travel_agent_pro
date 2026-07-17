@@ -351,3 +351,27 @@
   color: var(--text-muted);
   font-size: 0.8rem;
 }
+
+/* ── craft-paper quiet memory trace ───────────────── */
+html[data-shell="craft-paper"] .mt-summary,
+html[data-shell="craft-paper"] .mt-hit,
+html[data-shell="craft-paper"] .mt-extract {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+html[data-shell="craft-paper"] .mt-summary-decision.is-hit {
+  background: rgba(61, 143, 122, 0.12);
+  color: var(--accent);
+}
+html[data-shell="craft-paper"] .mt-hit-kind.kind-working {
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+html[data-shell="craft-paper"] .mt-section-head {
+  border-bottom-color: var(--border);
+  color: var(--text-muted);
+  font-style: normal;
+}

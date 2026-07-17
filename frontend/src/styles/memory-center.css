@@ -579,3 +579,37 @@
   border-radius: 10px;
   padding: 0 5px;
 }
+
+/* ── craft-paper quiet memory center ──────────────── */
+html[data-shell="craft-paper"] .memory-drawer {
+  background: var(--bg-main);
+  border-left: 1px solid var(--border);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+html[data-shell="craft-paper"] .memory-header h2 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-style: normal;
+}
+html[data-shell="craft-paper"] .memory-tab.is-active {
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+html[data-shell="craft-paper"] .memory-tab.is-active .memory-tab-count {
+  background: var(--bg-main);
+  color: var(--text-secondary);
+}
+html[data-shell="craft-paper"] .memory-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+html[data-shell="craft-paper"] .memory-card:hover {
+  border-color: var(--border);
+}
+html[data-shell="craft-paper"] .memory-card.is-pending {
+  border-left: 2px solid var(--accent);
+}
