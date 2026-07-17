@@ -1,3 +1,5 @@
+English | [简体中文](README.zh-CN.md)
+
 # Travel Agent Pro — Reliable Long-Horizon Planning Agent
 
 A travel-planning agent whose real subject is the **agent runtime**: bounded autonomy,
