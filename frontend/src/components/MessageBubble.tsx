@@ -112,8 +112,8 @@ export default function MessageBubble({
     const message = `已进入${phaseLabel}${stepLabel ? ` · ${stepLabel}` : ''}`
 
     return (
-      <div className="message system-phase-transition">
-        <div className="phase-transition-card">
+      <div className="message system-phase-transition message--block">
+        <div className="phase-transition-card doc-ref-block">
           <div className="phase-transition-header">
             <span className="phase-transition-marker" aria-hidden="true" />
             <span className="phase-transition-title">阶段推进</span>
@@ -126,8 +126,8 @@ export default function MessageBubble({
 
   if (role === 'system' && stateChanges && stateChanges.length > 0) {
     return (
-      <div className="message system-state-update">
-        <div className="state-update-card">
+      <div className="message system-state-update message--block">
+        <div className="state-update-card doc-ref-block">
           <div className="state-update-header">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 8a6 6 0 1 1-2-4.5" />
@@ -151,8 +151,8 @@ export default function MessageBubble({
 
   if (role === 'system' && compressionInfo) {
     return (
-      <div className="message system-compression">
-        <div className="compression-card">
+      <div className="message system-compression message--block">
+        <div className="compression-card doc-ref-block">
           <div className="compression-header">
             <span className="compression-icon">
               <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -199,8 +199,8 @@ export default function MessageBubble({
     const hasDetails = internalTask.result !== undefined || Boolean(internalTask.error)
 
     return (
-      <div className={`message system-internal-task ${internalTask.status}`}>
-        <div className="internal-task-card">
+      <div className={`message system-internal-task message--block ${internalTask.status}`}>
+        <div className="internal-task-card doc-ref-block">
           <div className="internal-task-header">
             <div className="internal-task-title-group">
               <span className="internal-task-pulse" aria-hidden="true" />
@@ -258,8 +258,8 @@ export default function MessageBubble({
       : null
 
     return (
-      <div className={`message tool ${toolStatus ?? 'pending'}`}>
-        <div className="tool-card">
+      <div className={`message tool message--block ${toolStatus ?? 'pending'}`}>
+        <div className="tool-card doc-ref-block">
           <div className="tool-card-header">
             <div className="tool-card-meta">
               <span className="tool-badge">{toolName}</span>
@@ -307,9 +307,13 @@ export default function MessageBubble({
       </div>
     )
   }
+
+  const roleLabel = role === 'user' ? 'You' : role === 'assistant' ? '旅行者' : role
+
   return (
-    <div className={`message ${role}`}>
-      <div className="bubble">
+    <div className={`message ${role} message--doc`}>
+      <div className="doc-role">{roleLabel}</div>
+      <div className="bubble doc-body">
         {role === 'assistant' ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
         ) : (

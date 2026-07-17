@@ -2929,3 +2929,62 @@ html[data-shell="craft-paper"] .session-item-meta {
 html[data-shell="craft-paper"] .sidebar-list {
   padding: 6px 8px;
 }
+
+/* ── craft-paper document stream messages ─────────── */
+html[data-shell="craft-paper"] .messages {
+  align-items: center;
+  padding: 28px 24px 40px;
+  gap: 20px;
+}
+html[data-shell="craft-paper"] .messages > .message {
+  width: 100%;
+  max-width: 600px;
+}
+html[data-shell="craft-paper"] .message.user,
+html[data-shell="craft-paper"] .message.assistant {
+  align-items: stretch;
+}
+html[data-shell="craft-paper"] .message--doc .doc-role {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+html[data-shell="craft-paper"] .message--doc .bubble,
+html[data-shell="craft-paper"] .message--doc .doc-body {
+  max-width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  padding: 0;
+  color: var(--text-primary);
+  line-height: 1.75;
+  font-size: 0.92rem;
+}
+html[data-shell="craft-paper"] .message.user.message--doc .bubble {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--text-primary);
+}
+html[data-shell="craft-paper"] .message.assistant.message--doc .bubble {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+html[data-shell="craft-paper"] .message--block .doc-ref-block,
+html[data-shell="craft-paper"] .doc-ref-block {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+html[data-shell="craft-paper"] .message.tool .tool-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
