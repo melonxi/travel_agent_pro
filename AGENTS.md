@@ -14,3 +14,9 @@
 - 所有 Playwright / 调试 / 文档用截图统一存放在项目根目录的 `screenshots/` 下，禁止散落在项目根目录或其他位置。
 - 调用 `mcp__playwright__browser_take_screenshot` 等工具时必须显式指定 `filename` 为 `screenshots/<描述性文件名>.png`。
 - 临时验证用截图用完即删；需要长期保留的截图（用于文档、PR、issue）才提交到 git。
+
+## 公开源码边界
+
+- 公开仓库以本地 `main` 为权威；不要为「少推一些文件」另造远端无关历史。
+- 密钥与本机配置（`.env`、`config.yaml` 等）永不入库；私人材料（学习笔记、面试资料、简历 bullet 等）只留本地，靠 `.gitignore` 排除。
+- 完整约定见 `docs/public-source-boundary.md`；增删「本地-only」路径时同步改该文档与 `.gitignore`。
