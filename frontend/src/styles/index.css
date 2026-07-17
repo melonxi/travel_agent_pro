@@ -3054,3 +3054,93 @@ html[data-shell="craft-paper"] .thinking-bubble-dot {
   opacity: 0.55;
   animation: thinkingDotPulse 1.6s ease-in-out infinite;
 }
+
+/* ── craft-paper inspector tabs + plan cards ──────── */
+html[data-shell="craft-paper"] .right-panel-tabs {
+  gap: 4px;
+  padding: 10px 12px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-inspector);
+}
+html[data-shell="craft-paper"] .right-tab {
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+html[data-shell="craft-paper"] .right-tab:hover {
+  color: var(--text-primary);
+  background: transparent;
+}
+html[data-shell="craft-paper"] .right-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-ink);
+  font-weight: 600;
+}
+html[data-shell="craft-paper"] .destination-banner {
+  text-align: left;
+  padding: 16px 16px 14px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+html[data-shell="craft-paper"] .destination-banner::before {
+  display: none;
+}
+html[data-shell="craft-paper"] .dest-label {
+  letter-spacing: 0.08em;
+  font-size: 0.62rem;
+  margin-bottom: 6px;
+}
+html[data-shell="craft-paper"] .dest-name {
+  font-family: var(--font-body);
+  font-size: 1.15rem;
+  font-weight: 600;
+  font-style: normal;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+html[data-shell="craft-paper"] .dest-dates {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+html[data-shell="craft-paper"] .dest-meta {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+html[data-shell="craft-paper"] .dest-chip {
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+html[data-shell="craft-paper"] .sidebar-section {
+  padding: 14px 14px 16px;
+  border-bottom: 1px solid var(--border);
+  animation: none;
+}
+html[data-shell="craft-paper"] .section-title {
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-style: normal;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+html[data-shell="craft-paper"] .section-title::after {
+  background: linear-gradient(to right, var(--border), transparent);
+}
+html[data-shell="craft-paper"] .p2-card,
+html[data-shell="craft-paper"] .budget-card,
+html[data-shell="craft-paper"] .map-empty,
+html[data-shell="craft-paper"] .timeline-empty {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
