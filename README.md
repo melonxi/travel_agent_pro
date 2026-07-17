@@ -140,25 +140,26 @@ planning) → **Cost & latency tracking** per session. Details:
 Prerequisites: Python ≥ 3.12, [uv](https://docs.astral.sh/uv/) (or pip), Node ≥ 18.
 An OpenAI/Anthropic key is needed **only** for live runs — tests need no keys.
 
-### Backend
+### Configure and run
 
 ```bash
+# From the repository root:
+cp .env.example .env
+cp config.example.yaml config.yaml  # optional non-secret overrides
+
+# Edit .env and fill exactly one live provider key.
+# Tests and scripted demos do not require provider keys.
+
 cd backend
 uv sync --all-extras --frozen
 # fallback without uv:
 # python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-
-# For live runs, create .env with your provider:
-cat > .env << 'EOF'
-DEFAULT_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o
-# Or: DEFAULT_PROVIDER=anthropic / ANTHROPIC_API_KEY / ANTHROPIC_MODEL
-EOF
-
-# Optional non-secret overrides: copy config.example.yaml → ../config.yaml
 uv run uvicorn main:app --reload --port 8000
 ```
+
+`.env` and `config.yaml` belong in the **repository root**, not `backend/`. Environment
+variables override the main provider/model in YAML; `config.yaml` controls non-secret
+runtime settings and per-phase LLM overrides. Both local files are git-ignored.
 
 ### Frontend
 
@@ -227,13 +228,20 @@ and CI release gates remain future work. Details:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DEFAULT_PROVIDER` | Yes (live runs) | `openai` or `anthropic` |
+| `DEFAULT_PROVIDER` | No | `openai` (default) or `anthropic` |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | For the chosen provider | API key |
 | `OPENAI_MODEL` / `ANTHROPIC_MODEL` | No | Model override |
-| `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` | No | Custom endpoint |
-| `OPENWEATHER_API_KEY` | No | Weather / feasibility tools |
+| `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` | No | SDK-compatible custom endpoint |
+| `GOOGLE_MAPS_API_KEY` | No | POI details, routes, accommodation and availability tools |
+| `OPENWEATHER_API_KEY` | No | Weather and feasibility tools |
 | `TAVILY_API_KEY` | No | Web-search fallback |
+| `AMADEUS_API_KEY` / `AMADEUS_API_SECRET` | No | Amadeus flight-search branch |
+| `FLYAI_API_KEY` | No | FlyAI-backed travel tools |
+| `XHS_CLI_BIN` / `XHS_CLI_TIMEOUT` | No | Xiaohongshu CLI executable and timeout overrides |
 | `OTEL_SDK_DISABLED` | No | `true` disables tracing (used by CI) |
+
+Start from [`.env.example`](.env.example). Keep secrets out of `config.yaml`; its
+`${VARIABLE}` entries resolve values from `.env` or the process environment.
 
 ## Project structure
 

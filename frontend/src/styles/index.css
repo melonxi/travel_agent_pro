@@ -2824,17 +2824,26 @@ html[data-shell="craft-paper"] .phase-node {
   border: 1px solid var(--border);
 }
 html[data-shell="craft-paper"] .phase-node.active {
-  background: var(--accent-ink);
-  color: var(--bg-main);
+  background: rgba(61, 143, 122, 0.10);
+  color: var(--text-primary);
+  border-color: rgba(61, 143, 122, 0.45);
+  font-weight: 600;
   animation: none;
+  box-shadow: none;
 }
 html[data-shell="craft-paper"] .phase-node.active .phase-num {
-  background: transparent;
-  color: inherit;
+  background: var(--accent);
+  color: #fff;
   box-shadow: none;
   animation: none;
 }
 html[data-shell="craft-paper"] .phase-node.completed {
+  color: var(--accent);
+  background: transparent;
+  border-color: transparent;
+}
+html[data-shell="craft-paper"] .phase-node.completed .phase-num {
+  background: rgba(61, 143, 122, 0.15);
   color: var(--accent);
 }
 

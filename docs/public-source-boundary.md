@@ -46,12 +46,12 @@
 
 ### C. 密钥与本机配置（已在 `.gitignore`）
 
-- `.env`、`.env.local`
+- `.env`、`.env.local`（公开模板 `.env.example` 除外）
 - `config.yaml`、`*.local.yaml`
 - `data/`、运行时截图、测试结果目录等
 - 例外：README / 文档长期引用的截图，先在 `.gitignore` 加白名单再提交（当前仅 `screenshots/demos/phase1-recommendations.png`）
 
-模板用 `config.example.yaml`；文档里只写占位符，不写真实 key。
+密钥模板用 `.env.example`，非密钥运行配置模板用 `config.example.yaml`；文档里只写占位符，不写真实 key。
 
 ---
 

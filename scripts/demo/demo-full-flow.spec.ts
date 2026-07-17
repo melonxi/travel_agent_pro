@@ -274,7 +274,7 @@ test('demo full flow covers recommendation, planning, and backtrack', async ({ p
   await installDemoRoutes(page, fixture)
 
   await page.goto('/')
-  await expect(page.locator('.brand-name')).toBeVisible({ timeout: LONG_TIMEOUT })
+  await expect(page.locator('.inbox-brand-name')).toBeVisible({ timeout: LONG_TIMEOUT })
   await expect(page.locator('.input-bar input')).toBeVisible({ timeout: LONG_TIMEOUT })
 
   const phase1Message = fixture.steps[0]

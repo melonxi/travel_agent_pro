@@ -18,14 +18,9 @@ type PhaseOverride = {
   expiresAt: number
 } | null
 
-type UiShell = 'craft-paper' | 'solstice'
 type UiTheme = 'light' | 'dark'
 
 function useUiAppearance() {
-  const [shell, setShell] = useState<UiShell>(() => {
-    const saved = localStorage.getItem('ui-shell')
-    return saved === 'solstice' ? 'solstice' : 'craft-paper'
-  })
   const [theme, setTheme] = useState<UiTheme>(() => {
     const saved = localStorage.getItem('ui-theme')
     if (saved === 'light' || saved === 'dark') return saved
@@ -35,24 +30,19 @@ function useUiAppearance() {
   })
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-shell', shell)
+    // Product shell is always craft-paper; no public shell switcher.
+    document.documentElement.setAttribute('data-shell', 'craft-paper')
     document.documentElement.setAttribute('data-theme', theme)
-    localStorage.setItem('ui-shell', shell)
     localStorage.setItem('ui-theme', theme)
-  }, [shell, theme])
+    localStorage.removeItem('ui-shell')
+  }, [theme])
 
   const toggleTheme = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), [])
-  const toggleShell = useCallback(
-    () => setShell((s) => (s === 'craft-paper' ? 'solstice' : 'craft-paper')),
-    [],
-  )
 
   return {
-    shell,
     theme,
     dark: theme === 'dark',
     toggleTheme,
-    toggleShell,
   }
 }
 
@@ -69,20 +59,6 @@ function ThemeToggle({ dark, onToggle }: { dark: boolean; onToggle: () => void }
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
         </svg>
       )}
-    </button>
-  )
-}
-
-function ShellToggle({ shell, onToggle }: { shell: UiShell; onToggle: () => void }) {
-  const label = shell === 'craft-paper' ? 'Craft' : 'Solstice'
-  return (
-    <button
-      className="theme-toggle shell-toggle"
-      onClick={onToggle}
-      title={shell === 'craft-paper' ? '切换 Solstice 壳' : '切换 Craft Paper 壳'}
-      style={{ width: 'auto', borderRadius: 17, padding: '0 10px', fontSize: '0.65rem', letterSpacing: '0.04em' }}
-    >
-      {label}
     </button>
   )
 }
@@ -108,7 +84,7 @@ export default function App() {
   const [rightTab, setRightTab] = useState<'plan' | 'trace' | 'memory'>('plan')
   const [traceTrigger, setTraceTrigger] = useState(0)
   const [memoryRefreshTrigger, setMemoryRefreshTrigger] = useState(0)
-  const { shell, dark, toggleTheme, toggleShell } = useUiAppearance()
+  const { dark, toggleTheme } = useUiAppearance()
   const initializedRef = useRef(false)
   const showPhase2Workbench = Boolean(
     plan && (
@@ -329,13 +305,7 @@ export default function App() {
           onStreamEnd={handleStreamEnd}
           documentTitle={plan?.destination ? `${plan.destination}规划` : '新行程'}
           phaseSlot={plan ? <PhaseIndicator currentPhase={plan.phase} overridePhase={phaseOverride?.phase ?? null} /> : null}
-          headerActions={
-            <>
-              <ShellToggle shell={shell} onToggle={toggleShell} />
-              <ThemeToggle dark={dark} onToggle={toggleTheme} />
-              <span className="session-badge">#{sessionId.slice(0, 8)}</span>
-            </>
-          }
+          headerActions={<ThemeToggle dark={dark} onToggle={toggleTheme} />}
         />
         <div className="right-panel">
           <div className="right-panel-tabs">

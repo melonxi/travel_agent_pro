@@ -133,25 +133,26 @@ session）；内层循环解释“一轮如何推进 `TravelPlanState`”。两�
 前置：Python ≥ 3.12、[uv](https://docs.astral.sh/uv/)（或 pip）、Node ≥ 18。
 只有实时运行需要 OpenAI/Anthropic key——测试不需要任何 key。
 
-### 后端
+### 配置并启动后端
 
 ```bash
+# 在项目根目录执行：
+cp .env.example .env
+cp config.example.yaml config.yaml  # 可选：覆盖非密钥运行配置
+
+# 编辑 .env，只填写一个实时 LLM provider 的 key。
+# 测试和脚本化 demo 不需要 provider key。
+
 cd backend
 uv sync --all-extras --frozen
 # 不用 uv 的回退方案：
 # python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-
-# 实时运行需创建 .env 配置 provider：
-cat > .env << 'EOF'
-DEFAULT_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o
-# 或：DEFAULT_PROVIDER=anthropic / ANTHROPIC_API_KEY / ANTHROPIC_MODEL
-EOF
-
-# 可选的非密钥配置：复制 config.example.yaml → ../config.yaml
 uv run uvicorn main:app --reload --port 8000
 ```
+
+`.env` 和 `config.yaml` 都放在**项目根目录**，不要放进 `backend/`。环境变量会覆盖
+YAML 中的主 provider / model；`config.yaml` 用于非密钥运行参数和分阶段 LLM 覆盖。
+这两个本地文件都已被 git 忽略。
 
 ### 前端
 
@@ -218,13 +219,20 @@ validator，而不是对着最终回答猜。
 
 | 变量 | 是否必需 | 说明 |
 |------|----------|------|
-| `DEFAULT_PROVIDER` | 实时运行必需 | `openai` 或 `anthropic` |
+| `DEFAULT_PROVIDER` | 否 | `openai`（默认）或 `anthropic` |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 对应 provider 必需 | API key |
 | `OPENAI_MODEL` / `ANTHROPIC_MODEL` | 否 | 模型覆盖 |
-| `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` | 否 | 自定义端点 |
+| `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` | 否 | SDK 兼容的自定义端点 |
+| `GOOGLE_MAPS_API_KEY` | 否 | POI、路线、住宿与可用性工具 |
 | `OPENWEATHER_API_KEY` | 否 | 天气 / 可行性工具 |
 | `TAVILY_API_KEY` | 否 | Web 搜索回退 |
+| `AMADEUS_API_KEY` / `AMADEUS_API_SECRET` | 否 | Amadeus 航班搜索分支 |
+| `FLYAI_API_KEY` | 否 | FlyAI 旅行工具 |
+| `XHS_CLI_BIN` / `XHS_CLI_TIMEOUT` | 否 | 小红书 CLI 路径与超时覆盖 |
 | `OTEL_SDK_DISABLED` | 否 | `true` 关闭 tracing（CI 使用） |
+
+从 [`.env.example`](.env.example) 开始配置。密钥不要写进 `config.yaml`；其中的
+`${VARIABLE}` 会从 `.env` 或进程环境变量解析。
 
 ## 项目结构
 
