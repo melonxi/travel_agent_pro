@@ -41,15 +41,18 @@ function useUiAppearance() {
     localStorage.setItem('ui-theme', theme)
   }, [shell, theme])
 
+  const toggleTheme = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), [])
+  const toggleShell = useCallback(
+    () => setShell((s) => (s === 'craft-paper' ? 'solstice' : 'craft-paper')),
+    [],
+  )
+
   return {
     shell,
     theme,
     dark: theme === 'dark',
-    toggleTheme: useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), []),
-    toggleShell: useCallback(
-      () => setShell((s) => (s === 'craft-paper' ? 'solstice' : 'craft-paper')),
-      [],
-    ),
+    toggleTheme,
+    toggleShell,
   }
 }
 

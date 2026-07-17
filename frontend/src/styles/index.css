@@ -105,6 +105,7 @@ html[data-shell="solstice"][data-theme="dark"] {
 /* ── Solstice Light (rollback) ────────────────────── */
 html[data-shell="solstice"][data-theme="light"] {
   --bg-deep: #f4f1ec;
+  --bg-app: #f4f1ec;
   --bg-surface: #eae6df;
   --bg-elevated: #ffffff;
   --bg-card: #ffffff;
@@ -118,10 +119,22 @@ html[data-shell="solstice"][data-theme="light"] {
   --accent-amber: #b8892e;
   --accent: #b8892e;
   --accent-ink: #1a1c22;
+  --accent-coral: #c45538;
+  --accent-teal: #2a8f84;
+  --accent-lavender: #6b5eaa;
   --border-subtle: rgba(0, 0, 0, 0.06);
   --border: rgba(0, 0, 0, 0.08);
   --border-accent: rgba(184, 137, 46, 0.25);
+  --shadow-ambient: 0 8px 32px rgba(0, 0, 0, 0.06);
+  --shadow-glow-amber: 0 0 48px rgba(184, 137, 46, 0.06);
+  --shadow-glow-coral: 0 0 32px rgba(196, 85, 56, 0.04);
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 22px;
+  --radius-xl: 32px;
   --font-display: 'Bodoni Moda', 'Georgia', serif;
+  --font-body: 'Figtree', 'Noto Sans SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 }
 
 /* Disable Solstice noise/orbs under craft-paper */
@@ -1773,7 +1786,7 @@ body::after {
   backdrop-filter: blur(8px);
 }
 
-:root[data-theme="light"] .right-panel {
+html[data-shell="solstice"][data-theme="light"] .right-panel {
   background: rgba(234, 230, 223, 0.5);
 }
 
@@ -2691,29 +2704,29 @@ body::after {
   .p2-lockgrid { grid-template-columns: 1fr; }
 }
 
-/* ── Light theme overrides for glass effects ──────── */
-:root[data-theme="light"] .app-header {
+/* ── Solstice light glass overrides (do not stain craft-paper) ──────── */
+html[data-shell="solstice"][data-theme="light"] .app-header {
   background: rgba(255, 255, 255, 0.7);
 }
 
-:root[data-theme="light"] .input-bar {
+html[data-shell="solstice"][data-theme="light"] .input-bar {
   background: rgba(255, 255, 255, 0.7);
 }
 
-:root[data-theme="light"] .message.assistant .bubble {
+html[data-shell="solstice"][data-theme="light"] .message.assistant .bubble {
   background: rgba(255, 255, 255, 0.8);
 }
 
-:root[data-theme="light"] .map-empty,
-:root[data-theme="light"] .timeline-empty {
+html[data-shell="solstice"][data-theme="light"] .map-empty,
+html[data-shell="solstice"][data-theme="light"] .timeline-empty {
   border-color: rgba(0, 0, 0, 0.06);
 }
 
-:root[data-theme="light"] .destination-banner {
+html[data-shell="solstice"][data-theme="light"] .destination-banner {
   background: linear-gradient(180deg, rgba(212, 162, 76, 0.06) 0%, var(--bg-surface) 100%);
 }
 
-:root[data-theme="light"] .destination-banner::before {
+html[data-shell="solstice"][data-theme="light"] .destination-banner::before {
   background: linear-gradient(90deg, transparent, var(--accent-amber), transparent);
 }
 
