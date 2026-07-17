@@ -10,8 +10,13 @@
 4. 只有 slice 明确指向或任务需要细节时，才读取 `deep/` 文档。
 5. 需要完整文档地图时读本文件。
 6. 不要默认读取根目录 `PROJECT_OVERVIEW.md`；它是全量参考，只在用户明确要求完整项目全景时使用。
+7. 涉及推送公开仓、私人文档、密钥或 `.gitignore` 边界时，读 `docs/public-source-boundary.md`。
 
 ## 文档树
+
+### 仓库约定（根 docs）
+
+- `../public-source-boundary.md`：公开源码边界——何物可进 GitHub、何物仅本地、误提交处理。
 
 ### Slices
 
