@@ -1,69 +1,136 @@
 /* ═══════════════════════════════════════════════════════
    旅行者 · Travel Agent Pro
-   Design System: "Solstice" — Dark glass + warm amber
+   Design System: Craft Paper (default) + Solstice (rollback)
+   data-shell="craft-paper" | "solstice"
+   data-theme="light" | "dark"
    ═══════════════════════════════════════════════════════ */
 
-:root {
-  /* Deep cool palette */
+:root,
+html[data-shell="craft-paper"][data-theme="light"] {
+  --bg-deep: #f7f6f3;
+  --bg-app: #f7f6f3;
+  --bg-surface: #efeee9;
+  --bg-sidebar: #efeee9;
+  --bg-main: #fbfaf7;
+  --bg-elevated: #ffffff;
+  --bg-card: #ffffff;
+  --bg-inspector: #f3f2ed;
+  --bg-glass: #f3f2ed;
+
+  --text-primary: #1c1b19;
+  --text-secondary: #5a5750;
+  --text-muted: #8a877f;
+
+  --accent-amber: #3d8f7a;  /* remap legacy amber usages to accent green */
+  --accent: #3d8f7a;
+  --accent-ink: #1c1b19;
+  --accent-coral: #c45538;
+  --accent-teal: #3d8f7a;
+  --accent-lavender: #6b5eaa;
+
+  --border-subtle: #ebe9e3;
+  --border: #e2e0da;
+  --border-accent: rgba(61, 143, 122, 0.28);
+
+  --shadow-ambient: none;
+  --shadow-glow-amber: none;
+  --shadow-glow-coral: none;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+
+  --font-display: system-ui, "Inter", "Noto Sans SC", sans-serif;
+  --font-body: system-ui, "Inter", "Noto Sans SC", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --transition-smooth: 0.2s var(--ease-out-expo);
+}
+
+/* ── Craft Paper Dark ─────────────────────────────── */
+html[data-shell="craft-paper"][data-theme="dark"] {
+  --bg-deep: #12141a;
+  --bg-app: #12141a;
+  --bg-surface: #0e1015;
+  --bg-sidebar: #0e1015;
+  --bg-main: #161922;
+  --bg-elevated: #1a1d26;
+  --bg-card: #1a1d26;
+  --bg-inspector: #0e1015;
+  --bg-glass: #0e1015;
+  --text-primary: #e8e6e1;
+  --text-secondary: #a8a59c;
+  --text-muted: #6b6e78;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-accent: rgba(61, 143, 122, 0.35);
+  --accent-amber: #3d8f7a;
+  --accent: #3d8f7a;
+  --accent-ink: #e8e6e1;
+}
+
+/* ── Solstice Dark (rollback) ─────────────────────── */
+html[data-shell="solstice"][data-theme="dark"] {
   --bg-deep: #0b0d11;
   --bg-surface: #12151c;
   --bg-elevated: #1a1e28;
   --bg-card: #1e2330;
   --bg-glass: rgba(30, 35, 48, 0.6);
-
+  --bg-main: #12151c;
+  --bg-sidebar: #12151c;
+  --bg-inspector: #1a1e28;
   --text-primary: #e4e1db;
   --text-secondary: #8e8d94;
   --text-muted: #4a4d5a;
-
   --accent-amber: #d4a24c;
+  --accent: #d4a24c;
+  --accent-ink: #d4a24c;
   --accent-coral: #d96a4b;
   --accent-teal: #3ba99c;
-  --accent-lavender: #8b7ec8;
-
   --border-subtle: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.08);
   --border-accent: rgba(212, 162, 76, 0.25);
-
   --shadow-ambient: 0 8px 32px rgba(0, 0, 0, 0.4);
   --shadow-glow-amber: 0 0 48px rgba(212, 162, 76, 0.08);
-  --shadow-glow-coral: 0 0 32px rgba(217, 106, 75, 0.06);
-
+  --font-display: 'Bodoni Moda', 'Georgia', serif;
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 22px;
   --radius-xl: 32px;
-
-  --font-display: 'Bodoni Moda', 'Georgia', serif;
-  --font-body: 'Figtree', 'Noto Sans SC', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
-
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --transition-smooth: 0.35s var(--ease-out-expo);
 }
 
-/* ── Light Theme ──────────────────────────────────── */
-:root[data-theme="light"] {
+/* ── Solstice Light (rollback) ────────────────────── */
+html[data-shell="solstice"][data-theme="light"] {
   --bg-deep: #f4f1ec;
   --bg-surface: #eae6df;
   --bg-elevated: #ffffff;
   --bg-card: #ffffff;
   --bg-glass: rgba(255, 255, 255, 0.7);
-
+  --bg-main: #f4f1ec;
+  --bg-sidebar: #eae6df;
+  --bg-inspector: #eae6df;
   --text-primary: #1a1c22;
   --text-secondary: #5c5a63;
   --text-muted: #9b98a2;
-
   --accent-amber: #b8892e;
-  --accent-coral: #c45538;
-  --accent-teal: #2a8f84;
-  --accent-lavender: #6b5eaa;
-
+  --accent: #b8892e;
+  --accent-ink: #1a1c22;
   --border-subtle: rgba(0, 0, 0, 0.06);
+  --border: rgba(0, 0, 0, 0.08);
   --border-accent: rgba(184, 137, 46, 0.25);
+  --font-display: 'Bodoni Moda', 'Georgia', serif;
+}
 
-  --shadow-ambient: 0 8px 32px rgba(0, 0, 0, 0.06);
-  --shadow-glow-amber: 0 0 48px rgba(184, 137, 46, 0.06);
-  --shadow-glow-coral: 0 0 32px rgba(196, 85, 56, 0.04);
+/* Disable Solstice noise/orbs under craft-paper */
+html[data-shell="craft-paper"] body::after {
+  display: none;
+}
+html[data-shell="craft-paper"] .app::before,
+html[data-shell="craft-paper"] .app::after {
+  display: none;
 }
 
 /* ── Reset & Base ─────────────────────────────────── */

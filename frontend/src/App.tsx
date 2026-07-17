@@ -18,18 +18,39 @@ type PhaseOverride = {
   expiresAt: number
 } | null
 
-function useTheme() {
-  const [dark, setDark] = useState(() => {
-    const saved = localStorage.getItem('theme')
-    return saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
+type UiShell = 'craft-paper' | 'solstice'
+type UiTheme = 'light' | 'dark'
+
+function useUiAppearance() {
+  const [shell, setShell] = useState<UiShell>(() => {
+    const saved = localStorage.getItem('ui-shell')
+    return saved === 'solstice' ? 'solstice' : 'craft-paper'
+  })
+  const [theme, setTheme] = useState<UiTheme>(() => {
+    const saved = localStorage.getItem('ui-theme')
+    if (saved === 'light' || saved === 'dark') return saved
+    const legacy = localStorage.getItem('theme')
+    if (legacy === 'light' || legacy === 'dark') return legacy
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   })
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light')
-    localStorage.setItem('theme', dark ? 'dark' : 'light')
-  }, [dark])
+    document.documentElement.setAttribute('data-shell', shell)
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('ui-shell', shell)
+    localStorage.setItem('ui-theme', theme)
+  }, [shell, theme])
 
-  return { dark, toggle: useCallback(() => setDark((d) => !d), []) }
+  return {
+    shell,
+    theme,
+    dark: theme === 'dark',
+    toggleTheme: useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), []),
+    toggleShell: useCallback(
+      () => setShell((s) => (s === 'craft-paper' ? 'solstice' : 'craft-paper')),
+      [],
+    ),
+  }
 }
 
 function ThemeToggle({ dark, onToggle }: { dark: boolean; onToggle: () => void }) {
@@ -45,6 +66,20 @@ function ThemeToggle({ dark, onToggle }: { dark: boolean; onToggle: () => void }
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
         </svg>
       )}
+    </button>
+  )
+}
+
+function ShellToggle({ shell, onToggle }: { shell: UiShell; onToggle: () => void }) {
+  const label = shell === 'craft-paper' ? 'Craft' : 'Solstice'
+  return (
+    <button
+      className="theme-toggle shell-toggle"
+      onClick={onToggle}
+      title={shell === 'craft-paper' ? '切换 Solstice 壳' : '切换 Craft Paper 壳'}
+      style={{ width: 'auto', borderRadius: 17, padding: '0 10px', fontSize: '0.65rem', letterSpacing: '0.04em' }}
+    >
+      {label}
     </button>
   )
 }
@@ -70,7 +105,7 @@ export default function App() {
   const [rightTab, setRightTab] = useState<'plan' | 'trace' | 'memory'>('plan')
   const [traceTrigger, setTraceTrigger] = useState(0)
   const [memoryRefreshTrigger, setMemoryRefreshTrigger] = useState(0)
-  const { dark, toggle: toggleTheme } = useTheme()
+  const { shell, dark, toggleTheme, toggleShell } = useUiAppearance()
   const initializedRef = useRef(false)
   const showPhase2Workbench = Boolean(
     plan && (
@@ -268,6 +303,7 @@ export default function App() {
         </div>
         <div className="header-right">
           {plan && <PhaseIndicator currentPhase={plan.phase} overridePhase={phaseOverride?.phase ?? null} />}
+          <ShellToggle shell={shell} onToggle={toggleShell} />
           <ThemeToggle dark={dark} onToggle={toggleTheme} />
           <span className="session-badge">#{sessionId.slice(0, 8)}</span>
         </div>
