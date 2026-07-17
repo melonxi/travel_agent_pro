@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import SessionItem from './SessionItem'
 import MemoryCenter from './MemoryCenter'
 import { useMemory } from '../hooks/useMemory'
@@ -11,6 +11,7 @@ interface Props {
   onSelectSession: (sessionId: string) => void
   onNewSession: () => void
   onDeleteSession: (sessionId: string) => void
+  brandSlot?: ReactNode
 }
 
 export default function SessionSidebar({
@@ -20,6 +21,7 @@ export default function SessionSidebar({
   onSelectSession,
   onNewSession,
   onDeleteSession,
+  brandSlot,
 }: Props) {
   const [collapsed, setCollapsed] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
@@ -66,6 +68,7 @@ export default function SessionSidebar({
   return (
     <>
       <aside className="session-sidebar" aria-label="会话列表">
+      {brandSlot && <div className="inbox-brand-wrap">{brandSlot}</div>}
       <div className="sidebar-header">
         <button
           type="button"

@@ -299,23 +299,17 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <div className="brand">
-          <span className="brand-name">旅行者</span>
-          <span className="brand-tag">travel agent</span>
-        </div>
-        <div className="header-right">
-          {plan && <PhaseIndicator currentPhase={plan.phase} overridePhase={phaseOverride?.phase ?? null} />}
-          <ShellToggle shell={shell} onToggle={toggleShell} />
-          <ThemeToggle dark={dark} onToggle={toggleTheme} />
-          <span className="session-badge">#{sessionId.slice(0, 8)}</span>
-        </div>
-      </header>
       <div className="app-body">
         <SessionSidebar
           sessions={sessionList}
           activeSessionId={sessionId}
           memoryRefreshTrigger={memoryRefreshTrigger}
+          brandSlot={
+            <div className="inbox-brand">
+              <div className="inbox-brand-name">旅行者</div>
+              <div className="inbox-brand-tag">travel workspace</div>
+            </div>
+          }
           onSelectSession={(id) => {
             void handleSelectSession(id)
           }}
@@ -333,6 +327,15 @@ export default function App() {
           onMemoryRecall={handleMemoryRecall}
           onPhaseTransition={handlePhaseTransition}
           onStreamEnd={handleStreamEnd}
+          documentTitle={plan?.destination ? `${plan.destination}规划` : '新行程'}
+          phaseSlot={plan ? <PhaseIndicator currentPhase={plan.phase} overridePhase={phaseOverride?.phase ?? null} /> : null}
+          headerActions={
+            <>
+              <ShellToggle shell={shell} onToggle={toggleShell} />
+              <ThemeToggle dark={dark} onToggle={toggleTheme} />
+              <span className="session-badge">#{sessionId.slice(0, 8)}</span>
+            </>
+          }
         />
         <div className="right-panel">
           <div className="right-panel-tabs">

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type ReactNode } from 'react'
 import MessageBubble from './MessageBubble'
 import ThinkingBubble from './ThinkingBubble'
 import ParallelProgress from './ParallelProgress'
@@ -110,6 +110,9 @@ interface Props {
   onMemoryRecall?: (itemIds: string[]) => void
   onPhaseTransition: (event: PhaseTransitionEvent) => void
   onStreamEnd?: () => void
+  documentTitle?: string
+  phaseSlot?: ReactNode
+  headerActions?: ReactNode
 }
 
 interface EventHandlerState {
@@ -250,7 +253,16 @@ function countRecalledItems(event: SSEEvent): number {
   return event.item_ids?.length ?? 0
 }
 
-export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onPhaseTransition, onStreamEnd }: Props) {
+export default function ChatPanel({
+  sessionId,
+  onPlanUpdate,
+  onMemoryRecall,
+  onPhaseTransition,
+  onStreamEnd,
+  documentTitle,
+  phaseSlot,
+  headerActions,
+}: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -936,6 +948,17 @@ export default function ChatPanel({ sessionId, onPlanUpdate, onMemoryRecall, onP
 
   return (
     <div className="chat-panel">
+      {(documentTitle || phaseSlot || headerActions) && (
+        <header className="document-header">
+          <div className="document-header-left">
+            <div className="document-header-title">{documentTitle ?? '新行程'}</div>
+          </div>
+          <div className="document-header-right">
+            {phaseSlot && <div className="document-header-phase">{phaseSlot}</div>}
+            {headerActions}
+          </div>
+        </header>
+      )}
       <div className="messages" ref={messagesRef} onScroll={handleScroll}>
         {messages.map((m, i) => (
           <MessageBubble

@@ -2757,3 +2757,95 @@ html[data-shell="solstice"][data-theme="light"] .destination-banner::before {
   cursor: pointer;
 }
 .system-memory-chip:hover { background: rgba(180, 140, 255, 0.14); }
+
+/* ── Document header (document shell) ───────────────── */
+.document-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-main, var(--bg-deep));
+  flex-shrink: 0;
+}
+.document-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+.document-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+html[data-shell="craft-paper"] .session-sidebar {
+  width: 232px;
+  min-width: 232px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+}
+html[data-shell="craft-paper"] .chat-panel {
+  background: var(--bg-main);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+html[data-shell="craft-paper"] .right-panel {
+  width: 300px;
+  min-width: 280px;
+  max-width: 320px;
+  background: var(--bg-inspector);
+  border-left: 1px solid var(--border);
+}
+html[data-shell="craft-paper"] .app-header {
+  display: none;
+}
+
+/* compact phase under craft-paper */
+html[data-shell="craft-paper"] .phase-bar {
+  background: transparent;
+  border: none;
+  padding: 0;
+  gap: 4px;
+}
+html[data-shell="craft-paper"] .phase-node {
+  padding: 4px 8px;
+  font-size: 10px;
+  border-radius: 999px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+}
+html[data-shell="craft-paper"] .phase-node.active {
+  background: var(--accent-ink);
+  color: var(--bg-main);
+  animation: none;
+}
+html[data-shell="craft-paper"] .phase-node.active .phase-num {
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+  animation: none;
+}
+html[data-shell="craft-paper"] .phase-node.completed {
+  color: var(--accent);
+}
+
+html[data-shell="craft-paper"] .inbox-brand-wrap {
+  padding: 14px 14px 8px;
+}
+html[data-shell="craft-paper"] .inbox-brand-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+html[data-shell="craft-paper"] .inbox-brand-tag {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
