@@ -17,7 +17,9 @@ def _reset_tracer_provider():
 
 
 @pytest.fixture(autouse=True)
-def otel_exporter():
+def otel_exporter(monkeypatch):
+    # Span-asserting tests need a real SDK; conftest defaults OTEL_SDK_DISABLED=true.
+    monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
     _reset_tracer_provider()
     exporter = InMemorySpanExporter()
     provider = TracerProvider()

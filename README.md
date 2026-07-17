@@ -140,8 +140,11 @@ npm run dev
 ### Run tests (no API key required for A0 core)
 
 ```bash
+# One-shot: backend A0 + frontend build (matches CI)
+./scripts/run-a0-core.sh
+
 cd backend
-# A0 core runtime suite (matches CI)
+# A0 core runtime suite only
 uv run pytest -q \
   tests/test_steering.py \
   tests/test_orchestrator.py \
@@ -154,8 +157,8 @@ uv run pytest -q \
   tests/test_trace_api.py \
   tests/test_session_persistence.py
 
-# Full unit suite (may take longer; mark integration tests separately when present)
-uv run pytest -q -m "not integration"
+# Full unit suite (OTEL_SDK_DISABLED=true avoids needing Jaeger)
+OTEL_SDK_DISABLED=true uv run pytest -q -m "not integration"
 ```
 
 ## Failure Analysis

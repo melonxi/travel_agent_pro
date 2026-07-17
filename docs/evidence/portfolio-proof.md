@@ -26,8 +26,9 @@ Agent Loop (bounded iterations)
 | Item | Value | Notes |
 |------|-------|--------|
 | CI | `.github/workflows/ci.yml` | Backend A0 core + frontend build |
-| Pytest collect | ≈2054 | Full suite; CI runs core subset |
-| A0 core | **269 passed** (2026-07-17, `uv run pytest` A0 list) | steering / orchestrator / candidate / writers / … |
+| One-shot verify | `./scripts/run-a0-core.sh` | no API keys |
+| Pytest full unit | **2054 passed** (2026-07-17, `OTEL_SDK_DISABLED=true pytest -m "not integration"`) | A1 local baseline |
+| A0 core | **269 passed** | steering / orchestrator / candidate / writers / … |
 | Golden cases | **40 load OK** | `backend/evals/golden_cases/` |
 | Dependency lock | `backend/uv.lock` | `uv sync --all-extras --frozen` |
 | LICENSE | MIT | repo root |
@@ -37,6 +38,7 @@ Agent Loop (bounded iterations)
 | Demo B (reliability) | _pending recording_ | Prefer real backend + trace |
 | Interview talk track | `interview-talk-track.md` | two stories |
 | Hostile Q | `hostile-questions.md` | top 10 |
+| Release notes | `RELEASE_NOTES_v1.0-portfolio.md` | tag after CI green |
 
 ## Core reliability paths covered in A0
 
@@ -51,16 +53,12 @@ Agent Loop (bounded iterations)
 ## Three-minute start
 
 ```bash
-cd backend && uv sync --all-extras --frozen
-uv run pytest -q tests/test_steering.py tests/test_orchestrator.py \
-  tests/test_phase3_candidate_store.py tests/test_plan_writers.py
-
-cd ../frontend && npm ci && npm run build
+./scripts/run-a0-core.sh
 ```
 
 ## Next evidence to fill
 
-1. 12 high-value golden cases with pass@3 → `baseline-results.json`
-2. ≥5 fault-injection scenarios → `fault-injection-report.md`
-3. One failure→recovery trace story under `traces/`
-4. Demo B recording linked from README
+1. ~~12-case mock pass@3~~ done → live pass@k when budget allows
+2. ~~Fault-injection test map~~ done → attach one redacted real-run trace for Demo B
+3. Demo B recording linked from README
+4. GitHub About description/topics + `v1.0-portfolio` release (manual / `gh release`)
