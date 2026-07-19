@@ -84,6 +84,61 @@ def _has_estimated_transport(plan: TravelPlanState) -> list[str]:
     return markers
 
 
+def _collect_recheck_items(plan: TravelPlanState) -> list[str]:
+    """从 daily_plans 收集 needs_recheck 活动，生成确定性复核清单条目。"""
+    items: list[str] = []
+    for day in getattr(plan, "daily_plans", []) or []:
+        for activity in getattr(day, "activities", []) or []:
+            visit_info = getattr(activity, "visit_info", None)
+            if visit_info is None or not getattr(visit_info, "needs_recheck", False):
+                continue
+            name = getattr(activity, "name", "") or "未命名活动"
+            reason = getattr(visit_info, "recommendation_reason", "") or ""
+            entry = f"第 {day.day} 天 · {name}"
+            if reason:
+                entry += f"：{reason}"
+            entry += "（信息未交叉验证，出发前请确认营业时间/预约/价格）"
+            items.append(entry)
+    return items
+
+
+_EXCLUDED_CATEGORY_LABELS = {
+    "distance": "距离过远",
+    "schedule": "时间排不下",
+    "weather": "天气风险",
+    "preference": "与偏好不符",
+    "duplicate": "体验重复",
+    "evidence": "证据不足",
+}
+
+
+def _build_decision_appendix(plan: TravelPlanState) -> str:
+    """需复核事项 + 已排除/暂缓项目。全部来自权威状态，确定性生成。"""
+    sections: list[str] = []
+
+    recheck_items = _collect_recheck_items(plan)
+    if recheck_items:
+        sections.append("## 出发前需复核")
+        sections.append("")
+        for item in recheck_items:
+            sections.append(f"- [ ] {item}")
+        sections.append("")
+
+    excluded = getattr(plan, "excluded_candidates", []) or []
+    if excluded:
+        sections.append("## 已排除 / 暂缓项目")
+        sections.append("")
+        for candidate in excluded:
+            label = _EXCLUDED_CATEGORY_LABELS.get(candidate.category, candidate.category)
+            line = f"- **{candidate.name}**（{label}）：{candidate.reason}"
+            if candidate.reconsider_when:
+                line += f"；重新考虑条件：{candidate.reconsider_when}"
+            sections.append(line)
+        sections.append("")
+
+    return "\n".join(sections)
+
+
 def _inject_estimation_markers(content: str, estimated_items: list[str]) -> str:
     if not estimated_items:
         return content
@@ -270,6 +325,9 @@ Don't use when: 逐日行程未完成，或需要回退前序阶段。
             daily_sections=daily_sections,
             estimated_items=estimated_items,
         )
+        decision_appendix = _build_decision_appendix(plan)
+        if decision_appendix:
+            travel_plan_markdown = travel_plan_markdown.rstrip("\n") + "\n\n" + decision_appendix
         checklist_markdown = _build_checklist_markdown(
             checklist_title=checklist_title.strip(),
             checklist_categories=checklist_categories,

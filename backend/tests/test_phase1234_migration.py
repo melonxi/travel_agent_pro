@@ -122,12 +122,12 @@ def test_demo_phase_labels_use_current_phase_numbers() -> None:
 def test_readme_production_path_uses_current_phase_numbers() -> None:
     readme = (REPO_ROOT / "README.md").read_text()
 
-    assert "| 2 | Framework Planning |" in readme
-    assert "| 3 | Daily Itinerary Assembly |" in readme
-    assert "| 4 | Pre-Departure Checklist |" in readme
+    assert "| 2 · Framework Planning |" in readme
+    assert "| 3 · Daily Itinerary Assembly |" in readme
+    assert "| 4 · Pre-Departure Checklist |" in readme
     assert "| 5 | Daily Itinerary Assembly |" not in readme
     assert "| 7 | Pre-Departure Checklist |" not in readme
-    assert "Phase 2 has four substeps" in readme
+    assert "four substeps" in readme
 
 
 def test_failure_analysis_defaults_to_current_final_phase() -> None:

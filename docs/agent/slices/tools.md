@@ -28,6 +28,13 @@
 - 多天行程：首日必须 `arrival_day`，末日必须 `departure_day`，中间日 `full_day`。
 - 到达/离开日轻排：`core_activities` 与 `locked_pois` 均不超过 2 项。
 
+## 证据链校验（阶段 A）
+
+- Activity 可选 `visit_info`：`{role, recommendation_reason, needs_recheck, evidence[]}`；校验在 `tools/plan_tools/evidence.py`。
+- 硬规则 1：UGC 来源（xiaohongshu/user）的 `fact` 不允许 `confidence="confirmed"`（`UGC_FACT_NOT_CONFIRMABLE`）。
+- 硬规则 2：`role="anchor"` 无 official/web 证据时必须 `needs_recheck=true`（`ANCHOR_NEEDS_RELIABLE_SOURCE`）。
+- `set_excluded_candidates`（phases 2/3）整体替换淘汰记录；Phase 4 `generate_summary` 从状态确定性生成「出发前需复核」「已排除/暂缓项目」章节。
+
 ## 航班搜索
 
 - `search_flights` 仅在 flyai 可用时注册；已移除 Amadeus sandbox 分支。

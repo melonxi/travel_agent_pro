@@ -14,6 +14,7 @@ from .daily_plans import (
     make_replace_daily_plans_tool,
     make_save_day_plan_tool,
 )
+from .evidence import make_set_excluded_candidates_tool
 from .phase2_tools import (
     make_select_skeleton_tool,
     make_select_transport_tool,
@@ -34,6 +35,7 @@ PLAN_WRITER_TOOL_NAMES = {
     "set_trip_brief",
     "set_candidate_pool",
     "set_shortlist",
+    "set_excluded_candidates",
     "set_skeleton_plans",
     "select_skeleton",
     "set_transport_options",
@@ -63,6 +65,7 @@ def make_all_plan_tools(plan: TravelPlanState) -> list[ToolDef]:
         make_set_accommodation_tool(plan),
         make_set_alternatives_tool(plan),
         make_set_candidate_pool_tool(plan),
+        make_set_excluded_candidates_tool(plan),
         make_set_risks_tool(plan),
         make_set_shortlist_tool(plan),
         make_set_skeleton_plans_tool(plan),
@@ -88,6 +91,7 @@ __all__ = [
     "make_set_accommodation_tool",
     "make_set_alternatives_tool",
     "make_set_candidate_pool_tool",
+    "make_set_excluded_candidates_tool",
     "make_set_risks_tool",
     "make_set_shortlist_tool",
     "make_set_skeleton_plans_tool",

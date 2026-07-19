@@ -161,6 +161,7 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 候选项组织成 4 类：必选 / 高潜力 / 可替代 / 不建议。
 
 每个候选项尽量给出：
+- `id`：稳定英文 id（如 `"poi_sensoji"`），供淘汰记录和后续阶段引用
 - `why`：为什么适合这次旅行
 - `why_not`：为什么可能不适合
 - `time_cost`：大致时间成本
@@ -184,6 +185,7 @@ PHASE2_STEP_PROMPTS: dict[str, str] = {
 ### 第三步：筛选成短名单
 - 保留必选项和通过验证的高潜力项写入 `set_shortlist`。
 - 重复体验、远距离低回报、与画像不匹配的项标记不建议并给原因。
+- 明确淘汰/暂缓的项用 `set_excluded_candidates(items=[{name, reason, category, reconsider_when?, source_candidate_id?}])` 留下结构化记录——淘汰是可解释决策，不允许只在正文说"不建议去 X"。category 取 distance / schedule / weather / preference / duplicate / evidence。
 
 ### 节奏约束
 - 三步应在 1-2 轮对话内完成；不要拆成多轮也不要为查全延迟写入。
@@ -395,6 +397,27 @@ PHASE3_PROMPT = """## 硬法则（执行级）
 - `cost` 是数字（人民币），没有时填 0
 - `day` 是整数，`date` 是 `"YYYY-MM-DD"`
 
+## 证据契约（visit_info，可选但强烈建议）
+
+对当天核心锚点和做过验证的活动，在 activity 上附加 `visit_info` 记录"为什么去、依据是什么"：
+
+```json
+"visit_info": {
+  "role": "anchor",
+  "recommendation_reason": "画像必去项，官方确认周三开放",
+  "needs_recheck": false,
+  "evidence": [
+    {"source_type": "official", "summary": "官网：9:00-17:00 开放，无需预约", "claim_type": "fact", "confidence": "confirmed", "source_url": "https://..."},
+    {"source_type": "xiaohongshu", "summary": "近期笔记：早上 9 点前人少", "claim_type": "experience", "confidence": "unverified", "observed_at": "2026-06"}
+  ]
+}
+```
+
+信息源硬规则（违反会导致写入失败）：
+- 小红书 / 用户自述（UGC）的 `fact` 不允许标 `confidence="confirmed"`——营业时间、票价、政策必须由 official/web 来源背书；UGC 只能承担 experience / warning。
+- `role="anchor"` 且没有任何 official/web 证据时，必须 `needs_recheck=true`——允许"没查到但仍推荐"，不允许"没查到且装作可靠"。
+- 不是每个活动都要 visit_info；普通用餐、接驳不需要。逐日排程中淘汰了骨架候选时，用 `set_excluded_candidates` 更新淘汰记录。
+
 ## 工具契约
 
 核心工具：
@@ -511,6 +534,7 @@ PHASE4_PROMPT = """## 输入 Gate
 
 **注意：**
 - 如果某天交通时长未经 `calculate_route` 验证（使用了估算通勤），系统会在该天行程末尾自动标注「⚠️ 交通时长为估算」，你无需手动添加
+- 系统会从状态自动在 travel_plan.md 末尾生成「出发前需复核」（来自 visit_info.needs_recheck）和「已排除 / 暂缓项目」（来自 excluded_candidates）两个章节，你无需手动编写
 - `plan_data` 仍需传入，至少包含 `destination`
 
 天气表述规则：

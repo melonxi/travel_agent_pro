@@ -70,6 +70,31 @@ export interface PlanRisk {
   [key: string]: unknown
 }
 
+export interface EvidenceRecord {
+  source_type: 'official' | 'web' | 'xiaohongshu' | 'user'
+  title: string
+  summary: string
+  claim_type: 'fact' | 'experience' | 'warning'
+  confidence: 'confirmed' | 'unverified'
+  source_url: string | null
+  observed_at: string | null
+}
+
+export interface VisitInfo {
+  role: 'anchor' | 'normal' | 'backup'
+  recommendation_reason: string
+  needs_recheck: boolean
+  evidence: EvidenceRecord[]
+}
+
+export interface ExcludedCandidate {
+  name: string
+  reason: string
+  category: 'distance' | 'schedule' | 'weather' | 'preference' | 'duplicate' | 'evidence'
+  reconsider_when: string | null
+  source_candidate_id: string | null
+}
+
 export interface Activity {
   name: string
   location: Location
@@ -79,6 +104,7 @@ export interface Activity {
   cost: number
   transport_from_prev: string | null
   transport_duration_min: number
+  visit_info?: VisitInfo
 }
 
 export interface DayPlan {
@@ -110,6 +136,7 @@ export interface TravelPlanState {
   trip_brief?: Record<string, unknown>
   candidate_pool?: CandidateItem[]
   shortlist?: CandidateItem[]
+  excluded_candidates?: ExcludedCandidate[]
   skeleton_plans?: SkeletonPlan[]
   selected_skeleton_id?: string | null
   transport_options?: Array<Record<string, unknown>>

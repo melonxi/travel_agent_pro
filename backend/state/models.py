@@ -10,6 +10,149 @@ from typing import Any
 CURRENT_STATE_VERSION = 2
 SUPPORTED_PHASES = {1, 2, 3, 4}
 
+# 证据链契约的封闭枚举。from_dict 对非法值容错降级；硬拒绝只发生在工具边界。
+EVIDENCE_SOURCE_TYPES = {"official", "web", "xiaohongshu", "user"}
+EVIDENCE_CLAIM_TYPES = {"fact", "experience", "warning"}
+EVIDENCE_CONFIDENCE_LEVELS = {"confirmed", "unverified"}
+UGC_SOURCE_TYPES = {"xiaohongshu", "user"}
+VISIT_ROLES = {"anchor", "normal", "backup"}
+EXCLUDED_CATEGORIES = {
+    "distance",
+    "schedule",
+    "weather",
+    "preference",
+    "duplicate",
+    "evidence",
+}
+
+
+def _normalize_enum(value: Any, allowed: set[str], fallback: str) -> str:
+    if isinstance(value, str) and value.strip().lower() in allowed:
+        return value.strip().lower()
+    return fallback
+
+
+@dataclass
+class EvidenceRecord:
+    """一条可追溯的外部信息：来自哪里、支持什么判断、可信到什么程度。
+
+    confidence 只有两级：confirmed（有官方/普通 Web 事实来源背书）与
+    unverified（UGC 体验、传闻或未交叉验证）。UGC 来源的 fact 不允许标
+    confirmed——该规则在工具层强制。
+    """
+
+    source_type: str = "web"  # official | web | xiaohongshu | user
+    title: str = ""
+    summary: str = ""
+    claim_type: str = "experience"  # fact | experience | warning
+    confidence: str = "unverified"  # confirmed | unverified
+    source_url: str | None = None
+    observed_at: str | None = None  # 信息观察/发布时间，提醒时效性
+
+    def to_dict(self) -> dict:
+        return {
+            "source_type": self.source_type,
+            "title": self.title,
+            "summary": self.summary,
+            "claim_type": self.claim_type,
+            "confidence": self.confidence,
+            "source_url": self.source_url,
+            "observed_at": self.observed_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Any) -> EvidenceRecord:
+        if not isinstance(d, dict):
+            return cls(summary=str(d or ""))
+        return cls(
+            source_type=_normalize_enum(
+                d.get("source_type"), EVIDENCE_SOURCE_TYPES, "web"
+            ),
+            title=str(d.get("title", "") or ""),
+            summary=str(d.get("summary", "") or ""),
+            claim_type=_normalize_enum(
+                d.get("claim_type"), EVIDENCE_CLAIM_TYPES, "experience"
+            ),
+            confidence=_normalize_enum(
+                d.get("confidence"), EVIDENCE_CONFIDENCE_LEVELS, "unverified"
+            ),
+            source_url=d.get("source_url") or None,
+            observed_at=d.get("observed_at") or None,
+        )
+
+
+@dataclass
+class VisitInfo:
+    """Activity 的决策与证据附加信息（阶段 A 最小集）。
+
+    执行类字段（预约链接、支付方式、导航 query 等）属于 Trip Mode，
+    留待阶段 B 扩展；此处只回答"为什么去、依据是什么、还需要核实什么"。
+    """
+
+    role: str = "normal"  # anchor | normal | backup
+    recommendation_reason: str = ""
+    needs_recheck: bool = False
+    evidence: list[EvidenceRecord] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "role": self.role,
+            "recommendation_reason": self.recommendation_reason,
+            "needs_recheck": self.needs_recheck,
+            "evidence": [e.to_dict() for e in self.evidence],
+        }
+
+    @classmethod
+    def from_dict(cls, d: Any) -> VisitInfo:
+        if not isinstance(d, dict):
+            return cls()
+        raw_evidence = d.get("evidence")
+        evidence = (
+            [EvidenceRecord.from_dict(e) for e in raw_evidence]
+            if isinstance(raw_evidence, list)
+            else []
+        )
+        return cls(
+            role=_normalize_enum(d.get("role"), VISIT_ROLES, "normal"),
+            recommendation_reason=str(d.get("recommendation_reason", "") or ""),
+            needs_recheck=bool(d.get("needs_recheck", False)),
+            evidence=evidence,
+        )
+
+
+@dataclass
+class ExcludedCandidate:
+    """被淘汰/暂缓的候选：淘汰不是丢弃，而是可展示、可回溯的决策记录。"""
+
+    name: str
+    reason: str
+    category: str = "preference"  # distance|schedule|weather|preference|duplicate|evidence
+    reconsider_when: str | None = None
+    source_candidate_id: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "reason": self.reason,
+            "category": self.category,
+            "reconsider_when": self.reconsider_when,
+            "source_candidate_id": self.source_candidate_id,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Any) -> ExcludedCandidate:
+        if not isinstance(d, dict):
+            return cls(name=str(d or ""), reason="")
+        return cls(
+            name=str(d.get("name", "") or ""),
+            reason=str(d.get("reason", "") or ""),
+            category=_normalize_enum(
+                d.get("category"), EXCLUDED_CATEGORIES, "preference"
+            ),
+            reconsider_when=d.get("reconsider_when") or None,
+            source_candidate_id=d.get("source_candidate_id") or None,
+        )
+
 
 @dataclass
 class Location:
@@ -114,6 +257,7 @@ class Activity:
     transport_duration_min: int = 0
     transport_estimated: bool = False
     notes: str = ""
+    visit_info: VisitInfo | None = None
 
     @property
     def duration_minutes(self) -> int:
@@ -122,7 +266,7 @@ class Activity:
         return (eh * 60 + em) - (sh * 60 + sm)
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "name": self.name,
             "location": self.location.to_dict(),
             "start_time": self.start_time,
@@ -134,6 +278,10 @@ class Activity:
             "transport_estimated": self.transport_estimated,
             "notes": self.notes,
         }
+        # 仅在存在时序列化，保持旧状态快照的字典结构不变。
+        if self.visit_info is not None:
+            data["visit_info"] = self.visit_info.to_dict()
+        return data
 
     @classmethod
     def from_dict(cls, d: dict) -> Activity:
@@ -141,6 +289,7 @@ class Activity:
         # where location is passed as a string name instead of a full dict.
         if not isinstance(d, dict):
             raise TypeError(f"Activity.from_dict expects dict, got {type(d).__name__}")
+        raw_visit_info = d.get("visit_info")
         return cls(
             name=str(d.get("name", "")),
             location=Location.from_dict(d.get("location")),
@@ -152,6 +301,9 @@ class Activity:
             transport_duration_min=d.get("transport_duration_min", 0) or 0,
             transport_estimated=bool(d.get("transport_estimated", False)),
             notes=str(d.get("notes", "") or ""),
+            visit_info=VisitInfo.from_dict(raw_visit_info)
+            if isinstance(raw_visit_info, dict)
+            else None,
         )
 
 
@@ -364,6 +516,7 @@ _PHASE_DOWNSTREAM: dict[int, list[str]] = {
         "trip_brief",
         "candidate_pool",
         "shortlist",
+        "excluded_candidates",
         "skeleton_plans",
         "selected_skeleton_id",
         "transport_options",
@@ -401,6 +554,7 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "trip_brief": {},
     "candidate_pool": [],
     "shortlist": [],
+    "excluded_candidates": [],
     "skeleton_plans": [],
     "selected_skeleton_id": None,
     "transport_options": [],
@@ -469,6 +623,7 @@ class TravelPlanState:
     trip_brief: dict[str, Any] = field(default_factory=dict)
     candidate_pool: list[dict[str, Any]] = field(default_factory=list)
     shortlist: list[dict[str, Any]] = field(default_factory=list)
+    excluded_candidates: list[ExcludedCandidate] = field(default_factory=list)
     skeleton_plans: list[dict[str, Any]] = field(default_factory=list)
     selected_skeleton_id: str | None = None
     transport_options: list[dict[str, Any]] = field(default_factory=list)
@@ -508,6 +663,7 @@ class TravelPlanState:
             "trip_brief": self.trip_brief,
             "candidate_pool": self.candidate_pool,
             "shortlist": self.shortlist,
+            "excluded_candidates": [e.to_dict() for e in self.excluded_candidates],
             "skeleton_plans": self.skeleton_plans,
             "selected_skeleton_id": self.selected_skeleton_id,
             "transport_options": self.transport_options,
@@ -575,6 +731,10 @@ class TravelPlanState:
             trip_brief=trip_brief,
             candidate_pool=candidate_pool,
             shortlist=shortlist,
+            excluded_candidates=[
+                ExcludedCandidate.from_dict(e)
+                for e in d.get("excluded_candidates", []) or []
+            ],
             skeleton_plans=skeleton_plans,
             selected_skeleton_id=selected_skeleton_id,
             transport_options=d.get("transport_options", []),

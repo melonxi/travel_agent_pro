@@ -18,6 +18,7 @@ EXPECTED_TOOL_NAMES = [
     "set_accommodation",
     "set_alternatives",
     "set_candidate_pool",
+    "set_excluded_candidates",
     "set_risks",
     "set_shortlist",
     "set_skeleton_plans",
@@ -34,9 +35,9 @@ def _make_plan() -> TravelPlanState:
 def test_make_all_plan_tools_returns_expected_tools():
     tools = make_all_plan_tools(_make_plan())
 
-    assert len(tools) == 17
+    assert len(tools) == 18
     assert [tool.name for tool in tools] == EXPECTED_TOOL_NAMES
-    assert len({tool.name for tool in tools}) == 17
+    assert len({tool.name for tool in tools}) == 18
     assert {tool.name for tool in tools} == set(EXPECTED_TOOL_NAMES)
     assert all(tool.human_label for tool in tools)
     assert all(tool.side_effect == "write" for tool in tools)

@@ -1,6 +1,6 @@
 # Tool State Writes Deep Dive
 
-## 17 个状态写工具
+## 18 个状态写工具
 
 | 阶段 | 工具 |
 |------|------|
@@ -9,6 +9,7 @@
 | Phase 2 candidate | `set_candidate_pool`、`set_shortlist` |
 | Phase 2 skeleton | `set_skeleton_plans`、`select_skeleton` |
 | Phase 2 lock | `set_transport_options`、`select_transport`、`set_accommodation_options`、`set_accommodation`、`set_risks`、`set_alternatives` |
+| Phase 2/3 证据链 | `set_excluded_candidates` |
 | Phase 3 | `save_day_plan`、`replace_all_day_plans` |
 | 跨阶段 | `request_backtrack` |
 
@@ -46,6 +47,8 @@ tools.plan_tools.*
 - `set_skeleton_plans` 要校验单个 skeleton 内 POI 在 `locked_pois` / `candidate_pois` 间全局唯一。
 - `save_day_plan` 新增或替换单日。
 - `replace_all_day_plans` 覆盖全量日程，并校验 day/date/activity/notes schema。
+- activity 可选 `visit_info`（role / recommendation_reason / needs_recheck / evidence[]），校验见 `tools/plan_tools/evidence.py`：UGC 的 fact 不允许 confirmed；anchor 无 official/web 证据必须 needs_recheck。
+- `set_excluded_candidates` 整体替换淘汰记录（name / reason / category / reconsider_when / source_candidate_id）。
 - `request_backtrack` 只保留 rebuild / transition 语义，不伪造字段 diff。
 
 ## 关键代码

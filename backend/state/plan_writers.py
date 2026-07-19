@@ -22,6 +22,7 @@ from state.models import (
     Accommodation,
     Constraint,
     DayPlan,
+    ExcludedCandidate,
     Preference,
     TravelPlanState,
     normalize_pace_value,
@@ -95,6 +96,12 @@ def write_candidate_pool(plan: TravelPlanState, pool: list[dict]) -> None:
 def write_shortlist(plan: TravelPlanState, items: list[dict]) -> None:
     assert isinstance(items, list), f"Expected list, got {type(items).__name__}"
     plan.shortlist = items
+
+
+def write_excluded_candidates(plan: TravelPlanState, items: list[dict]) -> None:
+    """Replace excluded_candidates wholesale（淘汰记录是决策产物，整体替换语义）。"""
+    assert isinstance(items, list), f"Expected list, got {type(items).__name__}"
+    plan.excluded_candidates = [ExcludedCandidate.from_dict(item) for item in items]
 
 
 def write_transport_options(plan: TravelPlanState, options: list[dict]) -> None:

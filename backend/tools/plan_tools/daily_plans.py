@@ -11,6 +11,7 @@ from state.plan_writers import (
     replace_one_day_plan,
 )
 from tools.base import ToolError, tool
+from tools.plan_tools.evidence import validate_visit_info
 
 _REQUIRED_ACTIVITY_FIELDS = {
     "name",
@@ -36,7 +37,12 @@ _SAVE_DAY_PLAN_PARAMETERS = {
         "activities": {
             "type": "array",
             "items": {"type": "object"},
-            "description": "活动列表（必填），每个必须包含 name, location, start_time, end_time, category, cost；可选 transport_estimated（true=该段交通时长为未验证的保守估算）",
+            "description": (
+                "活动列表（必填），每个必须包含 name, location, start_time, end_time, category, cost；"
+                "可选 transport_estimated（true=该段交通时长为未验证的保守估算）；"
+                "可选 visit_info（{role, recommendation_reason, needs_recheck, evidence[]}，"
+                "记录推荐理由与证据来源；anchor 活动没有 official/web 证据时必须 needs_recheck=true）"
+            ),
         },
     },
     "required": ["mode", "day", "date", "activities"],
@@ -191,6 +197,8 @@ def _validate_activities(activities: Any) -> None:
                     "calculate_route 验证的保守估算"
                 ),
             )
+        if activity.get("visit_info") is not None:
+            validate_visit_info(activity["visit_info"], f"activities[{index}]")
 
 
 # ---------------------------------------------------------------------------
