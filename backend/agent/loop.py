@@ -32,8 +32,11 @@ from agent.execution.loop_events import (
     notify_context_rebuild,
 )
 from agent.execution.phase_transition import detect_phase_transition
+from agent.execution.parallel_continuation import (
+    ParallelPhase3Continuation,
+    run_parallel_phase3_and_decide,
+)
 from agent.execution.repair_hints import (
-    RepairHintOutcome,
     build_phase2_state_repair_message,
     build_phase3_daily_state_repair_message,
 )
@@ -397,26 +400,21 @@ class AgentLoop:
                     self.phase3_parallel_config,
                     user_message=original_user_message,
                 ):
-                    async for chunk in self._run_parallel_phase3_orchestrator(
+                    continuation: ParallelPhase3Continuation | None = None
+                    async for item in run_parallel_phase3_and_decide(
+                        self,
                         messages=messages,
                         original_user_message=original_user_message,
+                        fallback_phase=phase,
                     ):
-                        # The orchestrator owns a complete Phase 3 sub-flow and
-                        # therefore emits DONE.  When its commit advances the
-                        # plan to Phase 4, that DONE is only the sub-flow
-                        # boundary: the same agent run must continue until the
-                        # deliverables are generated.
-                        if chunk.type != ChunkType.DONE:
-                            yield chunk
-
-                    current_phase = self.plan.phase if self.plan is not None else phase
-                    if current_phase != 4 or getattr(self.plan, "deliverables", None):
-                        yield LLMChunk(type=ChunkType.DONE)
+                        if isinstance(item, LLMChunk):
+                            yield item
+                        else:
+                            continuation = item
+                    if continuation is None or continuation.run_finished:
                         return
-                    tools = self.tool_engine.get_tools_for_phase(
-                        current_phase,
-                        self.plan,
-                    )
+                    current_phase = continuation.current_phase
+                    tools = continuation.tools
                     prev_iteration_had_tools = True
                     phase_changed_in_prev_iteration = True
 
@@ -476,11 +474,13 @@ class AgentLoop:
                     # If no tool calls, we're done — the LLM gave a final text response
                     if not tool_calls:
                         full_text = "".join(text_chunks)
-                        repair_outcome = self._build_phase2_state_repair_message(
+                        repair_outcome = build_phase2_state_repair_message(
+                            plan=self.plan,
                             current_phase=current_phase,
                             assistant_text=full_text,
                             repair_hints_used=repair_hints_used,
-                        ) or self._build_phase3_daily_state_repair_message(
+                        ) or build_phase3_daily_state_repair_message(
+                            plan=self.plan,
                             current_phase=current_phase,
                             assistant_text=full_text,
                             repair_hints_used=repair_hints_used,
@@ -829,34 +829,6 @@ class AgentLoop:
             tool_engine=self.tool_engine,
             plan=self.plan,
             phase=phase,
-        )
-
-    def _build_phase2_state_repair_message(
-        self,
-        *,
-        current_phase: int,
-        assistant_text: str,
-        repair_hints_used: set[str],
-    ) -> RepairHintOutcome | None:
-        return build_phase2_state_repair_message(
-            plan=self.plan,
-            current_phase=current_phase,
-            assistant_text=assistant_text,
-            repair_hints_used=repair_hints_used,
-        )
-
-    def _build_phase3_daily_state_repair_message(
-        self,
-        *,
-        current_phase: int,
-        assistant_text: str,
-        repair_hints_used: set[str],
-    ) -> RepairHintOutcome | None:
-        return build_phase3_daily_state_repair_message(
-            plan=self.plan,
-            current_phase=current_phase,
-            assistant_text=assistant_text,
-            repair_hints_used=repair_hints_used,
         )
 
     def _should_skip_redundant_update(self, tool_call: ToolCall) -> bool:

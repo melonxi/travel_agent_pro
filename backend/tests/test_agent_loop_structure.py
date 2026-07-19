@@ -82,6 +82,14 @@ def test_agent_execution_modules_expose_expected_names():
         "build_phase3_daily_state_repair_message",
     )
     assert module_defines(
+        "agent/execution/parallel_continuation.py",
+        "run_parallel_phase3_and_decide",
+    )
+    assert module_defines(
+        "agent/execution/parallel_continuation.py",
+        "ParallelPhase3Continuation",
+    )
+    assert module_defines(
         "agent/execution/message_rebuild.py",
         "rebuild_messages_for_phase_change",
     )
@@ -110,10 +118,10 @@ def test_agent_loop_public_surface_and_size_guard():
     assert "async def run(" in loop_text
     # Coarse regression guard: keep AgentLoop from drifting back into a god file
     # while compatibility wrappers are still present.
-    # Threshold raised to 900 after the Phase 3 parallel → Phase 4 continuation
-    # fix (cda4f18) while the handoff bridge coexists with compatibility
-    # handling for stored legacy records.
-    assert line_count("agent/loop.py") < 900
+    # Restored to 850 after extracting the parallel Phase 3 → Phase 4
+    # continuation decision into agent/execution/parallel_continuation.py
+    # and removing pass-through repair-hint wrappers.
+    assert line_count("agent/loop.py") < 850
 
 
 def test_agent_loop_compatibility_methods_remain():
