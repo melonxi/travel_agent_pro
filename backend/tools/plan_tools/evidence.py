@@ -29,6 +29,8 @@ from tools.base import ToolError, tool
 
 EVIDENCE_RECORD_SCHEMA = {
     "type": "object",
+    # 严格模式：并行 Day Worker 的 submit schema 直接复用本结构。
+    "additionalProperties": False,
     "properties": {
         "source_type": {
             "type": "string",
@@ -58,6 +60,7 @@ EVIDENCE_RECORD_SCHEMA = {
 
 VISIT_INFO_SCHEMA = {
     "type": "object",
+    "additionalProperties": False,
     "properties": {
         "role": {
             "type": "string",
@@ -82,6 +85,22 @@ VISIT_INFO_SCHEMA = {
 }
 
 _RELIABLE_SOURCE_TYPES = {"official", "web"}
+
+
+def is_reliable_fact_record(record: Any) -> bool:
+    """可靠来源 = official/web 的已确认事实且带可追溯 URL。
+
+    单看 source_type 不够：web 来源的 experience/unverified 记录
+    （"某篇游记说氛围很好"）不能作为 anchor 关闭 needs_recheck 的依据。
+    """
+    return (
+        isinstance(record, dict)
+        and record.get("source_type") in _RELIABLE_SOURCE_TYPES
+        and record.get("claim_type") == "fact"
+        and record.get("confidence") == "confirmed"
+        and isinstance(record.get("source_url"), str)
+        and record["source_url"].strip().startswith(("http://", "https://"))
+    )
 
 
 def _enum_error(prefix: str, field: str, value: Any, allowed: set[str]) -> ToolError:
@@ -172,17 +191,15 @@ def validate_visit_info(visit_info: Any, prefix: str) -> None:
     validate_evidence_records(evidence, f"{prefix}.visit_info")
     # 硬规则 2：anchor 没有可靠来源时必须显式标记待复核。
     if role == "anchor" and not needs_recheck:
-        has_reliable = any(
-            isinstance(record, dict)
-            and record.get("source_type") in _RELIABLE_SOURCE_TYPES
-            for record in evidence
-        )
+        has_reliable = any(is_reliable_fact_record(record) for record in evidence)
         if not has_reliable:
             raise ToolError(
-                f"{prefix}.visit_info: role=anchor 但没有 official/web 证据来源",
+                f"{prefix}.visit_info: role=anchor 但没有可靠事实来源"
+                "（official/web + claim_type=fact + confidence=confirmed + source_url）",
                 error_code="ANCHOR_NEEDS_RELIABLE_SOURCE",
                 suggestion=(
-                    "强锚点至少要有一条 official 或 web 事实来源；"
+                    "强锚点至少要有一条 official 或 web 来源、claim_type=fact、"
+                    "confidence=confirmed 且带 http(s) source_url 的证据；"
                     "暂时查不到时保留推荐，但必须 needs_recheck=true。"
                 ),
             )

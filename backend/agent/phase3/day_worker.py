@@ -32,6 +32,7 @@ from storage.trace_redaction import redact_for_trace, stable_content_hash
 from telemetry.stats import estimate_llm_cost_usd, llm_cache_usage_metadata
 from telemetry.trace_recorder import TraceContext, TraceRecorder
 from tools.engine import ToolEngine
+from tools.plan_tools.evidence import VISIT_INFO_SCHEMA
 
 logger = logging.getLogger(__name__)
 
@@ -459,6 +460,8 @@ _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA = {
         "- INVALID_DAYPLAN（day 不匹配）→ 把 dayplan.day 改为当前任务天数\n"
         "- INVALID_DAYPLAN（字段缺失）→ 补齐 day/date/activities，每个 activity 含 name/location/start_time/end_time/category/cost\n"
         "- INVALID_DAYPLAN（location 非对象）→ location 必须是 {name, lat, lng}，不是字符串\n"
+        "- INVALID_DAYPLAN_EVIDENCE（证据非法）→ 按错误信息修正 visit_info：UGC 来源的 fact 不允许 confidence=confirmed；"
+        "anchor 没有「official/web + fact + confirmed + source_url」证据时必须 needs_recheck=true\n"
         "- SUBMIT_UNAVAILABLE → 此运行未注入 candidate_store，改为在最终文本输出合法 DayPlan JSON（用 ```json 代码块包裹）"
     ),
     "parameters": {
@@ -554,6 +557,17 @@ _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA = {
                                 "notes": {
                                     "type": "string",
                                     "description": "可选。无法确认的信息写在这里，例如「需提前预约（未确认链接）」。",
+                                },
+                                "visit_info": {
+                                    **VISIT_INFO_SCHEMA,
+                                    "description": (
+                                        "可选。当天锚点和做过验证的活动应附上：为什么推荐、"
+                                        "证据来源（web_search 结果）、是否需要出发前复核。"
+                                        "UGC（小红书/用户）的 fact 不允许 confidence=confirmed；"
+                                        "role=anchor 没有已确认事实来源（official/web + fact + "
+                                        "confirmed + source_url）时必须 needs_recheck=true。"
+                                        "普通用餐、接驳不需要。"
+                                    ),
                                 },
                             },
                         },
@@ -1698,8 +1712,9 @@ def _submit_day_plan_candidate(
             tool_call_id=call.id,
             status="error",
             error=str(exc),
-            error_code="INVALID_DAYPLAN",
-            suggestion=f"Submit a DayPlan whose day is {task.day}.",
+            error_code=getattr(exc, "error_code", "INVALID_DAYPLAN"),
+            suggestion=getattr(exc, "suggestion", "")
+            or f"Submit a DayPlan whose day is {task.day}.",
         )
 
     return ToolResult(

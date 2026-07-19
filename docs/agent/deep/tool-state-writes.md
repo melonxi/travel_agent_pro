@@ -47,7 +47,7 @@ tools.plan_tools.*
 - `set_skeleton_plans` 要校验单个 skeleton 内 POI 在 `locked_pois` / `candidate_pois` 间全局唯一。
 - `save_day_plan` 新增或替换单日。
 - `replace_all_day_plans` 覆盖全量日程，并校验 day/date/activity/notes schema。
-- activity 可选 `visit_info`（role / recommendation_reason / needs_recheck / evidence[]），校验见 `tools/plan_tools/evidence.py`：UGC 的 fact 不允许 confirmed；anchor 无 official/web 证据必须 needs_recheck。
+- activity 可选 `visit_info`（role / recommendation_reason / needs_recheck / evidence[]），校验见 `tools/plan_tools/evidence.py`：UGC 的 fact 不允许 confirmed；anchor 必须有「official/web + fact + confirmed + source_url」的可靠事实来源，否则 needs_recheck。并行路径在 `Phase3CandidateStore._validate_dayplan` 提交时做同一校验（`INVALID_DAYPLAN_EVIDENCE`）。
 - `set_excluded_candidates` 整体替换淘汰记录（name / reason / category / reconsider_when / source_candidate_id）。
 - `request_backtrack` 只保留 rebuild / transition 语义，不伪造字段 diff。
 

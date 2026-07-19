@@ -41,7 +41,8 @@ _SAVE_DAY_PLAN_PARAMETERS = {
                 "活动列表（必填），每个必须包含 name, location, start_time, end_time, category, cost；"
                 "可选 transport_estimated（true=该段交通时长为未验证的保守估算）；"
                 "可选 visit_info（{role, recommendation_reason, needs_recheck, evidence[]}，"
-                "记录推荐理由与证据来源；anchor 活动没有 official/web 证据时必须 needs_recheck=true）"
+                "记录推荐理由与证据来源；anchor 活动没有已确认事实来源（official/web 的 "
+                "confirmed fact 且带 URL）时必须 needs_recheck=true）"
             ),
         },
     },

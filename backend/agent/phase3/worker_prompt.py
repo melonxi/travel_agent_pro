@@ -164,7 +164,22 @@ _DAYPLAN_SCHEMA = """## DayPlan 结构要求
       "transport_from_prev": "<可选：从上一地点的交通方式>",
       "transport_duration_min": "<可选：分钟数>",
       "transport_estimated": "<可选：true 表示该段交通时长为未经 calculate_route 验证的保守估算>",
-      "notes": "<可选：如天气提醒、穿着建议、注意事项等小贴士，行程安排必须写在 activities>"
+      "notes": "<可选：如天气提醒、穿着建议、注意事项等小贴士，行程安排必须写在 activities>",
+      "visit_info": {
+        "role": "<anchor 当天强锚点 / normal 普通 / backup 备选>",
+        "recommendation_reason": "<为什么推荐这个安排>",
+        "needs_recheck": "<信息未交叉验证时必须 true>",
+        "evidence": [
+          {
+            "source_type": "<official/web/xiaohongshu/user>",
+            "summary": "<压缩后的信息摘要>",
+            "claim_type": "<fact 可核验事实 / experience 体验 / warning 避坑>",
+            "confidence": "<confirmed / unverified>",
+            "source_url": "<来源链接，可选>",
+            "observed_at": "<信息时间，可选>"
+          }
+        ]
+      }
     }
   ]
 }
@@ -176,6 +191,12 @@ _DAYPLAN_SCHEMA = """## DayPlan 结构要求
 - cost 是数字（人民币），没有时填 0；不能是字符串如 "100元"
 - category 必须是以下枚举之一：shrine, museum, food, transport, activity, shopping, park, viewpoint, experience
 - 交通时长来自 calculate_route 实算时，transport_estimated 省略或为 false；未拿到可用路线而采用保守估算时，必须设 transport_estimated=true（不要只写进 notes 小字）
+
+证据记录（visit_info，可选但对锚点强烈建议）：
+- 当天核心锚点和做过 web_search 验证的活动，附 visit_info 记录"为什么去、依据是什么"；普通用餐、接驳不需要。
+- UGC（小红书/用户自述）的 fact 不允许 confidence=confirmed——营业时间、票价、政策必须由 official/web 来源背书，UGC 只承担 experience / warning。
+- role=anchor 必须至少有一条「official/web + claim_type=fact + confidence=confirmed + http(s) source_url」的证据；没有时保留推荐但必须 needs_recheck=true。
+- 违反以上规则提交会返回 INVALID_DAYPLAN_EVIDENCE，按错误信息修正后重新提交。
 
 常见结构错误（绝对不允许）：
 1. `"location": "浅草寺"` → 必须是 `{"name": "浅草寺", "lat": 35.7148, "lng": 139.7967}`

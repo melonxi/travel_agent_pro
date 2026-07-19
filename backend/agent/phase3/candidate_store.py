@@ -7,11 +7,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tools.base import ToolError
+from tools.plan_tools.evidence import validate_visit_info
+
 _SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class Phase3CandidateValidationError(ValueError):
-    pass
+    """候选校验失败。error_code/suggestion 供 Worker 自修复循环使用。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "INVALID_DAYPLAN",
+        suggestion: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.suggestion = suggestion
 
 
 @dataclass(frozen=True)
@@ -220,6 +234,22 @@ class Phase3CandidateStore:
 
         if not isinstance(dayplan.get("activities"), list):
             raise Phase3CandidateValidationError("dayplan.activities must be a list")
+
+        # 证据校验必须在提交时完成：单 Worker 内失败重试成本是一天；
+        # 拖到 Orchestrator 最终 handoff 才发现，会烧掉整轮并行成果。
+        for index, activity in enumerate(dayplan["activities"]):
+            if not isinstance(activity, dict):
+                continue
+            if activity.get("visit_info") is None:
+                continue
+            try:
+                validate_visit_info(activity["visit_info"], f"activities[{index}]")
+            except ToolError as exc:
+                raise Phase3CandidateValidationError(
+                    str(exc),
+                    error_code="INVALID_DAYPLAN_EVIDENCE",
+                    suggestion=exc.suggestion,
+                ) from exc
 
 
 def _validate_safe_segment(value: str, field_name: str) -> None:

@@ -88,6 +88,36 @@ def test_get_tools_for_phase2_respects_substep(engine):
     assert "search_accommodations" in lock_tools
 
 
+def test_set_excluded_candidates_gated_out_of_brief(engine):
+    """回归：新增 Phase 2 写工具必须登记进 builtin 集合，否则被当作
+    未知工具在所有子阶段放行。brief 阶段没有候选可淘汰，不应可见。"""
+
+    @tool(
+        name="set_excluded_candidates",
+        description="excl",
+        phases=[2, 3],
+        parameters={"type": "object", "properties": {}},
+    )
+    async def set_excluded_candidates() -> dict:
+        return {}
+
+    engine.register(set_excluded_candidates)
+    assert "set_excluded_candidates" in engine._phase2_builtin_tool_names()
+
+    plan = TravelPlanState(session_id="s_excl", phase=2, phase2_step="brief")
+    visible: dict[str, bool] = {}
+    for step in ["brief", "candidate", "skeleton", "lock"]:
+        plan.phase2_step = step
+        names = {t["name"] for t in engine.get_tools_for_phase(2, plan)}
+        visible[step] = "set_excluded_candidates" in names
+    assert visible == {
+        "brief": False,
+        "candidate": True,
+        "skeleton": True,
+        "lock": True,
+    }
+
+
 @pytest.mark.asyncio
 async def test_execute_success(engine):
     call = ToolCall(id="tc_1", name="greet", arguments={"name": "World"})
@@ -147,6 +177,7 @@ class TestEnginePhase3NewTools:
             "set_trip_brief",
             "set_candidate_pool",
             "set_shortlist",
+            "set_excluded_candidates",
             "add_preferences",
             "add_constraints",
             "web_search",
@@ -170,6 +201,7 @@ class TestEnginePhase3NewTools:
             "select_skeleton",
             "set_candidate_pool",
             "set_shortlist",
+            "set_excluded_candidates",
             "add_preferences",
             "add_constraints",
             "web_search",
@@ -191,6 +223,7 @@ class TestEnginePhase3NewTools:
             "set_trip_brief",
             "set_candidate_pool",
             "set_shortlist",
+            "set_excluded_candidates",
             "set_skeleton_plans",
             "select_skeleton",
             "set_transport_options",

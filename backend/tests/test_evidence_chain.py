@@ -325,6 +325,58 @@ class TestDayPlanVisitInfo:
         assert plan.daily_plans[0].activities[0].visit_info.needs_recheck is True
 
     @pytest.mark.asyncio
+    async def test_regression_unverified_web_experience_not_reliable(self):
+        """回归：web 来源的 experience/unverified（"某篇游记说氛围很好"）
+        不构成可靠来源，不能让 anchor 关闭 needs_recheck。"""
+        tool_fn = make_save_day_plan_tool(self._make_plan())
+        with pytest.raises(ToolError, match="ANCHOR_NEEDS_RELIABLE_SOURCE|可靠事实来源"):
+            await tool_fn(
+                mode="create",
+                day=1,
+                date="2026-05-01",
+                activities=[
+                    _activity_with_visit_info(
+                        {
+                            "role": "anchor",
+                            "recommendation_reason": "游记说氛围很好",
+                            "needs_recheck": False,
+                            "evidence": [
+                                {
+                                    "source_type": "web",
+                                    "summary": "某个人游记说氛围很好",
+                                    "claim_type": "experience",
+                                    "confidence": "unverified",
+                                }
+                            ],
+                        }
+                    )
+                ],
+            )
+
+    @pytest.mark.asyncio
+    async def test_regression_confirmed_fact_without_url_not_reliable(self):
+        """回归：声称 confirmed fact 但没有可追溯 URL，不构成可靠来源。"""
+        tool_fn = make_save_day_plan_tool(self._make_plan())
+        evidence_no_url = _official_evidence()
+        evidence_no_url.pop("source_url")
+        with pytest.raises(ToolError, match="ANCHOR_NEEDS_RELIABLE_SOURCE|可靠事实来源"):
+            await tool_fn(
+                mode="create",
+                day=1,
+                date="2026-05-01",
+                activities=[
+                    _activity_with_visit_info(
+                        {
+                            "role": "anchor",
+                            "recommendation_reason": "官方确认开放",
+                            "needs_recheck": False,
+                            "evidence": [evidence_no_url],
+                        }
+                    )
+                ],
+            )
+
+    @pytest.mark.asyncio
     async def test_activity_without_visit_info_still_accepted(self):
         """最小证据策略：普通活动不强制 visit_info。"""
         plan = self._make_plan()
@@ -336,6 +388,175 @@ class TestDayPlanVisitInfo:
             activities=[_activity_with_visit_info(None)],
         )
         assert result["activity_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 并行 Phase 3 主路径：Worker schema / Candidate Store 提交校验 / handoff 写入
+# ---------------------------------------------------------------------------
+
+
+class TestParallelPhase3EvidencePath:
+    """生产默认路径是并行 Orchestrator-Workers；证据必须能穿过
+    Worker submit schema → Candidate Store → replace_all_day_plans handoff。"""
+
+    def _dayplan(self, visit_info: dict | None, day: int = 2) -> dict:
+        return {
+            "day": day,
+            "date": "2026-05-02",
+            "activities": [_activity_with_visit_info(visit_info)],
+        }
+
+    def test_worker_submit_schema_allows_visit_info(self):
+        from agent.phase3.day_worker import _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA
+
+        activity_schema = _SUBMIT_DAY_PLAN_CANDIDATE_SCHEMA["parameters"][
+            "properties"
+        ]["dayplan"]["properties"]["activities"]["items"]
+        # 严格 schema 下 visit_info 必须显式声明，否则 Worker 物理上无法提交证据
+        assert activity_schema["additionalProperties"] is False
+        assert "visit_info" in activity_schema["properties"]
+        visit_info_schema = activity_schema["properties"]["visit_info"]
+        assert "evidence" in visit_info_schema["properties"]
+        assert visit_info_schema["additionalProperties"] is False
+
+    def test_candidate_store_rejects_ugc_confirmed_fact_at_submit(self, tmp_path):
+        """证据校验必须在 Worker 提交时失败，而不是最终 handoff 才爆炸。"""
+        from agent.phase3.candidate_store import (
+            Phase3CandidateStore,
+            Phase3CandidateValidationError,
+        )
+
+        store = Phase3CandidateStore(tmp_path)
+        bad_visit_info = {
+            "role": "normal",
+            "recommendation_reason": "笔记说好玩",
+            "evidence": [_ugc_evidence(claim_type="fact", confidence="confirmed")],
+        }
+        with pytest.raises(Phase3CandidateValidationError) as exc_info:
+            store.submit_candidate(
+                session_id="sess_ev",
+                run_id="run_1",
+                worker_id="day_2_attempt_1",
+                expected_day=2,
+                attempt=1,
+                dayplan=self._dayplan(bad_visit_info),
+            )
+        assert exc_info.value.error_code == "INVALID_DAYPLAN_EVIDENCE"
+        assert exc_info.value.suggestion
+
+    def test_candidate_store_rejects_unrecheck_anchor_at_submit(self, tmp_path):
+        from agent.phase3.candidate_store import (
+            Phase3CandidateStore,
+            Phase3CandidateValidationError,
+        )
+
+        store = Phase3CandidateStore(tmp_path)
+        anchor_no_source = {
+            "role": "anchor",
+            "recommendation_reason": "口碑很好但未查到官方信息",
+            "needs_recheck": False,
+            "evidence": [_ugc_evidence()],
+        }
+        with pytest.raises(Phase3CandidateValidationError) as exc_info:
+            store.submit_candidate(
+                session_id="sess_ev",
+                run_id="run_1",
+                worker_id="day_2_attempt_1",
+                expected_day=2,
+                attempt=1,
+                dayplan=self._dayplan(anchor_no_source),
+            )
+        assert exc_info.value.error_code == "INVALID_DAYPLAN_EVIDENCE"
+
+    def test_candidate_store_accepts_and_persists_valid_evidence(self, tmp_path):
+        import json as json_lib
+        from pathlib import Path
+
+        from agent.phase3.candidate_store import Phase3CandidateStore
+
+        store = Phase3CandidateStore(tmp_path)
+        valid_visit_info = {
+            "role": "anchor",
+            "recommendation_reason": "画像必去项，官方确认开放",
+            "needs_recheck": False,
+            "evidence": [_official_evidence(), _ugc_evidence()],
+        }
+        result = store.submit_candidate(
+            session_id="sess_ev",
+            run_id="run_1",
+            worker_id="day_2_attempt_1",
+            expected_day=2,
+            attempt=1,
+            dayplan=self._dayplan(valid_visit_info),
+        )
+        payload = json_lib.loads(Path(result["path"]).read_text(encoding="utf-8"))
+        persisted = payload["dayplan"]["activities"][0]["visit_info"]
+        assert persisted["evidence"][0]["source_type"] == "official"
+        assert persisted["evidence"][1]["confidence"] == "unverified"
+
+    def test_worker_submit_tool_surfaces_evidence_error_code(self, tmp_path):
+        """Worker 自修复循环依赖 error_code/suggestion 透传。"""
+        from agent.phase3.candidate_store import Phase3CandidateStore
+        from agent.phase3.day_worker import _submit_day_plan_candidate
+        from agent.phase3.worker_prompt import DayTask
+        from agent.types import ToolCall
+
+        plan = TravelPlanState(session_id="sess-ev-worker", phase=3)
+        task = DayTask(day=2, date="2026-05-02", skeleton_slice={}, pace="balanced")
+        bad_visit_info = {
+            "role": "normal",
+            "recommendation_reason": "笔记说好玩",
+            "evidence": [_ugc_evidence(claim_type="fact", confidence="confirmed")],
+        }
+        result = _submit_day_plan_candidate(
+            call=ToolCall(
+                id="tc_ev",
+                name="submit_day_plan_candidate",
+                arguments={"dayplan": self._dayplan(bad_visit_info)},
+            ),
+            plan=plan,
+            task=task,
+            candidate_store=Phase3CandidateStore(tmp_path),
+            run_id="run-1",
+            attempt=1,
+        )
+        assert result.status == "error"
+        assert result.error_code == "INVALID_DAYPLAN_EVIDENCE"
+        assert "confirmed" in (result.error or "") or (result.suggestion or "")
+
+    @pytest.mark.asyncio
+    async def test_handoff_replace_all_preserves_visit_info(self):
+        """Orchestrator handoff 最终通过 replace_all_day_plans 写入；
+        证据必须完整落进 TravelPlanState.daily_plans。"""
+        from tools.plan_tools.daily_plans import make_replace_all_day_plans_tool
+
+        plan = TravelPlanState(session_id="sess-handoff", phase=3)
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-02")
+        tool_fn = make_replace_all_day_plans_tool(plan)
+        await tool_fn(
+            days=[
+                {
+                    "day": 1,
+                    "date": "2026-05-01",
+                    "activities": [
+                        _activity_with_visit_info(
+                            {
+                                "role": "anchor",
+                                "recommendation_reason": "画像必去项，官方确认开放",
+                                "needs_recheck": False,
+                                "evidence": [_official_evidence()],
+                            }
+                        )
+                    ],
+                },
+                {"day": 2, "date": "2026-05-02", "activities": [_activity_with_visit_info(None)]},
+            ]
+        )
+        saved = plan.daily_plans[0].activities[0].visit_info
+        assert saved is not None
+        assert saved.role == "anchor"
+        assert saved.evidence[0].source_url == "https://example.com/official"
+        assert plan.daily_plans[1].activities[0].visit_info is None
 
 
 # ---------------------------------------------------------------------------

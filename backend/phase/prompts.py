@@ -415,7 +415,7 @@ PHASE3_PROMPT = """## 硬法则（执行级）
 
 信息源硬规则（违反会导致写入失败）：
 - 小红书 / 用户自述（UGC）的 `fact` 不允许标 `confidence="confirmed"`——营业时间、票价、政策必须由 official/web 来源背书；UGC 只能承担 experience / warning。
-- `role="anchor"` 且没有任何 official/web 证据时，必须 `needs_recheck=true`——允许"没查到但仍推荐"，不允许"没查到且装作可靠"。
+- `role="anchor"` 必须至少有一条「official/web + claim_type=fact + confidence=confirmed + http(s) source_url」的证据；没有时必须 `needs_recheck=true`——允许"没查到但仍推荐"，不允许"没查到且装作可靠"。
 - 不是每个活动都要 visit_info；普通用餐、接驳不需要。逐日排程中淘汰了骨架候选时，用 `set_excluded_candidates` 更新淘汰记录。
 
 ## 工具契约
