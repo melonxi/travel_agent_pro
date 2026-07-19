@@ -260,8 +260,8 @@ async def test_xiaohongshu_split_tools_enforce_min_page_and_extract_token_from_u
             }
         ),
     )
-    search_tool = make_xiaohongshu_search_notes_tool(xhs_client=xhs_client)
-    comments_tool = make_xiaohongshu_get_comments_tool(xhs_client=xhs_client)
+    search_tool = make_xiaohongshu_search_notes_tool(xhs_config=XhsConfig(enabled=True), xhs_client=xhs_client)
+    comments_tool = make_xiaohongshu_get_comments_tool(xhs_config=XhsConfig(enabled=True), xhs_client=xhs_client)
 
     await search_tool(keyword="东京 citywalk", page=0)
     xhs_client.search_notes.assert_awaited_once_with(

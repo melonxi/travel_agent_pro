@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agent.types import ToolCall
+from config import XhsConfig
 from tools.base import ToolError
 
 
@@ -251,7 +252,7 @@ async def test_xiaohongshu_search_notes_tool_searches_without_operation():
         get_comments=AsyncMock(),
     )
 
-    tool_fn = make_xiaohongshu_search_notes_tool(xhs_client=xhs_client)
+    tool_fn = make_xiaohongshu_search_notes_tool(xhs_config=XhsConfig(enabled=True), xhs_client=xhs_client)
     result = await tool_fn(
         keyword="上海 旅行",
         sort="popular",
@@ -311,7 +312,7 @@ async def test_xiaohongshu_search_notes_tool_accepts_max_results_and_truncates_i
         get_comments=AsyncMock(),
     )
 
-    tool_fn = make_xiaohongshu_search_notes_tool(xhs_client=xhs_client)
+    tool_fn = make_xiaohongshu_search_notes_tool(xhs_config=XhsConfig(enabled=True), xhs_client=xhs_client)
     result = await tool_fn(
         keyword="赛里木湖 夏季 体验",
         max_results=1,
@@ -331,7 +332,7 @@ async def test_xiaohongshu_search_notes_tool_accepts_max_results_and_truncates_i
 async def test_xiaohongshu_search_notes_tool_has_no_operation_parameter():
     from tools.xiaohongshu_search import make_xiaohongshu_search_notes_tool
 
-    tool_def = make_xiaohongshu_search_notes_tool(xhs_client=SimpleNamespace())
+    tool_def = make_xiaohongshu_search_notes_tool(xhs_config=XhsConfig(enabled=True), xhs_client=SimpleNamespace())
     assert "operation" not in tool_def.parameters["properties"]
     assert tool_def.parameters["required"] == ["keyword"]
 
@@ -381,8 +382,8 @@ async def test_xiaohongshu_read_note_and_get_comments_tools():
         ),
     )
 
-    read_tool = make_xiaohongshu_read_note_tool(xhs_client=xhs_client)
-    comments_tool = make_xiaohongshu_get_comments_tool(xhs_client=xhs_client)
+    read_tool = make_xiaohongshu_read_note_tool(xhs_config=XhsConfig(enabled=True), xhs_client=xhs_client)
+    comments_tool = make_xiaohongshu_get_comments_tool(xhs_config=XhsConfig(enabled=True), xhs_client=xhs_client)
 
     read_result = await read_tool(note_ref="note_1")
     assert read_result["note"]["title"] == "上海旅行攻略"
@@ -411,8 +412,8 @@ async def test_xiaohongshu_split_tools_require_specific_inputs():
         get_comments=AsyncMock(),
     )
 
-    search_tool = make_xiaohongshu_search_notes_tool(xhs_client=xhs_client)
-    read_tool = make_xiaohongshu_read_note_tool(xhs_client=xhs_client)
+    search_tool = make_xiaohongshu_search_notes_tool(xhs_config=XhsConfig(enabled=True), xhs_client=xhs_client)
+    read_tool = make_xiaohongshu_read_note_tool(xhs_config=XhsConfig(enabled=True), xhs_client=xhs_client)
 
     with pytest.raises(ToolError, match="keyword"):
         await search_tool()
@@ -455,13 +456,16 @@ async def test_xiaohongshu_split_tools_registration():
 
 
 @pytest.mark.asyncio
-async def test_xiaohongshu_tools_not_registered_when_disabled():
-    # 默认配置下 xhs.enabled=false,三件套不应出现在工具引擎中。
+async def test_xiaohongshu_tools_not_registered_when_disabled(tmp_path):
+    # 安全默认回归：config 没有 xhs 段（陌生人 clone 场景）时 enabled=False，
+    # 三件套不应出现在工具引擎中。不读仓库根目录的本机 config.yaml。
     from config import load_config
     from state.models import TravelPlanState
     from api.orchestration.agent.tools import build_tool_engine
 
-    cfg = load_config()
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("{}\n")
+    cfg = load_config(str(cfg_file))
     assert cfg.xhs.enabled is False
     plan = TravelPlanState(session_id="s_xhs_off", phase=1)
     tool_engine = build_tool_engine(config=cfg, plan=plan)
@@ -499,7 +503,7 @@ async def test_tool_engine_extracts_xiaohongshu_metadata():
     )
 
     engine = ToolEngine()
-    engine.register(make_xiaohongshu_search_notes_tool(xhs_client=xhs_client))
+    engine.register(make_xiaohongshu_search_notes_tool(xhs_config=XhsConfig(enabled=True), xhs_client=xhs_client))
     result = await engine.execute(
         ToolCall(
             id="tc_1",
@@ -718,7 +722,7 @@ async def test_read_note_tool_extracts_token_from_url():
         get_comments=AsyncMock(),
     )
 
-    tool_fn = make_xiaohongshu_read_note_tool(xhs_client=xhs_client)
+    tool_fn = make_xiaohongshu_read_note_tool(xhs_config=XhsConfig(enabled=True), xhs_client=xhs_client)
     url = "https://www.xiaohongshu.com/explore/note_1?xsec_token=tok_extracted"
     await tool_fn(note_ref=url)
 

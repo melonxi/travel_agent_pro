@@ -40,6 +40,12 @@
 - `search_flights` 仅在 flyai 可用时注册；已移除 Amadeus sandbox 分支。
 - flyai 不可用时由 lock 阶段 prompt 引导 `web_search` 查航线/价格带。
 
+## 小红书工具（默认下线）
+
+- `xiaohongshu_search_notes` / `read_note` / `get_comments` 由 `config.xhs.enabled` 门控，**代码默认 False**（CLI 走登录态抓取，有封号风险）。
+- UGC 内容统一由 `web_search` + `include_domains=["xiaohongshu.com",...]` 域内搜索承担；证据模型中的 `source_type="xiaohongshu"` 只是出处标签，不代表调用 XHS CLI。
+- 显式 opt-in 才注册；工具执行层另有 `_ensure_enabled` 双保险。
+
 ## 工具错误
 
 - `ToolError` 返回 `error_code` + `suggestion` 给 LLM。

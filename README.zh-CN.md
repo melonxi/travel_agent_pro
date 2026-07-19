@@ -86,7 +86,7 @@ session）；内层循环解释“一轮如何推进 `TravelPlanState`”。两�
 
 | Phase | 目标 | 代表工具 |
 |-------|------|----------|
-| 1 · 灵感与目的地锁定 | 把模糊意图收敛为目的地 | `xiaohongshu_search_notes`、`web_search`、`quick_travel_search` |
+| 1 · 灵感与目的地锁定 | 把模糊意图收敛为目的地 | `web_search`（UGC 域内搜索）、`quick_travel_search` |
 | 2 · 框架规划 | 旅行画像、候选池、骨架、交通与住宿锁定 | `set_trip_brief`、`set_skeleton_plans`、`search_flights`、`search_accommodations` |
 | 3 · 逐日行程详排 | 把选定骨架展开为经过校验的逐日计划 | `optimize_day_route`、`save_day_plan`、`replace_all_day_plans` |
 | 4 · 出发前查漏 | 最终检查，冻结 `travel_plan.md` + `checklist.md` 交付物 | `check_weather`、`search_travel_services`、`generate_summary` |

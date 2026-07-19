@@ -28,6 +28,13 @@ flyai:
   cli_timeout: 30
   # api_key: ${FLYAI_API_KEY}
 
+# Xiaohongshu CLI tools are DISABLED by default: the CLI scrapes with a
+# logged-in session and risks account bans. UGC content is sourced via
+# web_search with include_domains (xiaohongshu.com etc.) instead.
+# Only opt in locally at your own risk.
+xhs:
+  enabled: false
+
 quality_gate:
   threshold: 3.5
   max_retries: 2

@@ -91,7 +91,7 @@ invariants, not avoiding frameworks.
 
 | Phase | Purpose | Representative tools |
 |-------|---------|----------------------|
-| 1 · Inspiration & Destination Lock | Narrow vague intent into a destination | `xiaohongshu_search_notes`, `web_search`, `quick_travel_search` |
+| 1 · Inspiration & Destination Lock | Narrow vague intent into a destination | `web_search` (UGC domain-scoped), `quick_travel_search` |
 | 2 · Framework Planning | Trip brief, candidate pool, skeletons, transport & lodging locks | `set_trip_brief`, `set_skeleton_plans`, `search_flights`, `search_accommodations` |
 | 3 · Daily Itinerary Assembly | Expand the chosen skeleton into validated day-by-day plans | `optimize_day_route`, `save_day_plan`, `replace_all_day_plans` |
 | 4 · Pre-Departure Checklist | Final checks, freeze `travel_plan.md` + `checklist.md` deliverables | `check_weather`, `search_travel_services`, `generate_summary` |

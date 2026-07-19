@@ -48,7 +48,10 @@ class FlyAIConfig:
 
 @dataclass(frozen=True)
 class XhsConfig:
-    enabled: bool = True
+    # 默认关闭：XHS CLI 走登录态抓取，已验证有封号风险；UGC 信息默认由
+    # web_search 域内搜索（include_domains=xiaohongshu.com 等）承担。
+    # 仅当显式在 config.yaml 写 enabled: true 时才注册 XHS CLI 工具。
+    enabled: bool = False
     cli_bin: str = "xhs"
     cli_timeout: int = 30
 
@@ -325,7 +328,8 @@ def _build_api_keys(api_raw: dict) -> ApiKeysConfig:
 
 def _build_xhs_config(xhs_raw: dict) -> XhsConfig:
     return XhsConfig(
-        enabled=_as_bool(xhs_raw.get("enabled"), True),
+        # 安全默认：未显式声明时保持关闭（见 XhsConfig 注释）。
+        enabled=_as_bool(xhs_raw.get("enabled"), False),
         cli_bin=os.environ.get(
             "XHS_CLI_BIN", _resolve_env(xhs_raw.get("cli_bin", "xhs")) or "xhs"
         ),
