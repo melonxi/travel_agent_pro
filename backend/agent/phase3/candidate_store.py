@@ -9,6 +9,7 @@ from typing import Any
 
 from tools.base import ToolError
 from tools.plan_tools.evidence import validate_visit_info
+from tools.source_registry import SourceRegistry
 
 _SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -31,6 +32,8 @@ class Phase3CandidateValidationError(ValueError):
 @dataclass(frozen=True)
 class Phase3CandidateStore:
     root: Path | str
+    # 注入后启用 source_ref 绑定校验（与串行写入路径同一规则集）。
+    source_registry: SourceRegistry | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "root", Path(self.root))
@@ -50,7 +53,7 @@ class Phase3CandidateStore:
         dayplan: dict[str, Any],
     ) -> dict[str, Any]:
         _validate_safe_segment(worker_id, "worker_id")
-        self._validate_dayplan(expected_day, dayplan)
+        self._validate_dayplan(expected_day, dayplan, session_id=session_id)
 
         run_dir = self.run_dir(session_id, run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -217,7 +220,13 @@ class Phase3CandidateStore:
         os.replace(tmp_path, path)
         return True
 
-    def _validate_dayplan(self, expected_day: int, dayplan: dict[str, Any]) -> None:
+    def _validate_dayplan(
+        self,
+        expected_day: int,
+        dayplan: dict[str, Any],
+        *,
+        session_id: str | None = None,
+    ) -> None:
         if not isinstance(dayplan, dict):
             raise Phase3CandidateValidationError("dayplan must be an object")
 
@@ -243,7 +252,12 @@ class Phase3CandidateStore:
             if activity.get("visit_info") is None:
                 continue
             try:
-                validate_visit_info(activity["visit_info"], f"activities[{index}]")
+                validate_visit_info(
+                    activity["visit_info"],
+                    f"activities[{index}]",
+                    source_registry=self.source_registry,
+                    session_id=session_id,
+                )
             except ToolError as exc:
                 raise Phase3CandidateValidationError(
                     str(exc),

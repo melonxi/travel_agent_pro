@@ -78,6 +78,7 @@ export interface EvidenceRecord {
   confidence: 'confirmed' | 'unverified'
   source_url: string | null
   observed_at: string | null
+  source_ref: string | null
 }
 
 export interface VisitInfo {

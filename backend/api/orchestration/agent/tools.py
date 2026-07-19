@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from tools.ai_travel_search import make_ai_travel_search_tool
 from tools.assemble_day_plan import make_assemble_day_plan_tool
 from tools.calculate_route import make_calculate_route_tool
@@ -15,6 +17,7 @@ from tools.search_accommodations import make_search_accommodations_tool
 from tools.search_flights import make_search_flights_tool
 from tools.search_trains import make_search_trains_tool
 from tools.search_travel_services import make_search_travel_services_tool
+from tools.source_registry import SourceRegistry
 from tools.web_search import make_web_search_tool
 from tools.xiaohongshu_search import (
     make_xiaohongshu_get_comments_tool,
@@ -23,8 +26,14 @@ from tools.xiaohongshu_search import (
 )
 
 
+def build_source_registry(config) -> SourceRegistry:
+    """来源注册表落在 data_dir/sources；与 phase3 candidate store 同级约定。"""
+    return SourceRegistry(Path(config.data_dir) / "sources")
+
+
 def build_tool_engine(*, config, plan) -> ToolEngine:
     tool_engine = ToolEngine()
+    source_registry = build_source_registry(config)
 
     flyai_client = None
     if config.flyai.enabled:
@@ -35,7 +44,7 @@ def build_tool_engine(*, config, plan) -> ToolEngine:
             api_key=config.flyai.api_key,
         )
 
-    for plan_tool in make_all_plan_tools(plan):
+    for plan_tool in make_all_plan_tools(plan, source_registry=source_registry):
         tool_engine.register(plan_tool)
     # P2-8：search_flights 仅依赖 flyai（Amadeus sandbox 分支已删除）。
     # flyai 不可用时不注册，由 lock 阶段 prompt 引导用 web_search 查航班价格带。
@@ -56,7 +65,13 @@ def build_tool_engine(*, config, plan) -> ToolEngine:
     tool_engine.register(make_check_availability_tool(config.api_keys))
     tool_engine.register(make_check_weather_tool(config.api_keys))
     tool_engine.register(make_generate_summary_tool(plan))
-    tool_engine.register(make_web_search_tool(config.api_keys))
+    tool_engine.register(
+        make_web_search_tool(
+            config.api_keys,
+            source_registry=source_registry,
+            session_id=plan.session_id,
+        )
+    )
     if config.xhs.enabled:
         tool_engine.register(make_xiaohongshu_search_notes_tool(config.xhs))
         tool_engine.register(make_xiaohongshu_read_note_tool(config.xhs))

@@ -560,6 +560,257 @@ class TestParallelPhase3EvidencePath:
 
 
 # ---------------------------------------------------------------------------
+# source_ref 绑定：证据回溯到真实工具调用（注入 SourceRegistry 的路径）
+# ---------------------------------------------------------------------------
+
+
+class TestSourceRefBinding:
+    """web_search 铸造 source_id → 证据引用 source_ref → 校验可解析。
+    伪造引用 fail closed；未注入 registry 的 legacy 路径行为不变。"""
+
+    def _registry_and_plan(self, tmp_path):
+        from tools.source_registry import SourceRegistry
+
+        plan = TravelPlanState(session_id="sess_ref", phase=3)
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
+        return SourceRegistry(tmp_path), plan
+
+    def _confirmed_fact_with_ref(self, registry, session_id: str) -> dict:
+        url = "https://example.com/official"
+        source_id = registry.register(
+            session_id, url=url, title="官网开放信息", tool_name="web_search"
+        )
+        record = _official_evidence()
+        record["source_ref"] = source_id
+        return record
+
+    @pytest.mark.asyncio
+    async def test_web_search_mints_source_ids(self, tmp_path):
+        import respx
+        from httpx import Response
+
+        from config import ApiKeysConfig
+        from tools.source_registry import SourceRegistry, source_id_for
+        from tools.web_search import make_web_search_tool
+
+        registry = SourceRegistry(tmp_path)
+        tool_fn = make_web_search_tool(
+            ApiKeysConfig(tavily="test_key"),
+            source_registry=registry,
+            session_id="sess_ref",
+        )
+        with respx.mock:
+            respx.post("https://api.tavily.com/search").mock(
+                return_value=Response(
+                    200,
+                    json={
+                        "answer": "",
+                        "results": [
+                            {
+                                "title": "官网",
+                                "url": "https://example.com/official",
+                                "content": "9:00-17:00",
+                                "score": 0.9,
+                            }
+                        ],
+                    },
+                )
+            )
+            result = await tool_fn(query="浅草寺 开放时间")
+
+        minted = result["results"][0]["source_id"]
+        assert minted == source_id_for("sess_ref", "https://example.com/official")
+        assert registry.lookup("sess_ref", minted)["tool_name"] == "web_search"
+
+    @pytest.mark.asyncio
+    async def test_fabricated_source_ref_fails_closed(self, tmp_path):
+        registry, plan = self._registry_and_plan(tmp_path)
+        tool_fn = make_save_day_plan_tool(plan, source_registry=registry)
+        fabricated = _official_evidence()
+        fabricated["source_ref"] = "src_deadbeef00"  # 未经工具铸造
+        with pytest.raises(ToolError, match="UNKNOWN_SOURCE_REF|无法解析"):
+            await tool_fn(
+                mode="create",
+                day=1,
+                date="2026-05-01",
+                activities=[
+                    _activity_with_visit_info(
+                        {
+                            "role": "anchor",
+                            "recommendation_reason": "官方确认开放",
+                            "needs_recheck": False,
+                            "evidence": [fabricated],
+                        }
+                    )
+                ],
+            )
+
+    @pytest.mark.asyncio
+    async def test_confirmed_fact_requires_source_ref_when_registry_active(
+        self, tmp_path
+    ):
+        registry, plan = self._registry_and_plan(tmp_path)
+        tool_fn = make_save_day_plan_tool(plan, source_registry=registry)
+        no_ref = _official_evidence()  # confirmed fact，但没有 source_ref
+        with pytest.raises(
+            ToolError, match="CONFIRMED_FACT_NEEDS_SOURCE_REF|必须携带 source_ref"
+        ):
+            await tool_fn(
+                mode="create",
+                day=1,
+                date="2026-05-01",
+                activities=[
+                    _activity_with_visit_info(
+                        {
+                            "role": "anchor",
+                            "recommendation_reason": "官方确认开放",
+                            "needs_recheck": False,
+                            "evidence": [no_ref],
+                        }
+                    )
+                ],
+            )
+
+    @pytest.mark.asyncio
+    async def test_source_url_must_match_registered_url(self, tmp_path):
+        registry, plan = self._registry_and_plan(tmp_path)
+        tool_fn = make_save_day_plan_tool(plan, source_registry=registry)
+        record = self._confirmed_fact_with_ref(registry, plan.session_id)
+        record["source_url"] = "https://evil.example.com/spoofed"
+        with pytest.raises(ToolError, match="SOURCE_REF_URL_MISMATCH|不一致"):
+            await tool_fn(
+                mode="create",
+                day=1,
+                date="2026-05-01",
+                activities=[
+                    _activity_with_visit_info(
+                        {
+                            "role": "anchor",
+                            "recommendation_reason": "官方确认开放",
+                            "needs_recheck": False,
+                            "evidence": [record],
+                        }
+                    )
+                ],
+            )
+
+    @pytest.mark.asyncio
+    async def test_valid_source_ref_passes_end_to_end(self, tmp_path):
+        registry, plan = self._registry_and_plan(tmp_path)
+        tool_fn = make_save_day_plan_tool(plan, source_registry=registry)
+        record = self._confirmed_fact_with_ref(registry, plan.session_id)
+        result = await tool_fn(
+            mode="create",
+            day=1,
+            date="2026-05-01",
+            activities=[
+                _activity_with_visit_info(
+                    {
+                        "role": "anchor",
+                        "recommendation_reason": "官方确认开放",
+                        "needs_recheck": False,
+                        "evidence": [record, _ugc_evidence()],
+                    }
+                )
+            ],
+        )
+        assert result["day"] == 1
+        saved = plan.daily_plans[0].activities[0].visit_info.evidence[0]
+        assert saved.source_ref == record["source_ref"]
+        # 快照往返保留 source_ref
+        restored = TravelPlanState.from_dict(plan.to_dict())
+        assert (
+            restored.daily_plans[0].activities[0].visit_info.evidence[0].source_ref
+            == record["source_ref"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_malformed_source_ref_rejected_even_without_registry(self):
+        """格式校验不依赖 registry：编造的非 src_ 前缀引用直接拒。"""
+        plan = TravelPlanState(session_id="sess_fmt", phase=3)
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
+        tool_fn = make_save_day_plan_tool(plan)
+        bad = _official_evidence()
+        bad["source_ref"] = "https://example.com/not-an-id"
+        with pytest.raises(ToolError, match="source_ref 格式非法"):
+            await tool_fn(
+                mode="create",
+                day=1,
+                date="2026-05-01",
+                activities=[
+                    _activity_with_visit_info(
+                        {
+                            "role": "normal",
+                            "recommendation_reason": "测试",
+                            "evidence": [bad],
+                        }
+                    )
+                ],
+            )
+
+    @pytest.mark.asyncio
+    async def test_legacy_path_without_registry_unchanged(self):
+        """未注入 registry（legacy/单测路径）：confirmed fact 无 ref 仍可写入。"""
+        plan = TravelPlanState(session_id="sess_legacy_ref", phase=3)
+        plan.dates = DateRange(start="2026-05-01", end="2026-05-03")
+        tool_fn = make_save_day_plan_tool(plan)
+        result = await tool_fn(
+            mode="create",
+            day=1,
+            date="2026-05-01",
+            activities=[
+                _activity_with_visit_info(
+                    {
+                        "role": "anchor",
+                        "recommendation_reason": "官方确认开放",
+                        "needs_recheck": False,
+                        "evidence": [_official_evidence()],
+                    }
+                )
+            ],
+        )
+        assert result["day"] == 1
+
+    def test_candidate_store_with_registry_rejects_fabricated_ref(self, tmp_path):
+        """并行路径同样 fail closed：Worker 提交时校验 source_ref。"""
+        from agent.phase3.candidate_store import (
+            Phase3CandidateStore,
+            Phase3CandidateValidationError,
+        )
+        from tools.source_registry import SourceRegistry
+
+        store = Phase3CandidateStore(
+            tmp_path / "candidates",
+            source_registry=SourceRegistry(tmp_path / "sources"),
+        )
+        fabricated = _official_evidence()
+        fabricated["source_ref"] = "src_deadbeef00"
+        with pytest.raises(Phase3CandidateValidationError) as exc_info:
+            store.submit_candidate(
+                session_id="sess_ref",
+                run_id="run_1",
+                worker_id="day_2_attempt_1",
+                expected_day=2,
+                attempt=1,
+                dayplan={
+                    "day": 2,
+                    "date": "2026-05-02",
+                    "activities": [
+                        _activity_with_visit_info(
+                            {
+                                "role": "anchor",
+                                "recommendation_reason": "官方确认开放",
+                                "needs_recheck": False,
+                                "evidence": [fabricated],
+                            }
+                        )
+                    ],
+                },
+            )
+        assert exc_info.value.error_code == "INVALID_DAYPLAN_EVIDENCE"
+
+
+# ---------------------------------------------------------------------------
 # Phase 4 交付物：需复核与淘汰章节
 # ---------------------------------------------------------------------------
 

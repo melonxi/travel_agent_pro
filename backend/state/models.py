@@ -48,6 +48,9 @@ class EvidenceRecord:
     confidence: str = "unverified"  # confirmed | unverified
     source_url: str | None = None
     observed_at: str | None = None  # 信息观察/发布时间，提醒时效性
+    # 指向 SourceRegistry 登记的 source_id（如 "src_1a2b3c4d5e"）。
+    # 有 registry 的写入路径上，confirmed fact 必须携带可解析的 source_ref。
+    source_ref: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -58,6 +61,7 @@ class EvidenceRecord:
             "confidence": self.confidence,
             "source_url": self.source_url,
             "observed_at": self.observed_at,
+            "source_ref": self.source_ref,
         }
 
     @classmethod
@@ -78,6 +82,7 @@ class EvidenceRecord:
             ),
             source_url=d.get("source_url") or None,
             observed_at=d.get("observed_at") or None,
+            source_ref=d.get("source_ref") or None,
         )
 
 

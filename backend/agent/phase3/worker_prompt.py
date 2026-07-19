@@ -176,6 +176,7 @@ _DAYPLAN_SCHEMA = """## DayPlan 结构要求
             "claim_type": "<fact 可核验事实 / experience 体验 / warning 避坑>",
             "confidence": "<confirmed / unverified>",
             "source_url": "<来源链接，可选>",
+            "source_ref": "<web_search 结果中的 source_id，原样复制，可选>",
             "observed_at": "<信息时间，可选>"
           }
         ]
@@ -196,6 +197,7 @@ _DAYPLAN_SCHEMA = """## DayPlan 结构要求
 - 当天核心锚点和做过 web_search 验证的活动，附 visit_info 记录"为什么去、依据是什么"；普通用餐、接驳不需要。
 - UGC（小红书/用户自述）的 fact 不允许 confidence=confirmed——营业时间、票价、政策必须由 official/web 来源背书，UGC 只承担 experience / warning。
 - role=anchor 必须至少有一条「official/web + claim_type=fact + confidence=confirmed + http(s) source_url」的证据；没有时保留推荐但必须 needs_recheck=true。
+- source_ref 只能原样复制 web_search 结果里的 source_id（形如 src_1a2b3c4d5e），不能编造；confidence=confirmed 的 fact 必须携带 source_ref，没有对应搜索结果时改为 unverified。
 - 违反以上规则提交会返回 INVALID_DAYPLAN_EVIDENCE，按错误信息修正后重新提交。
 
 常见结构错误（绝对不允许）：

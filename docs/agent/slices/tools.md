@@ -28,15 +28,17 @@
 - 多天行程：首日必须 `arrival_day`，末日必须 `departure_day`，中间日 `full_day`。
 - 到达/离开日轻排：`core_activities` 与 `locked_pois` 均不超过 2 项。
 
-## 证据/来源记录校验（阶段 A）
+## 证据/来源记录校验（阶段 A / A+）
 
-> 定位诚实：这是**结构化来源记录 + 确定性硬规则**，不是防伪造证据链——
-> EvidenceRecord 由 LLM 自填，尚未绑定 tool_call/trace（source_ref 绑定已单独立项）。
+> 定位：结构化来源记录 + 确定性硬规则 + source_ref 绑定。注入 SourceRegistry
+> 的写入路径（生产默认）上，confirmed fact 必须回溯到检索工具铸造的 source_id，
+> 伪造引用 fail closed；summary/结论文本本身仍由 LLM 压缩，不做内容级防伪。
 
 - Activity 可选 `visit_info`：`{role, recommendation_reason, needs_recheck, evidence[]}`；校验在 `tools/plan_tools/evidence.py`。
 - 硬规则 1：UGC 来源（xiaohongshu/user）的 `fact` 不允许 `confidence="confirmed"`（`UGC_FACT_NOT_CONFIRMABLE`）。
 - 硬规则 2：`role="anchor"` 必须有一条可靠事实来源——`official/web + claim_type=fact + confidence=confirmed + http(s) source_url`（`is_reliable_fact_record`）；否则必须 `needs_recheck=true`（`ANCHOR_NEEDS_RELIABLE_SOURCE`）。
-- 校验点覆盖两条写入路径：串行 `save_day_plan`/`replace_all_day_plans`（工具层），并行 `submit_day_plan_candidate` → `Phase3CandidateStore._validate_dayplan`（提交时失败，错误码 `INVALID_DAYPLAN_EVIDENCE` 供 Worker 自修复）。
+- 硬规则 3（source_ref 绑定）：`web_search` 每条结果经 `tools/source_registry.py::SourceRegistry` 铸造 `source_id`（`data/sources/<session>.jsonl`，(session,url) 决定性哈希幂等）；evidence.source_ref 必须可解析（`UNKNOWN_SOURCE_REF`）、URL 必须一致（`SOURCE_REF_URL_MISMATCH`）、confirmed fact 必须携带（`CONFIRMED_FACT_NEEDS_SOURCE_REF`）。未注入 registry 的 legacy 路径只做格式校验。
+- 校验点覆盖两条写入路径：串行 `save_day_plan`/`replace_all_day_plans`（工具层，registry 由 `build_tool_engine` 注入），并行 `submit_day_plan_candidate` → `Phase3CandidateStore._validate_dayplan`（store 持 registry，root 来自 `phase3.parallel.source_registry_root`；提交时失败，错误码 `INVALID_DAYPLAN_EVIDENCE` 供 Worker 自修复）。
 - `set_excluded_candidates`（phases 2/3；Phase 2 子阶段 candidate/skeleton/lock，brief 不开放）整体替换淘汰记录；Phase 4 `generate_summary` 从状态确定性生成「出发前需复核」「已排除/暂缓项目」章节。
 
 ## 航班搜索

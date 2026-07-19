@@ -12,6 +12,7 @@ from state.plan_writers import (
 )
 from tools.base import ToolError, tool
 from tools.plan_tools.evidence import validate_visit_info
+from tools.source_registry import SourceRegistry
 
 _REQUIRED_ACTIVITY_FIELDS = {
     "name",
@@ -116,7 +117,12 @@ def _validate_date_format(date: str) -> None:
         )
 
 
-def _validate_activities(activities: Any) -> None:
+def _validate_activities(
+    activities: Any,
+    *,
+    source_registry: SourceRegistry | None = None,
+    session_id: str | None = None,
+) -> None:
     if not isinstance(activities, list):
         raise ToolError(
             f"activities 必须是 list，收到 {type(activities).__name__}",
@@ -199,7 +205,12 @@ def _validate_activities(activities: Any) -> None:
                 ),
             )
         if activity.get("visit_info") is not None:
-            validate_visit_info(activity["visit_info"], f"activities[{index}]")
+            validate_visit_info(
+                activity["visit_info"],
+                f"activities[{index}]",
+                source_registry=source_registry,
+                session_id=session_id,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +278,11 @@ def _validate_complete_day_coverage(
 # ---------------------------------------------------------------------------
 
 
-def make_save_day_plan_tool(plan: TravelPlanState):
+def make_save_day_plan_tool(
+    plan: TravelPlanState,
+    *,
+    source_registry: SourceRegistry | None = None,
+):
     @tool(
         name="save_day_plan",
         description=(
@@ -293,7 +308,11 @@ def make_save_day_plan_tool(plan: TravelPlanState):
         _validate_day(day, "day")
         _validate_day_in_range(plan, day, "day")
         _validate_date_format(date)
-        _validate_activities(activities)
+        _validate_activities(
+            activities,
+            source_registry=source_registry,
+            session_id=plan.session_id,
+        )
 
         exists = _day_exists(plan, day)
         if mode == "create" and exists:
@@ -338,7 +357,11 @@ def make_save_day_plan_tool(plan: TravelPlanState):
     return save_day_plan
 
 
-def make_replace_all_day_plans_tool(plan: TravelPlanState):
+def make_replace_all_day_plans_tool(
+    plan: TravelPlanState,
+    *,
+    source_registry: SourceRegistry | None = None,
+):
     @tool(
         name="replace_all_day_plans",
         description=(
@@ -377,7 +400,11 @@ def make_replace_all_day_plans_tool(plan: TravelPlanState):
             _validate_day(day_payload["day"], f"days[{index}].day")
             _validate_day_in_range(plan, day_payload["day"], f"days[{index}].day")
             _validate_date_format(day_payload["date"])
-            _validate_activities(day_payload["activities"])
+            _validate_activities(
+                day_payload["activities"],
+                source_registry=source_registry,
+                session_id=plan.session_id,
+            )
 
         day_numbers = [day_payload["day"] for day_payload in days]
         _validate_unique_day_numbers(day_numbers, "days")

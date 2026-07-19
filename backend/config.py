@@ -223,6 +223,9 @@ class Phase3ParallelConfig:
     worker_timeout_seconds: int = 1200
     fallback_to_serial: bool = True
     artifact_root: str = "./data/phase3_runs"
+    # 来源注册表根目录；须与主流程 build_source_registry(data_dir/sources) 一致，
+    # 自定义 data_dir 时同步覆盖（与 artifact_root 同理）。
+    source_registry_root: str = "./data/sources"
     # 编排预算：并行/串行编排整体超时。为 None 时表示豁免 run 级超时，
     # 由 worker 自身的 worker_timeout_seconds 兜底。
     orchestration_timeout_seconds: int | None = None
@@ -594,6 +597,7 @@ def _build_phase3_parallel_config(raw: dict) -> Phase3ParallelConfig:
         worker_timeout_seconds=int(p3.get("worker_timeout_seconds", 1200)),
         fallback_to_serial=_as_bool(p3.get("fallback_to_serial"), True),
         artifact_root=str(p3.get("artifact_root", "./data/phase3_runs")),
+        source_registry_root=str(p3.get("source_registry_root", "./data/sources")),
         orchestration_timeout_seconds=(
             int(raw_orch_timeout) if raw_orch_timeout is not None else None
         ),

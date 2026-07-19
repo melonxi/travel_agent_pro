@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import httpx
 from tools.base import ToolError, tool
+from tools.source_registry import SourceRegistry
 
 _PARAMETERS = {
     "type": "object",
@@ -53,7 +54,12 @@ def _normalize_domains(value: list[str] | None) -> list[str]:
     return domains[:_MAX_DOMAIN_FILTERS]
 
 
-def make_web_search_tool(api_keys) -> object:
+def make_web_search_tool(
+    api_keys,
+    *,
+    source_registry: SourceRegistry | None = None,
+    session_id: str | None = None,
+) -> object:
     tavily_key = api_keys.tavily if api_keys else ""
 
     @tool(
@@ -69,7 +75,8 @@ Use when:
 Important:
   - include_domains / exclude_domains 各最多 5 个域名。
   - max_results 会自动限制在 1 到 10。
-        返回 Tavily 的简答和结果列表,包含标题、链接、摘要和分数。对于推荐型 query,它经常能直接给出可用的候选结论。""",
+  - 每条结果带 source_id;写入证据(visit_info.evidence)时把它原样复制到 source_ref,不能自己编造。
+        返回 Tavily 的简答和结果列表,包含标题、链接、摘要、分数和 source_id。对于推荐型 query,它经常能直接给出可用的候选结论。""",
         phases=[1, 2, 3, 4],
         parameters=_PARAMETERS,
         human_label="上网查资料",
@@ -116,14 +123,25 @@ Important:
 
         results = []
         for item in data.get("results", []):
-            results.append(
-                {
-                    "title": item.get("title", ""),
-                    "url": item.get("url", ""),
-                    "content": item.get("content", ""),
-                    "score": item.get("score"),
-                }
-            )
+            entry = {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "content": item.get("content", ""),
+                "score": item.get("score"),
+            }
+            # 铸造 source_id：证据链 source_ref 的唯一合法来源。
+            if (
+                source_registry is not None
+                and session_id
+                and entry["url"].startswith(("http://", "https://"))
+            ):
+                entry["source_id"] = source_registry.register(
+                    session_id,
+                    url=entry["url"],
+                    title=entry["title"],
+                    tool_name="web_search",
+                )
+            results.append(entry)
 
         if not results and included:
             raise ToolError(

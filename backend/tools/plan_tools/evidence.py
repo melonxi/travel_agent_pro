@@ -1,12 +1,16 @@
 """Evidence-chain validation shared by plan-writing tools, plus the
 set_excluded_candidates tool.
 
-信息源使用规则（工具边界强制的两条硬规则）：
+信息源使用规则（工具边界强制的硬规则）：
 
 1. UGC 来源（xiaohongshu / user）的 fact 不允许标 confidence="confirmed"——
    营业时间、票价、政策等事实必须由 official / web 来源背书。
-2. role="anchor" 的活动若没有任何 official / web 证据，必须 needs_recheck=true——
-   允许"没查到但仍推荐"，不允许"没查到且装作可靠"。
+2. role="anchor" 的活动若没有可靠事实来源（official/web + fact + confirmed +
+   source_url），必须 needs_recheck=true——允许"没查到但仍推荐"，
+   不允许"没查到且装作可靠"。
+3. source_ref 绑定（写入路径注入 SourceRegistry 时启用）：confirmed fact 必须
+   引用检索工具铸造的 source_id，且能在本 session 的注册表中解析回真实 URL；
+   伪造的 source_ref 直接拒绝（fail closed）。
 
 其余为结构校验；非法枚举一律 ToolError 触发模型自修复，不做静默降级。
 """
@@ -26,6 +30,7 @@ from state.models import (
 )
 from state.plan_writers import write_excluded_candidates
 from tools.base import ToolError, tool
+from tools.source_registry import SOURCE_ID_PATTERN, SourceRegistry
 
 EVIDENCE_RECORD_SCHEMA = {
     "type": "object",
@@ -53,6 +58,13 @@ EVIDENCE_RECORD_SCHEMA = {
         "observed_at": {
             "type": "string",
             "description": "信息观察/发布时间（如 2026-05），提醒时效性，可选",
+        },
+        "source_ref": {
+            "type": "string",
+            "description": (
+                "来源引用 id（如 src_1a2b3c4d5e），必须原样复制 web_search 结果中的 "
+                "source_id，不能自己编造。confidence=confirmed 的 fact 必须携带。"
+            ),
         },
     },
     "required": ["source_type", "summary", "claim_type"],
@@ -111,14 +123,26 @@ def _enum_error(prefix: str, field: str, value: Any, allowed: set[str]) -> ToolE
     )
 
 
-def validate_evidence_records(records: Any, prefix: str) -> None:
-    """结构校验 + 信息源规则。records 允许为空列表。"""
+def validate_evidence_records(
+    records: Any,
+    prefix: str,
+    *,
+    source_registry: SourceRegistry | None = None,
+    session_id: str | None = None,
+) -> None:
+    """结构校验 + 信息源规则。records 允许为空列表。
+
+    source_registry 注入时启用 source_ref 绑定校验：伪造引用 fail closed，
+    confirmed fact 必须携带可解析的 source_ref。未注入（legacy/单测路径）
+    时只做结构与格式校验。
+    """
     if not isinstance(records, list):
         raise ToolError(
             f"{prefix}.evidence 必须是 list，收到 {type(records).__name__}",
             error_code="INVALID_VALUE",
             suggestion="evidence 应为 list[object]，每条包含 source_type, summary, claim_type",
         )
+    registry_active = source_registry is not None and bool(session_id)
     for i, record in enumerate(records):
         record_prefix = f"{prefix}.evidence[{i}]"
         if not isinstance(record, dict):
@@ -160,9 +184,87 @@ def validate_evidence_records(records: Any, prefix: str) -> None:
                     "或保持 confidence=unverified 并在 visit_info 上标 needs_recheck=true。"
                 ),
             )
+        _validate_source_ref(
+            record,
+            record_prefix,
+            registry_active=registry_active,
+            source_registry=source_registry,
+            session_id=session_id or "",
+        )
 
 
-def validate_visit_info(visit_info: Any, prefix: str) -> None:
+def _validate_source_ref(
+    record: dict,
+    record_prefix: str,
+    *,
+    registry_active: bool,
+    source_registry: SourceRegistry | None,
+    session_id: str,
+) -> None:
+    """硬规则 3：source_ref 必须能回溯到检索工具铸造的登记记录。"""
+    source_ref = record.get("source_ref")
+    if source_ref is not None:
+        if not isinstance(source_ref, str) or not SOURCE_ID_PATTERN.match(source_ref):
+            raise ToolError(
+                f"{record_prefix}.source_ref 格式非法: {source_ref!r}",
+                error_code="INVALID_VALUE",
+                suggestion=(
+                    "source_ref 必须原样复制 web_search 结果中的 source_id"
+                    "（形如 src_1a2b3c4d5e），不能自己编造。"
+                ),
+            )
+        if registry_active:
+            registered = source_registry.lookup(session_id, source_ref)
+            if registered is None:
+                raise ToolError(
+                    f"{record_prefix}.source_ref 无法解析: {source_ref}",
+                    error_code="UNKNOWN_SOURCE_REF",
+                    suggestion=(
+                        "该 source_id 不在本 session 的来源注册表中——只能引用"
+                        "本 session 内 web_search 结果返回的 source_id，不能编造"
+                        "或复用其他会话的 id。"
+                    ),
+                )
+            source_url = record.get("source_url")
+            if (
+                isinstance(source_url, str)
+                and source_url.strip()
+                and source_url.strip() != registered.get("url")
+            ):
+                raise ToolError(
+                    f"{record_prefix}: source_url 与 source_ref 登记的 URL 不一致",
+                    error_code="SOURCE_REF_URL_MISMATCH",
+                    suggestion=(
+                        f"source_ref={source_ref} 登记的 URL 是 "
+                        f"{registered.get('url')}；source_url 必须与其一致，"
+                        "或直接省略 source_url 由注册表提供。"
+                    ),
+                )
+    # confirmed fact 必须可回溯（仅在注册表在场的写入路径强制）。
+    if (
+        registry_active
+        and record.get("claim_type") == "fact"
+        and record.get("confidence", "unverified") == "confirmed"
+        and source_ref is None
+    ):
+        raise ToolError(
+            f"{record_prefix}: confidence=confirmed 的 fact 必须携带 source_ref",
+            error_code="CONFIRMED_FACT_NEEDS_SOURCE_REF",
+            suggestion=(
+                "已确认事实必须引用 web_search 结果中的 source_id（source_ref 字段），"
+                "使其可回溯到真实工具调用；没有对应搜索结果时请改为 "
+                "confidence=unverified。"
+            ),
+        )
+
+
+def validate_visit_info(
+    visit_info: Any,
+    prefix: str,
+    *,
+    source_registry: SourceRegistry | None = None,
+    session_id: str | None = None,
+) -> None:
     """visit_info 结构校验 + 锚点最小证据规则。"""
     if not isinstance(visit_info, dict):
         raise ToolError(
@@ -188,7 +290,12 @@ def validate_visit_info(visit_info: Any, prefix: str) -> None:
             suggestion="信息不足时 needs_recheck=true，已交叉验证时 false",
         )
     evidence = visit_info.get("evidence", [])
-    validate_evidence_records(evidence, f"{prefix}.visit_info")
+    validate_evidence_records(
+        evidence,
+        f"{prefix}.visit_info",
+        source_registry=source_registry,
+        session_id=session_id,
+    )
     # 硬规则 2：anchor 没有可靠来源时必须显式标记待复核。
     if role == "anchor" and not needs_recheck:
         has_reliable = any(is_reliable_fact_record(record) for record in evidence)

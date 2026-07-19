@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from state.models import TravelPlanState
 from tools.base import ToolDef
+from tools.source_registry import SourceRegistry
 
 from .append_tools import (
     make_add_constraints_tool,
@@ -52,13 +53,17 @@ PLAN_WRITER_TOOL_NAMES = {
 }
 
 
-def make_all_plan_tools(plan: TravelPlanState) -> list[ToolDef]:
+def make_all_plan_tools(
+    plan: TravelPlanState,
+    *,
+    source_registry: SourceRegistry | None = None,
+) -> list[ToolDef]:
     return [
         make_add_constraints_tool(plan),
         make_add_preferences_tool(plan),
         make_request_backtrack_tool(plan),
-        make_save_day_plan_tool(plan),
-        make_replace_all_day_plans_tool(plan),
+        make_save_day_plan_tool(plan, source_registry=source_registry),
+        make_replace_all_day_plans_tool(plan, source_registry=source_registry),
         make_select_skeleton_tool(plan),
         make_select_transport_tool(plan),
         make_set_accommodation_options_tool(plan),

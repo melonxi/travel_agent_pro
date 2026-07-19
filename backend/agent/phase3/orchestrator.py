@@ -49,6 +49,7 @@ from state.models import TravelPlanState, normalize_pace_value
 from storage.trace_redaction import stable_content_hash
 from telemetry.trace_recorder import TraceContext, TraceRecorder
 from tools.engine import ToolEngine
+from tools.source_registry import SourceRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -1212,7 +1213,10 @@ class Phase3Orchestrator:
             # 2. Build shared prefix
             shared_prefix = build_shared_prefix(self.plan)
             run_id = f"phase3_{uuid.uuid4().hex[:12]}"
-            candidate_store = Phase3CandidateStore(self.config.artifact_root)
+            candidate_store = Phase3CandidateStore(
+                self.config.artifact_root,
+                source_registry=SourceRegistry(self.config.source_registry_root),
+            )
             day_task_payload = [dict(task.__dict__) for task in tasks]
             start_event = await self._emit_trace_event(
                 event_type="phase3_orchestrator",
