@@ -1,5 +1,9 @@
 English | [简体中文](README.zh-CN.md)
 
+<p align="center">
+  <img src="frontend/public/favicon.svg" width="96" height="96" alt="Travel Agent Pro Logo" />
+</p>
+
 # Travel Agent Pro — Reliable Long-Horizon Planning Agent
 
 A travel-planning agent whose real subject is the **agent runtime**: bounded autonomy,

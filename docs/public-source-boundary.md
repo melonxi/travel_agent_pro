@@ -3,7 +3,7 @@
 本仓库以**本地 `main` 为权威代码源**，通过 GitHub 公开协作与展示。  
 目标：**代码与工程文档可公开；私人材料与密钥永不进公开历史。**
 
-最后对齐：`2026-07-17`（`origin/main` 已按本地历史 force 对齐，并剥离私人路径）。
+最后对齐：`2026-07-18`（`origin/main` 已按本地历史 force 对齐，并剥离私人路径）。
 
 ---
 
@@ -41,6 +41,7 @@
 | `docs/resume-bullets.md`、`docs/resume-bullets_*.md` | 简历 bullet 草稿 |
 | `docs/agent-interview-question-bank.md` | 面试题库 |
 | `docs/reviews/Agent 应用开发工程师模拟面试复盘 Round 1.md` | 模拟面试复盘 |
+| `docs/PORTFOLIO_HANDOFF.md`、`docs/PORTFOLIO_UPGRADE_PLAN.md` | 跨项目求职交接与本项目升级方案 |
 
 新增同类内容时：先加进 `.gitignore`，确认 `git status` 不可见，再开始写文件。
 
@@ -118,3 +119,4 @@ git diff --cached | rg -i 'api[_-]?key|sk-|password|token=' && echo '可疑密�
 |------|------|
 | 2026-07-17 | 确立边界：本地 main 为权威；私人 docs 从跟踪与历史剥离；force-with-lease 对齐 `origin/main` |
 | 2026-07-17 | README 重写为证据导向入口；`screenshots/demos/phase1-recommendations.png` 加白名单作为 README 头图 |
+| 2026-07-18 | 将作品集跨项目交接与升级方案列为本地-only 求职材料 |

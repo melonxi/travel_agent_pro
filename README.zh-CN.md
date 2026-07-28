@@ -1,5 +1,9 @@
 [English](README.md) | 简体中文
 
+<p align="center">
+  <img src="frontend/public/favicon.svg" width="96" height="96" alt="Travel Agent Pro Logo" />
+</p>
+
 # Travel Agent Pro — 面向长任务的高可靠规划 Agent
 
 一个旅行规划 Agent，但真正接受检验的是 **Agent Runtime**：受控自治、带版本化候选的并行

@@ -2850,6 +2850,11 @@ html[data-shell="craft-paper"] .phase-node.completed .phase-num {
 html[data-shell="craft-paper"] .inbox-brand-wrap {
   padding: 14px 14px 8px;
 }
+html[data-shell="craft-paper"] .inbox-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 html[data-shell="craft-paper"] .inbox-brand-name {
   font-size: 13px;
   font-weight: 600;
