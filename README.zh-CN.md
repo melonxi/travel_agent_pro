@@ -22,8 +22,8 @@ Worker、运行中 steering、局部重规划、基于 trace 的评测。旅行�
 ## 这个 Runtime 真正解决的三个问题
 
 **1. 并行 Worker 不能悄悄丢掉某一天的行程。**
-Phase 3 会并行派发逐日 Worker。每个提案都进入版本化候选存储（`accepted` / `rejected` /
-`superseded`）；只有 accepted 版本会提交到计划，所有提交都经过单一写入者，redispatch
+Phase 3 会并行派发逐日 Worker。每个提案都进入版本化候选存储（`accepted` / `rejected`，
+被替代的提案通过 `status_reason` 追踪）；只有 accepted 版本会提交到计划，所有提交都经过单一写入者，redispatch
 失败会回滚，而不是留下写了一半的一天。
 代码：[`agent/phase3/orchestrator.py`](backend/agent/phase3/orchestrator.py) ·
 [`agent/phase3/candidate_store.py`](backend/agent/phase3/candidate_store.py) ·
@@ -91,7 +91,7 @@ session）；内层循环解释“一轮如何推进 `TravelPlanState`”。两�
 | Phase | 目标 | 代表工具 |
 |-------|------|----------|
 | 1 · 灵感与目的地锁定 | 把模糊意图收敛为目的地 | `web_search`（UGC 域内搜索）、`quick_travel_search` |
-| 2 · 框架规划 | 旅行画像、候选池、骨架、交通与住宿锁定 | `set_trip_brief`、`set_skeleton_plans`、`search_flights`、`search_accommodations` |
+| 2 · 框架规划 | 旅行画像、候选池、骨架、交通与住宿锁定 | `set_trip_brief`、`set_skeleton_plans`、`search_flights`、`search_trains`、`search_accommodations` |
 | 3 · 逐日行程详排 | 把选定骨架展开为经过校验的逐日计划 | `optimize_day_route`、`save_day_plan`、`replace_all_day_plans` |
 | 4 · 出发前查漏 | 最终检查，冻结 `travel_plan.md` + `checklist.md` 交付物 | `check_weather`、`search_travel_services`、`generate_summary` |
 
@@ -209,11 +209,15 @@ validator，而不是对着最终回答猜。
 | Method | Path | 说明 |
 |--------|------|------|
 | POST | `/api/sessions` | 创建 session |
+| GET | `/api/sessions` | 列出所有 session |
+| DELETE | `/api/sessions/{session_id}` | 删除 session |
 | POST | `/api/chat/{session_id}` | SSE 流式对话 |
+| POST | `/api/chat/{session_id}/continue` | 继续被暂停或中断的运行 |
 | POST | `/api/chat/{session_id}/steer` | 运行中 steering（入队，安全边界排空） |
 | POST | `/api/chat/{session_id}/cancel` | 取消进行中的运行 |
 | POST | `/api/backtrack/{session_id}` | 阶段 / 计划回退 |
 | GET | `/api/plan/{session_id}` | 当前旅行计划状态 |
+| GET | `/api/memory/{user_id}` | 用户记忆（画像、工作记忆、episodes） |
 | GET | `/api/traces/{run_id}` | Flight recorder trace |
 | POST | `/api/traces/{run_id}/grade` | 确定性 trace 评分 |
 | GET | `/api/sessions/{session_id}/stats` | 成本 / token / 延迟统计 |
@@ -255,7 +259,7 @@ travel_agent_pro/
 │   ├── telemetry/             # OTel 接入 + SQLite flight recorder + session 统计
 │   ├── evals/                 # Golden cases、runner、trace grader、stability
 │   └── tests/                 # 约 2000 个 pytest 测试（CI 跑 A0 核心子集）
-├── frontend/                  # React 19 + Vite 6：对话、地图、时间线、trace viewer
+├── frontend/                  # React 19 + Vite 6：对话、地图、时间线、trace viewer、记忆中心、召回诊断面板
 ├── docs/
 │   ├── agent/                 # START_HERE → slices → deep（agent 可导航文档）
 │   ├── evidence/              # Portfolio 证据：基线、故障注入、traces

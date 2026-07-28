@@ -25,9 +25,9 @@ Engineering evidence lives in [`docs/evidence/`](docs/evidence/portfolio-proof.m
 
 **1. Parallel workers must not silently lose a day.**
 Phase 3 fans out per-day workers. Every proposal lands in a versioned candidate store
-(`accepted` / `rejected` / `superseded`); only accepted versions commit to the plan, all
-commits flow through a single writer, and a failed redispatch rolls back instead of
-leaving a half-written day.
+(`accepted` / `rejected`; superseded proposals are tracked via `status_reason`); only
+accepted versions commit to the plan, all commits flow through a single writer, and a
+failed redispatch rolls back instead of leaving a half-written day.
 Code: [`agent/phase3/orchestrator.py`](backend/agent/phase3/orchestrator.py) ·
 [`agent/phase3/candidate_store.py`](backend/agent/phase3/candidate_store.py) ·
 [`state/plan_writers.py`](backend/state/plan_writers.py) —
@@ -96,7 +96,7 @@ invariants, not avoiding frameworks.
 | Phase | Purpose | Representative tools |
 |-------|---------|----------------------|
 | 1 · Inspiration & Destination Lock | Narrow vague intent into a destination | `web_search` (UGC domain-scoped), `quick_travel_search` |
-| 2 · Framework Planning | Trip brief, candidate pool, skeletons, transport & lodging locks | `set_trip_brief`, `set_skeleton_plans`, `search_flights`, `search_accommodations` |
+| 2 · Framework Planning | Trip brief, candidate pool, skeletons, transport & lodging locks | `set_trip_brief`, `set_skeleton_plans`, `search_flights`, `search_trains`, `search_accommodations` |
 | 3 · Daily Itinerary Assembly | Expand the chosen skeleton into validated day-by-day plans | `optimize_day_route`, `save_day_plan`, `replace_all_day_plans` |
 | 4 · Pre-Departure Checklist | Final checks, freeze `travel_plan.md` + `checklist.md` deliverables | `check_weather`, `search_travel_services`, `generate_summary` |
 
@@ -218,11 +218,15 @@ and CI release gates remain future work. Details:
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/sessions` | Create a session |
+| GET | `/api/sessions` | List all sessions |
+| DELETE | `/api/sessions/{session_id}` | Delete a session |
 | POST | `/api/chat/{session_id}` | SSE streaming chat |
+| POST | `/api/chat/{session_id}/continue` | Continue a paused or interrupted run |
 | POST | `/api/chat/{session_id}/steer` | Mid-run steering (queued, safe-boundary drain) |
 | POST | `/api/chat/{session_id}/cancel` | Cancel in-flight run |
 | POST | `/api/backtrack/{session_id}` | Phase / plan backtrack |
 | GET | `/api/plan/{session_id}` | Current travel plan state |
+| GET | `/api/memory/{user_id}` | User memory (profile, working memory, episodes) |
 | GET | `/api/traces/{run_id}` | Flight-recorder trace |
 | POST | `/api/traces/{run_id}/grade` | Deterministic trace grading |
 | GET | `/api/sessions/{session_id}/stats` | Cost / token / latency stats |
@@ -264,7 +268,7 @@ travel_agent_pro/
 │   ├── telemetry/             # OTel setup + SQLite flight recorder + session stats
 │   ├── evals/                 # Golden cases, runner, trace grader, stability
 │   └── tests/                 # ~2000 pytest tests (A0 core subset runs in CI)
-├── frontend/                  # React 19 + Vite 6: chat, map, timeline, trace viewer
+├── frontend/                  # React 19 + Vite 6: chat, map, timeline, trace viewer, memory center, recall diagnostics
 ├── docs/
 │   ├── agent/                 # START_HERE → slices → deep (agent-navigable docs)
 │   ├── evidence/              # Portfolio proof: baselines, fault injection, traces
