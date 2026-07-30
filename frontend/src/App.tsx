@@ -63,55 +63,18 @@ function ThemeToggle({ dark, onToggle }: { dark: boolean; onToggle: () => void }
   )
 }
 
-/* 科技风路线地图与闪烁星号 Brand Logo */
+/* 阿导卡通头像 Brand Logo（导游帽） */
 function BrandMark({ size = 48, className = "" }: { size?: number; className?: string }) {
   return (
-    <svg
+    <img
+      src="/logo.png"
       width={size}
       height={size}
-      viewBox="0 0 48 48"
-      fill="none"
-      className={className}
-      style={{ display: "inline-block", verticalAlign: "middle" }}
-    >
-      <defs>
-        <linearGradient id="brandRouteGrad" x1="8" y1="38" x2="38" y2="10" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="var(--accent-teal, #3d8f7a)" />
-          <stop offset="60%" stopColor="#2dd4bf" />
-          <stop offset="100%" stopColor="#fbbf24" />
-        </linearGradient>
-        <linearGradient id="brandStarGrad" x1="28" y1="4" x2="44" y2="20" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#fbbf24" />
-          <stop offset="100%" stopColor="#f59e0b" />
-        </linearGradient>
-      </defs>
-
-      <path
-        d="M 12 0 V 48 M 24 0 V 48 M 36 0 V 48 M 0 12 H 48 M 0 24 H 48 M 0 36 H 48"
-        stroke="currentColor"
-        strokeWidth="0.5"
-        strokeDasharray="2 4"
-        opacity="0.15"
-      />
-      <path
-        d="M 10 36 C 16 36, 16 22, 26 22 C 34 22, 32 12, 36 12"
-        fill="none"
-        stroke="url(#brandRouteGrad)"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
-      <circle cx="10" cy="36" r="3.5" fill="var(--accent-teal, #3d8f7a)" />
-      <circle cx="26" cy="22" r="2.5" fill="#2dd4bf" />
-      <path
-        d="M 36 4 L 38.5 9.5 L 44 12 L 38.5 14.5 L 36 20 L 33.5 14.5 L 28 12 L 33.5 9.5 Z"
-        fill="url(#brandStarGrad)"
-      />
-      <path
-        d="M 15 11 L 16 13.5 L 18.5 14.5 L 16 15.5 L 15 18 L 14 15.5 L 11.5 14.5 L 14 13.5 Z"
-        fill="#2dd4bf"
-        opacity="0.85"
-      />
-    </svg>
+      alt="阿导"
+      className={`brand-mark ${className}`.trim()}
+      style={{ width: size, height: size }}
+      draggable={false}
+    />
   )
 }
 
@@ -305,8 +268,8 @@ export default function App() {
     return (
       <div className="loading-screen">
         <BrandMark />
-        <div className="loading-title">旅行者</div>
-        <div className="loading-subtitle">travel agent pro</div>
+        <div className="loading-title">阿导</div>
+        <div className="loading-subtitle">guida</div>
         <div className="loading-dots">
           <span /><span /><span />
         </div>
@@ -325,7 +288,7 @@ export default function App() {
             <div className="inbox-brand">
               <BrandMark size={28} />
               <div>
-                <div className="inbox-brand-name">旅行者</div>
+                <div className="inbox-brand-name">阿导</div>
                 <div className="inbox-brand-tag">travel workspace</div>
               </div>
             </div>

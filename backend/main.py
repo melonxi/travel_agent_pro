@@ -173,7 +173,7 @@ def create_app(config_path: str = "config.yaml") -> FastAPI:
                 task.cancel()
         await db.close()
 
-    app = FastAPI(title="Travel Agent Pro", lifespan=lifespan)
+    app = FastAPI(title="阿导 Guida", lifespan=lifespan)
     app.state._run_v3_memory_cutover_cleanup_once = _run_v3_memory_cutover_cleanup_once
     setup_telemetry(app, config.telemetry)
     app.add_middleware(

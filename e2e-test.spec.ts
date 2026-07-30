@@ -165,7 +165,7 @@ test.describe('Travel Agent Pro Phase 1 Flow', () => {
   test('abstract destination intent triggers destination recommendation flow', async ({ page }) => {
     await page.goto('/');
 
-    await expect(page.locator('text=旅行者')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('text=阿导')).toBeVisible({ timeout: 15000 });
     await expect(page.locator('input[placeholder*="告诉我你想去哪里"]')).toBeVisible({
       timeout: 15000,
     });

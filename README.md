@@ -1,10 +1,10 @@
 English | [简体中文](README.zh-CN.md)
 
 <p align="center">
-  <img src="frontend/public/favicon.svg" width="96" height="96" alt="Travel Agent Pro Logo" />
+  <img src="frontend/public/logo.png" width="96" height="96" alt="Guida Logo" />
 </p>
 
-# Travel Agent Pro — Reliable Long-Horizon Planning Agent
+# Guida — Reliable Long-Horizon Planning Agent
 
 A travel-planning agent whose real subject is the **agent runtime**: bounded autonomy,
 parallel workers with versioned candidates, mid-run steering, partial replanning, and

@@ -308,7 +308,7 @@ export default function MessageBubble({
     )
   }
 
-  const roleLabel = role === 'user' ? 'You' : role === 'assistant' ? '旅行者' : role
+  const roleLabel = role === 'user' ? 'You' : role === 'assistant' ? '阿导' : role
 
   return (
     <div className={`message ${role} message--doc`}>

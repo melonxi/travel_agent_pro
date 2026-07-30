@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════
-   旅行者 · Travel Agent Pro
+   阿导 · Guida
    Design System: Craft Paper (default) + Solstice (rollback)
    data-shell="craft-paper" | "solstice"
    data-theme="light" | "dark"
@@ -185,6 +185,28 @@ body::after {
 ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
 
 /* ── Loading Screen ───────────────────────────────── */
+/* 阿导卡通头像 */
+.brand-mark {
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: 28%;
+  object-fit: cover;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.loading-screen .brand-mark {
+  width: 88px;
+  height: 88px;
+  border-radius: 30%;
+  margin-bottom: 18px;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.18);
+  z-index: 1;
+  animation: fadeInUp 0.8s var(--ease-out-expo);
+}
+
 .loading-screen {
   display: flex;
   flex-direction: column;
@@ -2854,6 +2876,18 @@ html[data-shell="craft-paper"] .inbox-brand {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+html[data-shell="craft-paper"] .inbox-brand .brand-mark {
+  border-radius: 28%;
+}
+.session-sidebar.is-collapsed .inbox-brand-wrap.is-collapsed .inbox-brand {
+  flex-direction: column;
+  gap: 6px;
+  writing-mode: horizontal-tb;
+}
+.session-sidebar.is-collapsed .inbox-brand-wrap.is-collapsed .brand-mark {
+  width: 28px !important;
+  height: 28px !important;
 }
 html[data-shell="craft-paper"] .inbox-brand-name {
   font-size: 13px;

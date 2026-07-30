@@ -1,10 +1,10 @@
 [English](README.md) | 简体中文
 
 <p align="center">
-  <img src="frontend/public/favicon.svg" width="96" height="96" alt="Travel Agent Pro Logo" />
+  <img src="frontend/public/logo.png" width="96" height="96" alt="阿导 Guida Logo" />
 </p>
 
-# Travel Agent Pro — 面向长任务的高可靠规划 Agent
+# 阿导 Guida — 面向长任务的高可靠规划 Agent
 
 一个旅行规划 Agent，但真正接受检验的是 **Agent Runtime**：受控自治、带版本化候选的并行
 Worker、运行中 steering、局部重规划、基于 trace 的评测。旅行规划只是验证场景。

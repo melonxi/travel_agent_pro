@@ -49,15 +49,15 @@ export default function SessionSidebar({
   if (collapsed) {
     return (
       <>
-        <aside className="session-sidebar is-collapsed" aria-label="会话列表" title="旅行者">
+        <aside className="session-sidebar is-collapsed" aria-label="会话列表" title="阿导">
           {brandSlot ? (
-            <div className="inbox-brand-wrap is-collapsed" title="旅行者">
+            <div className="inbox-brand-wrap is-collapsed" title="阿导">
               {brandSlot}
             </div>
           ) : (
-            <span className="inbox-brand-collapsed" title="旅行者">
-              旅
-              <span className="sr-only">旅行者</span>
+            <span className="inbox-brand-collapsed" title="阿导">
+              阿
+              <span className="sr-only">阿导</span>
             </span>
           )}
           <button
